@@ -178,12 +178,22 @@ export class UiStateStore {
   private acceptedRevision: number;
   private submissionRevision: number;
   private uncertain = false;
+  private formTarget: number;
+  private syncedEdit = 0;
+  private syncTimer: ReturnType<typeof setTimeout> | undefined;
+  private syncWork: Promise<void> | undefined;
+  private syncTransportPending = false;
+  private lastSyncAt = -Infinity;
+  private syncCollisions = 0;
+  private syncBlocked = false;
+  private refreshForm = false;
+  readonly formSync: boolean;
   private visible: boolean;
   private corePending = new Set<string>();
   onEdit: () => void = () => {};
   onAccepted: (nodeId: string) => void = () => {};
   constructor(
-    private bridge: Pick<PluginUiBridge, "snapshot" | "invoke">,
+    private bridge: Pick<PluginUiBridge, "snapshot" | "invoke" | "syncForm">,
     readonly resource: PanelResourceV1 | PanelResourceV2,
     initial: UiStateSnapshot,
     restored?: DraftPayload,
@@ -210,6 +220,8 @@ export class UiStateStore {
         },
       }),
     );
+    this.formSync = "datasets" in resource && resource.formSync === true;
+    this.formTarget = initial.formRevision;
     this.target = initial.revision;
     this.visible = initial.visible;
     this.acceptedRevision = this.submissionRevision = initial.formRevision;
@@ -229,6 +241,7 @@ export class UiStateStore {
         if (Object.hasOwn(copy.draft, key)) this.view.draft[key] = copy.draft[key]!;
       this.view.raw = copy.raw;
       this.view.localRevision++; // Private edit generation, never a wire revision.
+      if (this.formSync) this.scheduleForm();
     }
   }
   getSnapshot = (): StateView => this.view;
@@ -250,6 +263,8 @@ export class UiStateStore {
       return;
     }
     this.onEdit();
+    this.syncCollisions = 0;
+    this.syncBlocked = false;
     const errors = { ...this.view.errors };
     delete errors[key];
     const nextRaw = { ...this.view.raw };
@@ -262,6 +277,169 @@ export class UiStateStore {
       errors,
       problem: null,
     });
+    this.scheduleForm();
+  }
+  /** Canonical host form is distinct from an unsent local draft. */
+  formCurrent(): boolean {
+    return (
+      !this.formSync ||
+      (!this.syncBlocked &&
+        this.syncedEdit === this.view.localRevision &&
+        this.formTarget <= this.view.snapshot.formRevision &&
+        !this.refreshForm)
+    );
+  }
+  private typedForm(form: Record<string, UiScalar>): boolean {
+    const keys = Object.keys(this.resource.fields);
+    return (
+      Object.keys(form).length === keys.length &&
+      keys.every(
+        (key) =>
+          Object.hasOwn(form, key) && scalarValid(this.resource.fields[key]!.schema, form[key]!),
+      ) &&
+      new TextEncoder().encode(JSON.stringify(form)).length <= 16384
+    );
+  }
+  private sameForm(a: Record<string, UiScalar>, b: Record<string, UiScalar>): boolean {
+    return (
+      Object.keys(a).length === Object.keys(b).length &&
+      Object.keys(a).every((key) => Object.hasOwn(b, key) && a[key] === b[key])
+    );
+  }
+  private canonical(snapshot: UiStateSnapshot): void {
+    if (!this.formSync) {
+      this.publish({ snapshot });
+      return;
+    }
+    if (snapshot.formRevision < this.acceptedRevision || !this.typedForm(snapshot.form))
+      throw new Error("Stale canonical form");
+    this.acceptedRevision = snapshot.formRevision;
+    // No newer local edits: backfill changed values only, retaining native numeric
+    // text/caret identity when its typed value is unchanged.
+    if (this.syncedEdit === this.view.localRevision) {
+      const raw = { ...this.view.raw };
+      const errors = { ...this.view.errors };
+      if (!this.sameForm(this.view.draft, snapshot.form)) this.onEdit();
+      for (const key of Object.keys(errors))
+        if (this.view.draft[key] !== snapshot.form[key]) delete errors[key];
+      for (const key of Object.keys(raw))
+        if (this.view.draft[key] !== snapshot.form[key]) delete raw[key];
+      this.publish({ snapshot, draft: { ...snapshot.form }, raw, errors });
+    } else this.publish({ snapshot });
+  }
+  private scheduleForm(): void {
+    if (
+      !this.formSync ||
+      !this.view.active ||
+      !this.visible ||
+      !this.view.snapshot.visible ||
+      this.view.busy ||
+      this.syncBlocked ||
+      this.syncWork ||
+      this.syncTransportPending ||
+      this.syncTimer ||
+      this.syncedEdit === this.view.localRevision
+    )
+      return;
+    this.syncTimer = setTimeout(
+      () => {
+        if (this.syncTimer) this.clearInputTimer(this.syncTimer);
+        this.syncTimer = undefined;
+        this.syncWork = this.sendForm().finally(() => {
+          this.syncWork = undefined;
+          this.publish({});
+          this.scheduleForm();
+        });
+      },
+      Math.max(0, 100 - (performance.now() - this.lastSyncAt)),
+    );
+    this.trackInputTimer(this.syncTimer);
+  }
+  private async sendForm(): Promise<void> {
+    const serial = this.serial;
+    try {
+      if (this.pending) await this.pending;
+      if (!this.bridge.syncForm || !this.typedForm(this.view.draft)) throw new Error("form-sync");
+      if (this.uncertain && !(await this.reconcileAction())) throw new Error("snapshot");
+      if (!this.view.active || !this.visible || serial !== this.serial) return;
+      const sequence = this.view.localRevision;
+      const base = this.acceptedRevision;
+      const form = { ...this.view.draft };
+      this.lastSyncAt = performance.now();
+      const request = this.bridge.syncForm({
+        binding: { ...this.view.snapshot.binding },
+        baseFormRevision: base,
+        editSequence: sequence,
+        form,
+      });
+      this.syncTransportPending = true;
+      const finished = () => {
+        this.syncTransportPending = false;
+        this.scheduleForm();
+      };
+      // The bridge has no cancellation parameter. A local timeout must not
+      // release the single transport slot while its original request is pending.
+      void request.then(finished, finished);
+      const result = await this.deadline(request);
+      if (!this.view.active || !this.visible || serial !== this.serial) return;
+      if (!result.ok) {
+        // Only a fresh snapshot can rebase a CAS collision; cap automatic retries.
+        if (result.error.code !== "PLUGIN_E_STALE_RESOURCE" || ++this.syncCollisions > 2)
+          throw new Error(result.error.code);
+        await this.invalidateForm(this.acceptedRevision, true);
+        return;
+      }
+      if (
+        result.value.editSequence !== sequence ||
+        result.value.formRevision !== base + 1 ||
+        !this.typedForm(result.value.form) ||
+        !this.sameForm(result.value.form, form)
+      )
+        throw new Error("form-sync-correlation");
+      this.syncedEdit = Math.max(this.syncedEdit, sequence);
+      const snapshot =
+        result.value.formRevision >= this.view.snapshot.formRevision
+          ? {
+              ...this.view.snapshot,
+              formRevision: result.value.formRevision,
+              form: { ...result.value.form },
+            }
+          : this.view.snapshot;
+      this.canonical(snapshot);
+    } catch (error) {
+      if (this.view.active && serial === this.serial) {
+        this.syncBlocked = true;
+        this.publish({ problem: error instanceof Error ? error.message : "form-sync" });
+      }
+    }
+  }
+  async flushForm(): Promise<boolean> {
+    if (!this.formSync) return true;
+    if (!this.view.active || !this.visible || this.syncBlocked) return false;
+    if (this.formCurrent() && !this.syncWork) return true;
+    let off = () => {};
+    try {
+      const settled = new Promise<boolean>((resolve) => {
+        const check = () => {
+          if (!this.view.active || !this.visible || this.syncBlocked) resolve(false);
+          else if (this.formCurrent() && !this.syncWork) resolve(true);
+        };
+        off = this.subscribe(check);
+        this.scheduleForm();
+        check();
+      });
+      return await this.deadline(settled);
+    } catch {
+      return false;
+    } finally {
+      off();
+    }
+  }
+  invalidateForm(revision: number, force = false): Promise<void> {
+    if (!this.formSync) return Promise.resolve();
+    this.formTarget = Math.max(this.formTarget, revision);
+    this.refreshForm ||= force;
+    return this.invalidate(this.view.snapshot.revision);
   }
   presentation(dialogId?: string | null): Map<string, { visible: boolean; enabled: boolean }> {
     const result = new Map<string, { visible: boolean; enabled: boolean }>();
@@ -351,13 +529,20 @@ export class UiStateStore {
     return this.nodeEnabled(id) && this.valid() && !this.view.busy;
   }
   setVisible(visible: boolean): void {
+    if (this.visible !== visible && this.formSync) {
+      this.serial++;
+      if (this.syncTimer) this.clearInputTimer(this.syncTimer);
+      this.syncTimer = undefined;
+    }
     this.visible = visible;
     if (this.view.active) this.publish({ snapshot: { ...this.view.snapshot, visible } });
+    if (visible) this.scheduleForm();
   }
   needsReconcile(): boolean {
     return this.uncertain;
   }
   async reconcileAction(): Promise<boolean> {
+    const serial = this.serial;
     const generation = this.view.localRevision;
     try {
       const result = await this.deadline(
@@ -365,6 +550,7 @@ export class UiStateStore {
       );
       if (
         !this.view.active ||
+        serial !== this.serial ||
         !result.ok ||
         bindingKey(result.value.binding) !== bindingKey(this.view.snapshot.binding) ||
         result.value.formRevision < this.acceptedRevision ||
@@ -373,7 +559,7 @@ export class UiStateStore {
         return false;
       this.acceptedRevision = result.value.formRevision;
       this.uncertain = false;
-      this.publish({ snapshot: result.value });
+      this.canonical(result.value);
       return true;
     } catch {
       if (this.view.active && this.view.localRevision === generation)
@@ -382,7 +568,12 @@ export class UiStateStore {
     }
   }
   nextAction(): boolean {
-    if (this.uncertain || this.view.busy || this.acceptedRevision >= Number.MAX_SAFE_INTEGER)
+    if (
+      this.uncertain ||
+      this.view.busy ||
+      !this.formCurrent() ||
+      this.acceptedRevision >= Number.MAX_SAFE_INTEGER
+    )
       return false;
     this.submissionRevision = this.acceptedRevision + 1;
     this.uncertain = true;
@@ -396,7 +587,10 @@ export class UiStateStore {
     this.publish({ busy: true });
   }
   actionFinished(): void {
-    if (this.view.active) this.publish({ busy: false });
+    if (this.view.active) {
+      this.publish({ busy: false });
+      this.scheduleForm();
+    }
   }
   applyCommandValue(value: CommandValue, nodeId: string): void {
     if (!this.view.active) return;
@@ -418,12 +612,25 @@ export class UiStateStore {
   }
   invalidate(revision: number): Promise<void> {
     this.target = Math.max(this.target, revision);
-    if (!this.view.active || this.target <= this.view.snapshot.revision) return Promise.resolve();
+    if (
+      !this.view.active ||
+      (this.target <= this.view.snapshot.revision &&
+        this.formTarget <= this.view.snapshot.formRevision &&
+        !this.refreshForm)
+    )
+      return Promise.resolve();
     if (this.pending) return this.pending;
     const serial = this.serial;
     this.pending = (async () => {
       try {
-        while (this.view.active && this.view.snapshot.revision < this.target) {
+        while (
+          this.view.active &&
+          (this.view.snapshot.revision < this.target ||
+            this.view.snapshot.formRevision < this.formTarget ||
+            this.refreshForm)
+        ) {
+          const forced = this.refreshForm;
+          this.refreshForm = false;
           const result = await this.deadline(
             this.bridge.snapshot({ binding: this.view.snapshot.binding }),
           );
@@ -431,7 +638,10 @@ export class UiStateStore {
           if (!result.ok) throw new Error(result.error.code);
           if (
             bindingKey(result.value.binding) !== bindingKey(this.view.snapshot.binding) ||
-            result.value.revision <= this.view.snapshot.revision
+            result.value.revision < this.view.snapshot.revision ||
+            (result.value.revision === this.view.snapshot.revision &&
+              result.value.formRevision <= this.view.snapshot.formRevision &&
+              !forced)
           )
             throw new Error("Stale UI state");
           this.retained.clear();
@@ -439,13 +649,16 @@ export class UiStateStore {
             result.value,
             new TextEncoder().encode(JSON.stringify(result.value)).length,
           );
-          this.publish({ snapshot: result.value }); // preserve local draft/raw/error
+          this.canonical(result.value);
+          this.scheduleForm();
         }
       } catch {
         if (this.view.active) this.publish({ problem: "snapshot" });
       }
     })().finally(() => {
       this.pending = undefined;
+      if (this.view.active && this.visible && serial !== this.serial)
+        void this.invalidate(this.target);
     });
     return this.pending;
   }
@@ -484,11 +697,26 @@ export class UiStateStore {
       if (!reconciled || generation !== this.view.localRevision || !this.actionEnabled(nodeId))
         return;
     }
+    if (this.formSync) {
+      const edit = this.view.localRevision;
+      if (
+        !(await this.flushForm()) ||
+        edit !== this.view.localRevision ||
+        !this.actionEnabled(nodeId)
+      )
+        return;
+    }
     if (!this.nextAction()) return;
     const revision = this.view.localRevision;
+    const submittedForm = this.submissionRevision;
     try {
       const result = await this.deadline(this.bridge.invoke({ ...this.form(), nodeId }), 30000);
-      if (!this.view.active || this.view.localRevision !== revision) return;
+      if (
+        !this.view.active ||
+        this.view.localRevision !== revision ||
+        (this.formSync && this.view.snapshot.formRevision > submittedForm)
+      )
+        return;
       if (!result.ok) this.publish({ problem: result.error.code });
       else {
         this.publish({
@@ -515,6 +743,7 @@ export class UiStateStore {
     for (const cancel of [...this.deadlines.values()]) cancel();
     for (const timer of this.inputTimers) clearTimeout(timer);
     this.inputTimers.clear();
+    this.syncTimer = undefined;
     this.inputQueue = undefined;
     this.retained.clear();
     this.listeners.clear();

@@ -19,12 +19,21 @@ afterEach(() => {
   vi.useRealTimers();
   document.body.replaceChildren();
 });
-function setup() {
+function setup(synchronized = false) {
   const f = fixture();
   const panel: PanelResourceV2 = {
     kind: "panel",
+    ...(synchronized ? { formSync: true as const } : {}),
     root: "root",
-    fields: {},
+    fields: synchronized
+      ? {
+          draft: {
+            schema: { type: "string", nullable: false, maxLength: 4000 },
+            initial: "",
+            required: false,
+          },
+        }
+      : {},
     data: {
       presentation: {
         schema: {
@@ -82,9 +91,26 @@ function setup() {
       },
     ],
   };
-  const initial = { ...snapshot(), form: {}, visible: true, data: { presentation: 1 } };
+  const initial = {
+    ...snapshot(),
+    form: synchronized ? { draft: "" } : {},
+    visible: true,
+    data: { presentation: 1 },
+  };
   f.bridge.snapshot.mockResolvedValue({ ok: true, value: initial });
-  const state = new UiStateStore(f.bridge, panel, initial);
+  const syncForm = vi.fn<NonNullable<PluginUiBridge["syncForm"]>>(async (q) => {
+    initial.formRevision = q.baseFormRevision + 1;
+    initial.form = { ...q.form };
+    return {
+      ok: true,
+      value: {
+        formRevision: initial.formRevision,
+        editSequence: q.editSequence,
+        form: { ...q.form },
+      },
+    };
+  });
+  const state = new UiStateStore({ ...f.bridge, syncForm }, panel, initial);
   const data = new UiDatasetStore(binding, panel.datasets, {
     snapshot: async () => ({ ok: true, value: { datasets: [] } }),
     read: async () => {
@@ -108,7 +134,17 @@ function setup() {
     interact.mock.calls
       .map(([r]) => r)
       .filter((r): r is Extract<UiInteractionRequest, { kind: "cursor" }> => r.kind === "cursor");
-  return { ...f, store, state, data, interact, cursor, calls, nextGeneration: () => generation++ };
+  return {
+    ...f,
+    store,
+    state,
+    data,
+    interact,
+    cursor,
+    calls,
+    syncForm,
+    nextGeneration: () => generation++,
+  };
 }
 const reply = (
   request: Extract<UiInteractionRequest, { kind: "cursor" }>,
@@ -336,6 +372,49 @@ it("ignores a cursor rejection after a newer position is queued", async () => {
   reject(new Error("obsolete"));
   await vi.advanceTimersByTimeAsync(0);
   expect(f.store.getSnapshot().problem).toBeNull();
+  f.store.dispose();
+  f.state.retire();
+  f.data.retire();
+});
+
+it("unsent synchronized typing clears cursor readings and fences its late reply", async () => {
+  vi.useFakeTimers();
+  const f = setup(true);
+  await f.store.refresh();
+  f.interact.mockImplementationOnce(async (q) => {
+    if (q.kind !== "cursor") throw Error("cursor");
+    return reply(q, 10);
+  });
+  f.cursor(10);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(f.store.getSnapshot().readings).toEqual({ raw: 10, value: 10 });
+  const pending = deferred<Awaited<ReturnType<NonNullable<PluginUiBridge["interact"]>>>>();
+  f.interact.mockImplementationOnce(() => pending.promise);
+  f.cursor(20);
+  await vi.advanceTimersByTimeAsync(100);
+  const request = f.calls().at(-1)!;
+  f.state.edit("draft", "unsent");
+  expect(f.syncForm).not.toHaveBeenCalled();
+  expect(f.store.getSnapshot().readings).toBeNull();
+  pending.resolve(reply(request, 20));
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(f.store.getSnapshot().readings).toBeNull();
+  f.store.dispose();
+  f.state.retire();
+  f.data.retire();
+});
+it("interaction commands flush a synchronized full form before next revision submission", async () => {
+  vi.useFakeTimers();
+  const f = setup(true);
+  await f.store.refresh();
+  f.state.edit("draft", "fresh");
+  const work = f.store.act({ kind: "codeCopy", nodeId: "code", dataset: "code", revision: 1 });
+  await vi.advanceTimersByTimeAsync(0);
+  await work;
+  const call = f.interact.mock.calls.find(([q]) => q.kind === "codeCopy")?.[0];
+  expect(call).toMatchObject({ formRevision: 2, form: { draft: "fresh" } });
+  expect(f.syncForm).toHaveBeenCalledOnce();
   f.store.dispose();
   f.state.retire();
   f.data.retire();

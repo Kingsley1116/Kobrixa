@@ -41,6 +41,7 @@ export interface FoundationDiagnostics {
   onEvent(listener: (event: FoundationDiagnosticEvent) => void): () => void;
 }
 export type UiBridgeEvent =
+  | { type: "form"; binding: UiBinding; formRevision: Counter }
   | { type: "data"; binding: UiBinding; dataset: string; revision: Counter; presentation: Counter }
   | { type: "catalog"; hostEpoch: Handle; revision: Counter; owners: UiOwner[] }
   | { type: "state"; binding: UiBinding; revision: Counter }
@@ -103,6 +104,14 @@ export type UiInteractionValue =
     };
 
 export interface PluginUiBridge {
+  syncForm?(input: {
+    binding: UiBinding;
+    baseFormRevision: Counter;
+    editSequence: Counter;
+    form: Record<LocalId, Scalar>;
+  }): Promise<
+    Result<{ formRevision: Counter; editSequence: Counter; form: Record<LocalId, Scalar> }>
+  >;
   interact?(input: UiInteractionRequest): Promise<Result<UiInteractionValue>>;
   dataRead(
     input: UiDataRequestMapV2["ui/dataRead"]["params"],

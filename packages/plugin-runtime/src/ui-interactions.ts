@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { synchronizedForm, equalForm } from "./ui-form.js";
 import { z } from "zod";
 import {
   acceptsValue,
@@ -628,7 +629,9 @@ export class UiInteractions {
     const limited = this.ports.admit(r.owner);
     if (limited) return limited;
     const invocation = this.#invocation(r, q, command, form, extra);
-    if (!invocation || !this.ports.acceptForm(q.binding, q.formRevision, form)) return stale();
+    const canonical = synchronizedForm(resource) ? r.state.form : form;
+    if (synchronizedForm(resource) && !equalForm(q.form, r.state.form)) return stale();
+    if (!invocation || !this.ports.acceptForm(q.binding, q.formRevision, canonical)) return stale();
     invocation.context.actionRef = this.ports.mintAction(r);
     const result = await this.ports.dispatch(r, invocation);
     const latest = this.#current(r);
@@ -708,6 +711,14 @@ export class UiInteractions {
         this.#pump(v);
       });
   }
+  #cursorFormCurrent(r: UiInteractionResolved, q: UiPanelInteraction): boolean {
+    // resolve() returns a snapshot. Never check a snapshot captured before an await.
+    const current = this.#current(r);
+    return (
+      !!current &&
+      (!synchronizedForm(current.resource) || current.state.formRevision === q.formRevision)
+    );
+  }
   async #cursor(
     q: Extract<UiInteractionRequest, { kind: "cursor" }>,
     v: View,
@@ -743,6 +754,7 @@ export class UiInteractions {
     if (time < from || time > end) return stale();
     if (
       !this.#currentView(r, v, q, sync) ||
+      !this.#cursorFormCurrent(r, q) ||
       v.serial !== serial ||
       !this.ports.currentData(q.binding, [...sync.metadata.values()])
     )
@@ -764,6 +776,7 @@ export class UiInteractions {
       !refreshed ||
       !this.#currentView(latest, v, q, refreshed) ||
       refreshed.presentation !== q.presentation ||
+      !this.#cursorFormCurrent(latest, q) ||
       v.serial !== serial ||
       v.view.generation !== q.viewGeneration ||
       !this.ports.currentData(q.binding, [...sync.metadata.values()])

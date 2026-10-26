@@ -325,7 +325,9 @@ export class RendererSession {
           this.bridge,
           resource,
           result.value,
-          this.drafts.restore(entry, result.value.binding),
+          "formSync" in resource && resource.formSync === true
+            ? undefined
+            : this.drafts.restore(entry, result.value.binding),
         );
         state.setDiagnosticOwner({
           sourceKey: entry.sourceKey,
@@ -412,6 +414,7 @@ export class RendererSession {
       this.catalog.current(record.entry) &&
       record.entry.availability === "available" &&
       record.resource.kind === "panel" &&
+      !record.state.formSync &&
       record.state.getSnapshot().active &&
       !this.failed(record.entry)
     ) {
@@ -503,6 +506,7 @@ export class RendererSession {
     }
     if (record) {
       if (event.type === "state") void record.state.invalidate(event.revision);
+      else if (event.type === "form") void record.state.invalidateForm(event.formRevision);
       else if (event.type === "data") void record.datasets?.invalidate();
       else record.intent.challenge(event.challenge);
     } else if (event.type === "state" && event.binding.kind === "status") {

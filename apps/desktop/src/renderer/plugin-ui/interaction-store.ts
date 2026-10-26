@@ -82,6 +82,9 @@ export class UiInteractionStore {
     }
     const signature = JSON.stringify([
       s.snapshot.visible,
+      ...(this.state.formSync
+        ? [s.localRevision, s.snapshot.formRevision, this.state.formCurrent()]
+        : []),
       s.snapshot.data[this.resource.presentationKey],
       this.data.getSnapshot().presentation,
       Object.keys(this.resource.datasets).map((id) => [id, this.data.revision(id)]),
@@ -95,10 +98,17 @@ export class UiInteractionStore {
     this.#cursorTimer = undefined;
     this.#viewCurrent = false;
     this.#publish({ view: s.snapshot.visible ? this.#snapshot.view : null, readings: null });
-    if (s.snapshot.visible) void this.refresh().then(() => this.#followCursor());
+    if (s.snapshot.visible && this.state.formCurrent())
+      void this.refresh().then(() => this.#followCursor());
   }
   async refresh(): Promise<void> {
-    if (!this.#alive || !this.bridge.interact || !this.state.getSnapshot().snapshot.visible) return;
+    if (
+      !this.#alive ||
+      !this.bridge.interact ||
+      !this.state.getSnapshot().snapshot.visible ||
+      !this.state.formCurrent()
+    )
+      return;
     this.#refreshAgain = true;
     if (this.#refresh) return this.#refresh;
     this.#refresh = (async () => {
@@ -152,6 +162,7 @@ export class UiInteractionStore {
       if (!viewOnly) {
         if (!this.state.valid() || this.state.getSnapshot().busy) return;
         if (this.state.needsReconcile() && !(await this.state.reconcileAction())) return;
+        if (this.state.formSync && !(await this.state.flushForm())) return;
       }
       await this.refresh();
       const view = this.#snapshot.view;
@@ -202,6 +213,7 @@ export class UiInteractionStore {
     const revision = this.data.revision(dataset);
     if (
       !this.#alive ||
+      !this.state.formCurrent() ||
       !this.#snapshot.view ||
       revision === undefined ||
       (time !== null && !Number.isFinite(time))
@@ -264,7 +276,15 @@ export class UiInteractionStore {
     const action = this.#cursorPending,
       view = this.#snapshot.view;
     this.#cursorPending = undefined;
-    if (!action || !view || !this.#viewCurrent || !this.bridge.interact || !this.#alive) return;
+    if (
+      !action ||
+      !view ||
+      !this.#viewCurrent ||
+      !this.bridge.interact ||
+      !this.#alive ||
+      !this.state.formCurrent()
+    )
+      return;
     this.#cursorRunning = true;
     this.#lastCursorAt = performance.now();
     const epoch = this.#epoch,

@@ -89,3 +89,4 @@ export type {
 } from "./ui-host-ports.js";
 
 export { UiInteractions, uiInteractionRequestSchema } from "./ui-interactions.js";
+export { synchronizedForm, equalForm } from "./ui-form.js";

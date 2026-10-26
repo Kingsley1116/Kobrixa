@@ -1,5 +1,10 @@
 import type { Principal } from "@kobrixa/plugin-runtime";
-import { UiInteractions, uiInteractionRequestSchema } from "@kobrixa/plugin-runtime";
+import {
+  UiInteractions,
+  uiInteractionRequestSchema,
+  synchronizedForm,
+  equalForm,
+} from "@kobrixa/plugin-runtime";
 import type {
   UiBridgeEvent,
   FoundationDiagnostics,
@@ -15,6 +20,8 @@ import {
   uiRequestSchemas,
   uiRequestSchemasV2,
   uiDataRequestSchemasV2,
+  uiFormRequestSchemasV2,
+  validUiFormWireV2,
   type RequestContext,
   type Handle,
 } from "@kobrixa/plugin-protocol";
@@ -68,6 +75,7 @@ export type ResolvedUi = {
   commands: ReadonlyMap<string, ContextCommandDeclaration>;
 };
 export interface UiExecutionAdapter {
+  syncForm?: PluginUiBridge["syncForm"];
   open: PluginUiBridge["open"];
   close: PluginUiBridge["close"];
   visibility: PluginUiBridge["visibility"];
@@ -416,6 +424,11 @@ export function createPluginUiBridge(input: {
     now: () => performance.now(),
   });
   const bridge: PluginUiBridge = {
+    syncForm: async (request) => {
+      const resolved = resolve(request.binding);
+      if (!resolved || !synchronizedForm(resolved.resource)) return stale();
+      return execution.syncForm?.(request) ?? stale();
+    },
     interact: async (request) => {
       if (disposed || !uiInteractionRequestSchema.safeParse(request).success) return stale();
       if (!resolve(request.binding) && !(await execution.prepareInteraction?.(request.binding)))
@@ -500,7 +513,14 @@ export function createPluginUiBridge(input: {
       );
       if (
         !built.ok ||
-        !execution.acceptForm(value.binding, value.formRevision, built.value.context.form!.values)
+        (synchronizedForm(resolved.resource) && !equalForm(value.form, resolved.state.form)) ||
+        !execution.acceptForm(
+          value.binding,
+          value.formRevision,
+          synchronizedForm(resolved.resource)
+            ? resolved.state.form
+            : built.value.context.form!.values,
+        )
       )
         return stale();
       try {
@@ -554,7 +574,14 @@ export function createPluginUiBridge(input: {
       );
       if (
         !built.ok ||
-        !execution.acceptForm(value.binding, value.formRevision, built.value.context.form!.values)
+        (synchronizedForm(resolved.resource) && !equalForm(value.form, resolved.state.form)) ||
+        !execution.acceptForm(
+          value.binding,
+          value.formRevision,
+          synchronizedForm(resolved.resource)
+            ? resolved.state.form
+            : built.value.context.form!.values,
+        )
       )
         return stale();
       const gesture = intent.begin(value.binding, value.inputToken);
@@ -740,6 +767,16 @@ export function registerUiIpc(input: {
     (value) => input.bridge.visibility(value),
   );
   register("plugins:ui:invoke", z.strictObject(actionInput), (value) => input.bridge.invoke(value));
+  register(
+    "plugins:ui:form-sync",
+    z.strictObject({
+      binding: bindingSchema,
+      baseFormRevision: counter,
+      editSequence: counter,
+      form: formSchema,
+    }),
+    (value) => input.bridge.syncForm?.(value) ?? stale(),
+  );
   register(
     "plugins:ui:hold",
     z.strictObject({
@@ -944,6 +981,28 @@ export function createUiChannelBinding(
       if (!ready || !versions.includes(2))
         throw new RpcError(RPC_ERRORS.invalidParams, "UI v2 data is not ready.");
     };
+    context.peer.handle("ui/formPatch", (params, request) => {
+      checkData(request);
+      if (!validUiFormWireV2("params", params))
+        throw new RpcError(RPC_ERRORS.invalidParams, "Invalid form patch.");
+      const parsed = uiFormRequestSchemasV2["ui/formPatch"].params.parse(params);
+      if (!input.states.inScope(context.owner, parsed.binding, input.scope())) return stale();
+      if (input.hasPanelsPermission?.(context.owner) !== true)
+        return {
+          ok: false as const,
+          error: {
+            code: "PLUGIN_E_PERMISSION_DENIED" as const,
+            message: "UI panels permission required.",
+            detail: { kind: "permission" as const, reason: "permission" as const },
+          },
+        };
+      const result = input.states.formPatch(context.owner, parsed);
+      if (result.ok) {
+        const flush = () => flushStateAfterReply(input.states);
+        request.afterReply(flush, flush);
+      }
+      return uiFormRequestSchemasV2["ui/formPatch"].result.parse(result);
+    });
     context.peer.handle("ui/dataBegin", (params, request) => {
       checkData(request);
       return data.store.begin(context.owner, params);
@@ -1115,6 +1174,7 @@ export function createUiChannelBinding(
         "ui/instances",
         "ui/state",
         "ui/patch",
+        "ui/formPatch",
         "ui/snapshot",
         "ui/subscribe",
       ] as const)
@@ -1439,6 +1499,10 @@ export function createUiExecutionAdapter(input: {
       const value = resolve(binding);
       if (!value) return false;
       return input.states.setForm(value.owner, binding, revision, values, true).ok;
+    },
+    syncForm: async (request) => {
+      const value = resolve(request.binding);
+      return value ? input.states.syncForm(value.owner, request) : stale();
     },
     reportFailure: (value) => input.catalog.reportFailure(value),
   };

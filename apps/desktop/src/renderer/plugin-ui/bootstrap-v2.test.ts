@@ -235,3 +235,53 @@ it("invalid opening presentation quarantines and disposes the cache before visib
   expect(f.bridge.visibility).not.toHaveBeenCalledWith(expect.objectContaining({ visible: true }));
   f.session.dispose();
 });
+
+it("routes form-only invalidation and reopens synchronized panels from the fresh host form", async () => {
+  const f = v2();
+  const formResource: PanelResourceV2 = {
+    ...panel,
+    formSync: true,
+    fields: {
+      draft: {
+        schema: { type: "string", nullable: false, maxLength: 4000 },
+        initial: "",
+        required: false,
+      },
+    },
+    nodes: [
+      { id: "root", type: "group", layout: "stack", children: ["draft", "table"] },
+      { id: "draft", type: "textInput", field: "draft", label: { en: "Draft" } },
+      { id: "table", type: "table", label: { en: "Samples" }, dataset: "samples" },
+    ],
+  };
+  f.bridge.resource.mockResolvedValue({
+    ok: true,
+    value: {
+      ...f.resource,
+      resource: formResource,
+      rawBytes: new TextEncoder().encode(JSON.stringify(formResource)).length,
+    },
+  });
+  f.state.form = { draft: "initial" };
+  await f.session.start();
+  f.session.showPane(true, "sidebar");
+  await f.session.open(f.item);
+  const first = f.session.record(f.item)!.state;
+  f.state.form = { draft: "capture" };
+  f.state.formRevision = 1;
+  f.emit({ type: "form", binding, formRevision: 1 });
+  await vi.waitFor(() => expect(first.getSnapshot().draft.draft).toBe("capture"));
+  expect(first.getSnapshot().snapshot.revision).toBe(0);
+  first.edit("draft", "unsent old binding");
+  f.session.close(f.item);
+  f.state.binding = { ...binding, panelInstance: "00000000-0000-4000-8000-000000000090" };
+  f.state.form = { draft: "fresh host" };
+  await f.session.open(f.item);
+  const next = f.session.record(f.item)!.state;
+  expect(next.getSnapshot().draft.draft).toBe("fresh host");
+  const calls = f.bridge.snapshot.mock.calls.length;
+  f.emit({ type: "form", binding, formRevision: 99 });
+  expect(f.bridge.snapshot).toHaveBeenCalledTimes(calls);
+  expect(first.getSnapshot().active).toBe(false);
+  f.session.dispose();
+});

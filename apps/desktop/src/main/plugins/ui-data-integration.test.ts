@@ -44,6 +44,7 @@ async function harness(
   options: {
     version?: string;
     resourceVersion?: 1 | 2;
+    formSync?: boolean;
     ready?: (ctx: PluginContext) => Promise<void>;
   } = {},
 ) {
@@ -88,6 +89,7 @@ async function harness(
   host.handle("events/ack", ({ subscriptionId, sequence }) =>
     ledger.ack(owner, subscriptionId, sequence),
   );
+  host.handle("events/unsubscribe", ({subscriptionId}) => ledger.unsubscribe(owner,subscriptionId));
   const context: Stage3ChannelContext = {
     peer: host,
     owner,
@@ -207,6 +209,19 @@ async function harness(
     datasets: { code: { kind: "code" } },
     presentationKey: "presentation",
   };
+  if (options.formSync) {
+    resource.formSync = true;
+    resource.fields = {
+      value: {
+        schema: { type: "string", maxLength: 100, nullable: false },
+        initial: "0",
+        required: false,
+      },
+    };
+    resource.nodes.push({ id: "input", type: "textInput", field: "value", label: { en: "Value" } });
+    const root = resource.nodes[0];
+    if (root?.type === "group") root.children.push("input");
+  }
   const resourceVersion = options.resourceVersion ?? 2;
   const admittedResource =
     resourceVersion === 2
@@ -305,6 +320,58 @@ async function begin(ctx: PluginContext, binding: Binding, baseRevision = 0, pre
     }),
   ).transfer;
 }
+it("synchronizes typed drafts and plugin backfills over the actual SDK/channel with independent form CAS", async () => {
+  const h = await harness({ formSync: true });
+  const binding = value(await h.open()).binding;
+  const seen: unknown[] = [];
+  const subscription = value(
+    await h.ctx.ui.subscribe({ topics: ["form"], binding }, (event) => {
+      seen.push(event);
+    }),
+  );
+  expect(
+    await h.bridge.syncForm!({
+      binding,
+      baseFormRevision: 0,
+      editSequence: 1,
+      form: { value: "-" },
+    }),
+  ).toMatchObject({ ok: true, value: { formRevision: 1, editSequence: 1, form: { value: "-" } } });
+  expect(await h.ctx.ui.formPatch(binding, 1, { value: "23" })).toMatchObject({
+    ok: true,
+    value: { formRevision: 2, form: { value: "23" } },
+  });
+  expect(value(await h.ctx.ui.state(binding))).toMatchObject({
+    revision: 0,
+    formRevision: 2,
+    form: { value: "23" },
+  });
+  expect((await h.ctx.ui.formPatch(binding, 1, { value: "late" })).ok).toBe(false);
+  await vi.waitFor(() =>
+    expect(seen).toContainEqual(
+      expect.objectContaining({ kind: "ui.form", data: expect.objectContaining({ revision: 2 }) }),
+    ),
+  );
+  await h.ctx.ui.unsubscribe(subscription.subscriptionId);
+});
+it("rejects form patches without opt-in, permission, current scope or visible binding", async () => {
+  const old = await harness();
+  const oldBinding = value(await old.open()).binding;
+  expect((await old.ctx.ui.formPatch(oldBinding, 0, { value: "x" })).ok).toBe(false);
+  const h = await harness({ formSync: true });
+  const binding = value(await h.open()).binding;
+  h.permission(false);
+  expect(await h.ctx.ui.formPatch(binding, 0, { value: "x" })).toMatchObject({
+    ok: false,
+    error: { code: "PLUGIN_E_PERMISSION_DENIED" },
+  });
+  h.permission(true);
+  await h.bridge.visibility({ binding, visible: false, reason: "tab" });
+  expect((await h.ctx.ui.formPatch(binding, 0, { value: "x" })).ok).toBe(false);
+  await h.bridge.visibility({ binding, visible: true, reason: "tab" });
+  h.window();
+  expect((await h.ctx.ui.formPatch(binding, 0, { value: "x" })).ok).toBe(false);
+});
 async function publish(ctx: PluginContext, binding: Binding, baseRevision = 0, presentation = 1) {
   const transfer = await begin(ctx, binding, baseRevision, presentation);
   value(

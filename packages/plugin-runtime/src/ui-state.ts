@@ -25,6 +25,12 @@ import type { CoreWindowScope } from "./core-actions.js";
 import type { UiRuntimeAttachment } from "./ui-lifecycle.js";
 import type { UiDataAuthority } from "./ui-data.js";
 import {
+  synchronizedForm,
+  canonicalForm,
+  editableFormChange,
+  requiredFormValid,
+} from "./ui-form.js";
+import {
   sameResourceOwner,
   sameUiBinding,
   type FoundationCounters,
@@ -62,6 +68,7 @@ type Live = {
   times: number[];
   pending: number;
   pendingData: number;
+  editTimes?: number[];
 };
 type Reservation = {
   owner: UiOwner;
@@ -466,6 +473,94 @@ export class UiStateRegistry {
         });
       }
     }
+  }
+  formPatch(
+    owner: ResourceOwner,
+    input: { binding: UiBinding; baseFormRevision: number; set: Record<string, UiScalar> },
+  ): Result<{ formRevision: number; form: Record<string, UiScalar> }> {
+    const live = this.#find(owner, input.binding);
+    if (
+      !live ||
+      live.version !== 2 ||
+      !synchronizedForm(live.resource) ||
+      !live.state.visible ||
+      input.baseFormRevision !== live.state.formRevision
+    )
+      return resourceFailure("stale");
+    const resource = live.resource;
+    const keys = Object.keys(input.set);
+    if (
+      !keys.length ||
+      keys.length > 32 ||
+      keys.some((key) => !Object.hasOwn(resource.fields, key)) ||
+      !Number.isSafeInteger(input.baseFormRevision)
+    )
+      return uiFailure("schema", "$.set");
+    const form = { ...live.state.form, ...input.set };
+    if (!canonicalForm(live.resource, form)) return uiFailure("schema", "$.form");
+    const limit = this.#publicationLimit(live);
+    if (limit)
+      return resourceFailure(limit, limit === "rate" ? L.patchesPerSecond : L.pendingPatches);
+    const accepted = this.setForm(
+      owner,
+      input.binding,
+      input.baseFormRevision + 1,
+      form,
+      requiredFormValid(live.resource, live.state.data, form),
+    );
+    if (!accepted.ok) return accepted;
+    live.times.push(this.#now());
+    live.pendingData++;
+    return {
+      ok: true,
+      value: { formRevision: live.state.formRevision, form: structuredClone(live.state.form) },
+    };
+  }
+  /** Trusted renderer draft input, distinct from the plugin publication budget. */
+  syncForm(
+    owner: ResourceOwner,
+    input: {
+      binding: UiBinding;
+      baseFormRevision: number;
+      editSequence: number;
+      form: Record<string, UiScalar>;
+    },
+  ): Result<{ formRevision: number; editSequence: number; form: Record<string, UiScalar> }> {
+    const live = this.#find(owner, input.binding);
+    if (
+      !live ||
+      live.version !== 2 ||
+      !synchronizedForm(live.resource) ||
+      !live.state.visible ||
+      input.baseFormRevision !== live.state.formRevision ||
+      !Number.isSafeInteger(input.editSequence) ||
+      input.editSequence < 0
+    )
+      return resourceFailure("stale");
+    if (
+      !canonicalForm(live.resource, input.form) ||
+      !editableFormChange(live.resource, live.state.data, live.state.form, input.form)
+    )
+      return uiFailure("schema", "$.form");
+    live.editTimes = (live.editTimes ?? []).filter((time) => this.#now() - time < 1000);
+    if (live.editTimes.length >= 20) return resourceFailure("rate", 20);
+    const accepted = this.setForm(
+      owner,
+      input.binding,
+      input.baseFormRevision + 1,
+      input.form,
+      requiredFormValid(live.resource, live.state.data, input.form),
+    );
+    if (!accepted.ok) return accepted;
+    live.editTimes.push(this.#now());
+    return {
+      ok: true,
+      value: {
+        formRevision: live.state.formRevision,
+        editSequence: input.editSequence,
+        form: structuredClone(live.state.form),
+      },
+    };
   }
   setForm(
     owner: ResourceOwner,

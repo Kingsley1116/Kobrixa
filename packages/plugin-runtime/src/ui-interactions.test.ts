@@ -452,6 +452,90 @@ it("cursor enforces the actual recent window and accepts no-value empty series a
   expect(h.state.formRevision).toBe(0);
   h.host.dispose();
 });
+it("synchronized form changes fence an already dispatched cursor result", async () => {
+  const h = fixture();
+  h.resource.formSync = true;
+  let finish!: (result: Result<CommandValue>) => void;
+  h.dispatch.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const pending = h.host.interact({
+    ...h.q("chart"),
+    kind: "cursor",
+    dataset: "chart",
+    revision: 1,
+    time: 50000,
+  });
+  await vi.waitFor(() => expect(h.dispatch).toHaveBeenCalledOnce());
+  h.state.formRevision++;
+  finish({ ok: true, value: { output: { raw: 1, value: 1 }, fieldErrors: [] } });
+  expect((await pending).ok).toBe(false);
+  h.host.dispose();
+});
+it.each(["before-snapshot", "before-read", "after-snapshot", "after-read"] as const)(
+  "fences synchronized cursor form changes during %s using cloned host snapshots",
+  async (phase) => {
+    const h = fixture();
+    h.resource.formSync = true;
+    h.resource.fields.a = {
+      schema: { type: "boolean", nullable: false },
+      initial: false,
+      required: false,
+    };
+    h.resource.nodes.push({ id: "input", type: "boolean", field: "a", label: { en: "A" } });
+    const root = h.resource.nodes.find((n) => n.id === h.resource.root);
+    if (root?.type === "group") root.children.push("input");
+    h.state.form = { a: false };
+    h.ports.resolve = () => ({ ...h.resolved, state: structuredClone(h.state) });
+    let dispatched = false,
+      changed = false,
+      snapshots = 0;
+    h.dispatch.mockImplementation(async () => {
+      dispatched = true;
+      return { ok: true, value: { output: { raw: 1, value: 1 }, fieldErrors: [] } };
+    });
+    const change = async (operation: "snapshot" | "read") => {
+      // Skip interact()'s initial refresh: target the queued cursor's own
+      // pre-dispatch refresh, or its final refresh after dispatch resolves.
+      if (!dispatched && snapshots < 2) return;
+      if (!changed && phase === `${dispatched ? "after" : "before"}-${operation}`) {
+        await Promise.resolve();
+        changed = true;
+        h.state.formRevision++;
+        h.state.form = { a: true };
+      }
+    };
+    const snapshot = h.ports.snapshot,
+      read = h.ports.read;
+    h.ports.snapshot = async (q) => {
+      snapshots++;
+      const value = await snapshot(q);
+      await change("snapshot");
+      return value;
+    };
+    h.ports.read = async (q) => {
+      const value = await read(q);
+      await change("read");
+      return value;
+    };
+    const result = await h.host.interact({
+      ...h.q("chart"),
+      form: { a: false },
+      kind: "cursor",
+      dataset: "chart",
+      revision: 1,
+      time: 50000,
+    });
+    h.host.dispose();
+    expect(changed).toBe(true);
+    expect(result.ok).toBe(false);
+    expect(h.dispatch).toHaveBeenCalledTimes(phase.startsWith("before") ? 0 : 1);
+    expect(h.mint).not.toHaveBeenCalled();
+  },
+);
 it("inspect view changes fence late cursor replies and reopen takes the latest header default", async () => {
   const h = fixture();
   let resolve!: (r: Result<CommandValue>) => void;

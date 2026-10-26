@@ -1801,7 +1801,14 @@ export async function composeDesktopMain(
         });
       } else if (event.kind === "ui.visibility" && !event.data.visible)
         intent.revoke(event.data.binding, "hidden");
-      else if (event.kind === "ui.form") intent.cancelHold(event.data.binding);
+      else if (event.kind === "ui.form") {
+        intent.cancelHold(event.data.binding);
+        events.publish({
+          type: "form",
+          binding: event.data.binding,
+          formRevision: event.data.revision,
+        });
+      }
     });
     uiDisposers.push(offState);
     uiDisposers.push(
