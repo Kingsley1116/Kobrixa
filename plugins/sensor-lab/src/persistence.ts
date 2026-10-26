@@ -40,6 +40,43 @@ function value<T>(
 }
 const MAX_BYTES = 8 * 1024 * 1024;
 const CHUNK_BYTES = 256 * 1024;
+/** Advisory capacity check; the writer repeats it with actual bytes and host begin is authoritative. */
+export async function preflightRecording(
+  storage: LabStorage,
+  byteLength: number,
+  create: boolean,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!Number.isSafeInteger(byteLength) || byteLength < 0 || byteLength > MAX_BYTES)
+    throw new LabStorageError("size", "Recording exceeds 8 MiB");
+  if (create) {
+    let cursor: string | undefined;
+    let count = 0;
+    const seen = new Set<string>();
+    do {
+      const page = value(
+        await storage.list(
+          { kind: "sensor-lab.recording", limit: 64, ...(cursor ? { cursor } : {}) },
+          signal,
+        ),
+      );
+      count += page.entries.length;
+      if (count >= 50) throw new LabStorageError("history", "Recording history is full");
+      cursor = page.nextCursor;
+      if (cursor && seen.has(cursor))
+        throw new LabStorageError("history", "Repeated history cursor");
+      if (cursor) seen.add(cursor);
+    } while (cursor);
+  }
+  const quota = value(await storage.quota({}, signal));
+  if (
+    quota.writeSlotsAvailable < 1 ||
+    quota.hostAvailableBytes < byteLength ||
+    quota.committedBytes + quota.reservedBytes + byteLength > quota.sourceLimitBytes ||
+    (create && quota.recordCount + quota.reservedCreates >= quota.sourceLimitRecords)
+  )
+    throw new LabStorageError("quota", "Insufficient recording storage quota");
+}
 type Pending = { write: string; id: string; bytes: Buffer; input: RecordWrite; modelId: string };
 /** One logical recording writer, retaining the original write across unknown replies.
  * A committed receipt advances the CAS head; submitted/sealed never means saved. */
@@ -90,39 +127,12 @@ export class RecordingWriter {
         throw new LabStorageError("identity", "Recording payload identity changed");
       if (this.#pending) await this.#resume(options, true);
       const storage = options.storage ?? this.storage;
-      if (!this.#current) {
-        let cursor: string | undefined;
-        let count = 0;
-        const seen = new Set<string>();
-        do {
-          const page = value(
-            await storage.list(
-              { kind: "sensor-lab.recording", limit: 64, ...(cursor ? { cursor } : {}) },
-              options.signal,
-            ),
-          );
-          count += page.entries.length;
-          if (count >= 50) throw new LabStorageError("history", "Recording history is full");
-          cursor = page.nextCursor;
-          if (cursor && seen.has(cursor))
-            throw new LabStorageError("history", "Repeated history cursor");
-          if (cursor) seen.add(cursor);
-        } while (cursor);
-      }
       if (options.drainToken && (!this.#current || options.checkpoint?.phase !== "final"))
         throw new LabStorageError("drain", "Final drain requires a confirmed checkpoint target");
       // The retained drain route admits only final write operations; quota/list
       // cannot borrow the retired owner's ordinary permissions. beginWrite remains authoritative.
-      if (!options.drainToken) {
-        const quota = value(await storage.quota({}, options.signal));
-        if (
-          quota.writeSlotsAvailable < 1 ||
-          quota.hostAvailableBytes < bytes.length ||
-          quota.committedBytes + quota.reservedBytes + bytes.length > quota.sourceLimitBytes ||
-          (!this.#current && quota.recordCount + quota.reservedCreates >= quota.sourceLimitRecords)
-        )
-          throw new LabStorageError("quota", "Insufficient recording storage quota");
-      }
+      if (!options.drainToken)
+        await preflightRecording(storage, bytes.length, !this.#current, options.signal);
       const input: RecordWrite = immutableSnapshot({
         target: this.#current
           ? { mode: "replace", id: this.#current.id, expectedRevision: this.#current.revision }
