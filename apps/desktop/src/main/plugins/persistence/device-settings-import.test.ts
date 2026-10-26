@@ -154,7 +154,7 @@ const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const fn of cleanups.splice(0)) await fn();
 });
-it("actual WorkerSources cannot import the existing unversioned device file (explicit integration blocker)", async () => {
+it("ordinary versioned WorkerSources still rejects an unversioned file; only the fixed combined mapper admits it", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "device-import-contract-"));
   const source = path.join(root, "legacy");
   await mkdir(source);

@@ -28,6 +28,8 @@ export interface LegacyImportDescriptor {
   /** Omitted by pre-existing formatVersion mappers. Never guess from payload keys. */
   fileFormat?: "format-version" | "sensor-lab-recording-v1" | "sensor-lab-profile-v1";
   targetSettingsSchemaVersion?: Version;
+  /** Fixed host-only combined mapper; never a plugin-selected path. */
+  combinedSource?: "device-preferences-v1";
   targetRecordSchemaVersions: readonly Version[];
   rendererKeyAllowlist?: readonly string[];
   validate(input: LegacyImportInput): boolean;
@@ -50,6 +52,8 @@ import type {
   PersistenceBackend,
   PublicationTicket,
   LegacyPreferencesEvidenceRef,
+  DevicePreferencesEvidence,
+  ImportSettingsAuthority,
 } from "./engine-port.js";
 export type LegacySourceItem = Readonly<{
   key: string;
@@ -70,6 +74,7 @@ export interface LegacySourceResolver {
     descriptorId: string;
     owner: PersistenceOwner;
     evidence: LegacyPreferencesEvidenceRef;
+    settings?: ImportSettingsAuthority;
   }): Promise<void>;
   register(input: {
     descriptorId: string;
@@ -86,7 +91,11 @@ export interface LegacySourceResolver {
   releaseMapped(mapped: Handle): Promise<void>;
   inventory(
     descriptorId: string,
-  ): Promise<{ state: "present" | "absent" | "blocked"; entries: readonly LegacySourceItem[] }>;
+  ): Promise<{
+    state: "present" | "absent" | "blocked";
+    entries: readonly LegacySourceItem[];
+    devicePreferencesEvidence?: DevicePreferencesEvidence;
+  }>;
   read(descriptorId: string, key: string, offset: number, maxBytes: number): Promise<Uint8Array>;
 }
 

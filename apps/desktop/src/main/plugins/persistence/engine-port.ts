@@ -71,6 +71,13 @@ export interface PersistenceBackend {
 
 export type ImportTag = Readonly<{importId:string; itemKey:string; sourceSha256:Sha256}>;
 
+export type DevicePreferencesEvidence = Readonly<{
+  formatVersion: 1;
+  defaultedKeys: readonly string[];
+  device: { state: "absent" } | { state: "present"; base64: string; sha256: Sha256 };
+  renderer: { nonce: Handle; digest: Sha256; base64: string };
+}>;
+export type ImportSettingsAuthority = Readonly<{schemaVersion: Version; validationDigest: Sha256}>;
 export type ImportPlannedItem = Readonly<{
   key:string; sourceFormat:Version; sourceSha256:Sha256; mappedSha256:Sha256; byteLength:number;
   ticket:PublicationTicket; tag:ImportTag;
@@ -79,7 +86,8 @@ export type ImportPlannedItem = Readonly<{
 export type LegacyPreferencesEvidenceRef = Readonly<{nonce:Handle; digest:Sha256}>;
 
 export type ImportPlan = Readonly<{formatVersion:1; id:string; descriptorId:string; mappingVersion:Version;
-  targetSourceKey:string; preferencesEvidence:LegacyPreferencesEvidenceRef|null; items:readonly ImportPlannedItem[]}>;
+  targetSourceKey:string; preferencesEvidence:LegacyPreferencesEvidenceRef|null;
+  devicePreferencesEvidence?:DevicePreferencesEvidence; items:readonly ImportPlannedItem[]}>;
 
 export type ImportItemEvidence = {key:string; state:"pending"|"committed"|"skipped"|"unknown";
   receipt:Receipt<SettingsRevision|RecordRevision>|null; skipReason:string|null;

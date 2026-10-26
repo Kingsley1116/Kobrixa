@@ -1,12 +1,22 @@
-import { validateSettingsValues } from "../../../../../../packages/plugin-protocol/src/settings.js";
+import {
+  normalizeSettingsValues,
+  settingsValidationText,
+  validateSettingsValues,
+} from "../../../../../../packages/plugin-protocol/src/settings.js";
 import { createHash } from "node:crypto";
 import type {
+  LegacyImportDescriptor,
   LegacyImportInput,
   LegacyImportItem,
   LegacyPreferencesSnapshot,
 } from "./import-sources.js";
 import { IMPORT_LIMITS, snapshotBytes } from "./import-sources.js";
-import { devicePreferencesResource, devicePreferenceValues } from "./device-preferences-port.js";
+import { devicePreferencesEvidenceSchema, devicePreferencesEvidenceBytes } from "./namespace.js";
+import {
+  devicePreferencesResource,
+  devicePreferenceValues,
+  DEVICE_PREFERENCES_SOURCE,
+} from "./device-preferences-port.js";
 
 export const DEVICE_RENDERER_KEYS = Object.freeze([
   "kobrixa.connectionMode",
@@ -26,11 +36,7 @@ function decode(input: LegacyImportInput, kind: LegacyImportInput["sourceKind"])
     throw new Error("invalid-source-evidence");
   return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(input.bytes)) as unknown;
 }
-/** Pure two-source mapping prerequisite, NOT an admitted import descriptor.
- * The current worker cannot bind these two originals into a single plan. Only a
- * future worker combined-source resolver may supply validated absence, after the
- * writer barrier and anchored filesystem check. This helper grants no authority,
- * publishes no receipt/complete marker, and must not be run as two replacements. */
+/** Pure full-candidate mapping; authority and original evidence are worker-owned. */
 export function mapDeviceSettingsSnapshot(input: {
   device: { state: "absent" } | { state: "present"; original: LegacyImportInput };
   renderer: LegacyImportInput;
@@ -78,16 +84,11 @@ export function mapDeviceSettingsSnapshot(input: {
     values.set(target, value);
     defaulted.delete(target);
   }
-  validateSettingsValues(
+  // Scalar validation precedes normalization; canonical validation follows it.
+  const merged = normalizeSettingsValues(
     devicePreferencesResource,
     [...values].map(([key, value]) => ({ key, value })),
-    true,
-  );
-  // Historical remember=false discards addresses; both originals remain evidence.
-  if (values.get("rememberWifiAddress") === false) values.set("lastWifiAddress", "");
-  const merged = [...values]
-    .map(([key, value]) => ({ key, value }))
-    .sort((a, b) => (a.key < b.key ? -1 : 1));
+  ).sort((a, b) => (a.key < b.key ? -1 : 1));
   devicePreferenceValues({ schemaVersion: 1, revision: null, values: merged });
   return {
     item: { kind: "settings", schemaVersion: 1, values: merged },
@@ -99,3 +100,63 @@ export function mapDeviceSettingsSnapshot(input: {
     },
   };
 }
+
+export const DEVICE_IMPORT_ID = "kobrixa.device-preferences";
+export const deviceImportSettingsAuthority = Object.freeze({
+  schemaVersion: 1,
+  validationDigest: sha256(Buffer.from(settingsValidationText(devicePreferencesResource))),
+});
+function mapCombined(input: LegacyImportInput): LegacyImportItem {
+  if (
+    input.sourceKind !== "renderer-preferences" ||
+    input.bytes.length > 196608 ||
+    sha256(input.bytes) !== input.sha256
+  )
+    throw new Error("invalid-source-evidence");
+  const raw = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(input.bytes));
+  const evidence = devicePreferencesEvidenceSchema.parse(raw);
+  if (!devicePreferencesEvidenceBytes(evidence).equals(input.bytes))
+    throw new Error("noncanonical-combined-evidence");
+  const mapped = mapDeviceSettingsSnapshot({
+    device:
+      evidence.device.state === "absent"
+        ? { state: "absent" }
+        : {
+            state: "present",
+            original: {
+              sourceKind: "device-settings",
+              bytes: Buffer.from(evidence.device.base64, "base64"),
+              sha256: evidence.device.sha256,
+              file: { basename: "device-settings.json" },
+            },
+          },
+    renderer: {
+      sourceKind: "renderer-preferences",
+      bytes: Buffer.from(evidence.renderer.base64, "base64"),
+      sha256: evidence.renderer.digest,
+    },
+  });
+  if (JSON.stringify(mapped.defaultedKeys) !== JSON.stringify(evidence.defaultedKeys))
+    throw new Error("default-evidence-binding");
+  return mapped.item;
+}
+export const deviceSettingsImportDescriptor: LegacyImportDescriptor = Object.freeze({
+  id: DEVICE_IMPORT_ID,
+  mappingVersion: 1,
+  targetSourceKey: DEVICE_PREFERENCES_SOURCE,
+  sourceKind: "renderer-preferences",
+  combinedSource: "device-preferences-v1",
+  sourceFormatVersions: [1],
+  targetSettingsSchemaVersion: 1,
+  targetRecordSchemaVersions: [],
+  rendererKeyAllowlist: DEVICE_RENDERER_KEYS,
+  validate(input: LegacyImportInput) {
+    try {
+      mapCombined(input);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  map: mapCombined,
+});

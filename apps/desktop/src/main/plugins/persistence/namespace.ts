@@ -43,10 +43,39 @@ export function sameImportAttempt(original:PublicationTicket,attempt:Publication
   return sameImportValue(original.metadata,attempt.metadata) && sameImportValue(original.target,attempt.target) &&
     original.owner.sourceKey===attempt.owner.sourceKey && original.owner.pluginId===attempt.owner.pluginId;
 }
+const originalBase64=z.string().max(87384).refine(value=>{
+  const bytes=Buffer.from(value,"base64");
+  return bytes.length<=65536 && bytes.toString("base64")===value;
+});
+export const devicePreferencesEvidenceSchema=z.strictObject({
+  formatVersion:z.literal(1),
+  defaultedKeys:z.array(z.string().regex(/^[a-zA-Z][a-zA-Z0-9]*$/).max(64)).max(9).refine(keys=>keys.every((key,i)=>i===0 || keys[i-1]!<key)),
+  device:z.union([z.strictObject({state:z.literal("absent")}),
+    z.strictObject({state:z.literal("present"),base64:originalBase64,sha256:hash})]),
+  renderer:z.strictObject({nonce:h,digest:hash,base64:originalBase64}),
+}).refine(e=>{
+  if(e.device.state==="present" && createHash("sha256").update(Buffer.from(e.device.base64,"base64")).digest("hex")!==e.device.sha256)return false;
+  if(createHash("sha256").update(Buffer.from(e.renderer.base64,"base64")).digest("hex")!==e.renderer.digest)return false;
+  try { return JSON.parse(Buffer.from(e.renderer.base64,"base64").toString("utf8")).nonce===e.renderer.nonce; } catch { return false; }
+});
+/** Canonical property order is shared by the worker and durable plan verifier. */
+export function devicePreferencesEvidenceBytes(value:unknown):Buffer {
+  return Buffer.from(JSON.stringify(devicePreferencesEvidenceSchema.parse(value)));
+}
 export const importPlanSchema=z.strictObject({formatVersion:z.literal(1),id:key,descriptorId:key,mappingVersion:v,
   targetSourceKey:z.string().min(1).max(160),preferencesEvidence:legacyPreferencesEvidenceRefSchema.nullable(),
+  devicePreferencesEvidence:devicePreferencesEvidenceSchema.exactOptional(),
   items:z.array(z.strictObject({key,sourceFormat:v,sourceSha256:hash,mappedSha256:hash,byteLength:n.max(8388608),ticket:publicationTicketSchema,tag:importTagSchema})).max(512)
 }).superRefine((plan,ctx)=>{
+  const combined=plan.devicePreferencesEvidence;
+  if(combined && (plan.descriptorId!=="kobrixa.device-preferences" || plan.targetSourceKey!=="builtin:kobrixa.device-ev3" ||
+    plan.mappingVersion!==1 || plan.items.length!==1 || plan.items[0]?.key!=="preferences" ||
+    plan.items[0]?.sourceFormat!==1 || plan.items[0]?.ticket.target.kind!=="settings" ||
+    plan.items[0]?.ticket.target.expectedRevision!==null ||
+    !sameImportValue(plan.preferencesEvidence,{nonce:combined.renderer.nonce,digest:combined.renderer.digest}) ||
+    plan.items[0]?.sourceSha256!==createHash("sha256").update(devicePreferencesEvidenceBytes(combined)).digest("hex")))
+    ctx.addIssue({code:"custom",message:"combined-evidence-binding"});
+  if(plan.descriptorId==="kobrixa.device-preferences" && !combined)ctx.addIssue({code:"custom",message:"missing-combined-evidence"});
   const expectedId="import/"+createHash("sha256").update(JSON.stringify([plan.descriptorId,plan.targetSourceKey]),"utf8").digest("hex");
   const ids=plan.items.flatMap(item=>item.ticket.target.kind==="record"?[item.ticket.target.id]:["settings"]);
   if(plan.id!==expectedId || new Set(ids).size!==ids.length ||
@@ -76,6 +105,7 @@ export const importDocumentSchema=z.strictObject({formatVersion:z.literal(1),pla
     Buffer.byteLength(JSON.stringify(d))<=2097152 && d.items.length===d.plan.items.length &&
     new Set(d.items.map(e=>e.key)).size===d.items.length && d.items.every((e,i)=>e.key===d.plan.items[i]?.key &&
       (e.publicationTicket===null || sameImportAttempt(d.plan.items[i]!.ticket,e.publicationTicket))) &&
+    (!d.plan.devicePreferencesEvidence || d.items.every(e=>e.state!=="skipped")) &&
     (!d.complete || d.items.every(e=>e.state==="committed" || e.state==="skipped")));
 export const storedRecoverySchema=z.strictObject({id:h,owner:persistenceOwnerSchema,
   report:z.strictObject({state:z.enum(["saved","retryable","checkpoint-only","uncertain"]),blocker:z.boolean(),recovery:h.exactOptional(),retryAction:h.exactOptional(),pendingSettings:z.boolean(),

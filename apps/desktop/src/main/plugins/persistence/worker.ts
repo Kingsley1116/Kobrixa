@@ -3,6 +3,7 @@ import { createHash,randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import path from "node:path";
 import { z } from "zod";
+import { deviceSettingsImportDescriptor, deviceImportSettingsAuthority, mapDeviceSettingsSnapshot, DEVICE_IMPORT_ID } from "./device-settings-import.js";
 import { sensorLabImportDescriptors } from "./sensor-lab-import.js";
 import type { ProfileWriterLock,PersistenceOwner } from "@kobrixa/plugin-runtime";
 import type { LegacyImportDescriptor,LegacySourceItem,LegacyMappedItem,LegacySourceResolver } from "./import-sources.js";
@@ -63,7 +64,7 @@ const args={
   "output.begin":z.tuple([handle,owner,handle,count.max(8388608),digest,monotonic]),"output.append":z.tuple([handle,count,bytes]),
   "output.commit":z.tuple([handle]),"output.reconcile":z.tuple([handle]),"output.abort":z.tuple([handle]),
   "destinations.register":z.tuple([z.strictObject({action:handle,scope,nativePath:z.string().min(1),deadlineMonotonicMs:monotonic})]),"destinations.release":z.tuple([handle]),
-  "sources.resolvePreferences":z.tuple([z.strictObject({descriptorId:text,owner,evidence:z.strictObject({nonce:z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),digest})})]),
+  "sources.resolvePreferences":z.tuple([z.strictObject({descriptorId:text,owner,evidence:z.strictObject({nonce:z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),digest}),settings:z.strictObject({schemaVersion:z.number().int().min(1).max(2147483647),validationDigest:digest}).optional()})]),
   "sources.register":z.tuple([z.strictObject({descriptorId:text,mapperId:text,sourceKind:z.enum(["sensor-lab","device-settings","renderer-preferences"])})]),
   "sources.map":z.tuple([text,text]),"sources.appendMapped":z.tuple([z.strictObject({mapped:handle,ticket,offset:count,maxBytes:count.min(1).max(262144)})]),
   "sources.releaseMapped":z.tuple([handle]),"sources.inventory":z.tuple([text]),"sources.read":z.tuple([text,text,count,count.min(1).max(262144)]),
@@ -341,20 +342,20 @@ export function runPersistenceWorker(input:{mappers:ReadonlyMap<string,LegacyImp
 export function shippedLegacySourceRoots(root:string):ReadonlyMap<string,string> {
   if(!path.isAbsolute(root) || path.normalize(root)!==root || path.basename(root)!=="persistence-v1" || path.basename(path.dirname(root))!=="plugins")throw new Error("invalid-store-root");
   const userData=path.dirname(path.dirname(root));
-  return new Map(sensorLabImportDescriptors.map((d,i)=>[d.id,path.join(userData,"sensor-lab",i===0?"recordings":"calibrations")]));
+  return new Map([...sensorLabImportDescriptors.map((d,i)=>[d.id,path.join(userData,"sensor-lab",i===0?"recordings":"calibrations")] as const),[DEVICE_IMPORT_ID,userData]]);
 }
 export function runShippedPersistenceWorker():void {
-  runPersistenceWorker({mappers:new Map(sensorLabImportDescriptors.map(d=>[d.id,d])),sourceRootsForStore:shippedLegacySourceRoots,lazySourceRoots:true});
+  runPersistenceWorker({mappers:new Map([...sensorLabImportDescriptors,deviceSettingsImportDescriptor].map(d=>[d.id,d])),sourceRootsForStore:shippedLegacySourceRoots,lazySourceRoots:true});
 }
 // The shipped CJS footer invokes runShippedPersistenceWorker; test entries retain explicit inventories.
 // The module itself has no auto-start side effect, so T7's wrapper can call the runner once.
 
 import { parseNonceDocument, snapshotBytes, importIdFor } from "./import-sources.js";
-import { sameImportValue, sameImportAttempt } from "./namespace.js";
-import type { LegacyPreferencesEvidenceRef } from "./engine-port.js";
+import { devicePreferencesEvidenceBytes, sameImportValue, sameImportAttempt } from "./namespace.js";
+import type { DevicePreferencesEvidence, ImportSettingsAuthority, LegacyPreferencesEvidenceRef } from "./engine-port.js";
 type SourceBinding = {kind:"file";descriptor:LegacyImportDescriptor;fs:NodePersistenceFs} |
-  {kind:"renderer";descriptor:LegacyImportDescriptor;resolved:null|{
-    owner:PersistenceOwner;evidence:LegacyPreferencesEvidenceRef;bytes:Uint8Array;charge:string}};
+  {kind:"renderer";descriptor:LegacyImportDescriptor;fs?:NodePersistenceFs;combined?:DevicePreferencesEvidence;combinedCharged?:boolean;resolved:null|{
+    owner:PersistenceOwner;evidence:LegacyPreferencesEvidenceRef;bytes:Uint8Array;charge:string;settings?:ImportSettingsAuthority}};
 export class WorkerSources implements LegacySourceResolver {
   private readonly registered=new Map<string,SourceBinding>();
   private readonly mapped=new Map<string,{bytes:Uint8Array;sourceSha256:string;mappedSha256:string;metadata:LegacyMappedItem;offset:number;ticket:string|null}>();
@@ -363,7 +364,7 @@ export class WorkerSources implements LegacySourceResolver {
     const used=new Set<string>();
     for(const [id,root] of this.sourceRoots) {
       const descriptor=this.mappers.get(id);
-      if(!descriptor || descriptor.id!==id || descriptor.sourceKind==="renderer-preferences" ||
+      if(!descriptor || descriptor.id!==id || (descriptor.sourceKind==="renderer-preferences" && descriptor.combinedSource!=="device-preferences-v1") ||
           !path.isAbsolute(root) || path.normalize(root)!==root || root.includes("\0") || used.has(root))throw new Error("invalid-source-root");
       used.add(root);
     }
@@ -377,7 +378,10 @@ export class WorkerSources implements LegacySourceResolver {
     const existing=this.registered.get(input.descriptorId);
     if(existing) {if(existing.descriptor!==descriptor)throw new Error("invalid-mapper");return;}
     if(descriptor.sourceKind==="renderer-preferences") {
-      this.registered.set(input.descriptorId,{kind:"renderer",descriptor,resolved:null});return;
+      const root=this.sourceRoots.get(descriptor.id);
+      if(descriptor.combinedSource && (descriptor.id!==DEVICE_IMPORT_ID || !root))throw new Error("missing-source-root");
+      this.registered.set(input.descriptorId,{kind:"renderer",descriptor,resolved:null,
+        ...(descriptor.combinedSource?{fs:new NodePersistenceFs(root!,this.store.fs.profile)}:{})});return;
     }
     const sourceRoot=this.sourceRoots.get(descriptor.id);
     if(!sourceRoot)throw new Error("missing-source-root");
@@ -388,10 +392,20 @@ export class WorkerSources implements LegacySourceResolver {
     const binding=this.source(input.descriptorId);
     if(binding.kind!=="renderer" || input.owner.sourceKey!==binding.descriptor.targetSourceKey ||
         input.owner.hostEpoch!==this.store.fs.profile.hostEpoch)throw new Error("stale");
+    const previous=binding.resolved;
+    if(binding.descriptor.combinedSource && !sameImportValue(input.settings,deviceImportSettingsAuthority))throw new Error("schema-mismatch");
+    if(!binding.descriptor.combinedSource && input.settings)throw new Error("invalid-mapper");
     const plan=await this.store.loadImport(input.owner,importIdFor(binding.descriptor.id,binding.descriptor.targetSourceKey));
+    if(binding.descriptor.combinedSource && plan && !plan.plan.devicePreferencesEvidence)throw new Error("missing-combined-evidence");
     if(plan && !plan.complete && !sameImportValue(plan.plan.preferencesEvidence,input.evidence))throw new Error("input-changed");
-    if(binding.resolved && (!sameImportValue(binding.resolved.evidence,input.evidence) ||
-        !sameImportValue(binding.resolved.owner,input.owner)))throw new Error("input-changed");
+    if(previous) {
+      if(!sameImportValue(previous.evidence,input.evidence) || !sameImportValue(previous.settings,input.settings))throw new Error("input-changed");
+      if(!sameImportValue(previous.owner,input.owner)) {
+        if(!binding.descriptor.combinedSource)throw new Error("input-changed");
+        if(previous.owner.sourceKey!==input.owner.sourceKey || previous.owner.pluginId!==input.owner.pluginId ||
+          previous.owner.hostEpoch!==input.owner.hostEpoch || input.owner.generation<=previous.owner.generation)throw new Error("stale");
+      }
+    }
     const encoded=await this.store.auxiliary(input.owner,"import","nonce/"+input.evidence.nonce);
     if(!encoded)throw new Error("missing-evidence");
     const document=parseNonceDocument(encoded);
@@ -400,29 +414,83 @@ export class WorkerSources implements LegacySourceResolver {
         document.originalTicket.owner.pluginId!==input.owner.pluginId || document.descriptorId!==binding.descriptor.id ||
         !sameImportValue(document.allowlist,binding.descriptor.rendererKeyAllowlist) ||
         !binding.descriptor.sourceFormatVersions.includes(1))throw new Error("evidence-binding");
+    if(binding.descriptor.combinedSource) {
+      const originalOwners=[document.originalTicket.owner,document.ticket.owner,
+        ...(plan?.plan.items.map(item=>item.ticket.owner) ?? []),
+        ...(plan?.items.flatMap(item=>item.publicationTicket?[item.publicationTicket.owner]:[]) ?? [])];
+      if(originalOwners.some(original=>original.sourceKey!==input.owner.sourceKey || original.pluginId!==input.owner.pluginId ||
+        (original.hostEpoch===input.owner.hostEpoch && (input.owner.generation<original.generation ||
+          (input.owner.generation===original.generation && input.owner.processEpoch!==original.processEpoch)))))throw new Error("stale");
+    }
     const bytes=snapshotBytes(document.raw,document.allowlist);
     if(createHash("sha256").update(bytes).digest("hex")!==input.evidence.digest)throw new Error("evidence-binding");
-    if(binding.resolved) {
-      if(!Buffer.from(binding.resolved.bytes).equals(bytes))throw new Error("input-changed");return;
+    // The immutable capture outlives execution owners. Only the trusted host's
+    // strictly newer same-namespace generation may continue it; original tickets
+    // remain in the durable plan and are reconciled/admitted separately.
+    // An older in-flight resolution must not replace a newer completed binding.
+    if(binding.descriptor.combinedSource && binding.resolved!==previous)throw new Error("stale");
+    const retained=binding.resolved;
+    if(retained) {
+      if(!Buffer.from(retained.bytes).equals(bytes) || (plan?.plan.devicePreferencesEvidence &&
+        !sameImportValue(binding.combined,plan.plan.devicePreferencesEvidence)))throw new Error("input-changed");
+      if(binding.descriptor.combinedSource && !sameImportValue(retained.owner,input.owner))
+        binding.resolved={...retained,owner:structuredClone(input.owner)};
+      return;
     }
     const bindings=[...this.registered.values()].flatMap(s=>s.kind==="renderer" && s.resolved?[s.resolved]:[]);
     if(bindings.reduce((total,b)=>total+b.bytes.length,bytes.length)>8388608 ||
         bindings.filter(b=>b.owner.sourceKey===input.owner.sourceKey).reduce((total,b)=>total+b.bytes.length,bytes.length)>524288)
       throw new Error("quota");
     const charge=randomUUID();this.store.quota.holdTemporary(input.owner.sourceKey,charge,bytes.length);
-    binding.resolved={owner:structuredClone(input.owner),evidence:structuredClone(input.evidence),bytes,charge};
+    binding.resolved={owner:structuredClone(input.owner),evidence:structuredClone(input.evidence),bytes,charge,
+      ...(input.settings?{settings:structuredClone(input.settings)}:{})};
+    if(plan?.plan.devicePreferencesEvidence)binding.combined=structuredClone(plan.plan.devicePreferencesEvidence);
   }
   private async preferences(binding:Extract<SourceBinding,{kind:"renderer"}>):Promise<Uint8Array> {
     if(!binding.resolved)throw new Error("missing-evidence");
-    await this.resolvePreferences({descriptorId:binding.descriptor.id,owner:binding.resolved.owner,evidence:binding.resolved.evidence});
-    return binding.resolved.bytes;
+    await this.resolvePreferences({descriptorId:binding.descriptor.id,owner:binding.resolved.owner,evidence:binding.resolved.evidence,...(binding.resolved.settings?{settings:binding.resolved.settings}:{})});
+    if(!binding.descriptor.combinedSource)return binding.resolved.bytes;
+    const fs=binding.fs!;
+    // Verify every ancestor and the parent before allowing *leaf-only* ENOENT.
+    const anchor=path.parse(fs.root).root,anchored=new NodePersistenceFs(anchor,fs.profile);
+    await anchored.check(anchored.path(...path.relative(anchor,fs.root).split(path.sep)));
+    let device:DevicePreferencesEvidence["device"];
+    try {await fs.check(fs.path("device-settings.json"));device={state:"present",base64:"",sha256:""};}
+    catch(error){
+      if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error;
+      await anchored.check(anchored.path(...path.relative(anchor,fs.root).split(path.sep)));
+      device={state:"absent"};
+    }
+    if(device.state==="present") {
+      // An ENOENT after the existence check is an incomplete read, never defaults.
+      const bytes=await fs.bytes(fs.path("device-settings.json"),65536);
+      device={state:"present",base64:Buffer.from(bytes).toString("base64"),sha256:createHash("sha256").update(bytes).digest("hex")};
+    }
+    const mapping=mapDeviceSettingsSnapshot({
+      device:device.state==="absent"?{state:"absent"}:{state:"present",original:{sourceKind:"device-settings",bytes:Buffer.from(device.base64,"base64"),sha256:device.sha256,file:{basename:"device-settings.json"}}},
+      renderer:{sourceKind:"renderer-preferences",bytes:binding.resolved.bytes,sha256:binding.resolved.evidence.digest},
+    });
+    const candidate:DevicePreferencesEvidence={formatVersion:1,defaultedKeys:mapping.defaultedKeys,device,renderer:{...binding.resolved.evidence,base64:Buffer.from(binding.resolved.bytes).toString("base64")}};
+    if(binding.combined && !sameImportValue(binding.combined,candidate))throw new Error("input-changed");
+    const bytes=devicePreferencesEvidenceBytes(candidate);
+    if(!binding.descriptor.validate({sourceKind:binding.descriptor.sourceKind,bytes,sha256:createHash("sha256").update(bytes).digest("hex")}))throw new Error("invalid-resource");
+    if(!binding.combinedCharged) {
+      // Bound the additional immutable device capture with the existing temporary quota.
+      this.store.quota.holdTemporary(binding.resolved.owner.sourceKey,binding.resolved.charge+"/combined",bytes.length);
+      binding.combinedCharged=true;
+      binding.combined=candidate;
+    }
+    return bytes;
   }
   async inventory(id:string):ReturnType<LegacySourceResolver["inventory"]> {
     const binding=this.source(id),{descriptor}=binding;
     if(binding.kind==="renderer") {
       if(!binding.resolved)return {state:"blocked",entries:[]};
-      const bytes=await this.preferences(binding);
-      return {state:"present",entries:[{key:"preferences",format:1,byteLength:bytes.length,sha256:binding.resolved.evidence.digest}]};
+      try {
+        const bytes=await this.preferences(binding);
+        return {state:"present",entries:[{key:"preferences",format:1,byteLength:bytes.length,sha256:createHash("sha256").update(bytes).digest("hex")}],
+          ...(binding.combined?{devicePreferencesEvidence:structuredClone(binding.combined)}:{})};
+      }catch(error){if(!descriptor.combinedSource)throw error;return {state:"blocked",entries:[]};}
     }
     const {fs}=binding;
     // Only the fixed root's initial check can establish absence. Once collection
@@ -477,7 +545,7 @@ export class WorkerSources implements LegacySourceResolver {
     if(!descriptor.validate(input))throw new Error("invalid-resource");
     const item=descriptor.map(input);
     const mappedBytes=item.kind==="record"?item.bytes:Buffer.from(JSON.stringify({formatVersion:1,schemaVersion:item.schemaVersion,values:item.values,
-      validationDigest:await this.settingsValidationDigest(descriptor)}));
+      validationDigest:binding.kind==="renderer" && binding.descriptor.combinedSource ? binding.resolved!.settings!.validationDigest : await this.settingsValidationDigest(descriptor)}));
     if(mappedBytes.length>8388608 || this.mapped.size>=4)throw new Error("quota");
     const mapped=randomUUID(),mappedSha256=createHash("sha256").update(mappedBytes).digest("hex");
     this.store.quota.holdTemporary(descriptor.targetSourceKey,mapped,mappedBytes.length);

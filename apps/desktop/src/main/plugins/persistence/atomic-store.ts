@@ -719,6 +719,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
   private async recordImportOne(owner:PersistenceOwner,id:string,evidence:ImportItemEvidence):Promise<void> {
     importItemEvidenceSchema.parse(evidence);
     const saved=await this.loadImport(owner,id); if (!saved) throw new Error("not-found");
+    if(saved.plan.devicePreferencesEvidence && evidence.state==="skipped")throw new Error("unverified-receipt");
     const index=saved.plan.items.findIndex(i=>i.key===evidence.key); if (index<0 || saved.complete) throw new Error("stale");
     if (evidence.state==="committed") {
       const receipt=(await this.importReceipts(owner,id)).find(r=>r.tag.itemKey===evidence.key);

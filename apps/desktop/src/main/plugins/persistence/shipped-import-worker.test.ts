@@ -56,6 +56,7 @@ it("derives fixed source paths only from the profile store", () => {
   expect([...roots.values()]).toEqual([
     "/profile/sensor-lab/recordings",
     "/profile/sensor-lab/calibrations",
+    "/profile",
   ]);
   for (const root of [
     "relative/plugins/persistence-v1",

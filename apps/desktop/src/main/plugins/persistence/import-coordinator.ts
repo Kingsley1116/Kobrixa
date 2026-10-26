@@ -10,6 +10,7 @@ import type {
   ImportPlan,
   ImportPlannedItem,
   LegacyPreferencesEvidenceRef,
+  ImportSettingsAuthority,
 } from "./engine-port.js";
 import type {
   LegacySourceResolver,
@@ -39,6 +40,11 @@ export function createLegacyImportCoordinator(input: {
   currentScope: (scope: CoreWindowScope) => boolean;
   currentSource: (sourceKey: string) => boolean;
   importOwner: (sourceKey: string) => PersistenceOwner;
+  /** Current trusted resource admission; required only by fixed pristine settings imports. */
+  settingsAuthority?: (
+    owner: PersistenceOwner,
+    descriptor: LegacyImportDescriptor,
+  ) => Promise<ImportSettingsAuthority>;
 }): LegacyImportHostPort {
   if (input.sources !== input.backend.sources) throw new Error("backend-mismatch");
   const { backend, sources, barrier } = input,
@@ -58,6 +64,13 @@ export function createLegacyImportCoordinator(input: {
           source.fileFormat,
         ) ||
           source.sourceKind === "renderer-preferences")) ||
+      (source.combinedSource !== undefined &&
+        (source.combinedSource !== "device-preferences-v1" ||
+          source.id !== "kobrixa.device-preferences" ||
+          source.targetSourceKey !== "builtin:kobrixa.device-ev3" ||
+          source.sourceKind !== "renderer-preferences" ||
+          source.mappingVersion !== 1 ||
+          source.targetSettingsSchemaVersion !== 1)) ||
       new Set(source.sourceFormatVersions).size !== source.sourceFormatVersions.length ||
       new Set(source.targetRecordSchemaVersions).size !==
         source.targetRecordSchemaVersions.length ||
@@ -262,6 +275,40 @@ export function createLegacyImportCoordinator(input: {
         )
           throw new Error("stale");
       };
+      async function settingsAdmission(owner: PersistenceOwner) {
+        check();
+        const committed = await backend.evidence.settingsDigest(owner);
+        check();
+        if (!descriptor.combinedSource) return committed;
+        if (
+          committed &&
+          !(
+            saved?.items.length === 1 &&
+            saved.items[0]?.state === "committed" &&
+            saved.items[0].receipt?.revision === committed.revision &&
+            saved.plan.items[0]?.ticket.metadata.kind === "settings" &&
+            saved.plan.items[0].ticket.metadata.validationDigest === committed.validationDigest
+          )
+        )
+          throw new Error("target-exists");
+        if (!input.settingsAuthority) throw new Error("missing-settings-authority");
+        const authority = structuredClone(
+          await input.settingsAuthority(structuredClone(owner), descriptor),
+        );
+        check();
+        if (
+          authority.schemaVersion !== descriptor.targetSettingsSchemaVersion ||
+          !/^[0-9a-f]{64}$/.test(authority.validationDigest)
+        )
+          throw new Error("schema-mismatch");
+        if (
+          committed &&
+          (committed.schemaVersion !== authority.schemaVersion ||
+            committed.validationDigest !== authority.validationDigest)
+        )
+          throw new Error("schema-mismatch");
+        return { ...authority, revision: committed?.revision ?? null };
+      }
       // This helper closes over the serialized run's descriptor and factory input.
       async function publishMapped(
         backend: PersistenceBackend,
@@ -360,10 +407,19 @@ export function createLegacyImportCoordinator(input: {
           if (!consumed || !consumed.digest) return progress("blocked");
           preferencesEvidence = { nonce: consumed.nonce, digest: consumed.digest };
           check();
+          const authority = descriptor.combinedSource ? await settingsAdmission(owner) : null;
           await backend.sources.resolvePreferences({
             descriptorId: descriptor.id,
             owner,
             evidence: preferencesEvidence,
+            ...(authority
+              ? {
+                  settings: {
+                    schemaVersion: authority.schemaVersion,
+                    validationDigest: authority.validationDigest,
+                  },
+                }
+              : {}),
           });
         }
         check();
@@ -385,7 +441,12 @@ export function createLegacyImportCoordinator(input: {
               !/^[0-9a-f]{64}$/.test(e.sha256) ||
               !Number.isSafeInteger(e.byteLength) ||
               e.byteLength < 0 ||
-              e.byteLength > (descriptor.sourceKind === "sensor-lab" ? 8388608 : 65536),
+              e.byteLength >
+                (descriptor.combinedSource
+                  ? 196608
+                  : descriptor.sourceKind === "sensor-lab"
+                    ? 8388608
+                    : 65536),
           ) ||
           inventory.entries.length > 512 ||
           new Set(inventory.entries.map((e) => e.key)).size !== inventory.entries.length ||
@@ -393,6 +454,13 @@ export function createLegacyImportCoordinator(input: {
         )
           throw new Error("input-changed");
         if (saved) {
+          if (
+            !sameImportValue(
+              saved.plan.devicePreferencesEvidence,
+              inventory.devicePreferencesEvidence,
+            )
+          )
+            throw new Error("input-changed");
           const planned = saved.plan.items;
           if (
             planned.length !== inventory.entries.length ||
@@ -444,7 +512,7 @@ export function createLegacyImportCoordinator(input: {
                     },
                   };
                 } else {
-                  const digest = await backend.evidence.settingsDigest(owner);
+                  const digest = await settingsAdmission(owner);
                   if (
                     !digest ||
                     digest.schemaVersion !== descriptor.targetSettingsSchemaVersion ||
@@ -486,6 +554,9 @@ export function createLegacyImportCoordinator(input: {
             mappingVersion: descriptor.mappingVersion,
             targetSourceKey: descriptor.targetSourceKey,
             preferencesEvidence,
+            ...(inventory.devicePreferencesEvidence
+              ? { devicePreferencesEvidence: inventory.devicePreferencesEvidence }
+              : {}),
             items,
           };
           // Include immutable plan and initial evidence in the shared auxiliary budget.
@@ -534,7 +605,7 @@ export function createLegacyImportCoordinator(input: {
               throw new Error("input-changed");
             if (mapped.kind === "record") recordMetadata(mapped, item.ticket);
             else {
-              const digest = await backend.evidence.settingsDigest(owner);
+              const digest = await settingsAdmission(owner);
               if (
                 item.ticket.metadata.kind !== "settings" ||
                 !digest ||
@@ -607,6 +678,15 @@ export function createLegacyImportCoordinator(input: {
         saved = await loadImport(imports, owner, descriptor);
         if (!saved) throw new Error("missing-import-plan");
         check();
+        if (descriptor.combinedSource) {
+          const final = await sources.inventory(descriptor.id);
+          check();
+          if (
+            final.state !== "present" ||
+            !sameImportValue(final.devicePreferencesEvidence, saved.plan.devicePreferencesEvidence)
+          )
+            throw new Error("input-changed");
+        }
         if (
           saved.items.every((e) => e.state === "committed" || e.state === "skipped") &&
           (await finishImport(imports, owner, saved.plan))
