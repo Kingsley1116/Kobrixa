@@ -652,10 +652,15 @@ export function runInstalledLab(): void {
         checkpoints.applied = { at: wall(), state: state() };
         stage = "copy-code";
         const beforeCopy = sequence;
-        const displayed = await js<string>(
-          'document.querySelector("[data-ui-node=code] code")?.textContent ?? ""',
+        const displayed = await until(
+          () =>
+            js<string>(`(() => {
+            const node = document.querySelector('[data-ui-node="code"]');
+            const button = node?.querySelector('button');
+            return button && !button.disabled ? node.querySelector('code')?.textContent ?? '' : '';
+          })()`),
+          "current draft code rendered with enabled copy",
         );
-        assert.ok(displayed.length > 0);
         await click('[data-ui-node="code"] button');
         const copied = await until(
           () =>
