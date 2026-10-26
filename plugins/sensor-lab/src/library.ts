@@ -123,7 +123,17 @@ export class LabLibrary {
         ],
         ["endedAt", "reason", "recordingOrigin", "provenance"],
       );
-      return snapshotRecording(raw as Recording);
+      const record = snapshotRecording(raw as Recording);
+      // Recovery evidence belongs to the verified host metadata, not the raw
+      // payload. Project it only for reads/CSV; never rewrite the stored bytes
+      // or replace an already declared terminal outcome.
+      return opened.record.interrupted && record.endedAt === undefined
+        ? snapshotRecording({
+            ...record,
+            reason: "interrupted",
+            endedAt: record.frames.at(-1)?.sampledAt ?? record.startedAt,
+          })
+        : record;
     } finally {
       // Independent cleanup remains possible after the view signal was cancelled.
       await this.storage.closeRead({ read: opened.read }).catch(() => {});
