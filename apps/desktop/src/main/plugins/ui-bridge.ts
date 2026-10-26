@@ -1,3 +1,5 @@
+import type { Principal } from "@kobrixa/plugin-runtime";
+import { UiInteractions, uiInteractionRequestSchema } from "@kobrixa/plugin-runtime";
 import type {
   UiBridgeEvent,
   FoundationDiagnostics,
@@ -73,6 +75,11 @@ export interface UiExecutionAdapter {
   dataRead?: PluginUiBridge["dataRead"];
   dataSnapshot?: PluginUiBridge["dataSnapshot"];
   reportFailure: PluginUiBridge["reportFailure"];
+  prepareInteraction?(binding: UiBinding): Promise<boolean>;
+  dataCurrent?(
+    binding: UiBinding,
+    expected: readonly { dataset: string; revision: number; presentation: number }[],
+  ): boolean;
   resolve(binding: UiBinding): ResolvedUi | null;
   acceptForm(binding: UiBinding, revision: number, values: Record<string, Scalar>): boolean;
   invoke(
@@ -242,6 +249,54 @@ export function buildInvocation(
     ? { ok: true, value: invocation }
     : stale();
 }
+/** Same-owner safety release. This never borrows a core principal or reports persistence saved. */
+export async function releaseUiRecording(input: {
+  owner: ResourceOwner;
+  reservation: unknown;
+  principal(): Principal;
+  current(): boolean;
+  request(
+    principal: Principal,
+    method: "devices/recording/query" | "devices/recording/release",
+    params: { reservationId: string },
+    signal: AbortSignal,
+  ): Promise<
+    { ok: true; value: unknown } | { ok: false; error: { code: string; message: string } }
+  >;
+}): Promise<Result<CommandValue>> {
+  const id = handleSchema.safeParse(input.reservation);
+  if (!id.success || !input.current()) return stale();
+  const principal = input.principal();
+  if (principal.kind !== "plugin" || !sameResourceOwner(principal.owner, input.owner))
+    return stale();
+  const signal = new AbortController().signal;
+  try {
+    const owned = await input.request(
+      principal,
+      "devices/recording/query",
+      { reservationId: id.data },
+      signal,
+    );
+    if (!owned.ok || !input.current()) return stale();
+    const current = input.principal();
+    if (current.kind !== "plugin" || !sameResourceOwner(current.owner, input.owner)) return stale();
+    const result = await input.request(
+      current,
+      "devices/recording/release",
+      { reservationId: id.data },
+      signal,
+    );
+    if (!input.current()) return stale();
+    return result.ok
+      ? { ok: true, value: { output: {}, fieldErrors: [] } }
+      : uiRequestSchemas["command/invoke"].result.parse({
+          ok: false,
+          error: { code: result.error.code, message: result.error.message },
+        });
+  } catch {
+    return stale();
+  }
+}
 export function trustedWorkbench(
   event: { sender: { id: number }; senderFrame: unknown },
   trusted: { id: number; mainFrame: unknown },
@@ -337,7 +392,36 @@ export function createPluginUiBridge(input: {
       if (requests.size === 0 && inflight.get(key) === requests) inflight.delete(key);
     }
   };
+  const interactions = new UiInteractions({
+    resolve,
+    read: (params) =>
+      execution.dataRead
+        ? execution.dataRead(params)
+        : Promise.reject(new Error("Data unavailable")),
+    snapshot: (params) =>
+      execution.dataSnapshot
+        ? execution.dataSnapshot(params)
+        : Promise.reject(new Error("Data unavailable")),
+    currentData: (binding, expected) => execution.dataCurrent?.(binding, expected) === true,
+    core: (resolved, actionId) => execution.core(resolved, actionId),
+    dispatch,
+    admit: admission,
+    acceptForm: (binding, revision, values) => execution.acceptForm(binding, revision, values),
+    mintAction: (resolved) =>
+      input.actions.mint(
+        resolved.owner,
+        input.scope(),
+        resolved.state.binding.uiResourceGeneration,
+      ),
+    now: () => performance.now(),
+  });
   const bridge: PluginUiBridge = {
+    interact: async (request) => {
+      if (disposed || !uiInteractionRequestSchema.safeParse(request).success) return stale();
+      if (!resolve(request.binding) && !(await execution.prepareInteraction?.(request.binding)))
+        return stale();
+      return interactions.interact(request);
+    },
     catalog: (value) => input.catalog.catalog(value),
     resource: (value) => input.catalog.resource(value),
     open: async (value) => {
@@ -360,12 +444,14 @@ export function createPluginUiBridge(input: {
       return result;
     },
     close: (value) => {
+      interactions.invalidate(value.binding, true);
       intent.revoke(value.binding, "closed");
       abort(value.binding);
       return execution.close(value);
     },
     visibility: async (value) => {
       if (!value.visible) {
+        interactions.invalidate(value.binding);
         intent.revoke(value.binding, "hidden");
         abort(value.binding);
       }
@@ -390,8 +476,17 @@ export function createPluginUiBridge(input: {
           ? resolved.resource.nodes.find((item) => item.id === value.nodeId)
           : undefined;
       // Core safety routes do not depend on feature form validity or enabledWhen.
-      if (node?.type === "action" && node.action.kind === "core")
+      if (node?.type === "action" && node.action.kind === "core") {
+        if (node.action.action === "stopRecording") {
+          const result = await interactions.interact({
+            kind: "core",
+            binding: value.binding,
+            actionId: node.id,
+          });
+          return result.ok ? { ok: true, value: { output: {}, fieldErrors: [] } } : result;
+        }
         return execution.core(resolved, node.id);
+      }
       const limited = admission(resolved.owner);
       if (limited) return limited;
       const built = buildInvocation(
@@ -520,7 +615,10 @@ export function createPluginUiBridge(input: {
     onEvent: input.events.subscribe,
   };
   const offLifetime = input.events.subscribe((event) => {
-    if (event.type === "revoked") abort(event.binding);
+    if (event.type === "revoked") {
+      interactions.invalidate(event.binding, true);
+      abort(event.binding);
+    }
   });
   const diagnostics = registerFoundationDiagnostics(bridge, () => ({
     owners: 0,
@@ -537,6 +635,7 @@ export function createPluginUiBridge(input: {
   bridgeDisposals.set(bridge, () => {
     if (disposed) return;
     disposed = true;
+    interactions.dispose();
     for (const requests of inflight.values()) for (const request of requests) request.abort();
     inflight.clear();
     pending.clear();
@@ -601,6 +700,11 @@ export function registerUiIpc(input: {
       return parsed.success ? action(parsed.data) : stale();
     });
   };
+  register(
+    "plugins:ui:interact",
+    uiInteractionRequestSchema,
+    (value) => input.bridge.interact?.(value) ?? stale(),
+  );
   register("plugins:ui:catalog", z.strictObject({ cursor: handleSchema.optional() }), (value) =>
     input.bridge.catalog(value.cursor === undefined ? {} : { cursor: value.cursor }),
   );
@@ -1099,6 +1203,74 @@ export function createUiExecutionAdapter(input: {
   };
   return {
     resolve,
+    prepareInteraction: async (binding) => {
+      if (disposed || binding.kind !== "status") return false;
+      const scope = input.scope(),
+        owner = input.states.executionOwner(binding);
+      if (!owner || !input.runtime.current(owner) || !input.states.inScope(owner, binding, scope))
+        return false;
+      let cursor: string | undefined;
+      do {
+        const page = await input.catalog.catalog(cursor ? { cursor } : {});
+        if (!page.ok) return false;
+        const entry = page.value.entries.find(
+          (e) =>
+            e.sourceKey === owner.sourceKey &&
+            e.pluginId === owner.pluginId &&
+            e.id === binding.contributionId &&
+            e.uiResourceGeneration === binding.uiResourceGeneration &&
+            e.version === 2 &&
+            e.kind === "status",
+        );
+        if (entry) {
+          const resource = await input.catalog.resource({
+            sourceKey: entry.sourceKey,
+            id: entry.id,
+            uiResourceGeneration: entry.uiResourceGeneration,
+            resourceDigest: entry.resourceDigest,
+          });
+          if (
+            !resource.ok ||
+            resource.value.version !== 2 ||
+            resource.value.resource.kind !== "status" ||
+            disposed ||
+            !input.runtime.current(owner) ||
+            !input.states.inScope(owner, binding, input.scope()) ||
+            scope.workbenchInstance !== input.scope().workbenchInstance
+          )
+            return false;
+          metadata.set(binding.panelInstance, {
+            owner,
+            binding: structuredClone(binding),
+            resource: resource.value.resource,
+            workbenchInstance: scope.workbenchInstance,
+            contextRef: null,
+            commands: new Map(),
+          });
+          return true;
+        }
+        cursor = page.value.nextCursor ?? undefined;
+      } while (cursor);
+      return false;
+    },
+    dataCurrent: (binding, expected) => {
+      const resolved = resolve(binding);
+      if (!resolved || binding.kind !== "panel" || !input.data) return false;
+      const snapshot = input.data.store.snapshot(resolved.owner, {
+        binding: { ...binding, kind: "panel" },
+      });
+      return (
+        snapshot.ok &&
+        expected.every((m) =>
+          snapshot.value.datasets.some(
+            (d) =>
+              d.dataset === m.dataset &&
+              d.revision === m.revision &&
+              d.presentation === m.presentation,
+          ),
+        )
+      );
+    },
     dataRead: async (params) => {
       const value = resolve(params.binding);
       return value && input.data

@@ -235,7 +235,7 @@ import { UiIntent } from "./ui-intent.js";
 import { UserPersistenceActions } from "./user-persistence-actions.js";
 import { EventLedger } from "../device-broker/registry.js";
 
-function executionFixture() {
+function executionFixture(version: 1 | 2 = 1) {
   const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
   const owner: ResourceOwner = {
     sourceKey: "development:fixture",
@@ -262,6 +262,7 @@ function executionFixture() {
   );
   const broker = { events: ledger };
   const { catalog, states, subscriptions } = createUiRegistry({
+    supportedResourceVersions: version === 2 ? [1, 2] : [1],
     hostEpoch: owner.hostEpoch,
     broker,
     now: () => now,
@@ -338,10 +339,33 @@ function executionFixture() {
     scope: () => scope,
   });
   const raw = JSON.stringify({
+    ...(version === 2
+      ? {
+          actions: [
+            {
+              id: "stop",
+              label: { en: "Stop" },
+              action: {
+                kind: "core",
+                action: "stopRecording",
+                reservation: { scope: "data", key: "reservation" },
+              },
+            },
+          ],
+        }
+      : {}),
     kind: "status",
     text: { text: { en: "Ready" } },
     tone: "neutral",
     data: {
+      ...(version === 2
+        ? {
+            reservation: {
+              schema: { type: "string", maxLength: 36, nullable: true },
+              initial: uuid(4),
+            },
+          }
+        : {}),
       value: {
         schema: { type: "number", min: 0, max: 10, integer: true, nullable: false },
         initial: 0,
@@ -358,7 +382,7 @@ function executionFixture() {
       {
         id: "test.ui.status",
         title: { en: "Status" },
-        resource: { version: 1, path: "status.json" },
+        resource: { version, path: "status.json" },
       },
     ],
   };
@@ -1878,5 +1902,56 @@ it("U08 saturated ordinary admission rejects hold begin but still stops and disp
     off();
     await fixture.dispose();
     if (begin) await begin;
+  }
+});
+
+it("v2 initialized status interaction recovers catalog metadata without opening or fabricating a panel", async () => {
+  const h = executionFixture(2);
+  try {
+    const descriptor = await h.load();
+    const resource = await h.catalog.resource(descriptor);
+    if (!resource.ok || resource.value.version !== 2) throw new Error("v2 resource");
+    const opened = await h.states.open({
+      ...resource.value,
+      id: descriptor.id,
+      scope: h.scope(),
+      activateInitialized: async () => h.context,
+    });
+    if (!opened.ok) throw new Error("initialized status");
+    const b = opened.value.binding;
+    expect(h.execution.resolve(b)).toBeNull();
+    const core = vi.fn<UiExecutionAdapter["core"]>(async () => ({
+      ok: true,
+      value: { output: {}, fieldErrors: [] },
+    }));
+    h.execution.core = core;
+    expect(await h.bridge.interact?.({ kind: "core", binding: b, actionId: "stop" })).toEqual({
+      ok: true,
+      value: { kind: "control", accepted: true },
+    });
+    expect(core).toHaveBeenCalledOnce();
+    expect(core.mock.calls[0]![0].state.data.reservation).toBe(
+      "00000000-0000-4000-8000-000000000004",
+    );
+    expect(core.mock.calls[0]![0].owner).toEqual(h.owner);
+    expect(h.runtime.activateInitialized).not.toHaveBeenCalled();
+    expect(h.runtime.ready).not.toHaveBeenCalled();
+    expect(
+      (
+        await h.bridge.interact?.({
+          kind: "core",
+          binding: { ...b, processEpoch: b.panelInstance },
+          actionId: "stop",
+        })
+      )?.ok,
+    ).toBe(false);
+    h.replace();
+    expect((await h.bridge.interact?.({ kind: "core", binding: b, actionId: "stop" }))?.ok).toBe(
+      false,
+    );
+    expect(core).toHaveBeenCalledOnce();
+  } finally {
+    disposePluginUiBridge(h.bridge);
+    h.dispose();
   }
 });

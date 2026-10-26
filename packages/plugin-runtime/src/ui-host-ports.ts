@@ -56,7 +56,54 @@ export type UiCatalogResourceValue = {
   | { version: 1; resource: PanelResourceV1 | StatusResourceV1 }
   | { version: 2; resource: UiResourceV2 }
 );
+export type UiInteractionView = {
+  generation: Counter;
+  dialogId: LocalId | null;
+  inspectView: "full" | "recent60s" | null;
+};
+export type UiPanelInteraction = {
+  binding: UiBinding;
+  nodeId: LocalId;
+  presentation: Counter;
+  viewGeneration: Counter;
+  formRevision: Counter;
+  form: Record<LocalId, Scalar>;
+};
+export type UiInteractionRequest =
+  | { kind: "viewState"; binding: UiBinding }
+  | { kind: "core"; binding: UiBinding; actionId: LocalId }
+  | (UiPanelInteraction &
+      (
+        | { kind: "action" }
+        | { kind: "row"; dataset: LocalId; revision: Counter; key: string }
+        | { kind: "list"; actionId: LocalId; dataset: LocalId; revision: Counter; key: string }
+        | { kind: "dialogConfirm" }
+        | { kind: "dialogClose" }
+        | { kind: "chartView"; view: "full" | "recent60s" }
+        | { kind: "cursor"; dataset: LocalId; revision: Counter; time: number | null }
+        | { kind: "codeCopy"; dataset: LocalId; revision: Counter }
+      ));
+export type UiInteractionValue =
+  | { kind: "view"; view: UiInteractionView }
+  | { kind: "control"; accepted: true }
+  | {
+      kind: "command";
+      invocationId: Handle;
+      presentation: Counter;
+      viewGeneration: Counter;
+      value: CommandValue;
+    }
+  | {
+      kind: "cursor";
+      invocationId: Handle;
+      presentation: Counter;
+      viewGeneration: Counter;
+      time: number;
+      output: Record<LocalId, number | null>;
+    };
+
 export interface PluginUiBridge {
+  interact?(input: UiInteractionRequest): Promise<Result<UiInteractionValue>>;
   dataRead(
     input: UiDataRequestMapV2["ui/dataRead"]["params"],
   ): Promise<UiDataRequestMapV2["ui/dataRead"]["result"]>;

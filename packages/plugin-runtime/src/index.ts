@@ -81,3 +81,11 @@ export { validateVersionedUiResource } from "./ui-resource-version.js";
 export type { VersionedUiResource } from "./ui-resource-version.js";
 
 export * from "./ui-data-host.js";
+
+export type {
+  UiInteractionView,
+  UiInteractionRequest,
+  UiInteractionValue,
+} from "./ui-host-ports.js";
+
+export { UiInteractions, uiInteractionRequestSchema } from "./ui-interactions.js";

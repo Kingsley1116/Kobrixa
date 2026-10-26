@@ -85,6 +85,7 @@ const api: KobrixaApi = {
       hold: (input) => ipcRenderer.invoke("plugins:ui:hold", input),
       pulse: (input) => ipcRenderer.invoke("plugins:ui:pulse", input),
       snapshot: (input) => ipcRenderer.invoke("plugins:ui:snapshot", input),
+      interact: (input) => ipcRenderer.invoke("plugins:ui:interact", input),
       dataRead: (input) => ipcRenderer.invoke("plugins:ui:data-read", input),
       dataSnapshot: (input) => ipcRenderer.invoke("plugins:ui:data-snapshot", input),
       reportFailure: (input) => ipcRenderer.invoke("plugins:ui:report-failure", input),

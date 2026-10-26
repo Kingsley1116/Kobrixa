@@ -1,3 +1,4 @@
+import { releaseUiRecording } from "./ui-bridge.js";
 import type {
   Permission as ImportedPermission,
   ResourceOwner as ImportedResourceOwner,
@@ -1660,15 +1661,29 @@ export async function composeDesktopMain(
           resolved.resource.kind === "panel"
             ? resolved.resource.nodes.find((value) => value.id === nodeId)
             : undefined;
-        if (
-          !node ||
-          node.type !== "action" ||
-          node.action.kind !== "core" ||
-          !runtime().current(resolved.owner)
-        )
-          return resourceFailure("stale");
-        const action = node.action;
-        if (action.action === "stopRecording") return resourceFailure("stale");
+        const action =
+          node?.type === "action" && node.action.kind === "core"
+            ? node.action
+            : resolved.resource.kind === "status" && "actions" in resolved.resource
+              ? resolved.resource.actions.find((value) => value.id === nodeId)?.action
+              : undefined;
+        if (!action || !runtime().current(resolved.owner)) return resourceFailure("stale");
+        if (action.action === "stopRecording")
+          return releaseUiRecording({
+            owner: resolved.owner,
+            reservation: resolved.state.data[action.reservation.key],
+            principal: () => input.principal(resolved.owner),
+            current: () => {
+              const current = execution.resolve(resolved.state.binding);
+              return (
+                !!current &&
+                runtime().current(resolved.owner) &&
+                sameResourceOwner(current.owner, resolved.owner) &&
+                current.resource === resolved.resource
+              );
+            },
+            request: broker.request.bind(broker),
+          });
         if (action.action === "openRecovery") {
           navigateRecovery();
           return { ok: true, value: { output: {}, fieldErrors: [] } };
@@ -1677,6 +1692,14 @@ export async function composeDesktopMain(
           let cursor: string | undefined;
           do {
             const page = await catalog.catalog(cursor ? { cursor } : {});
+            const current = execution.resolve(resolved.state.binding);
+            if (
+              !current ||
+              !runtime().current(resolved.owner) ||
+              !sameResourceOwner(current.owner, resolved.owner) ||
+              current.resource !== resolved.resource
+            )
+              return resourceFailure("stale");
             if (!page.ok) return page;
             const entry = page.value.entries.find(
               (value) =>
