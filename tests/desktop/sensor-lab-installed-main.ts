@@ -672,7 +672,7 @@ export function runInstalledLab(): void {
         checkpoints.copy = {
           at: wall(),
           params: copied.request.message.params,
-          text: clipboard.readText(),
+          text: await clipboard.readText(),
           displayed,
         };
         assert.equal(
