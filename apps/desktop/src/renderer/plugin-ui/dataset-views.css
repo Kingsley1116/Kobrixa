@@ -24,6 +24,26 @@
   max-width: 100%;
   overflow: auto;
 }
+.plugin-dataset-dialog {
+  box-sizing: border-box;
+  width: min(64rem, calc(100vw - 2rem));
+  max-width: calc(100vw - 2rem);
+  max-height: calc(100dvh - 2rem);
+  overflow: auto;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid currentColor;
+  padding: 1rem;
+}
+.plugin-dataset-dialog::backdrop {
+  background: rgb(0 0 0 / 45%);
+}
+.plugin-dataset-dialog > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
 .plugin-dataset-table table {
   width: 100%;
   border-collapse: collapse;

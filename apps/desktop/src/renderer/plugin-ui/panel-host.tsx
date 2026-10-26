@@ -81,6 +81,7 @@ export function PluginToolsPane({
             >
               <PanelTree
                 {...(record.datasets ? { datasets: record.datasets } : {})}
+                {...(record.interactions ? { interactions: record.interactions } : {})}
                 state={record.state}
                 intent={record.intent}
                 locale={locale}

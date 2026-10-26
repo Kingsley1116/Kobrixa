@@ -1,4 +1,6 @@
 import { DatasetNodeView } from "./dataset-node.js";
+import { DatasetDialog } from "./dataset-dialog.js";
+import type { UiInteractionStore, InteractionView } from "./interaction-store.js";
 import type { UiDatasetStore } from "./data-store.js";
 import { CompositionInput, composingKey } from "./composition-input.js";
 import { translated } from "./recovery-support.js";
@@ -16,6 +18,15 @@ import type { DisplayText, DisplayValue, Text, UiScalar } from "@kobrixa/plugin-
 import type { UiLabels } from "./host-ports.js";
 import { condition, numericDraft, type UiStateStore } from "./state-store.js";
 import type { UiIntentController } from "./intent-controller.js";
+const noInteraction: InteractionView = {
+  view: null,
+  busy: false,
+  requestedCursor: null,
+  readings: null,
+  problem: null,
+};
+const noInteractionSnapshot = () => noInteraction;
+const noInteractionSubscribe = () => () => {};
 
 export function displayText(
   value: DisplayText,
@@ -67,13 +78,20 @@ export function PanelTree({
   locale,
   labels,
   datasets,
+  interactions,
 }: {
   state: UiStateStore;
   intent: UiIntentController;
   locale: "en" | "zh-TW";
   labels: UiLabels;
   datasets?: UiDatasetStore;
+  interactions?: UiInteractionStore;
 }) {
+  const interaction = useSyncExternalStore(
+    interactions?.subscribe ?? noInteractionSubscribe,
+    interactions?.getSnapshot ?? noInteractionSnapshot,
+    interactions?.getSnapshot ?? noInteractionSnapshot,
+  );
   const view = useSyncExternalStore(state.subscribe, state.getSnapshot, state.getSnapshot);
   useLayoutEffect(
     () => state.renderCommitted(view.snapshot.revision),
@@ -81,7 +99,7 @@ export function PanelTree({
   );
   const root = useRef<HTMLDivElement>(null);
   const focus = useRef<{ element: HTMLElement; groups: string[] } | null>(null);
-  const presentation = state.presentation();
+  const presentation = state.presentation(interaction.view?.dialogId);
   const nodes = new Map(state.resource.nodes.map((node) => [node.id, node]));
   useEffect(() => {
     const up = (event: PointerEvent) => intent.release("pointer", String(event.pointerId), false);
@@ -312,9 +330,22 @@ export function PanelTree({
         content = (
           <button
             id={domId}
-            disabled={!state.actionEnabled(node.id)}
+            disabled={
+              node.action.kind === "core"
+                ? !state.actionEnabled(node.id)
+                : interactions
+                  ? disabled ||
+                    interaction.busy ||
+                    !interaction.view ||
+                    (node.action.kind !== "view" && (!state.valid() || view.busy))
+                  : !state.actionEnabled(node.id)
+            }
             data-variant={node.variant}
-            onClick={() => void state.invoke(node.id)}
+            onClick={() => {
+              if (interactions && node.action.kind !== "core")
+                void interactions.act({ kind: "action", nodeId: node.id });
+              else void state.invoke(node.id);
+            }}
           >
             {text(node.label)}
           </button>
@@ -417,7 +448,14 @@ export function PanelTree({
         if (!datasets || !("datasets" in state.resource))
           throw new Error("Dataset cache unavailable");
         content = (
-          <DatasetNodeView node={node} resource={state.resource} store={datasets} locale={locale} />
+          <DatasetNodeView
+            node={node}
+            resource={state.resource}
+            store={datasets}
+            locale={locale}
+            enabled={!disabled && !view.busy}
+            {...(interactions ? { interactions } : {})}
+          />
         );
         break;
       case "dialog":
@@ -462,6 +500,39 @@ export function PanelTree({
       }}
     >
       {render(state.resource.root)}
+      {interaction.view?.dialogId &&
+        (() => {
+          const node = nodes.get(interaction.view.dialogId);
+          if (!node || node.type !== "dialog" || !interactions) return null;
+          return (
+            <DatasetDialog
+              key={node.id}
+              label={text(node.label)}
+              closeLabel={labels.close}
+              onClose={() => {
+                void interactions.act({ kind: "dialogClose", nodeId: node.id });
+              }}
+            >
+              {node.children.map(render)}
+              {node.confirm && (
+                <button
+                  type="button"
+                  disabled={interaction.busy || !view.active || !state.valid()}
+                  onClick={() => {
+                    void interactions.act({ kind: "dialogConfirm", nodeId: node.id });
+                  }}
+                >
+                  {text(node.confirm.label)}
+                </button>
+              )}
+            </DatasetDialog>
+          );
+        })()}
+      {interaction.problem && (
+        <p role="alert">
+          {labels.unavailable}: {interaction.problem}
+        </p>
+      )}
       {!state.valid() && <p role="status">{labels.invalid}</p>}
       {view.problem && (
         <p role="alert">

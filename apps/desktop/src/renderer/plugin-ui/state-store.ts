@@ -12,6 +12,7 @@ import type {
   UiScalar,
   ValueSpec,
   UiNodeV2,
+  CommandValue,
   Text,
   ResourceOwner,
 } from "@kobrixa/plugin-protocol";
@@ -262,7 +263,7 @@ export class UiStateStore {
       problem: null,
     });
   }
-  presentation(): Map<string, { visible: boolean; enabled: boolean }> {
+  presentation(dialogId?: string | null): Map<string, { visible: boolean; enabled: boolean }> {
     const result = new Map<string, { visible: boolean; enabled: boolean }>();
     const nodes = new Map(this.resource.nodes.map((node) => [node.id, node]));
     const walk = (id: string, visible: boolean, enabled: boolean): void => {
@@ -273,10 +274,11 @@ export class UiStateStore {
         enabled: enabled && condition(node.enabledWhen, this.view.snapshot.data, this.view.draft),
       };
       result.set(id, state);
-      if (node.type === "group")
+      if (node.type === "group" || node.type === "dialog")
         node.children.forEach((child) => walk(child, state.visible, state.enabled));
     };
     walk(this.resource.root, true, true);
+    if (dialogId) walk(dialogId, true, true);
     return result;
   }
   nodeEnabled(id: string): boolean {
@@ -334,7 +336,7 @@ export class UiStateStore {
     return (
       node?.type === "action" &&
       node.action.kind === "core" &&
-      ["stop", "disconnect", "openRecovery"].includes(node.action.action)
+      ["stop", "stopRecording", "disconnect", "openRecovery"].includes(node.action.action)
     );
   }
   actionEnabled(id: string): boolean {
@@ -395,6 +397,17 @@ export class UiStateStore {
   }
   actionFinished(): void {
     if (this.view.active) this.publish({ busy: false });
+  }
+  applyCommandValue(value: CommandValue, nodeId: string): void {
+    if (!this.view.active) return;
+    this.publish({
+      errors: Object.fromEntries(
+        value.fieldErrors
+          .filter((error) => Object.hasOwn(this.resource.fields, error.field))
+          .map((error) => [error.field, error.message]),
+      ),
+    });
+    if (value.fieldErrors.length === 0) this.onAccepted(nodeId);
   }
   form() {
     return {

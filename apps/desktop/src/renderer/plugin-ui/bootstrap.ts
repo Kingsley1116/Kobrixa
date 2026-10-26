@@ -15,11 +15,13 @@ import { contributionKey, send, UiCatalogStore } from "./catalog-store.js";
 import { bindingKey, UiStateStore } from "./state-store.js";
 import { UiIntentController } from "./intent-controller.js";
 import { UiDatasetStore } from "./data-store.js";
+import { UiInteractionStore } from "./interaction-store.js";
 import { DraftCache } from "./draft-cache.js";
 export type PanelRecord = {
   entry: UiCatalogEntry;
   resource: PanelResourceV1 | StatusResourceV1 | UiResourceV2;
   datasets?: UiDatasetStore;
+  interactions?: UiInteractionStore;
   detachDatasets?: () => void;
   state: UiStateStore;
   intent: UiIntentController;
@@ -107,6 +109,7 @@ export class RendererSession {
   private pane = false;
   private selected: string | null = null;
   private recoveryRequest = 0;
+  private toolsRequest = 0;
   private documentVisible = true;
   private focused = true;
   constructor(readonly bridge: PluginUiBridge) {
@@ -158,7 +161,42 @@ export class RendererSession {
   selectedKey(): string | null {
     return this.selected;
   }
+  async statusAction(entry: UiCatalogEntry, actionId: string): Promise<void> {
+    const record = this.record(entry);
+    if (
+      !record ||
+      record.resource.kind !== "status" ||
+      !("actions" in record.resource) ||
+      !this.bridge.interact ||
+      !this.catalog.current(entry)
+    )
+      return;
+    const action = record.resource.actions.find((item) => item.id === actionId)?.action;
+    if (!action) return;
+    const binding = record.state.form().binding;
+    const result = await record.state.actionReply(
+      this.bridge.interact({ kind: "core", binding, actionId }),
+    );
+    if (!result.ok) throw new Error(result.error.code);
+    if (this.dead || this.record(entry) !== record || !record.state.getSnapshot().active) return;
+    if (action.action === "openPanel") {
+      const target = this.catalog
+        .getSnapshot()
+        .entries.find(
+          (item) =>
+            item.sourceKey === entry.sourceKey &&
+            item.id === action.panelId &&
+            item.kind === "panel",
+        );
+      if (target) {
+        this.toolsRequest++;
+        this.publish();
+        await this.open(target);
+      }
+    }
+  }
   getRecoveryRequest = (): number => this.recoveryRequest;
+  getToolsRequest = (): number => this.toolsRequest;
   statusUnavailable(entry: UiCatalogEntry): boolean {
     return this.unavailableStatus.has(contributionKey(entry));
   }
@@ -325,6 +363,7 @@ export class RendererSession {
             read: (params) => this.bridge.dataRead(params),
           });
           record.datasets = datasets;
+          record.interactions = new UiInteractionStore(this.bridge, state, datasets, resource);
           const sync = () => {
             if (!state.getSnapshot().active) {
               datasets.retire();

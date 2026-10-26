@@ -81,7 +81,7 @@ export function DatasetChart({
   view?: TimeViewV2;
   cursor: number | null;
   enabled: boolean;
-  onCursor?: (time: number) => void;
+  onCursor?: (time: number | null) => void;
 }) {
   const clip = useId();
   const [from, to] = effectiveTimeDomainV2(header, view);
@@ -191,7 +191,22 @@ export function DatasetChart({
               if (enabled && Number.isFinite(value) && value >= from && value <= to)
                 onCursor(value);
             }}
+            onKeyDown={(event) => {
+              if (!enabled) return;
+              const delta = ["ArrowRight", "ArrowUp"].includes(event.key)
+                ? 100
+                : ["ArrowLeft", "ArrowDown"].includes(event.key)
+                  ? -100
+                  : 0;
+              if (delta) {
+                event.preventDefault();
+                onCursor(Math.min(to, Math.max(from, selected + delta)));
+              }
+            }}
           />
+          <button type="button" disabled={!enabled} onClick={() => onCursor(null)}>
+            {zh ? "跟隨最新" : "Follow latest"}
+          </button>
         </label>
       )}
     </figure>
@@ -206,6 +221,7 @@ export function DatasetTable({
   revision,
   enabled,
   onSelect,
+  actions = [],
 }: {
   label: string;
   declaration: TableDeclaration;
@@ -214,6 +230,11 @@ export function DatasetTable({
   revision: number;
   enabled: boolean;
   onSelect?: (selection: { key: string; version: string | null; revision: number }) => void;
+  actions?: readonly {
+    id: string;
+    label: string;
+    select(selection: { key: string; revision: number }): void;
+  }[];
 }) {
   const zh = locale === "zh-TW";
   return (
@@ -227,7 +248,7 @@ export function DatasetTable({
                 {translated(column.label, locale)}
               </th>
             ))}
-            {onSelect && <th scope="col">{zh ? "動作" : "Action"}</th>}
+            {(onSelect || actions.length > 0) && <th scope="col">{zh ? "動作" : "Action"}</th>}
           </tr>
         </thead>
         <tbody>
@@ -248,16 +269,29 @@ export function DatasetTable({
                       : String(cell)}
                 </td>
               ))}
-              {onSelect && (
+              {(onSelect || actions.length > 0) && (
                 <td>
-                  <button
-                    type="button"
-                    disabled={!enabled}
-                    aria-label={`${zh ? "選取" : "Select"}: ${row.key}`}
-                    onClick={() => onSelect({ key: row.key, version: row.version, revision })}
-                  >
-                    {zh ? "選取" : "Select"}
-                  </button>
+                  {onSelect && (
+                    <button
+                      type="button"
+                      disabled={!enabled}
+                      aria-label={`${zh ? "選取" : "Select"}: ${row.key}`}
+                      onClick={() => onSelect({ key: row.key, version: row.version, revision })}
+                    >
+                      {zh ? "選取" : "Select"}
+                    </button>
+                  )}
+                  {actions.map((action) => (
+                    <button
+                      key={action.id}
+                      type="button"
+                      disabled={!enabled}
+                      aria-label={`${action.label}: ${row.key}`}
+                      onClick={() => action.select({ key: row.key, revision })}
+                    >
+                      {action.label}
+                    </button>
+                  ))}
                 </td>
               )}
             </tr>

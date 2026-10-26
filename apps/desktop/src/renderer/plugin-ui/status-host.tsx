@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useState, useSyncExternalStore } from "react";
-import type { StatusResourceV1, UiCatalogEntry } from "@kobrixa/plugin-protocol";
+import type { StatusResourceV1, StatusResourceV2, UiCatalogEntry } from "@kobrixa/plugin-protocol";
 import { assertRenderable, type RendererSession, type PanelRecord } from "./bootstrap.js";
 import { contributionKey } from "./catalog-store.js";
 import { condition } from "./state-store.js";
@@ -10,12 +10,16 @@ function BoundStatus({
   resource,
   locale,
   labels,
+  onAction,
 }: {
   record: PanelRecord;
-  resource: StatusResourceV1;
+  resource: StatusResourceV1 | StatusResourceV2;
   locale: "en" | "zh-TW";
   labels: UiLabels;
+  onAction(actionId: string): Promise<void>;
 }) {
+  const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
+  const [problem, setProblem] = useState(false);
   const view = useSyncExternalStore(record.state.subscribe, record.state.getSnapshot);
   useLayoutEffect(
     () => record.state.renderCommitted(view.snapshot.revision),
@@ -26,6 +30,30 @@ function BoundStatus({
   return (
     <span data-tone={resource.tone}>
       <LiveText text={displayText(resource.text, view.snapshot.data, locale)} />
+      {"actions" in resource &&
+        resource.actions.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            disabled={
+              pending.has(item.id) ||
+              (item.action.action === "stopRecording" &&
+                typeof view.snapshot.data[item.action.reservation.key] !== "string")
+            }
+            onClick={() => {
+              setPending((previous) => new Set([...previous, item.id]));
+              setProblem(false);
+              void onAction(item.id)
+                .catch(() => setProblem(true))
+                .finally(() =>
+                  setPending((previous) => new Set([...previous].filter((id) => id !== item.id))),
+                );
+            }}
+          >
+            {translated(item.label, locale)}
+          </button>
+        ))}
+      {problem && <span role="alert">{labels.unavailable}</span>}
     </span>
   );
 }
@@ -57,7 +85,7 @@ function StatusItem({
   locale: "en" | "zh-TW";
   labels: UiLabels;
 }) {
-  const [resource, setResource] = useState<StatusResourceV1 | null>(null);
+  const [resource, setResource] = useState<StatusResourceV1 | StatusResourceV2 | null>(null);
   useSyncExternalStore(session.subscribe, session.getSnapshot);
   useEffect(() => {
     let live = true;
@@ -67,7 +95,12 @@ function StatusItem({
         if (!live || !session.catalog.current(entry)) return;
         try {
           if (value?.resource.kind === "status") {
-            assertRenderable(value.resource, value.validationContext, value.rawBytes);
+            assertRenderable(
+              value.resource,
+              value.validationContext,
+              value.rawBytes,
+              value.version,
+            );
             setResource(value.resource);
           }
         } catch {
@@ -100,7 +133,13 @@ function StatusItem({
     >
       <span title={translated(entry.title, locale)}>
         {record ? (
-          <BoundStatus record={record} resource={resource} locale={locale} labels={labels} />
+          <BoundStatus
+            record={record}
+            resource={resource}
+            locale={locale}
+            labels={labels}
+            onAction={(actionId) => session.statusAction(entry, actionId)}
+          />
         ) : (
           <InitialStatus resource={resource} locale={locale} />
         )}

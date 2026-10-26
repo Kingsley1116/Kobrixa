@@ -1,0 +1,342 @@
+// @vitest-environment jsdom
+import { act, createElement } from "react";
+import { createRoot } from "react-dom/client";
+import { PanelTree } from "./components.js";
+import { UiIntentController } from "./intent-controller.js";
+import { afterEach, expect, it, vi } from "vitest";
+import type { PanelResourceV2 } from "@kobrixa/plugin-protocol";
+import type {
+  PluginUiBridge,
+  UiInteractionRequest,
+  UiInteractionValue,
+} from "@kobrixa/plugin-runtime";
+import { UiInteractionStore } from "./interaction-store.js";
+import { UiStateStore } from "./state-store.js";
+import { UiDatasetStore } from "./data-store.js";
+import { binding, deferred, fixture, snapshot, labels } from "./contract.test.js";
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+afterEach(() => {
+  vi.useRealTimers();
+  document.body.replaceChildren();
+});
+function setup() {
+  const f = fixture();
+  const panel: PanelResourceV2 = {
+    kind: "panel",
+    root: "root",
+    fields: {},
+    data: {
+      presentation: {
+        schema: {
+          type: "number",
+          min: 0,
+          max: Number.MAX_SAFE_INTEGER,
+          integer: true,
+          nullable: false,
+        },
+        initial: 0,
+      },
+    },
+    presentationKey: "presentation",
+    datasets: {
+      plot: { kind: "chart", series: [{ id: "raw", label: { en: "Raw" } }] },
+      code: { kind: "code" },
+    },
+    nodes: [
+      { id: "root", type: "group", layout: "stack", children: ["chart", "code"] },
+      {
+        id: "code",
+        type: "code",
+        label: { en: "Code" },
+        dataset: "code",
+        copy: { command: "acme.ui.copy", arguments: {} },
+      },
+      {
+        id: "inspect",
+        type: "dialog",
+        label: { en: "Inspect" },
+        children: ["hint", "close-inspect"],
+      },
+      {
+        id: "close-inspect",
+        type: "action",
+        variant: "normal",
+        label: { en: "Close inspection" },
+        action: { kind: "view", action: "closeDialog", dialogId: "inspect" },
+      },
+      { id: "hint", type: "help", value: { text: { en: "Inspect" } } },
+      {
+        id: "chart",
+        type: "lineChart",
+        label: { en: "Chart" },
+        dataset: "plot",
+        cursorGroup: "g",
+        timeView: "default",
+        onCursor: {
+          command: "acme.ui.cursor",
+          arguments: {},
+          timeArg: "time",
+          presentationArg: "presentation",
+          readings: [{ dataset: "plot", series: "raw", rawKey: "raw", valueKey: "value" }],
+        },
+      },
+    ],
+  };
+  const initial = { ...snapshot(), form: {}, visible: true, data: { presentation: 1 } };
+  f.bridge.snapshot.mockResolvedValue({ ok: true, value: initial });
+  const state = new UiStateStore(f.bridge, panel, initial);
+  const data = new UiDatasetStore(binding, panel.datasets, {
+    snapshot: async () => ({ ok: true, value: { datasets: [] } }),
+    read: async () => {
+      throw new Error("not read by interaction controller");
+    },
+  });
+  data.setPresentation(1);
+  vi.spyOn(data, "revision").mockReturnValue(1);
+  let generation = 1;
+  const interact = vi.fn<NonNullable<PluginUiBridge["interact"]>>(async (request) => {
+    if (request.kind === "viewState")
+      return {
+        ok: true,
+        value: { kind: "view", view: { generation, dialogId: null, inspectView: null } },
+      };
+    return { ok: false, error: { code: "PLUGIN_E_STALE_RESOURCE", message: "stale" } };
+  });
+  const store = new UiInteractionStore({ interact }, state, data, panel);
+  const cursor = (time: number | null) => store.cursor("chart", "plot", time);
+  const calls = () =>
+    interact.mock.calls
+      .map(([r]) => r)
+      .filter((r): r is Extract<UiInteractionRequest, { kind: "cursor" }> => r.kind === "cursor");
+  return { ...f, store, state, data, interact, cursor, calls, nextGeneration: () => generation++ };
+}
+const reply = (
+  request: Extract<UiInteractionRequest, { kind: "cursor" }>,
+  value: number,
+): { ok: true; value: UiInteractionValue } => ({
+  ok: true,
+  value: {
+    kind: "cursor",
+    invocationId: "00000000-0000-4000-8000-000000000010",
+    presentation: request.presentation,
+    viewGeneration: request.viewGeneration,
+    time: request.time ?? 1000,
+    output: { raw: value, value },
+  },
+});
+it("coalesces cursor work to the latest request and discards an older in-flight result", async () => {
+  vi.useFakeTimers();
+  const f = setup();
+  await f.store.refresh();
+  const pending = deferred<Awaited<ReturnType<NonNullable<PluginUiBridge["interact"]>>>>();
+  f.interact.mockImplementationOnce(() => pending.promise);
+  f.cursor(100);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(f.calls()).toHaveLength(1);
+  f.cursor(200);
+  f.cursor(300);
+  await vi.advanceTimersByTimeAsync(500);
+  expect(f.calls()).toHaveLength(1);
+  pending.resolve(reply(f.calls()[0]!, 100));
+  f.interact.mockImplementationOnce(async (request) => {
+    if (request.kind !== "cursor") throw new Error("cursor");
+    return reply(request, 300);
+  });
+  await vi.advanceTimersByTimeAsync(1);
+  expect(f.calls()).toHaveLength(2);
+  expect(f.calls()[1]!.time).toBe(300);
+  expect(f.store.getSnapshot().readings).toEqual({ raw: 300, value: 300 });
+  expect(f.state.getSnapshot().busy).toBe(false);
+  expect(f.bridge.invoke).not.toHaveBeenCalled();
+  f.store.dispose();
+  f.state.retire();
+  f.data.retire();
+});
+it("limits burst starts to 100ms and never turns cursor requests into action authority", async () => {
+  vi.useFakeTimers();
+  const f = setup();
+  await f.store.refresh();
+  f.interact.mockImplementation(async (request) =>
+    request.kind === "cursor"
+      ? reply(request, 1)
+      : {
+          ok: true,
+          value: { kind: "view", view: { generation: 1, dialogId: null, inspectView: null } },
+        },
+  );
+  f.cursor(null);
+  await vi.advanceTimersByTimeAsync(0);
+  for (let n = 0; n < 20; n++) f.cursor(n);
+  await vi.advanceTimersByTimeAsync(99);
+  expect(f.calls()).toHaveLength(1);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(f.calls()).toHaveLength(2);
+  expect(f.calls()[1]!.time).toBe(19);
+  expect(f.calls()[0]).not.toHaveProperty("actionRef");
+  expect(f.calls()[0]).not.toHaveProperty("motionScopeRef");
+  expect(f.calls()[0]!.formRevision).toBe(f.state.getSnapshot().snapshot.formRevision);
+  f.store.dispose();
+  f.state.retire();
+  f.data.retire();
+});
+it.each(["hide", "retire", "presentation"] as const)(
+  "ignores a pending cursor after %s",
+  async (change) => {
+    vi.useFakeTimers();
+    const f = setup();
+    await f.store.refresh();
+    const pending = deferred<Awaited<ReturnType<NonNullable<PluginUiBridge["interact"]>>>>();
+    f.interact.mockImplementationOnce(() => pending.promise);
+    f.cursor(200);
+    await vi.advanceTimersByTimeAsync(0);
+    const request = f.calls()[0]!;
+    if (change === "hide") f.state.setVisible(false);
+    else if (change === "retire") f.state.retire();
+    else {
+      f.nextGeneration();
+      f.data.setPresentation(2);
+    }
+    pending.resolve(reply(request, 999));
+    await vi.advanceTimersByTimeAsync(1);
+    expect(f.store.getSnapshot().readings).toBeNull();
+    f.store.dispose();
+    f.state.retire();
+    f.data.retire();
+  },
+);
+it("does not accept non-finite cursor output", async () => {
+  vi.useFakeTimers();
+  const f = setup();
+  await f.store.refresh();
+  f.interact.mockImplementationOnce(async (request) => {
+    if (request.kind !== "cursor") throw new Error("cursor");
+    return reply(request, Infinity);
+  });
+  f.cursor(100);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(f.store.getSnapshot().readings).toBeNull();
+  f.store.dispose();
+  f.state.retire();
+  f.data.retire();
+});
+it.each(["reply", "rejection"] as const)(
+  "closing a dialog bypasses a pending command and suppresses its late %s",
+  async (outcome) => {
+    const f = setup();
+    await f.store.refresh();
+    const pending = deferred<Awaited<ReturnType<NonNullable<PluginUiBridge["interact"]>>>>();
+    let reject!: (reason: Error) => void;
+    const rejected = new Promise<never>((_resolve, fail) => {
+      reject = fail;
+    });
+    const accepted = vi.fn();
+    f.state.onAccepted = accepted;
+    f.interact.mockImplementation(async (request) => {
+      if (request.kind === "viewState")
+        return {
+          ok: true,
+          value: {
+            kind: "view",
+            view: { generation: 1, dialogId: "inspect", inspectView: "full" },
+          },
+        };
+      if (request.kind === "codeCopy") return outcome === "rejection" ? rejected : pending.promise;
+      if (request.kind === "dialogClose")
+        return {
+          ok: true,
+          value: { kind: "view", view: { generation: 2, dialogId: null, inspectView: null } },
+        };
+      throw new Error("Unexpected interaction");
+    });
+    const command = f.store.act({ kind: "codeCopy", nodeId: "code", dataset: "code", revision: 1 });
+    await vi.waitFor(() =>
+      expect(f.interact.mock.calls.some(([request]) => request.kind === "codeCopy")).toBe(true),
+    );
+    await f.store.act({ kind: "dialogClose", nodeId: "inspect" });
+    expect(f.store.getSnapshot().view?.dialogId).toBeNull();
+    expect(f.interact.mock.calls.some(([request]) => request.kind === "dialogClose")).toBe(true);
+    if (outcome === "rejection") reject(new Error("late command failure"));
+    else
+      pending.resolve({
+        ok: true,
+        value: {
+          kind: "command",
+          invocationId: binding.panelInstance,
+          presentation: 1,
+          viewGeneration: 1,
+          value: { output: {}, fieldErrors: [] },
+        },
+      });
+    await command;
+    expect(accepted).not.toHaveBeenCalled();
+    expect(f.store.getSnapshot().problem).toBeNull();
+    f.store.dispose();
+    f.state.retire();
+    f.data.retire();
+  },
+);
+
+it("keeps the actual dialog and its focused control mounted while data refresh is pending", async () => {
+  const f = setup();
+  const hostView = { generation: 2, dialogId: "inspect", inspectView: "full" as const };
+  f.interact.mockResolvedValue({ ok: true, value: { kind: "view", view: hostView } });
+  await f.store.refresh();
+  const intent = new UiIntentController(f.bridge, f.state);
+  const div = document.createElement("div");
+  document.body.append(div);
+  const root = createRoot(div);
+  try {
+    await act(async () =>
+      root.render(
+        createElement(PanelTree, {
+          state: f.state,
+          intent,
+          locale: "en",
+          labels,
+          datasets: f.data,
+          interactions: f.store,
+        }),
+      ),
+    );
+    const dialog = div.querySelector("dialog")!;
+    const focused = dialog.querySelectorAll("button")[1]!;
+    focused.focus();
+    const pending = deferred<Awaited<ReturnType<NonNullable<PluginUiBridge["interact"]>>>>();
+    f.interact.mockImplementationOnce(() => pending.promise);
+    await act(async () => {
+      f.data.setPresentation(2);
+    });
+    expect(div.querySelector("dialog")).toBe(dialog);
+    expect(document.activeElement).toBe(focused);
+    await act(async () =>
+      pending.resolve({ ok: true, value: { kind: "view", view: { ...hostView, generation: 3 } } }),
+    );
+    expect(div.querySelector("dialog")).toBe(dialog);
+    expect(document.activeElement).toBe(focused);
+  } finally {
+    await act(async () => root.unmount());
+    intent.dispose();
+    f.store.dispose();
+    f.state.retire();
+    f.data.retire();
+  }
+});
+it("ignores a cursor rejection after a newer position is queued", async () => {
+  vi.useFakeTimers();
+  const f = setup();
+  await f.store.refresh();
+  let reject!: (error: Error) => void;
+  const pending = new Promise<never>((_resolve, fail) => {
+    reject = fail;
+  });
+  f.interact.mockImplementationOnce(() => pending);
+  f.cursor(100);
+  await vi.advanceTimersByTimeAsync(0);
+  f.cursor(200);
+  reject(new Error("obsolete"));
+  await vi.advanceTimersByTimeAsync(0);
+  expect(f.store.getSnapshot().problem).toBeNull();
+  f.store.dispose();
+  f.state.retire();
+  f.data.retire();
+});

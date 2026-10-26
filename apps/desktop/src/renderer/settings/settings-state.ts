@@ -61,7 +61,12 @@ export function createPluginUiWindow(input: {
       next.rightPanel === null ? "collapse" : "sidebar",
     );
   const offTransition = input.settings.beforeChange(sync);
+  let toolsRequest = session.getToolsRequest();
   const offSelection = session.subscribe(() => {
+    if (session.getToolsRequest() !== toolsRequest) {
+      toolsRequest = session.getToolsRequest();
+      input.settings.set("rightPanel", "plugins");
+    }
     const key = session.selectedKey();
     if (!key) return;
     try {
