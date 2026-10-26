@@ -73,7 +73,16 @@ export function permitsRetainedPersistenceRequest(
 ): boolean {
   return retainedRouteChecks.get(host)?.(principal, method, params) ?? false;
 }
+/** Metadata-only host admission. Implementations must check safe/disabled/source eligibility
+ * without starting a process or reading optional resources. The owner is a trusted
+ * host namespace identity, not a fabricated plugin principal or window binding. */
+export type HostSettingsNamespace = Readonly<{
+  owner: ResourceOwner;
+  resourceDigest: Sha256;
+  uiResourceGeneration: number;
+}>;
 export interface PersistenceSourcePort {
+  settingsNamespace?(sourceKey: string): HostSettingsNamespace | null;
   current(owner: ResourceOwner): boolean;
   settings(input: { sourceKey: string; resourceDigest: Sha256 }): Promise<{
     owner: UiOwner;

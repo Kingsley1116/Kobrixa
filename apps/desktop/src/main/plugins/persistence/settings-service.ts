@@ -6,7 +6,7 @@ import type {
 import { ownerKey } from "./engine-port.js";
 import { validateSettingsResource } from "../../../../../../packages/plugin-protocol/src/persistence-validation.js";
 import type { PersistenceBackend } from "./engine-port.js";
-import type { PersistenceSourcePort } from "./host-port.js";
+import type { HostSettingsNamespace, PersistenceSourcePort } from "./host-port.js";
 
 import { createHash, randomUUID } from "node:crypto";
 import type {
@@ -169,6 +169,7 @@ export function createSettingsService(deps: SettingsDependencies) {
     } catch (error) {
       throw isFailure(error) ? error : settingsFailure("PLUGIN_E_SETTINGS_SAVE", "io");
     }
+    await current();
     if (!migration && stored) {
       if (stored.schemaVersion !== loaded.resource.schemaVersion)
         throw settingsFailure(
@@ -683,7 +684,16 @@ export function settingsRequests(backend: PersistenceBackend) {
 function makeSettingsComposition(input: CompositionInput) {
   const admitted = new Map<string, { digest: string; resolved: ResolvedSettings }>();
   const subscriptions = new Map<Handle, ResourceOwner>();
-  const listeners = new Map<string, Set<() => void>>();
+  const listeners = new Map<string, Set<(reason: "committed" | "retired") => void>>();
+  function notify(sourceKey: string, reason: "committed" | "retired") {
+    for (const listener of [...(listeners.get(sourceKey) ?? [])]) {
+      try {
+        listener(reason);
+      } catch {
+        /* Observer failure never changes a receipt. */
+      }
+    }
+  }
   let disposed = false;
   let bound: BoundSettingsService | undefined;
   let closeForm = (_sourceKey?: string) => {};
@@ -691,6 +701,20 @@ function makeSettingsComposition(input: CompositionInput) {
   const requireLive = () => {
     if (disposed) throw new Error("Settings service disposed.");
   };
+  function hostCurrent(namespace: HostSettingsNamespace, importReady: () => boolean): boolean {
+    try {
+      if (disposed || !importReady()) return false;
+      const value = input.sources.settingsNamespace?.(namespace.owner.sourceKey);
+      return (
+        !!value &&
+        ownerKey(value.owner) === ownerKey(namespace.owner) &&
+        value.resourceDigest === namespace.resourceDigest &&
+        value.uiResourceGeneration === namespace.uiResourceGeneration
+      );
+    } catch {
+      return false;
+    }
+  }
   const service = createSettingsService({
     now: input.now,
     allowed: (principal) =>
@@ -736,13 +760,7 @@ function makeSettingsComposition(input: CompositionInput) {
         return result.value.subscriptionId;
       },
       changed(owner, event) {
-        for (const listener of listeners.get(owner.sourceKey) ?? []) {
-          try {
-            listener();
-          } catch {
-            /* Local observers do not own public subscriptions. */
-          }
-        }
+        notify(owner.sourceKey, "committed");
         for (const [id, subscriber] of subscriptions) {
           if (subscriber.sourceKey !== owner.sourceKey) continue;
           const result = input.events.publish(
@@ -785,6 +803,7 @@ function makeSettingsComposition(input: CompositionInput) {
     retire(sourceKey: string) {
       closeForm(sourceKey);
       admitted.delete(sourceKey);
+      notify(sourceKey, "retired");
       for (const [id, owner] of subscriptions) {
         if (owner.sourceKey !== sourceKey) continue;
         input.events.unsubscribe(owner, id);
@@ -824,9 +843,64 @@ function makeSettingsComposition(input: CompositionInput) {
           throw new Error("Stale settings catalog.");
       });
     },
+    /** No window/process admission and no write authority. Import readiness is a
+     * synchronous fence supplied by the host's completed migration gate. */
+    hostCurrent,
+    async hostSnapshot(sourceKey: string, importReady: () => boolean) {
+      requireLive();
+      if (!importReady()) throw new Error("Settings import is not ready.");
+      const initial = input.sources.settingsNamespace?.(sourceKey);
+      if (!initial || initial.owner.sourceKey !== sourceKey)
+        throw new Error("Settings namespace is not admitted.");
+      const namespace = structuredClone(initial);
+      const current = async () => {
+        requireLive();
+        if (!hostCurrent(namespace, importReady)) throw new Error("Stale settings namespace.");
+      };
+      await current();
+      const resolved = await input.sources.settings({
+        sourceKey,
+        resourceDigest: namespace.resourceDigest,
+      });
+      await current();
+      if (
+        !resolved ||
+        resolved.owner.sourceKey !== sourceKey ||
+        resolved.owner.pluginId !== namespace.owner.pluginId ||
+        resolved.owner.uiResourceGeneration !== namespace.uiResourceGeneration
+      )
+        throw new Error("Stale settings resource.");
+      // Shared service queue, validation and unresolved-publication reconciliation.
+      admitted.set(sourceKey, {
+        digest: namespace.resourceDigest,
+        resolved: structuredClone(resolved),
+      });
+      const result = await service.requestOwner(
+        namespace.owner,
+        "settings/read",
+        { schemaVersion: resolved.resource.schemaVersion },
+        new AbortController().signal,
+        current,
+      );
+      await current();
+      if (!result.ok) throw result.error;
+      if (!hostCurrent(namespace, importReady)) throw new Error("Stale settings namespace.");
+      return structuredClone({
+        namespace,
+        resource: resolved.resource,
+        validationDigest: resolved.validationDigest,
+        snapshot: result.value,
+      });
+    },
     requestOwner: service.requestOwner,
-    onCommitted(owner: ResourceOwner, listener: () => void) {
-      const set = listeners.get(owner.sourceKey) ?? new Set<() => void>();
+    onCommitted(
+      owner: Pick<ResourceOwner, "sourceKey">,
+      listener: (reason: "committed" | "retired") => void,
+    ) {
+      requireLive();
+      const set =
+        listeners.get(owner.sourceKey) ?? new Set<(reason: "committed" | "retired") => void>();
+      if (set.size >= 32) throw new Error("Settings observer limit.");
       set.add(listener);
       listeners.set(owner.sourceKey, set);
       return () => {
@@ -841,6 +915,7 @@ function makeSettingsComposition(input: CompositionInput) {
       offRemoved();
       for (const [id, owner] of subscriptions) input.events.unsubscribe(owner, id);
       subscriptions.clear();
+      for (const key of listeners.keys()) notify(key, "retired");
       listeners.clear();
       admitted.clear();
       await service.idle();

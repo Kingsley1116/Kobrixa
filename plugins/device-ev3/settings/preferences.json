@@ -1,0 +1,207 @@
+{
+  "schemaVersion": 1,
+  "title": {
+    "en": "Device preferences"
+  },
+  "fields": [
+    {
+      "key": "skipUnchangedAssets",
+      "type": "boolean",
+      "default": true,
+      "label": {
+        "en": "Skip unchanged assets"
+      }
+    },
+    {
+      "key": "usbAutoReconnect",
+      "type": "boolean",
+      "default": true,
+      "label": {
+        "en": "USB auto reconnect"
+      }
+    },
+    {
+      "key": "usbRetryInterval",
+      "type": "enum",
+      "default": "backoff",
+      "label": {
+        "en": "USB retry interval"
+      },
+      "options": [
+        {
+          "value": "backoff",
+          "label": {
+            "en": "backoff"
+          }
+        },
+        {
+          "value": 1000,
+          "label": {
+            "en": "1000"
+          }
+        },
+        {
+          "value": 2000,
+          "label": {
+            "en": "2000"
+          }
+        },
+        {
+          "value": 5000,
+          "label": {
+            "en": "5000"
+          }
+        },
+        {
+          "value": 10000,
+          "label": {
+            "en": "10000"
+          }
+        }
+      ]
+    },
+    {
+      "key": "usbRetryLimit",
+      "type": "enum",
+      "default": "unlimited",
+      "label": {
+        "en": "USB retry limit"
+      },
+      "options": [
+        {
+          "value": "unlimited",
+          "label": {
+            "en": "unlimited"
+          }
+        },
+        {
+          "value": 3,
+          "label": {
+            "en": "3"
+          }
+        },
+        {
+          "value": 5,
+          "label": {
+            "en": "5"
+          }
+        },
+        {
+          "value": 10,
+          "label": {
+            "en": "10"
+          }
+        }
+      ]
+    },
+    {
+      "key": "wifiConnectTimeout",
+      "type": "enum",
+      "default": 5000,
+      "label": {
+        "en": "Wi-Fi connect timeout"
+      },
+      "options": [
+        {
+          "value": 3000,
+          "label": {
+            "en": "3000"
+          }
+        },
+        {
+          "value": 5000,
+          "label": {
+            "en": "5000"
+          }
+        },
+        {
+          "value": 10000,
+          "label": {
+            "en": "10000"
+          }
+        },
+        {
+          "value": 30000,
+          "label": {
+            "en": "30000"
+          }
+        }
+      ]
+    },
+    {
+      "key": "wifiHandshakeTimeout",
+      "type": "enum",
+      "default": 3000,
+      "label": {
+        "en": "Wi-Fi handshake timeout"
+      },
+      "options": [
+        {
+          "value": 1000,
+          "label": {
+            "en": "1000"
+          }
+        },
+        {
+          "value": 3000,
+          "label": {
+            "en": "3000"
+          }
+        },
+        {
+          "value": 5000,
+          "label": {
+            "en": "5000"
+          }
+        },
+        {
+          "value": 10000,
+          "label": {
+            "en": "10000"
+          }
+        }
+      ]
+    },
+    {
+      "key": "connectionMode",
+      "type": "enum",
+      "default": "usb",
+      "label": {
+        "en": "Connection mode"
+      },
+      "options": [
+        {
+          "value": "usb",
+          "label": {
+            "en": "usb"
+          }
+        },
+        {
+          "value": "wifi",
+          "label": {
+            "en": "wifi"
+          }
+        }
+      ]
+    },
+    {
+      "key": "rememberWifiAddress",
+      "type": "boolean",
+      "default": false,
+      "label": {
+        "en": "Remember Wi-Fi address"
+      }
+    },
+    {
+      "key": "lastWifiAddress",
+      "type": "string",
+      "default": "",
+      "label": {
+        "en": "Last Wi-Fi address"
+      },
+      "minLength": 0,
+      "maxLength": 45,
+      "maxBytes": 180
+    }
+  ]
+}
