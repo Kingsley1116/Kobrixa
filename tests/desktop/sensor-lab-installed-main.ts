@@ -6,7 +6,7 @@ import { execFile } from "node:child_process";
 import { readFile, realpath, writeFile } from "node:fs/promises";
 import { app, BrowserWindow, ipcMain, clipboard } from "electron";
 import type { DrainOffer, DrainReport, PluginLauncher } from "@kobrixa/plugin-runtime";
-import type { ResourceOwner } from "@kobrixa/plugin-protocol";
+import { pluginManifestSchema, type ResourceOwner } from "@kobrixa/plugin-protocol";
 import {
   composeDesktopMain,
   desktopUi,
@@ -226,6 +226,10 @@ export function runInstalledLab(): void {
         );
         assert.ok(source && source.kind === "builtin");
         const manifest = object(source.manifest);
+        const requirements =
+          scenario === "healthy"
+            ? (pluginManifestSchema.parse(source.manifest).requires?.devices ?? [])
+            : [];
         const sourceKey = "builtin:kobrixa.sensor-lab";
         const legacy = new SensorLabService({
           directory: path.join(app.getPath("userData"), "sensor-lab"),
@@ -344,7 +348,7 @@ export function runInstalledLab(): void {
                   : p.owner.sourceKey === sourceKey &&
                     Array.isArray(manifest.permissions) &&
                     manifest.permissions.includes(permission),
-              requirements: (p) => (p.sourceKey === sourceKey ? [] : null),
+              requirements: (p) => (p.sourceKey === sourceKey ? requirements : null),
               connectionPolicy: () => ({
                 wifiConnectTimeoutMs: 10_000,
                 wifiHandshakeTimeoutMs: 5_000,
