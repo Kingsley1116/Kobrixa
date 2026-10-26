@@ -53,6 +53,11 @@ export function createLegacyImportCoordinator(input: {
       Buffer.byteLength(source.targetSourceKey) > 160 ||
       source.targetSourceKey.includes("\0") ||
       !["sensor-lab", "device-settings", "renderer-preferences"].includes(source.sourceKind) ||
+      (source.fileFormat !== undefined &&
+        (!["format-version", "sensor-lab-recording-v1", "sensor-lab-profile-v1"].includes(
+          source.fileFormat,
+        ) ||
+          source.sourceKind === "renderer-preferences")) ||
       new Set(source.sourceFormatVersions).size !== source.sourceFormatVersions.length ||
       new Set(source.targetRecordSchemaVersions).size !==
         source.targetRecordSchemaVersions.length ||

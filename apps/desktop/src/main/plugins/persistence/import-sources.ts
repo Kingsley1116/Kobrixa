@@ -9,6 +9,8 @@ export type LegacyImportInput = {
   sourceKind: "sensor-lab" | "device-settings" | "renderer-preferences";
   bytes: Uint8Array;
   sha256: Sha256;
+  /** Host-observed basename from the same contained file read; never plugin input. */
+  file?: { basename: string };
 };
 export type LegacyImportItem =
   | { kind: "settings"; schemaVersion: Version; values: Values }
@@ -23,6 +25,8 @@ export interface LegacyImportDescriptor {
   targetSourceKey: string;
   sourceKind: LegacyImportInput["sourceKind"];
   sourceFormatVersions: readonly Version[];
+  /** Omitted by pre-existing formatVersion mappers. Never guess from payload keys. */
+  fileFormat?: "format-version" | "sensor-lab-recording-v1" | "sensor-lab-profile-v1";
   targetSettingsSchemaVersion?: Version;
   targetRecordSchemaVersions: readonly Version[];
   rendererKeyAllowlist?: readonly string[];

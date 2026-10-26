@@ -424,8 +424,10 @@ export class WorkerSources implements LegacySourceResolver {
       for(let start=0;start<entries.length;start+=64)for(const entry of entries.slice(start,start+64)) {
         if(entry.directory || Buffer.byteLength(entry.name)>128 || entry.bytes>8388608)throw new Error("invalid-resource");
         const bytes=await fs.bytes(fs.path(entry.name),8388608),sha256=createHash("sha256").update(bytes).digest("hex");
-        const raw=JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(bytes)),format=raw.formatVersion;
-        if(!descriptor.sourceFormatVersions.includes(format) || !descriptor.validate({sourceKind:descriptor.sourceKind,bytes,sha256}))throw new Error("unsupported-format");
+        const raw=JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(bytes));
+        const format=descriptor.fileFormat==="sensor-lab-recording-v1" || descriptor.fileFormat==="sensor-lab-profile-v1"
+          ? raw.schemaVersion : descriptor.fileFormat===undefined || descriptor.fileFormat==="format-version" ? raw.formatVersion : undefined;
+        if(!descriptor.sourceFormatVersions.includes(format) || !descriptor.validate({sourceKind:descriptor.sourceKind,bytes,sha256,file:{basename:entry.name}}))throw new Error("unsupported-format");
         items.push({key:entry.name,format,byteLength:bytes.length,sha256});
       }
       return {state:"present",entries:items};
@@ -455,8 +457,9 @@ export class WorkerSources implements LegacySourceResolver {
     if(binding.kind==="renderer" && key!=="preferences")throw new Error("stale");
     const bytes=binding.kind==="renderer"?await this.preferences(binding):await binding.fs.bytes(binding.fs.path(key),8388608);
     const sourceSha256=createHash("sha256").update(bytes).digest("hex");
-    if(!descriptor.validate({sourceKind:descriptor.sourceKind,bytes,sha256:sourceSha256}))throw new Error("invalid-resource");
-    const item=descriptor.map({sourceKind:descriptor.sourceKind,bytes,sha256:sourceSha256});
+    const input={sourceKind:descriptor.sourceKind,bytes,sha256:sourceSha256,...(binding.kind==="file"?{file:{basename:key}}:{})};
+    if(!descriptor.validate(input))throw new Error("invalid-resource");
+    const item=descriptor.map(input);
     const mappedBytes=item.kind==="record"?item.bytes:Buffer.from(JSON.stringify({formatVersion:1,schemaVersion:item.schemaVersion,values:item.values,
       validationDigest:await this.settingsValidationDigest(descriptor)}));
     if(mappedBytes.length>8388608 || this.mapped.size>=4)throw new Error("quota");
