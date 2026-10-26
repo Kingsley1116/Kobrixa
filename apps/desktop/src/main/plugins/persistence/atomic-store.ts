@@ -545,7 +545,13 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       page = { owner: ownerKey(owner), source: owner.sourceKey, kind: input.kind, limit: input.limit, entries, created: this.fs.now(), used: this.fs.now(), bytes, tokens: new Map() }; this.pages.add(page);
     }
     page.used = this.fs.now(); const entries = page.entries.slice(offset, offset + page.limit), next = offset + entries.length;
-    if (next === page.entries.length) return { entries: structuredClone(entries) };
+    if (next === page.entries.length) {
+      // With no issued cursor there is no handle to replay or retain. Keeping
+      // empty/single-page results would exhaust the four snapshot slots after
+      // four ordinary refreshes. Multi-page cursor snapshots keep their TTL.
+      if(page.tokens.size===0)this.pages.delete(page);
+      return { entries: structuredClone(entries) };
+    }
     let token = page.tokens.get(next); if (!token) { token = randomUUID(); page.tokens.set(next, token); this.cursors.set(token, { page, offset: next }); }
     const result = { entries: structuredClone(entries), nextCursor: token };
     if (Buffer.byteLength(JSON.stringify({ ok: true, value: result })) > 262144) throw new Error("size-limit"); return result;
