@@ -19,18 +19,18 @@
     "@kobrixa/compiler": "workspace:*",
     "@kobrixa/device": "workspace:*",
     "@kobrixa/ir": "workspace:*",
-    "electron-updater": "6.8.9",
+    "electron-updater": "6.8.11",
     "lib0": "^0.2.119",
     "monaco-editor": "0.57.0",
     "node-hid": "^3.2.0",
-    "planck": "1.5.0",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0",
+    "planck": "1.5.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "semver": "7.8.5",
     "y-monaco": "^0.1.6",
     "y-protocols": "^1.0.7",
     "yjs": "^13.6.33",
-    "zod": "^4.6.5"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@electron-forge/cli": "^8.0.1",
@@ -41,7 +41,7 @@
     "@types/semver": "7.8.0",
     "@vitejs/plugin-react": "^6.1.2",
     "electron": "^44.7.0",
-    "electron-builder": "26.15.3",
-    "vite": "^8.3.4"
+    "electron-builder": "26.18.0",
+    "vite": "^8.3.5"
   }
 }
