@@ -140,6 +140,13 @@ it("keeps native unpack and feature payload unpack in the same packaging rule", 
       slug: "motor-test",
       pluginId: "kobrixa.motor-test",
     },
+    {
+      entry: "../../plugins/sensor-lab/src/main.ts",
+      config: "vite.plugin-lab.config.ts",
+      target: "main",
+      slug: "sensor-lab",
+      pluginId: "kobrixa.sensor-lab",
+    },
   ]);
   expect(builtinProcessBuilds(false)).toEqual(DELIVERED_BUILTIN_PROCESS_BUILDS);
   expect(() => builtinProcessBuilds(true)).toThrow("conflicts with the delivered motor payload");
