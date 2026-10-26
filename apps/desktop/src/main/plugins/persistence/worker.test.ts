@@ -605,3 +605,37 @@ it("failed reserve cleanup and wrong-owner abort cannot clear a drain obligation
     expect(await env.backend.evidence.flush(settled)).toMatchObject({state:"failed",incomplete:[t.id]});
   } finally {await rm(trigger,{force:true});await env.backend.engine.abort(t);await env.backend.dispose();}
 });
+
+it("seals the zero-byte deletion through the public record service and real worker",async()=>{
+  const env=await launch(path.join(directory,randomUUID())),owner=ownerFor(env.profile.hostEpoch),bytes=Buffer.from("delete original");
+  const service=createRecordService({now:()=>performance.now(),wall:Date.now,live:()=>true,permission:()=>true,
+    engine:env.backend.engine,read:env.backend.reads,evidence:env.backend.evidence,
+    checkpoint:{authorize:()=>"none",committed(){},open:()=>false,register:async()=>{throw new Error("unused");},abandon:async()=>{throw new Error("unused");}}});
+  const principal={kind:"plugin" as const,owner,authorityContext:null},signal=new AbortController().signal,t=make(owner,bytes);
+  try {
+    await stage(env.backend,t,bytes);expect((await env.backend.engine.publish(t)).disposition).toBe("committed");
+    if(t.metadata.kind!=="record")throw new Error("record required");
+    const params={id:t.metadata.record.id,expectedRevision:t.metadata.record.revision};
+    const deleted=await service.request(principal,"storage/delete",params,signal);
+    expect(deleted).toMatchObject({ok:true,value:{deleted:true}});
+    expect(await service.request(principal,"storage/delete",params,signal)).toEqual(deleted);
+    expect((await env.backend.reads.list(owner,{limit:64})).entries).toEqual([]);
+  }finally{await env.backend.dispose();}
+});
+
+it("preserves the record on delete seal failure and permits a fresh explicit retry after proven abort",async()=>{
+  const env=await launch(path.join(directory,randomUUID())),owner=ownerFor(env.profile.hostEpoch),bytes=Buffer.from("keep on failure");
+  const service=createRecordService({now:()=>performance.now(),wall:Date.now,live:()=>true,permission:()=>true,
+    engine:env.backend.engine,read:env.backend.reads,evidence:env.backend.evidence,
+    checkpoint:{authorize:()=>"none",committed(){},open:()=>false,register:async()=>{throw new Error("unused");},abandon:async()=>{throw new Error("unused");}}});
+  const principal={kind:"plugin" as const,owner,authorityContext:null},signal=new AbortController().signal,t=make(owner,bytes);
+  try {
+    await stage(env.backend,t,bytes);await env.backend.engine.publish(t);
+    if(t.metadata.kind!=="record")throw new Error("record required");
+    const params={id:t.metadata.record.id,expectedRevision:t.metadata.record.revision};
+    env.control.arm("seal-sync","fail");
+    expect(await service.request(principal,"storage/delete",params,signal)).toMatchObject({ok:false});
+    expect(await env.backend.reads.stat(owner,params.id)).toMatchObject({revision:params.expectedRevision});
+    expect(await service.request(principal,"storage/delete",params,signal)).toMatchObject({ok:true,value:{deleted:true}});
+  }finally{await env.backend.dispose();}
+});

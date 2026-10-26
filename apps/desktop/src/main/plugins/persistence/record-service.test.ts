@@ -690,3 +690,65 @@ it("fractional idle deadlines admit until the exact original boundary and clamp 
   storageRequestSchemas["storage/writeStatus"].result.parse(expired);
   expect(expired).toMatchObject({ ok: true, value: { state: "expired", expiresAt: 0 } });
 });
+
+it("keeps an uncertain pre-publication delete fenced and only reconciles its original ticket", async () => {
+  const f = fixture(),
+    committed = await f.complete(new Uint8Array());
+  const params = { id: committed.id, expectedRevision: committed.record.revision };
+  vi.clearAllMocks();
+  const reserve = f.deps.engine.reserve;
+  f.deps.engine.reserve = vi.fn(async (ticket, bytes) => {
+    await reserve(ticket, bytes);
+    throw new Error("lost admission reply");
+  });
+  f.deps.engine.abort = vi.fn(async () => "unknown" as const);
+  f.deps.engine.reconcile = vi.fn(async () => ({ disposition: "not-committed" as const }));
+  const publish = vi.spyOn(f.deps.engine, "publish");
+  expect(await f.service.request(p, "storage/delete", params, signal())).toMatchObject({
+    ok: false,
+    error: { detail: { disposition: "unknown" } },
+  });
+  expect(await f.service.request(p, "storage/flush", {}, signal())).toMatchObject({ ok: false });
+  expect(await f.service.request(p, "storage/delete", params, signal())).toMatchObject({
+    ok: false,
+    error: { detail: { disposition: "unknown" } },
+  });
+  expect(f.deps.engine.reserve).toHaveBeenCalledOnce();
+  expect(f.deps.engine.reconcile).toHaveBeenCalledOnce();
+  expect(publish).not.toHaveBeenCalled();
+  f.deps.engine.abort = vi.fn(async () => "aborted" as const);
+  expect(await f.service.request(p, "storage/delete", params, signal())).toMatchObject({
+    ok: false,
+  });
+  expect(f.deps.engine.reserve).toHaveBeenCalledOnce();
+  f.deps.engine.reserve = reserve;
+  expect(await f.service.request(p, "storage/delete", params, signal())).toMatchObject({
+    ok: true,
+    value: { deleted: true },
+  });
+});
+
+it("a concurrent delete never reconciles or aborts an original deletion still sealing", async () => {
+  const f = fixture(),
+    committed = await f.complete(new Uint8Array());
+  const params = { id: committed.id, expectedRevision: committed.record.revision };
+  vi.clearAllMocks();
+  const seal = f.deps.engine.seal;
+  let release!: () => void;
+  f.deps.engine.seal = vi.fn(async (ticket, length, hash) => {
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await seal(ticket, length, hash);
+  });
+  f.deps.engine.reconcile = vi.fn(f.deps.engine.reconcile);
+  const original = f.service.request(p, "storage/delete", params, signal());
+  await vi.waitFor(() => expect(f.deps.engine.seal).toHaveBeenCalledOnce());
+  expect(await f.service.request(p, "storage/delete", params, signal())).toMatchObject({
+    ok: false,
+    error: { code: "PLUGIN_E_STORAGE_CONFLICT" },
+  });
+  expect(f.deps.engine.reconcile).not.toHaveBeenCalled();
+  release();
+  expect(await original).toMatchObject({ ok: true, value: { deleted: true } });
+});

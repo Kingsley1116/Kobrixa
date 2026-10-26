@@ -1,6 +1,6 @@
 import { wallExpiry as projectWallExpiry } from "./wall-expiry.js";
 import type { SealedPayloadPin } from "./engine-port.js";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { RpcError, RPC_ERRORS } from "@kobrixa/plugin-protocol";
 import type {
   RecordMeta,
@@ -88,7 +88,7 @@ export function createRecordService(
   const listing = new Set<string>();
   const deleting = new Map<
     string,
-    { owner: ResourceOwner; expected: string; ticket: PublicationTicket }
+    { owner: ResourceOwner; expected: string; ticket: PublicationTicket; busy: boolean }
   >();
   const deleted = new Map<
     string,
@@ -574,9 +574,10 @@ export function createRecordService(
         (ownerKey(pending.owner) !== ownerKey(owner) || pending.expected !== p.expectedRevision)
       )
         stale();
-      if (!pending && targets.has(key)) conflict("write-in-progress");
-      if (!pending) {
-        targets.set(key, "delete");
+      if (pending?.busy || (!pending && targets.has(key))) conflict("write-in-progress");
+      targets.set(key, "delete");
+      let attempt = pending;
+      if (!attempt) {
         try {
           const record = await deps.read.stat(owner, p.id);
           if (record.revision !== p.expectedRevision) conflict("revision-mismatch");
@@ -592,29 +593,60 @@ export function createRecordService(
             },
             target: { kind: "record", id: p.id, expectedRevision: p.expectedRevision },
           };
-          await deps.engine.reserve(ticket, 0);
-          if (signal.aborted || !deps.live(owner)) {
-            await deps.engine.abort(ticket);
-            stale();
-          }
-          deleting.set(key, { owner: { ...owner }, expected: p.expectedRevision, ticket });
+          attempt = { owner: { ...owner }, expected: p.expectedRevision, ticket, busy: true };
+          // Retain original admission even if its reply or later seal is lost.
+          deleting.set(key, attempt);
         } catch (error) {
           targets.delete(key);
           throw error;
         }
       }
-      const ticket = deleting.get(key)!.ticket;
+      attempt.busy = true;
+      const ticket = attempt.ticket;
       let result: Awaited<ReturnType<RecordDependencies["engine"]["publish"]>>;
       try {
-        result = await (pending ? deps.engine.reconcile(ticket) : deps.engine.publish(ticket));
-      } catch {
-        unknown();
+        if (!pending) {
+          try {
+            await deps.engine.reserve(ticket, 0);
+            if (signal.aborted || !deps.live(owner)) stale();
+            await deps.engine.seal(ticket, 0, createHash("sha256").digest("hex"));
+            if (signal.aborted || !deps.live(owner)) stale();
+          } catch (error) {
+            // No publication was requested. Only a proven abort releases this
+            // target; unknown cleanup remains reconcilable using the same ticket.
+            const aborted = await deps.engine.abort(ticket).catch(() => "unknown" as const);
+            if (aborted !== "aborted") unknown();
+            deleting.delete(key);
+            targets.delete(key);
+            throw error;
+          }
+        }
+        try {
+          result = await (pending ? deps.engine.reconcile(ticket) : deps.engine.publish(ticket));
+        } catch {
+          unknown();
+        }
+        if (result.disposition === "unknown") unknown();
+        if (result.disposition !== "committed") {
+          const aborted = await deps.engine.abort(ticket).catch(() => "unknown" as const);
+          if (aborted === "unknown") unknown();
+          if (aborted === "committed") {
+            try {
+              result = await deps.engine.reconcile(ticket);
+            } catch {
+              unknown();
+            }
+            if (result.disposition !== "committed") unknown();
+          }
+        }
+        if (result.disposition === "committed" && !result.receipt) unknown();
+        deleting.delete(key);
+        targets.delete(key);
+        if (result.disposition !== "committed" || !result.receipt)
+          throw new PersistenceFault("PLUGIN_E_STORAGE_IO", "io");
+      } finally {
+        attempt.busy = false;
       }
-      if (result.disposition === "unknown") unknown();
-      deleting.delete(key);
-      targets.delete(key);
-      if (result.disposition !== "committed" || !result.receipt)
-        throw new PersistenceFault("PLUGIN_E_STORAGE_IO", "io");
       deleted.set(key, {
         owner: { ...owner },
         expected: p.expectedRevision,
