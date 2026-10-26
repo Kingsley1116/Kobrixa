@@ -841,6 +841,7 @@ export function runInstalledLab(): void {
         stage = "complete";
       } catch (error) {
         failures.push(error instanceof Error ? (error.stack ?? error.message) : String(error));
+        if (composition) checkpoints.failureState = composition.plugins.state();
         if (composition)
           await composition.dispose().catch((error) => failures.push(`cleanup: ${String(error)}`));
       } finally {
