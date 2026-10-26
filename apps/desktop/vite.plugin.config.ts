@@ -18,6 +18,9 @@ export function builtinPluginConfig(input: {
   );
   let resolvedOutput = output;
   return {
+    // These CJS leaves run in utilityProcess, even though Vite names the build
+    // environment "client". Preserve the host's per-launch resource owner.
+    environments: { client: { keepProcessEnv: true } },
     // Feature/test roots are not installed workspace packages. Resolve only the
     // public SDK/protocol at build time and bundle them into the shipped leaf.
     resolve: {
