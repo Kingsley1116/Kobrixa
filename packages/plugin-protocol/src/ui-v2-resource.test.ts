@@ -595,3 +595,30 @@ describe.each(["chart", "table", "list"] as const)("dataset %s ID admission pari
     });
   });
 });
+
+it("admits an explicit derived-form correlation only on synchronized panels and a separate counter", () => {
+  const resource = make();
+  resource.formSync = true;
+  resource.derivedFormRevisionKey = "derived";
+  resource.data.derived = { schema: { ...counter }, initial: 0 };
+  expect(validateUiResourceV2(resource, context, uiBytes(resource)).ok).toBe(true);
+  for (const change of [
+    (r: PanelResourceV2) => {
+      delete r.formSync;
+    },
+    (r: PanelResourceV2) => {
+      r.derivedFormRevisionKey = r.presentationKey;
+    },
+    (r: PanelResourceV2) => {
+      r.data.derived!.schema = { type: "string", maxLength: 20, nullable: false };
+      r.data.derived!.initial = "0";
+    },
+  ]) {
+    const copy = structuredClone(resource);
+    change(copy);
+    expect(validateUiResourceV2(copy, context, uiBytes(copy))).toMatchObject({
+      ok: false,
+      error: { detail: { fieldPath: "$.derivedFormRevisionKey" } },
+    });
+  }
+});

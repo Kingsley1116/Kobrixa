@@ -71,7 +71,7 @@ const resource: PanelResourceV2 = {
     },
   ],
 };
-function setup() {
+function setup(correlated = false) {
   vi.useFakeTimers();
   const f = fixture();
   let host: UiStateSnapshot = {
@@ -94,7 +94,13 @@ function setup() {
     };
   });
   const bridge = { ...f.bridge, syncForm };
-  const state = new UiStateStore(bridge, resource, structuredClone(host));
+  const selectedResource = structuredClone(resource);
+  if (correlated) {
+    selectedResource.derivedFormRevisionKey = "derived";
+    selectedResource.data.derived = { ...structuredClone(selectedResource.data.presentation!) };
+    host.data.derived = 0;
+  }
+  const state = new UiStateStore(bridge, selectedResource, structuredClone(host));
   return {
     ...f,
     bridge,
@@ -320,5 +326,28 @@ it("a late snapshot cannot backfill a hide/show lifetime and a fresh snapshot pr
   await vi.advanceTimersByTimeAsync(0);
   expect(f.state.getSnapshot().draft.text).toBe("new lifecycle edit");
   expect(f.host().form.text).toBe("new lifecycle edit");
+  f.state.retire();
+});
+
+it("keeps derived datasets stale until the same canonical draft is explicitly published", async () => {
+  const f = setup(true);
+  expect(f.state.derivedCurrent()).toBe(true);
+  f.state.edit("text", "new draft");
+  expect(f.state.derivedCurrent()).toBe(false);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(f.state.formCurrent()).toBe(true);
+  expect(f.state.derivedCurrent()).toBe(false);
+  // An unrelated scalar presentation update is not evidence of recomputation.
+  f.host().revision++;
+  f.host().data.presentation = 1;
+  await f.state.invalidate(f.host().revision);
+  expect(f.state.derivedCurrent()).toBe(false);
+  f.host().revision++;
+  f.host().data.derived = f.host().formRevision;
+  await f.state.invalidate(f.host().revision);
+  expect(f.state.derivedCurrent()).toBe(true);
+  f.patch({ text: "backfill" });
+  await f.state.invalidateForm(f.host().formRevision);
+  expect(f.state.derivedCurrent()).toBe(false);
   f.state.retire();
 });

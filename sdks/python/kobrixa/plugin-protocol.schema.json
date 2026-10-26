@@ -136421,6 +136421,12 @@
               "type": "boolean",
               "const": true
             },
+            "derivedFormRevisionKey": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32,
+              "pattern": "^[a-z][a-z0-9-]{0,31}$"
+            },
             "datasets": {
               "type": "object",
               "propertyNames": {

@@ -285,3 +285,42 @@ it("routes form-only invalidation and reopens synchronized panels from the fresh
   expect(first.getSnapshot().active).toBe(false);
   f.session.dispose();
 });
+
+it("does not render stale derived dataset values after a canonical form edit", async () => {
+  const f = v2();
+  Object.assign(f.resource.resource, { formSync: true, derivedFormRevisionKey: "derived" });
+  Object.assign(f.resource.resource.data, { derived: structuredClone(panel.data.presentation!) });
+  Object.assign(f.state.data, { derived: 0 });
+  f.resource.rawBytes = new TextEncoder().encode(JSON.stringify(f.resource.resource)).length;
+  await f.session.start();
+  f.session.showPane(true, "sidebar");
+  await f.session.open(f.item);
+  const record = f.session.record(f.item)!;
+  await vi.waitFor(() => expect(record.datasets!.dataset("samples")).toBeDefined());
+  const rendered = () =>
+    renderToStaticMarkup(
+      createElement(PanelTree, {
+        state: record.state,
+        intent: record.intent,
+        datasets: record.datasets!,
+        locale: "en",
+        labels,
+      }),
+    );
+  expect(rendered()).toContain("<td>2</td>");
+  f.state.formRevision++;
+  f.emit({ type: "form", binding, formRevision: f.state.formRevision });
+  await vi.waitFor(() =>
+    expect(record.state.getSnapshot().snapshot.formRevision).toBe(f.state.formRevision),
+  );
+  expect(rendered()).not.toContain("<td>2</td>");
+  expect(rendered()).toContain("Updating");
+  Object.assign(f.state.data, { derived: f.state.formRevision });
+  f.state.revision++;
+  f.emit({ type: "state", binding, revision: f.state.revision });
+  await vi.waitFor(() =>
+    expect(record.state.getSnapshot().snapshot.revision).toBe(f.state.revision),
+  );
+  expect(rendered()).toContain("<td>2</td>");
+  f.session.dispose();
+});

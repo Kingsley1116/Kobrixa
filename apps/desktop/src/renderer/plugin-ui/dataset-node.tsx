@@ -32,6 +32,7 @@ export function DatasetNodeView({
   locale,
   interactions,
   enabled = false,
+  current = true,
 }: {
   node: Node;
   resource: PanelResourceV2;
@@ -39,6 +40,7 @@ export function DatasetNodeView({
   locale: "en" | "zh-TW";
   interactions?: UiInteractionStore;
   enabled?: boolean;
+  current?: boolean;
 }) {
   const interaction = useSyncExternalStore(
     interactions?.subscribe ?? noSubscribe,
@@ -63,7 +65,7 @@ export function DatasetNodeView({
           : "Updating…"}
     </p>
   );
-  if (!data || !declaration || revision === undefined) return pending;
+  if (!current || !data || !declaration || revision === undefined) return pending;
   if (node.type === "lineChart" && declaration.kind === "chart" && chart(data)) {
     const group = [
       ...new Set(

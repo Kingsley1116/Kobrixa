@@ -164,6 +164,7 @@ export class UiInteractionStore {
         if (this.state.needsReconcile() && !(await this.state.reconcileAction())) return;
         if (this.state.formSync && !(await this.state.flushForm())) return;
       }
+      if (!viewOnly && !this.state.derivedCurrent()) return;
       await this.refresh();
       const view = this.#snapshot.view;
       if (

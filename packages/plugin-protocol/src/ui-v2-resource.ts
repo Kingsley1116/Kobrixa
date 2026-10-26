@@ -126,6 +126,7 @@ export const uiNodeV2Schema = z.union([
 ]);
 export const panelResourceV2Schema = panelResourceV1Schema.extend({
   formSync: z.literal(true).exactOptional(),
+  derivedFormRevisionKey: localIdSchema.exactOptional(),
   nodes: z.array(uiNodeV2Schema).min(1).max(256),
   datasets: z.record(localIdSchema, datasetDeclarationV2Schema),
   presentationKey: localIdSchema,
@@ -537,6 +538,21 @@ function validatePanelExtensions(
     presentation.initial !== 0
   )
     fail("reference", "$.presentationKey");
+  if (resource.derivedFormRevisionKey !== undefined) {
+    const derived = resource.data[resource.derivedFormRevisionKey];
+    if (
+      resource.formSync !== true ||
+      resource.derivedFormRevisionKey === resource.presentationKey ||
+      !derived ||
+      derived.schema.type !== "number" ||
+      derived.schema.nullable ||
+      !derived.schema.integer ||
+      derived.schema.min !== 0 ||
+      derived.schema.max !== Number.MAX_SAFE_INTEGER ||
+      derived.initial !== 0
+    )
+      fail("reference", "$.derivedFormRevisionKey");
+  }
   for (const [, d] of declarations) {
     if (d.kind === "code") continue;
     const items = d.kind === "chart" ? d.series : d.columns;

@@ -289,6 +289,15 @@ export class UiStateStore {
         !this.refreshForm)
     );
   }
+  /** A scalar presentation tags the exact canonical draft used to compute its datasets. */
+  derivedCurrent(): boolean {
+    const key =
+      "derivedFormRevisionKey" in this.resource ? this.resource.derivedFormRevisionKey : undefined;
+    return (
+      key === undefined ||
+      (this.formCurrent() && this.view.snapshot.data[key] === this.view.snapshot.formRevision)
+    );
+  }
   private typedForm(form: Record<string, UiScalar>): boolean {
     const keys = Object.keys(this.resource.fields);
     return (

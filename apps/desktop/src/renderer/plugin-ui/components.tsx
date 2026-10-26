@@ -452,6 +452,7 @@ export function PanelTree({
             node={node}
             resource={state.resource}
             store={datasets}
+            current={state.derivedCurrent()}
             locale={locale}
             enabled={!disabled && !view.busy}
             {...(interactions ? { interactions } : {})}
