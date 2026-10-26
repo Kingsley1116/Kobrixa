@@ -2,10 +2,13 @@ import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   UiClient,
+  UiDataClient,
+  createPersistenceContext,
   type ContextCommandContext,
   type ContextCommandHandler,
   type DevicesClient,
   type PluginContext,
+  type UiResyncRequiredNotice,
 } from "@kobrixa/plugin-sdk";
 import {
   commandInvocationSchema,
@@ -19,8 +22,9 @@ import {
   validateUiData,
   sourceCatalogSchema,
   uiBindingSchema,
-  uiEventEnvelopeSchema,
-  uiRequestSchemas,
+  uiEventEnvelopeSchemaV2 as uiEventEnvelopeSchema,
+  uiRequestSchemasV2 as uiRequestSchemas,
+  RpcPeer,
   type DeviceEvent,
   type DeviceListValue,
   type DeviceMethod,
@@ -29,8 +33,8 @@ import {
   type DeviceSubscriptionParams,
   type MotionSnapshot,
   type UiBinding,
-  type UiEventEnvelope,
-  type UiRequestMap,
+  type UiEventEnvelopeV2 as UiEventEnvelope,
+  type UiRequestMapV2 as UiRequestMap,
   type UiScalar,
 } from "@kobrixa/plugin-protocol";
 import { createMotorPlugin } from "./feature.js";
@@ -296,6 +300,13 @@ function fixture() {
     },
     { adopt() {}, forget() {} },
   );
+  let resync: ((notice: UiResyncRequiredNotice) => void | Promise<void>) | undefined;
+  vi.spyOn(ui, "onResyncRequired").mockImplementation((callback) => {
+    resync = callback;
+    return () => {
+      resync = undefined;
+    };
+  });
   const state = (b: UiBinding) => ({
     binding: b,
     revision: revisions.get(JSON.stringify(b)) ?? 0,
@@ -356,10 +367,27 @@ function fixture() {
     return { ok: true, value: { removed: true } };
   });
   const context: PluginContext = {
+    ...createPersistenceContext(
+      new RpcPeer({
+        send() {
+          throw new Error("Motor has no persistence requests");
+        },
+        onMessage() {
+          return () => {};
+        },
+      }),
+    ),
     pluginId: "kobrixa.motor-test",
     locale: "en",
     devices,
-    ui,
+    ui: Object.assign(ui, {
+      data: new UiDataClient(async () => {
+        throw new Error("Motor has no datasets");
+      }),
+      copyText: async () => {
+        throw new Error("Motor has no clipboard action");
+      },
+    }),
     commands: {
       register() {
         throw new Error("Use registerContext");
@@ -462,6 +490,21 @@ function fixture() {
     invocation,
     uiEvent,
     deviceEvent,
+    terminalUi(cleanup: UiResyncRequiredNotice["cleanup"] = Promise.resolve([])) {
+      return resync?.({
+        event: eventEnvelopeSchema.parse({
+          version: 1,
+          subscriptionId: id(999),
+          owner,
+          sequence: 1,
+          delivery: "control",
+          kind: "events.resyncRequired",
+          data: { reason: "overflow", affected: [...uiListeners.keys()] },
+        }) as UiResyncRequiredNotice["event"],
+        cleanup,
+        subscriptions: [],
+      });
+    },
     calls,
     requests,
     patches,
@@ -1360,6 +1403,68 @@ describe("public motor process", () => {
     expect(
       f.patches.slice(before).some((p) => p.binding.panelInstance === binding.panelInstance),
     ).toBe(false);
+  });
+  it("terminal UI cleanup rebuilds subscriptions and stops without replaying a gesture", async () => {
+    await f.boot();
+    await f.select();
+    await f.invoke();
+    await drain();
+    const old = [...f.uiListeners.keys()];
+    const starts = f.calls("devices/motion/start").length;
+    const cleanup = barrier<Awaited<UiResyncRequiredNotice["cleanup"]>>();
+    const work = f.terminalUi(cleanup.promise);
+    await drain();
+    expect(f.calls("devices/motion/stop")).toHaveLength(1);
+    expect(f.uiListeners.size).toBeLessThan(old.length);
+    cleanup.resolve([]);
+    await work;
+    await drain();
+    expect(f.uiListeners.size).toBe(old.length);
+    expect([...f.uiListeners.keys()].some((id) => old.includes(id))).toBe(false);
+    expect(f.calls("devices/motion/start")).toHaveLength(starts);
+    expect(f.calls("devices/motion/prepare")).toHaveLength(1);
+    f.visible = false;
+    f.uiEvent("ui.visibility", { binding, visible: false });
+    await drain();
+    await f.invoke();
+    expect(f.calls("devices/motion/prepare")).toHaveLength(1);
+  });
+  it("terminal cleanup finishing after deactivate cannot subscribe or replay work", async () => {
+    await f.boot();
+    const cleanup = barrier<Awaited<UiResyncRequiredNotice["cleanup"]>>();
+    const work = f.terminalUi(cleanup.promise);
+    await f.plugin.deactivate?.();
+    const subscriptions = f.calls("ui/subscribe").length;
+    cleanup.resolve([]);
+    await work;
+    await drain();
+    expect(f.calls("ui/subscribe")).toHaveLength(subscriptions);
+    expect(f.uiListeners.size + f.deviceListeners.size).toBe(0);
+  });
+  it("terminal cleanup failure keeps ordinary actions fenced", async () => {
+    await f.boot();
+    await f.select();
+    const subscriptions = f.calls("ui/subscribe").length;
+    await f.terminalUi(
+      Promise.resolve([
+        {
+          ok: false,
+          error: {
+            code: "PLUGIN_E_STALE_RESOURCE",
+            message: "retired",
+            detail: {
+              kind: "resource",
+              reason: "stale",
+              resource: "subscription",
+            },
+          },
+        },
+      ]),
+    );
+    await f.invoke();
+    await drain();
+    expect(f.calls("ui/subscribe")).toHaveLength(subscriptions);
+    expect(f.calls("devices/motion/prepare")).toHaveLength(0);
   });
   it("a late UI state cannot restore visibility after hide", async () => {
     await f.boot();
