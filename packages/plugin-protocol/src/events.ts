@@ -9,7 +9,7 @@ export type EventKindV150 =
   | "devices.recordingFrames"
   | "devices.authority"
   | "events.resyncRequired";
-export type EventKind = EventKindV150; // 後續 API 批次由唯一 registry 擴充。
+export type EventKind = EventKindV150 | UiEvent["kind"] | "ui.data" | "settings.changed"; // 後續 API 批次由唯一 registry 擴充。
 export type EventEnvelope<Data> = {
   version: 1;
   subscriptionId: Handle;
@@ -21,12 +21,13 @@ export type EventEnvelope<Data> = {
 };
 
 import type { UiEvent } from "./ui-types.js";
+import { settingsChangedSchema } from "./settings.js";
 import type { SettingsRevision, Version, SettingKey } from "./settings.js";
 
 export type Stage3EventData = {
   [K in keyof typeof deviceEventDataSchemas]: z.output<(typeof deviceEventDataSchemas)[K]>;
 } & {
-  [K in UiEvent["kind"]]: Extract<UiEvent, { kind: K }>["data"];
+  [K in keyof typeof uiEventDataSchemas]: z.output<(typeof uiEventDataSchemas)[K]>;
 } & {
   "settings.changed": {
     revision: SettingsRevision;
@@ -57,7 +58,7 @@ const base = {
   owner: resourceOwnerSchema,
   sequence: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
 };
-const event = <K extends EventKindV150, D extends z.ZodType>(
+const event = <K extends EventKind, D extends z.ZodType>(
   kind: K,
   delivery: "control" | "telemetry",
   data: D,
@@ -83,7 +84,20 @@ export const deviceEventDataSchemas = {
     affected: z.array(h).max(32),
   }),
 } as const satisfies Record<EventKindV150, z.ZodType>;
+import { uiDataEventSchemaV2 } from "./ui-v2-methods.js";
+import { uiEventSchema } from "./ui-types.js";
+export const uiEventDataSchemas = {
+  "ui.data": uiDataEventSchemaV2.shape.data,
+  "ui.instances": uiEventSchema.options[0].shape.data,
+  "ui.visibility": uiEventSchema.options[1].shape.data,
+  "ui.environment": uiEventSchema.options[2].shape.data,
+  "ui.form": uiEventSchema.options[3].shape.data,
+  "ui.state": uiEventSchema.options[4].shape.data,
+  "ui.revoked": uiEventSchema.options[5].shape.data,
+} as const satisfies Record<UiEvent["kind"] | "ui.data", z.ZodType>;
+export const settingsEventDataSchemas = { "settings.changed": settingsChangedSchema } as const;
 export const eventEnvelopeSchema = z.discriminatedUnion("kind", [
+  event("settings.changed", "telemetry", settingsChangedSchema),
   event("devices.catalog", "control", deviceEventDataSchemas["devices.catalog"]),
   event("devices.session", "control", deviceEventDataSchemas["devices.session"]),
   event("devices.telemetry", "telemetry", deviceEventDataSchemas["devices.telemetry"]),
@@ -92,5 +106,14 @@ export const eventEnvelopeSchema = z.discriminatedUnion("kind", [
   event("devices.recordingFrames", "telemetry", deviceEventDataSchemas["devices.recordingFrames"]),
   event("devices.authority", "control", deviceEventDataSchemas["devices.authority"]),
   event("events.resyncRequired", "control", deviceEventDataSchemas["events.resyncRequired"]),
+  event("ui.data", "telemetry", uiEventDataSchemas["ui.data"]),
+  event("ui.instances", "control", uiEventDataSchemas["ui.instances"]),
+  event("ui.visibility", "control", uiEventDataSchemas["ui.visibility"]),
+  event("ui.environment", "control", uiEventDataSchemas["ui.environment"]),
+  event("ui.form", "control", uiEventDataSchemas["ui.form"]),
+  event("ui.state", "telemetry", uiEventDataSchemas["ui.state"]),
+  event("ui.revoked", "control", uiEventDataSchemas["ui.revoked"]),
 ]);
 export type DeviceEvent = z.output<typeof eventEnvelopeSchema>;
+
+export type Stage3EventEnvelope = z.output<typeof eventEnvelopeSchema>;

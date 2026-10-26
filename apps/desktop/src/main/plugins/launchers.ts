@@ -23,6 +23,20 @@ function channelEnvironment(plugin: LaunchablePlugin): NodeJS.ProcessEnv {
 /** A utilityProcess that reports neither spawn nor exit must not hang the launch. */
 export const PLUGIN_SPAWN_TIMEOUT_MS = 10_000;
 
+export function builtinProcessEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const environment = { ...source };
+  for (const name of Object.keys(environment)) {
+    const key = name.toUpperCase();
+    if (
+      key === "KOBRIXA_RESOURCE_OWNER" ||
+      key === "NODE_OPTIONS" ||
+      key === "NODE_PATH" ||
+      key === "ELECTRON_RUN_AS_NODE"
+    )
+      delete environment[name];
+  }
+  return environment;
+}
 async function launchNode(
   plugin: LaunchablePlugin,
   onOutput: (line: string) => void,
@@ -30,66 +44,107 @@ async function launchNode(
 ): Promise<PluginProcess> {
   const child = utilityProcess.fork(plugin.entry, [], {
     cwd: plugin.directory,
-    env: channelEnvironment(plugin),
     serviceName: `Kobrixa plugin ${plugin.id}`,
     stdio: "pipe",
+    env: {
+      ...builtinProcessEnvironment(process.env),
+      ...(plugin.channelOwner
+        ? { KOBRIXA_RESOURCE_OWNER: JSON.stringify(resourceOwnerSchema.parse(plugin.channelOwner)) }
+        : {}),
+    },
   });
-  const signal = (signal: "SIGTERM" | "SIGKILL") => {
+  let killSent = false;
+  const signal = (value: "SIGTERM" | "SIGKILL") => {
+    if (value === "SIGKILL") killSent = true;
     try {
-      if (child.pid !== undefined) process.kill(child.pid, signal);
+      if (child.pid !== undefined) process.kill(child.pid, value);
       else child.kill();
     } catch {
-      /* The process already exited. */
+      /* An already-exited process has no signal target. */
     }
   };
+  const exits = new ExitSignal();
   const tail = new OutputTail(onOutput);
+  let ended = false;
+  let abandoned = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let ports: InstanceType<typeof MessageChannelMain> | undefined;
+  let rejectStart: ((error: Error) => void) | undefined;
   child.stdout?.on("data", (chunk: Buffer) => tail.push(chunk, "stdout"));
   child.stderr?.on("data", (chunk: Buffer) => tail.push(chunk, "stderr"));
-  child.once("exit", () => tail.end());
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      signal("SIGKILL");
-      reject(new Error(`The plugin process did not start within ${spawnTimeoutMs} ms.`));
-    }, spawnTimeoutMs);
-    child.once("spawn", () => {
-      clearTimeout(timer);
-      resolve();
-    });
-    child.once("exit", (code) => {
-      clearTimeout(timer);
-      reject(new Error(`The plugin process exited during launch (code ${code}).`));
-    });
-  });
-  const { port1, port2 } = new MessageChannelMain();
-  child.postMessage({ type: "kobrixa-plugin-port" }, [port2]);
-  port1.start();
-  const exits = new ExitSignal();
-  child.once("exit", (code) => {
-    port1.close();
-    exits.emit({ code });
-  });
-  // Electron 44's utilityProcess.kill() synchronously reaps for up to 2 s on macOS,
-  // blocking the manager's force-kill timer. Send the signal directly and await onExit.
-  // Recheck this behavior when upgrading Electron:
-  // https://github.com/electron/electron/blob/v44.7.0/shell/browser/api/electron_api_utility_process.cc#L423-L437
-  // https://github.com/chromium/chromium/blob/152.0.7977.130/base/process/kill_mac.cc#L156-L160
-  const kill = escalatingKill(
-    exits,
-    () => signal("SIGTERM"),
-    () => signal("SIGKILL"),
-  );
-  return {
-    send: (text) => port1.postMessage(text),
-    onMessage: (listener) => {
-      const handler = (event: Electron.MessageEvent) =>
-        listener(typeof event.data === "string" ? event.data : "");
-      port1.on("message", handler);
-      return () => port1.off("message", handler);
-    },
-    onExit: (listener) => exits.subscribe(listener),
-    ...kill,
-    stderrTail: () => tail.text(),
+  const closePorts = () => {
+    ports?.port1.close();
+    ports?.port2.close();
   };
+  child.once("exit", (code) => {
+    ended = true;
+    clearTimeout(timer);
+    closePorts();
+    tail.end();
+    exits.emit({ code });
+    rejectStart?.(new PluginError("PLUGIN_E_LAUNCH", "Plugin exited during launch."));
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      rejectStart = reject;
+      timer = setTimeout(() => {
+        abandoned = true;
+        signal("SIGKILL");
+        reject(
+          new PluginError(
+            "PLUGIN_E_LAUNCH",
+            `The plugin process did not start within ${spawnTimeoutMs} ms.`,
+          ),
+        );
+      }, spawnTimeoutMs);
+      child.once("spawn", () => {
+        clearTimeout(timer);
+        if (abandoned || ended) {
+          signal("SIGKILL");
+          return;
+        }
+        resolve();
+      });
+    });
+    rejectStart = undefined;
+    if (ended || abandoned) throw new Error("Plugin exited before channel handoff.");
+    ports = new MessageChannelMain();
+    child.postMessage({ type: "kobrixa-plugin-port" }, [ports.port2]);
+    ports.port1.start();
+    if (ended) throw new Error("Plugin exited during channel handoff.");
+    const channel = ports.port1;
+    const kill = escalatingKill(
+      exits,
+      () => signal("SIGTERM"),
+      () => signal("SIGKILL"),
+    );
+    return {
+      send: (message) => {
+        if (ended) throw new Error("Plugin process exited.");
+        channel.postMessage(message);
+      },
+      onMessage: (listener) => {
+        const receive = (event: Electron.MessageEvent) => {
+          if (typeof event.data === "string") listener(event.data);
+        };
+        channel.on("message", receive);
+        return () => channel.off("message", receive);
+      },
+      onExit: (listener) => exits.subscribe(listener),
+      ...kill,
+      stderrTail: () => tail.text(),
+    };
+  } catch (error) {
+    abandoned = true;
+    closePorts();
+    if (!ended && !killSent) signal("SIGKILL");
+    throw error instanceof PluginError
+      ? error
+      : new PluginError("PLUGIN_E_LAUNCH", "Plugin channel could not be started.");
+  } finally {
+    clearTimeout(timer);
+    rejectStart = undefined;
+  }
 }
 
 const logToConsole = (plugin: LaunchablePlugin, line: string) =>

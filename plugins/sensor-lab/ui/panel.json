@@ -1,0 +1,1711 @@
+{
+  "kind": "panel",
+  "formSync": true,
+  "root": "root",
+  "fields": {
+    "slot": {
+      "schema": {
+        "type": "enum",
+        "values": ["0", "1", "2", "3"],
+        "nullable": false
+      },
+      "initial": "0",
+      "required": false
+    },
+    "two-point": {
+      "schema": {
+        "type": "boolean",
+        "nullable": false
+      },
+      "initial": false,
+      "required": false
+    },
+    "source-a": {
+      "schema": {
+        "type": "string",
+        "maxLength": 128,
+        "nullable": false
+      },
+      "initial": "0",
+      "required": false
+    },
+    "target-a": {
+      "schema": {
+        "type": "string",
+        "maxLength": 128,
+        "nullable": false
+      },
+      "initial": "0",
+      "required": false
+    },
+    "source-b": {
+      "schema": {
+        "type": "string",
+        "maxLength": 128,
+        "nullable": false
+      },
+      "initial": "100",
+      "required": false
+    },
+    "target-b": {
+      "schema": {
+        "type": "string",
+        "maxLength": 128,
+        "nullable": false
+      },
+      "initial": "100",
+      "required": false
+    },
+    "zero-offset": {
+      "schema": {
+        "type": "string",
+        "maxLength": 128,
+        "nullable": false
+      },
+      "initial": "0",
+      "required": false
+    },
+    "unit": {
+      "schema": {
+        "type": "string",
+        "maxLength": 128,
+        "nullable": false
+      },
+      "initial": "",
+      "required": false
+    },
+    "recording-name": {
+      "schema": {
+        "type": "string",
+        "maxLength": 128,
+        "nullable": false
+      },
+      "initial": "",
+      "required": false
+    },
+    "calibrated": {
+      "schema": {
+        "type": "boolean",
+        "nullable": false
+      },
+      "initial": false,
+      "required": false
+    },
+    "profile-name": {
+      "schema": {
+        "type": "string",
+        "maxLength": 128,
+        "nullable": false
+      },
+      "initial": "",
+      "required": false
+    },
+    "csv-start": {
+      "schema": {
+        "type": "string",
+        "maxLength": 128,
+        "nullable": false
+      },
+      "initial": "",
+      "required": false
+    },
+    "csv-end": {
+      "schema": {
+        "type": "string",
+        "maxLength": 128,
+        "nullable": false
+      },
+      "initial": "",
+      "required": false
+    }
+  },
+  "data": {
+    "presentation": {
+      "schema": {
+        "type": "number",
+        "min": 0,
+        "max": 9007199254740991,
+        "integer": true,
+        "nullable": false
+      },
+      "initial": 0
+    },
+    "reservation": {
+      "schema": {
+        "type": "string",
+        "maxLength": 36,
+        "nullable": true
+      },
+      "initial": null
+    },
+    "summary": {
+      "schema": {
+        "type": "string",
+        "maxLength": 1000,
+        "nullable": false
+      },
+      "initial": "Unavailable / 無法使用"
+    },
+    "error": {
+      "schema": {
+        "type": "string",
+        "maxLength": 1000,
+        "nullable": false
+      },
+      "initial": ""
+    },
+    "has-error": {
+      "schema": {
+        "type": "boolean",
+        "nullable": false
+      },
+      "initial": false
+    },
+    "editable": {
+      "schema": {
+        "type": "boolean",
+        "nullable": false
+      },
+      "initial": true
+    },
+    "can-start": {
+      "schema": {
+        "type": "boolean",
+        "nullable": false
+      },
+      "initial": false
+    },
+    "derived-form-revision": {
+      "schema": {
+        "type": "number",
+        "min": 0,
+        "max": 9007199254740991,
+        "integer": true,
+        "nullable": false
+      },
+      "initial": 0
+    }
+  },
+  "datasets": {
+    "chart0": {
+      "kind": "chart",
+      "series": [
+        {
+          "id": "primary",
+          "label": {
+            "en": "Current",
+            "zh-TW": "目前"
+          }
+        },
+        {
+          "id": "comparison",
+          "label": {
+            "en": "Comparison",
+            "zh-TW": "比較"
+          }
+        }
+      ]
+    },
+    "chart1": {
+      "kind": "chart",
+      "series": [
+        {
+          "id": "primary",
+          "label": {
+            "en": "Current",
+            "zh-TW": "目前"
+          }
+        },
+        {
+          "id": "comparison",
+          "label": {
+            "en": "Comparison",
+            "zh-TW": "比較"
+          }
+        }
+      ]
+    },
+    "chart2": {
+      "kind": "chart",
+      "series": [
+        {
+          "id": "primary",
+          "label": {
+            "en": "Current",
+            "zh-TW": "目前"
+          }
+        },
+        {
+          "id": "comparison",
+          "label": {
+            "en": "Comparison",
+            "zh-TW": "比較"
+          }
+        }
+      ]
+    },
+    "chart3": {
+      "kind": "chart",
+      "series": [
+        {
+          "id": "primary",
+          "label": {
+            "en": "Current",
+            "zh-TW": "目前"
+          }
+        },
+        {
+          "id": "comparison",
+          "label": {
+            "en": "Comparison",
+            "zh-TW": "比較"
+          }
+        }
+      ]
+    },
+    "available": {
+      "kind": "table",
+      "columns": [
+        {
+          "id": "name",
+          "label": {
+            "en": "Name",
+            "zh-TW": "名稱"
+          },
+          "value": "string"
+        }
+      ]
+    },
+    "history": {
+      "kind": "list",
+      "columns": [
+        {
+          "id": "name",
+          "label": {
+            "en": "Name",
+            "zh-TW": "名稱"
+          },
+          "value": "string"
+        }
+      ]
+    },
+    "profiles": {
+      "kind": "list",
+      "columns": [
+        {
+          "id": "name",
+          "label": {
+            "en": "Name",
+            "zh-TW": "名稱"
+          },
+          "value": "string"
+        }
+      ]
+    },
+    "code": {
+      "kind": "code"
+    }
+  },
+  "presentationKey": "presentation",
+  "nodes": [
+    {
+      "id": "slot",
+      "field": "slot",
+      "type": "choice",
+      "label": {
+        "en": "Selected channel",
+        "zh-TW": "已選通道"
+      },
+      "presentation": "select",
+      "options": [
+        {
+          "value": "0",
+          "label": {
+            "en": "Channel 1",
+            "zh-TW": "通道 1"
+          }
+        },
+        {
+          "value": "1",
+          "label": {
+            "en": "Channel 2",
+            "zh-TW": "通道 2"
+          }
+        },
+        {
+          "value": "2",
+          "label": {
+            "en": "Channel 3",
+            "zh-TW": "通道 3"
+          }
+        },
+        {
+          "value": "3",
+          "label": {
+            "en": "Channel 4",
+            "zh-TW": "通道 4"
+          }
+        }
+      ]
+    },
+    {
+      "id": "two-point",
+      "field": "two-point",
+      "type": "boolean",
+      "label": {
+        "en": "Two-point calibration",
+        "zh-TW": "兩點校正"
+      }
+    },
+    {
+      "id": "source-a",
+      "field": "source-a",
+      "type": "textInput",
+      "label": {
+        "en": "Raw A",
+        "zh-TW": "原始值 A"
+      },
+      "visibleWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "two-point"
+        },
+        "right": true
+      }
+    },
+    {
+      "id": "target-a",
+      "field": "target-a",
+      "type": "textInput",
+      "label": {
+        "en": "Target A",
+        "zh-TW": "目標值 A"
+      },
+      "visibleWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "two-point"
+        },
+        "right": true
+      }
+    },
+    {
+      "id": "source-b",
+      "field": "source-b",
+      "type": "textInput",
+      "label": {
+        "en": "Raw B",
+        "zh-TW": "原始值 B"
+      },
+      "visibleWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "two-point"
+        },
+        "right": true
+      }
+    },
+    {
+      "id": "target-b",
+      "field": "target-b",
+      "type": "textInput",
+      "label": {
+        "en": "Target B",
+        "zh-TW": "目標值 B"
+      },
+      "visibleWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "two-point"
+        },
+        "right": true
+      }
+    },
+    {
+      "id": "capture-a",
+      "type": "action",
+      "label": {
+        "en": "Capture A",
+        "zh-TW": "擷取 A"
+      },
+      "variant": "normal",
+      "action": {
+        "kind": "command",
+        "command": "kobrixa.sensor-lab.capture-a",
+        "arguments": {}
+      },
+      "enabledWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "data",
+          "key": "editable"
+        },
+        "right": true
+      }
+    },
+    {
+      "id": "capture-b",
+      "type": "action",
+      "label": {
+        "en": "Capture B",
+        "zh-TW": "擷取 B"
+      },
+      "variant": "normal",
+      "action": {
+        "kind": "command",
+        "command": "kobrixa.sensor-lab.capture-b",
+        "arguments": {}
+      },
+      "enabledWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "data",
+          "key": "editable"
+        },
+        "right": true
+      }
+    },
+    {
+      "id": "zero-offset",
+      "field": "zero-offset",
+      "type": "textInput",
+      "label": {
+        "en": "Zero offset",
+        "zh-TW": "歸零偏移"
+      }
+    },
+    {
+      "id": "unit",
+      "field": "unit",
+      "type": "textInput",
+      "label": {
+        "en": "Unit",
+        "zh-TW": "單位"
+      }
+    },
+    {
+      "id": "zero",
+      "type": "action",
+      "label": {
+        "en": "Zero current reading",
+        "zh-TW": "目前讀值歸零"
+      },
+      "variant": "normal",
+      "action": {
+        "kind": "command",
+        "command": "kobrixa.sensor-lab.zero",
+        "arguments": {}
+      },
+      "enabledWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "data",
+          "key": "editable"
+        },
+        "right": true
+      }
+    },
+    {
+      "id": "clear-zero",
+      "type": "action",
+      "label": {
+        "en": "Clear zero",
+        "zh-TW": "清除歸零"
+      },
+      "variant": "normal",
+      "action": {
+        "kind": "command",
+        "command": "kobrixa.sensor-lab.clear-zero",
+        "arguments": {}
+      },
+      "enabledWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "data",
+          "key": "editable"
+        },
+        "right": true
+      }
+    },
+    {
+      "id": "apply",
+      "type": "action",
+      "label": {
+        "en": "Apply calibration",
+        "zh-TW": "套用校正"
+      },
+      "variant": "normal",
+      "action": {
+        "kind": "command",
+        "command": "kobrixa.sensor-lab.apply",
+        "arguments": {}
+      },
+      "enabledWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "data",
+          "key": "editable"
+        },
+        "right": true
+      }
+    },
+    {
+      "id": "reset",
+      "type": "action",
+      "label": {
+        "en": "Reset calibration",
+        "zh-TW": "重設校正"
+      },
+      "variant": "normal",
+      "action": {
+        "kind": "command",
+        "command": "kobrixa.sensor-lab.reset",
+        "arguments": {}
+      },
+      "enabledWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "data",
+          "key": "editable"
+        },
+        "right": true
+      }
+    },
+    {
+      "id": "remove-channel",
+      "type": "action",
+      "label": {
+        "en": "Remove selected channel",
+        "zh-TW": "移除所選通道"
+      },
+      "variant": "normal",
+      "action": {
+        "kind": "command",
+        "command": "kobrixa.sensor-lab.remove-channel",
+        "arguments": {}
+      },
+      "enabledWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "data",
+          "key": "editable"
+        },
+        "right": true
+      }
+    },
+    {
+      "id": "calibration",
+      "type": "group",
+      "layout": "stack",
+      "children": [
+        "slot",
+        "two-point",
+        "source-a",
+        "target-a",
+        "source-b",
+        "target-b",
+        "capture-a",
+        "capture-b",
+        "zero-offset",
+        "unit",
+        "zero",
+        "clear-zero",
+        "apply",
+        "reset",
+        "remove-channel"
+      ],
+      "label": {
+        "en": "Calibration",
+        "zh-TW": "校正"
+      },
+      "enabledWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "data",
+          "key": "editable"
+        },
+        "right": true
+      }
+    },
+    {
+      "id": "available",
+      "type": "table",
+      "label": {
+        "en": "Available channels",
+        "zh-TW": "可用通道"
+      },
+      "dataset": "available",
+      "onSelect": {
+        "command": "kobrixa.sensor-lab.select-channel",
+        "arguments": {},
+        "rowKeyArg": "key",
+        "rowVersionArg": "revision",
+        "datasetRevisionArg": "dataset"
+      },
+      "enabledWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "data",
+          "key": "editable"
+        },
+        "right": true
+      }
+    },
+    {
+      "id": "recording-name",
+      "field": "recording-name",
+      "type": "textInput",
+      "label": {
+        "en": "Recording name",
+        "zh-TW": "錄製名稱"
+      }
+    },
+    {
+      "id": "start",
+      "type": "action",
+      "label": {
+        "en": "Start recording",
+        "zh-TW": "開始錄製"
+      },
+      "variant": "normal",
+      "action": {
+        "kind": "command",
+        "command": "kobrixa.sensor-lab.start",
+        "arguments": {}
+      },
+      "enabledWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "data",
+          "key": "can-start"
+        },
+        "right": true
+      }
+    },
+    {
+      "id": "stop",
+      "type": "action",
+      "label": {
+        "en": "Stop recording",
+        "zh-TW": "停止錄製"
+      },
+      "variant": "danger",
+      "action": {
+        "kind": "core",
+        "action": "stopRecording",
+        "reservation": {
+          "scope": "data",
+          "key": "reservation"
+        }
+      }
+    },
+    {
+      "id": "record-controls",
+      "type": "group",
+      "layout": "stack",
+      "children": ["recording-name", "start", "stop"],
+      "label": {
+        "en": "Recording",
+        "zh-TW": "錄製"
+      }
+    },
+    {
+      "id": "chart0",
+      "type": "lineChart",
+      "label": {
+        "en": "Channel 1",
+        "zh-TW": "通道 1"
+      },
+      "dataset": "chart0",
+      "cursorGroup": "readings",
+      "timeView": "default",
+      "onCursor": {
+        "command": "kobrixa.sensor-lab.cursor",
+        "arguments": {},
+        "timeArg": "time",
+        "presentationArg": "presentation",
+        "readings": [
+          {
+            "dataset": "chart0",
+            "series": "primary",
+            "rawKey": "c0raw",
+            "valueKey": "c0value"
+          },
+          {
+            "dataset": "chart0",
+            "series": "comparison",
+            "rawKey": "c0comparisonraw",
+            "valueKey": "c0comparisonvalue"
+          },
+          {
+            "dataset": "chart1",
+            "series": "primary",
+            "rawKey": "c1raw",
+            "valueKey": "c1value"
+          },
+          {
+            "dataset": "chart1",
+            "series": "comparison",
+            "rawKey": "c1comparisonraw",
+            "valueKey": "c1comparisonvalue"
+          },
+          {
+            "dataset": "chart2",
+            "series": "primary",
+            "rawKey": "c2raw",
+            "valueKey": "c2value"
+          },
+          {
+            "dataset": "chart2",
+            "series": "comparison",
+            "rawKey": "c2comparisonraw",
+            "valueKey": "c2comparisonvalue"
+          },
+          {
+            "dataset": "chart3",
+            "series": "primary",
+            "rawKey": "c3raw",
+            "valueKey": "c3value"
+          },
+          {
+            "dataset": "chart3",
+            "series": "comparison",
+            "rawKey": "c3comparisonraw",
+            "valueKey": "c3comparisonvalue"
+          }
+        ]
+      }
+    },
+    {
+      "id": "chart0-inspect",
+      "type": "lineChart",
+      "label": {
+        "en": "Channel 1",
+        "zh-TW": "通道 1"
+      },
+      "dataset": "chart0",
+      "cursorGroup": "readings",
+      "timeView": "inspect",
+      "onCursor": {
+        "command": "kobrixa.sensor-lab.cursor",
+        "arguments": {},
+        "timeArg": "time",
+        "presentationArg": "presentation",
+        "readings": [
+          {
+            "dataset": "chart0",
+            "series": "primary",
+            "rawKey": "c0raw",
+            "valueKey": "c0value"
+          },
+          {
+            "dataset": "chart0",
+            "series": "comparison",
+            "rawKey": "c0comparisonraw",
+            "valueKey": "c0comparisonvalue"
+          },
+          {
+            "dataset": "chart1",
+            "series": "primary",
+            "rawKey": "c1raw",
+            "valueKey": "c1value"
+          },
+          {
+            "dataset": "chart1",
+            "series": "comparison",
+            "rawKey": "c1comparisonraw",
+            "valueKey": "c1comparisonvalue"
+          },
+          {
+            "dataset": "chart2",
+            "series": "primary",
+            "rawKey": "c2raw",
+            "valueKey": "c2value"
+          },
+          {
+            "dataset": "chart2",
+            "series": "comparison",
+            "rawKey": "c2comparisonraw",
+            "valueKey": "c2comparisonvalue"
+          },
+          {
+            "dataset": "chart3",
+            "series": "primary",
+            "rawKey": "c3raw",
+            "valueKey": "c3value"
+          },
+          {
+            "dataset": "chart3",
+            "series": "comparison",
+            "rawKey": "c3comparisonraw",
+            "valueKey": "c3comparisonvalue"
+          }
+        ]
+      }
+    },
+    {
+      "id": "chart1",
+      "type": "lineChart",
+      "label": {
+        "en": "Channel 2",
+        "zh-TW": "通道 2"
+      },
+      "dataset": "chart1",
+      "cursorGroup": "readings",
+      "timeView": "default",
+      "onCursor": {
+        "command": "kobrixa.sensor-lab.cursor",
+        "arguments": {},
+        "timeArg": "time",
+        "presentationArg": "presentation",
+        "readings": [
+          {
+            "dataset": "chart0",
+            "series": "primary",
+            "rawKey": "c0raw",
+            "valueKey": "c0value"
+          },
+          {
+            "dataset": "chart0",
+            "series": "comparison",
+            "rawKey": "c0comparisonraw",
+            "valueKey": "c0comparisonvalue"
+          },
+          {
+            "dataset": "chart1",
+            "series": "primary",
+            "rawKey": "c1raw",
+            "valueKey": "c1value"
+          },
+          {
+            "dataset": "chart1",
+            "series": "comparison",
+            "rawKey": "c1comparisonraw",
+            "valueKey": "c1comparisonvalue"
+          },
+          {
+            "dataset": "chart2",
+            "series": "primary",
+            "rawKey": "c2raw",
+            "valueKey": "c2value"
+          },
+          {
+            "dataset": "chart2",
+            "series": "comparison",
+            "rawKey": "c2comparisonraw",
+            "valueKey": "c2comparisonvalue"
+          },
+          {
+            "dataset": "chart3",
+            "series": "primary",
+            "rawKey": "c3raw",
+            "valueKey": "c3value"
+          },
+          {
+            "dataset": "chart3",
+            "series": "comparison",
+            "rawKey": "c3comparisonraw",
+            "valueKey": "c3comparisonvalue"
+          }
+        ]
+      }
+    },
+    {
+      "id": "chart1-inspect",
+      "type": "lineChart",
+      "label": {
+        "en": "Channel 2",
+        "zh-TW": "通道 2"
+      },
+      "dataset": "chart1",
+      "cursorGroup": "readings",
+      "timeView": "inspect",
+      "onCursor": {
+        "command": "kobrixa.sensor-lab.cursor",
+        "arguments": {},
+        "timeArg": "time",
+        "presentationArg": "presentation",
+        "readings": [
+          {
+            "dataset": "chart0",
+            "series": "primary",
+            "rawKey": "c0raw",
+            "valueKey": "c0value"
+          },
+          {
+            "dataset": "chart0",
+            "series": "comparison",
+            "rawKey": "c0comparisonraw",
+            "valueKey": "c0comparisonvalue"
+          },
+          {
+            "dataset": "chart1",
+            "series": "primary",
+            "rawKey": "c1raw",
+            "valueKey": "c1value"
+          },
+          {
+            "dataset": "chart1",
+            "series": "comparison",
+            "rawKey": "c1comparisonraw",
+            "valueKey": "c1comparisonvalue"
+          },
+          {
+            "dataset": "chart2",
+            "series": "primary",
+            "rawKey": "c2raw",
+            "valueKey": "c2value"
+          },
+          {
+            "dataset": "chart2",
+            "series": "comparison",
+            "rawKey": "c2comparisonraw",
+            "valueKey": "c2comparisonvalue"
+          },
+          {
+            "dataset": "chart3",
+            "series": "primary",
+            "rawKey": "c3raw",
+            "valueKey": "c3value"
+          },
+          {
+            "dataset": "chart3",
+            "series": "comparison",
+            "rawKey": "c3comparisonraw",
+            "valueKey": "c3comparisonvalue"
+          }
+        ]
+      }
+    },
+    {
+      "id": "chart2",
+      "type": "lineChart",
+      "label": {
+        "en": "Channel 3",
+        "zh-TW": "通道 3"
+      },
+      "dataset": "chart2",
+      "cursorGroup": "readings",
+      "timeView": "default",
+      "onCursor": {
+        "command": "kobrixa.sensor-lab.cursor",
+        "arguments": {},
+        "timeArg": "time",
+        "presentationArg": "presentation",
+        "readings": [
+          {
+            "dataset": "chart0",
+            "series": "primary",
+            "rawKey": "c0raw",
+            "valueKey": "c0value"
+          },
+          {
+            "dataset": "chart0",
+            "series": "comparison",
+            "rawKey": "c0comparisonraw",
+            "valueKey": "c0comparisonvalue"
+          },
+          {
+            "dataset": "chart1",
+            "series": "primary",
+            "rawKey": "c1raw",
+            "valueKey": "c1value"
+          },
+          {
+            "dataset": "chart1",
+            "series": "comparison",
+            "rawKey": "c1comparisonraw",
+            "valueKey": "c1comparisonvalue"
+          },
+          {
+            "dataset": "chart2",
+            "series": "primary",
+            "rawKey": "c2raw",
+            "valueKey": "c2value"
+          },
+          {
+            "dataset": "chart2",
+            "series": "comparison",
+            "rawKey": "c2comparisonraw",
+            "valueKey": "c2comparisonvalue"
+          },
+          {
+            "dataset": "chart3",
+            "series": "primary",
+            "rawKey": "c3raw",
+            "valueKey": "c3value"
+          },
+          {
+            "dataset": "chart3",
+            "series": "comparison",
+            "rawKey": "c3comparisonraw",
+            "valueKey": "c3comparisonvalue"
+          }
+        ]
+      }
+    },
+    {
+      "id": "chart2-inspect",
+      "type": "lineChart",
+      "label": {
+        "en": "Channel 3",
+        "zh-TW": "通道 3"
+      },
+      "dataset": "chart2",
+      "cursorGroup": "readings",
+      "timeView": "inspect",
+      "onCursor": {
+        "command": "kobrixa.sensor-lab.cursor",
+        "arguments": {},
+        "timeArg": "time",
+        "presentationArg": "presentation",
+        "readings": [
+          {
+            "dataset": "chart0",
+            "series": "primary",
+            "rawKey": "c0raw",
+            "valueKey": "c0value"
+          },
+          {
+            "dataset": "chart0",
+            "series": "comparison",
+            "rawKey": "c0comparisonraw",
+            "valueKey": "c0comparisonvalue"
+          },
+          {
+            "dataset": "chart1",
+            "series": "primary",
+            "rawKey": "c1raw",
+            "valueKey": "c1value"
+          },
+          {
+            "dataset": "chart1",
+            "series": "comparison",
+            "rawKey": "c1comparisonraw",
+            "valueKey": "c1comparisonvalue"
+          },
+          {
+            "dataset": "chart2",
+            "series": "primary",
+            "rawKey": "c2raw",
+            "valueKey": "c2value"
+          },
+          {
+            "dataset": "chart2",
+            "series": "comparison",
+            "rawKey": "c2comparisonraw",
+            "valueKey": "c2comparisonvalue"
+          },
+          {
+            "dataset": "chart3",
+            "series": "primary",
+            "rawKey": "c3raw",
+            "valueKey": "c3value"
+          },
+          {
+            "dataset": "chart3",
+            "series": "comparison",
+            "rawKey": "c3comparisonraw",
+            "valueKey": "c3comparisonvalue"
+          }
+        ]
+      }
+    },
+    {
+      "id": "chart3",
+      "type": "lineChart",
+      "label": {
+        "en": "Channel 4",
+        "zh-TW": "通道 4"
+      },
+      "dataset": "chart3",
+      "cursorGroup": "readings",
+      "timeView": "default",
+      "onCursor": {
+        "command": "kobrixa.sensor-lab.cursor",
+        "arguments": {},
+        "timeArg": "time",
+        "presentationArg": "presentation",
+        "readings": [
+          {
+            "dataset": "chart0",
+            "series": "primary",
+            "rawKey": "c0raw",
+            "valueKey": "c0value"
+          },
+          {
+            "dataset": "chart0",
+            "series": "comparison",
+            "rawKey": "c0comparisonraw",
+            "valueKey": "c0comparisonvalue"
+          },
+          {
+            "dataset": "chart1",
+            "series": "primary",
+            "rawKey": "c1raw",
+            "valueKey": "c1value"
+          },
+          {
+            "dataset": "chart1",
+            "series": "comparison",
+            "rawKey": "c1comparisonraw",
+            "valueKey": "c1comparisonvalue"
+          },
+          {
+            "dataset": "chart2",
+            "series": "primary",
+            "rawKey": "c2raw",
+            "valueKey": "c2value"
+          },
+          {
+            "dataset": "chart2",
+            "series": "comparison",
+            "rawKey": "c2comparisonraw",
+            "valueKey": "c2comparisonvalue"
+          },
+          {
+            "dataset": "chart3",
+            "series": "primary",
+            "rawKey": "c3raw",
+            "valueKey": "c3value"
+          },
+          {
+            "dataset": "chart3",
+            "series": "comparison",
+            "rawKey": "c3comparisonraw",
+            "valueKey": "c3comparisonvalue"
+          }
+        ]
+      }
+    },
+    {
+      "id": "chart3-inspect",
+      "type": "lineChart",
+      "label": {
+        "en": "Channel 4",
+        "zh-TW": "通道 4"
+      },
+      "dataset": "chart3",
+      "cursorGroup": "readings",
+      "timeView": "inspect",
+      "onCursor": {
+        "command": "kobrixa.sensor-lab.cursor",
+        "arguments": {},
+        "timeArg": "time",
+        "presentationArg": "presentation",
+        "readings": [
+          {
+            "dataset": "chart0",
+            "series": "primary",
+            "rawKey": "c0raw",
+            "valueKey": "c0value"
+          },
+          {
+            "dataset": "chart0",
+            "series": "comparison",
+            "rawKey": "c0comparisonraw",
+            "valueKey": "c0comparisonvalue"
+          },
+          {
+            "dataset": "chart1",
+            "series": "primary",
+            "rawKey": "c1raw",
+            "valueKey": "c1value"
+          },
+          {
+            "dataset": "chart1",
+            "series": "comparison",
+            "rawKey": "c1comparisonraw",
+            "valueKey": "c1comparisonvalue"
+          },
+          {
+            "dataset": "chart2",
+            "series": "primary",
+            "rawKey": "c2raw",
+            "valueKey": "c2value"
+          },
+          {
+            "dataset": "chart2",
+            "series": "comparison",
+            "rawKey": "c2comparisonraw",
+            "valueKey": "c2comparisonvalue"
+          },
+          {
+            "dataset": "chart3",
+            "series": "primary",
+            "rawKey": "c3raw",
+            "valueKey": "c3value"
+          },
+          {
+            "dataset": "chart3",
+            "series": "comparison",
+            "rawKey": "c3comparisonraw",
+            "valueKey": "c3comparisonvalue"
+          }
+        ]
+      }
+    },
+    {
+      "id": "calibrated",
+      "field": "calibrated",
+      "type": "boolean",
+      "label": {
+        "en": "Show calibrated values",
+        "zh-TW": "顯示校正值"
+      }
+    },
+    {
+      "id": "expand",
+      "type": "action",
+      "label": {
+        "en": "Expand charts",
+        "zh-TW": "放大圖表"
+      },
+      "variant": "normal",
+      "action": {
+        "kind": "view",
+        "action": "openDialog",
+        "dialogId": "expanded"
+      }
+    },
+    {
+      "id": "expanded",
+      "type": "dialog",
+      "label": {
+        "en": "Expanded charts",
+        "zh-TW": "放大圖表"
+      },
+      "children": ["chart0-inspect", "chart1-inspect", "chart2-inspect", "chart3-inspect"]
+    },
+    {
+      "id": "charts",
+      "type": "group",
+      "layout": "stack",
+      "children": ["calibrated", "chart0", "chart1", "chart2", "chart3", "expand"],
+      "label": {
+        "en": "Charts",
+        "zh-TW": "圖表"
+      }
+    },
+    {
+      "id": "history",
+      "type": "list",
+      "label": {
+        "en": "Recordings",
+        "zh-TW": "錄製紀錄"
+      },
+      "dataset": "history",
+      "actions": [
+        {
+          "id": "view-record",
+          "label": {
+            "en": "View",
+            "zh-TW": "檢視"
+          },
+          "action": {
+            "kind": "command",
+            "command": {
+              "command": "kobrixa.sensor-lab.view-record",
+              "arguments": {},
+              "rowKeyArg": "key",
+              "rowVersionArg": "revision",
+              "datasetRevisionArg": "dataset"
+            }
+          }
+        },
+        {
+          "id": "compare-record",
+          "label": {
+            "en": "Compare",
+            "zh-TW": "比較"
+          },
+          "action": {
+            "kind": "command",
+            "command": {
+              "command": "kobrixa.sensor-lab.compare-record",
+              "arguments": {},
+              "rowKeyArg": "key",
+              "rowVersionArg": "revision",
+              "datasetRevisionArg": "dataset"
+            }
+          }
+        },
+        {
+          "id": "delete-history",
+          "label": {
+            "en": "Delete",
+            "zh-TW": "刪除"
+          },
+          "action": {
+            "kind": "view",
+            "action": "openDialog",
+            "dialogId": "delete-history-confirm"
+          }
+        }
+      ]
+    },
+    {
+      "id": "delete-history-message",
+      "type": "text",
+      "emphasis": "normal",
+      "value": {
+        "text": {
+          "en": "Delete this saved item? This cannot be undone.",
+          "zh-TW": "刪除此儲存項目？此操作無法復原。"
+        }
+      }
+    },
+    {
+      "id": "delete-history-confirm",
+      "type": "dialog",
+      "label": {
+        "en": "Confirm deletion",
+        "zh-TW": "確認刪除"
+      },
+      "children": ["delete-history-message"],
+      "confirm": {
+        "label": {
+          "en": "Delete",
+          "zh-TW": "刪除"
+        },
+        "dataset": "history",
+        "command": {
+          "command": "kobrixa.sensor-lab.delete-history",
+          "arguments": {},
+          "rowKeyArg": "key",
+          "rowVersionArg": "revision",
+          "datasetRevisionArg": "dataset"
+        }
+      }
+    },
+    {
+      "id": "profiles",
+      "type": "list",
+      "label": {
+        "en": "Calibration profiles",
+        "zh-TW": "校正設定檔"
+      },
+      "dataset": "profiles",
+      "actions": [
+        {
+          "id": "apply-profile",
+          "label": {
+            "en": "Apply",
+            "zh-TW": "套用"
+          },
+          "action": {
+            "kind": "command",
+            "command": {
+              "command": "kobrixa.sensor-lab.apply-profile",
+              "arguments": {},
+              "rowKeyArg": "key",
+              "rowVersionArg": "revision",
+              "datasetRevisionArg": "dataset"
+            }
+          }
+        },
+        {
+          "id": "delete-profiles",
+          "label": {
+            "en": "Delete",
+            "zh-TW": "刪除"
+          },
+          "action": {
+            "kind": "view",
+            "action": "openDialog",
+            "dialogId": "delete-profiles-confirm"
+          }
+        }
+      ]
+    },
+    {
+      "id": "delete-profiles-message",
+      "type": "text",
+      "emphasis": "normal",
+      "value": {
+        "text": {
+          "en": "Delete this saved item? This cannot be undone.",
+          "zh-TW": "刪除此儲存項目？此操作無法復原。"
+        }
+      }
+    },
+    {
+      "id": "delete-profiles-confirm",
+      "type": "dialog",
+      "label": {
+        "en": "Confirm deletion",
+        "zh-TW": "確認刪除"
+      },
+      "children": ["delete-profiles-message"],
+      "confirm": {
+        "label": {
+          "en": "Delete",
+          "zh-TW": "刪除"
+        },
+        "dataset": "profiles",
+        "command": {
+          "command": "kobrixa.sensor-lab.delete-profiles",
+          "arguments": {},
+          "rowKeyArg": "key",
+          "rowVersionArg": "revision",
+          "datasetRevisionArg": "dataset"
+        }
+      }
+    },
+    {
+      "id": "profile-name",
+      "field": "profile-name",
+      "type": "textInput",
+      "label": {
+        "en": "Profile name",
+        "zh-TW": "設定檔名稱"
+      }
+    },
+    {
+      "id": "save-profile",
+      "type": "action",
+      "label": {
+        "en": "Save profile",
+        "zh-TW": "儲存設定檔"
+      },
+      "variant": "normal",
+      "action": {
+        "kind": "command",
+        "command": "kobrixa.sensor-lab.save-profile",
+        "arguments": {}
+      },
+      "enabledWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "data",
+          "key": "editable"
+        },
+        "right": true
+      }
+    },
+    {
+      "id": "profiles-next",
+      "type": "action",
+      "label": {
+        "en": "Next profiles",
+        "zh-TW": "下一頁設定檔"
+      },
+      "variant": "normal",
+      "action": {
+        "kind": "command",
+        "command": "kobrixa.sensor-lab.profiles-next",
+        "arguments": {}
+      }
+    },
+    {
+      "id": "profile-tools",
+      "type": "group",
+      "layout": "stack",
+      "children": ["profile-name", "save-profile", "profiles", "profiles-next"],
+      "label": {
+        "en": "Profiles",
+        "zh-TW": "設定檔"
+      }
+    },
+    {
+      "id": "history-next",
+      "type": "action",
+      "label": {
+        "en": "Next recordings",
+        "zh-TW": "下一頁紀錄"
+      },
+      "variant": "normal",
+      "action": {
+        "kind": "command",
+        "command": "kobrixa.sensor-lab.history-next",
+        "arguments": {}
+      }
+    },
+    {
+      "id": "live",
+      "type": "action",
+      "label": {
+        "en": "Return to live preview",
+        "zh-TW": "返回即時預覽"
+      },
+      "variant": "normal",
+      "action": {
+        "kind": "command",
+        "command": "kobrixa.sensor-lab.live",
+        "arguments": {}
+      }
+    },
+    {
+      "id": "clear-comparison",
+      "type": "action",
+      "label": {
+        "en": "Clear comparison",
+        "zh-TW": "清除比較"
+      },
+      "variant": "normal",
+      "action": {
+        "kind": "command",
+        "command": "kobrixa.sensor-lab.clear-comparison",
+        "arguments": {}
+      }
+    },
+    {
+      "id": "csv-start",
+      "field": "csv-start",
+      "type": "textInput",
+      "label": {
+        "en": "CSV start time (ms; blank for all)",
+        "zh-TW": "CSV 起始時間（毫秒；留空匯出全部）"
+      }
+    },
+    {
+      "id": "csv-end",
+      "field": "csv-end",
+      "type": "textInput",
+      "label": {
+        "en": "CSV end time (ms; blank for all)",
+        "zh-TW": "CSV 結束時間（毫秒；留空匯出全部）"
+      }
+    },
+    {
+      "id": "export",
+      "type": "action",
+      "label": {
+        "en": "Export raw CSV",
+        "zh-TW": "匯出原始 CSV"
+      },
+      "variant": "normal",
+      "action": {
+        "kind": "command",
+        "command": "kobrixa.sensor-lab.export",
+        "arguments": {}
+      }
+    },
+    {
+      "id": "history-tools",
+      "type": "group",
+      "layout": "stack",
+      "children": [
+        "history",
+        "history-next",
+        "live",
+        "clear-comparison",
+        "csv-start",
+        "csv-end",
+        "export"
+      ],
+      "label": {
+        "en": "History and export",
+        "zh-TW": "歷史與匯出"
+      }
+    },
+    {
+      "id": "code",
+      "type": "code",
+      "label": {
+        "en": "Basic Plus calibration example",
+        "zh-TW": "Basic Plus 校正範例"
+      },
+      "dataset": "code",
+      "copy": {
+        "command": "kobrixa.sensor-lab.copy-code",
+        "arguments": {}
+      }
+    },
+    {
+      "id": "summary",
+      "type": "status",
+      "tone": "neutral",
+      "text": {
+        "ref": {
+          "scope": "data",
+          "key": "summary"
+        }
+      }
+    },
+    {
+      "id": "error",
+      "type": "alert",
+      "severity": "error",
+      "text": {
+        "ref": {
+          "scope": "data",
+          "key": "error"
+        }
+      },
+      "visibleWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "data",
+          "key": "has-error"
+        },
+        "right": true
+      }
+    },
+    {
+      "id": "recovery",
+      "type": "action",
+      "label": {
+        "en": "Open recovery",
+        "zh-TW": "開啟復原"
+      },
+      "variant": "normal",
+      "action": {
+        "kind": "core",
+        "action": "openRecovery"
+      }
+    },
+    {
+      "id": "select-current",
+      "type": "action",
+      "label": {
+        "en": "Use current connection",
+        "zh-TW": "使用目前連線"
+      },
+      "variant": "normal",
+      "action": {
+        "kind": "command",
+        "command": "kobrixa.sensor-lab.select-current",
+        "arguments": {}
+      }
+    },
+    {
+      "id": "refresh",
+      "type": "action",
+      "label": {
+        "en": "Refresh availability",
+        "zh-TW": "重新整理可用性"
+      },
+      "variant": "normal",
+      "action": {
+        "kind": "command",
+        "command": "kobrixa.sensor-lab.refresh",
+        "arguments": {}
+      }
+    },
+    {
+      "id": "root",
+      "type": "group",
+      "layout": "stack",
+      "children": [
+        "summary",
+        "error",
+        "select-current",
+        "refresh",
+        "available",
+        "record-controls",
+        "charts",
+        "calibration",
+        "code",
+        "profile-tools",
+        "history-tools",
+        "recovery"
+      ]
+    }
+  ],
+  "derivedFormRevisionKey": "derived-form-revision"
+}

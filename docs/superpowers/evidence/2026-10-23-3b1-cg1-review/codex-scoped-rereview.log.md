@@ -1,0 +1,5 @@
+1. **B1 — `ad2083c → 7add202`: Spec PASS. Quality PASS.** No remaining concrete findings in scope. Safety requests send `form: {}` only for stop/disconnect/openRecovery. Actual main IPC retains strict validation, current binding/owner/scope checks, host-data target resolution, and broker/authority enforcement. The edit-generation fence prevents a late reconciliation rejection from restoring the cleared error.
+
+2. **3C — `5f73887 → fb69d35`: Spec PASS. Quality PASS.** No remaining concrete findings in scope. Idempotent cancellation and settled guards bound hidden presentation loops. Forced-brake escalation and late-ID stopping remain intact. Pending attempts reset prior operation/results/progress, and resolved transport errors clear merged error flags.
+
+Independent read-only source reviews; regression additions inspected, no tests run. Reported test results remain controller-provided evidence. Neither verdict establishes Electron/native or hardware acceptance; those remain separate controller evidence and gates.

@@ -195,7 +195,9 @@ export class UpdateService {
     this.patch({ phase: "preparing", error: undefined });
   }
   cancelInstall(): void {
-    if (this.preparing) this.patch({ phase: "ready" });
+    if (!this.preparing) return;
+    this.patch({ phase: "ready" });
+    this.#notifyInstallFailed();
   }
   install(): void {
     try {

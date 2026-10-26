@@ -1,0 +1,641 @@
+import { createHash,randomUUID } from "node:crypto";
+import type { SettingsResourceV1 } from "@kobrixa/plugin-protocol";
+import { mkdtemp,rm,mkdir,realpath,writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { build } from "vite";
+import { afterAll,beforeAll,expect,it } from "vitest";
+import { startPersistenceWorker,PersistenceWorkerRequest,PersistenceWorkerResponse,type PersistenceFaultControl } from "./worker.js";
+import { openStoreRoot,type PersistenceFaultPoint } from "./filesystem.js";
+import type { PersistenceBackend,PublicationTicket,ImportPlan } from "./engine-port.js";
+import { createRecordService } from "./record-service.js";
+import { PersistenceFault } from "./record-port.js";
+let directory:string,entry:string;
+const hash=(bytes:Uint8Array)=>createHash("sha256").update(bytes).digest("hex");
+beforeAll(async()=>{
+  directory=await realpath(await mkdtemp(path.join(tmpdir(),"persistence-worker-test-")));
+  await mkdir(path.join(directory,"legacy","sensor-lab"),{recursive:true});
+  const workerPath=fileURLToPath(new URL("./worker.ts",import.meta.url)),fixturesPath=fileURLToPath(new URL("./import-fixtures.ts",import.meta.url));
+  const fixtureEntry=path.join(directory,"worker-entry.ts");
+  const filesystemPath=fileURLToPath(new URL("./filesystem.ts",import.meta.url));
+  await writeFile(fixtureEntry,`import {runPersistenceWorker} from ${JSON.stringify(workerPath)};
+      import {syntheticImportDescriptor,syntheticPreferencesImportDescriptor} from ${JSON.stringify(fixturesPath)};
+      import {NodePersistenceFs} from ${JSON.stringify(filesystemPath)};
+      import {existsSync,unlinkSync} from "node:fs";
+      // Test-only fault injection: remove an enumerated child on real disk. All source
+      // collection, messages, codecs, journals and subsequent reads remain native.
+      const entries=NodePersistenceFs.prototype.entries;
+      NodePersistenceFs.prototype.entries=async function(...args) {
+        const result=await entries.apply(this,args);
+        const trigger=${JSON.stringify(path.join(directory,"child-race.trigger"))};
+        if(this.root===${JSON.stringify(path.join(directory,"legacy","sensor-lab"))} && existsSync(trigger)) {
+          unlinkSync(trigger);
+          unlinkSync(this.root+"/22222222-2222-4222-8222-222222222222.json");
+        }
+        return result;
+      };
+      const unlink=NodePersistenceFs.prototype.unlink;
+      NodePersistenceFs.prototype.unlink=async function(p) {
+        if(existsSync(${JSON.stringify(path.join(directory,"cleanup-failure.trigger"))}) && this.name(p).endsWith("intent.json"))throw new Error("injected-cleanup");
+        return unlink.call(this,p);
+      };
+      runPersistenceWorker({mappers:new Map([syntheticImportDescriptor,syntheticPreferencesImportDescriptor].map(d=>[d.id,d])),
+        sourceRoots:new Map([[syntheticImportDescriptor.id,${JSON.stringify(path.join(directory,"legacy","sensor-lab"))}]])});`);
+  await build({configFile:false,logLevel:"error",
+    build:{target:"node24",outDir:path.join(directory,"bundle"),emptyOutDir:true,
+      lib:{entry:fixtureEntry,formats:["cjs"],fileName:()=>"persistence-worker.cjs"},rollupOptions:{external:[/^node:/]},minify:false}});
+  entry=path.join(directory,"bundle","persistence-worker.cjs");
+},60000);
+afterAll(async()=>{await rm(directory,{recursive:true,force:true});});
+async function launch(userData:string){
+  await mkdir(userData,{recursive:true});const profile={hostEpoch:randomUUID(),assertHeld(){}};
+  const root=await openStoreRoot({userData,profile});let control:PersistenceFaultControl|undefined;
+  const started=await startPersistenceWorker({profile,root,workerEntry:entry,now:()=>performance.now(),testControl:c=>{control=c;}});
+  return {...started,profile,control:control!};
+}
+function make(owner:PublicationTicket["owner"],bytes:Uint8Array):PublicationTicket {
+  const id=randomUUID();return {id:randomUUID(),owner,deadlineMonotonicMs:performance.now()+120000,
+    target:{kind:"record",id,expectedRevision:null},metadata:{kind:"record",deleted:false,record:{id,revision:"r_"+randomUUID().replaceAll("-",""),kind:"test",schemaVersion:1,label:"Worker",mediaType:"application/octet-stream",byteLength:bytes.length,sha256:hash(bytes),createdAt:1,updatedAt:1,checkpoint:"none",interrupted:false}}};
+}
+const ownerFor=(epoch:string)=>({sourceKey:"builtin:kobrixa.lab",pluginId:"kobrixa.lab",generation:1,hostEpoch:epoch,processEpoch:randomUUID()});
+async function stage(backend:PersistenceBackend,t:PublicationTicket,bytes:Uint8Array){await backend.engine.reserve(t,bytes.length);for(let n=0;n<bytes.length;n+=262144)await backend.engine.append(t,n,bytes.subarray(n,n+262144));await backend.engine.seal(t,bytes.length,hash(bytes));}
+it('preserves checksum, missing-record and read-quota failures through the real worker',async()=>{
+  const env=await launch(path.join(directory,randomUUID())),owner=ownerFor(env.profile.hostEpoch);
+  const service=createRecordService({now:()=>performance.now(),wall:Date.now,live:()=>true,permission:()=>true,
+    engine:env.backend.engine,read:env.backend.reads,evidence:env.backend.evidence,
+    checkpoint:{authorize:()=>"none",committed(){},open:()=>false,
+      register:async()=>{throw new Error("unused");},abandon:async()=>{throw new Error("unused");}}});
+  const principal={kind:"plugin" as const,owner,authorityContext:null},signal=new AbortController().signal;
+  try {
+    const missing=await service.request(principal,'storage/stat',{id:randomUUID()},signal);
+    expect(missing).toMatchObject({ok:false,error:{code:'PLUGIN_E_STORAGE_IO',detail:{kind:'persistence',reason:'not-found'}}});
+    const bytes=Buffer.from('payload'),begin=await service.request(principal,'storage/beginWrite',{
+      target:{mode:'create'},kind:'test',schemaVersion:1,label:'Bad checksum',mediaType:'application/octet-stream',
+      byteLength:bytes.length,sha256:hash(Buffer.from('different'))},signal);
+    expect(begin.ok).toBe(true);if(!begin.ok)throw new Error('begin failed');
+    expect((await service.request(principal,'storage/writeChunk',{write:begin.value.write,offset:0,data:bytes.toString('base64')},signal)).ok).toBe(true);
+    expect(await service.request(principal,'storage/sealWrite',{write:begin.value.write},signal)).toMatchObject({
+      ok:false,error:{code:'PLUGIN_E_STORAGE_CONFLICT',detail:{kind:'persistence',reason:'checksum-mismatch'}}});
+    expect(await service.request(principal,'storage/writeStatus',{write:begin.value.write},signal)).toMatchObject({ok:true,value:{state:'failed'}});
+    const t=make(owner,bytes);await stage(env.backend,t,bytes);await env.backend.engine.publish(t);
+    if(t.metadata.kind!=='record')throw new Error('record required');
+    const record=t.metadata.record,pins:string[]=[];
+    for(let i=0;i<4;i++)pins.push(await env.backend.reads.open(owner,record.id,record.revision));
+    try {
+      const error=await env.backend.reads.open(owner,record.id,record.revision).catch((error:unknown)=>error);
+      expect(error).toBeInstanceOf(PersistenceFault);
+      expect(error).toMatchObject({result:{ok:false,error:{code:'PLUGIN_E_RESOURCE_LIMIT',detail:{kind:'resource',reason:'quota',resource:'storage-read'}}}});
+    } finally {for(const pin of pins)await env.backend.reads.close(owner,pin);}
+  } finally {await service.close();await env.backend.dispose();}
+});
+it("rejects malformed private messages and missing capabilities",async()=>{
+  const directory=await realpath(await mkdtemp(path.join(tmpdir(),"malformed-worker-")));
+  try {
+  expect(PersistenceWorkerRequest.safeParse({version:1,id:1,operation:"engine.fence",args:[]}).success).toBe(false);
+  expect(PersistenceWorkerRequest.safeParse({version:1,id:1,operation:"reads.settings",args:[{sourceKey:"forged"}]}).success).toBe(false);
+  expect(PersistenceWorkerResponse.safeParse({version:1,id:1,ok:false,error:{code:"io",message:"io",path:"private"}}).success).toBe(false);
+  await expect(openStoreRoot({userData:directory,profile:{hostEpoch:randomUUID(),assertHeld(){throw new Error("not-primary");}}})).rejects.toThrow("not-primary");
+  await expect(startPersistenceWorker({profile:{hostEpoch:randomUUID(),assertHeld(){}},root:{} as never,workerEntry:path.join(directory,"unused.cjs"),now:()=>0})).rejects.toThrow("unsafe-root");
+  }finally{await rm(directory,{recursive:true,force:true});}
+});
+it("preserves exact opaque bytes, scoped barriers and one idempotent disposal",async()=>{
+  const env=await launch(path.join(directory,randomUUID())),bytes=new Uint8Array([0,255,123,0,10]),owner=ownerFor(env.profile.hostEpoch),t=make(owner,bytes);
+  expect(persistenceWorkerCount(env.backend)).toBe(1);
+  await stage(env.backend,t,bytes);
+  const incomplete=env.backend.evidence.capture({kind:"namespace",owner},performance.now()+10000);
+  expect(env.backend.evidence.tickets(incomplete)).toEqual([t]);
+  expect((await env.backend.evidence.flush(incomplete)).state).toBe("failed");
+  expect(()=>env.backend.evidence.tickets(incomplete)).toThrow("stale");
+  const barrier=env.backend.evidence.capture({kind:"namespace",owner},performance.now()+10000);
+  const committed=await env.backend.engine.publish(t);expect(committed.disposition).toBe("committed");
+  const id=t.target.kind==="record"?t.target.id:"",meta=await env.backend.reads.stat(owner,id);
+  expect([meta.byteLength,meta.sha256]).toEqual([bytes.length,hash(bytes)]);
+  const pin=await env.backend.reads.open(owner,id,meta.revision);expect(await env.backend.reads.read(owner,pin,0,256)).toEqual(bytes);await env.backend.reads.close(owner,pin);
+  const late=make(owner,bytes);await env.backend.engine.reserve(late,bytes.length);
+  expect(env.backend.evidence.tickets(barrier)).toEqual([t]);
+  expect((await env.backend.evidence.flush(barrier)).state).toBe("saved");
+  await env.backend.engine.abort(late);
+  const one=env.backend.dispose();expect(env.backend.dispose()).toBe(one);expect(persistenceWorkerCount(env.backend)).toBe(1);await one;expect(persistenceWorkerCount(env.backend)).toBe(0);
+});
+const points:PersistenceFaultPoint[]=["reserve","open-temp","chunk-write","seal-sync","object-rename","object-dir-sync","backup-head","head-write","before-publish","after-publish","head-dir-sync","cache-publish","receipt-send","cleanup","import-marker"];
+for(const point of points)it(`real worker kill at ${point}`,async()=>{
+  const userData=path.join(directory,randomUUID()),env=await launch(userData),owner=ownerFor(env.profile.hostEpoch),bytes=Buffer.from(JSON.stringify({formatVersion:1,value:1}));
+  const target={kind:"import" as const,key:"fault-matrix"};
+  const ticket=():PublicationTicket=>({id:randomUUID(),owner,deadlineMonotonicMs:performance.now()+120000,target,metadata:target});
+  const old=ticket();await stage(env.backend,old,bytes);await env.backend.engine.publish(old);
+  env.control.arm(point,"pause");const reached=env.control.reached(point),next=ticket();
+  const pending=stage(env.backend,next,bytes).then(()=>env.backend.engine.publish(next)).catch(()=>null);
+  await reached;expect(persistenceWorkerCount(env.backend)).toBe(1);await env.control.terminate();expect(persistenceWorkerCount(env.backend)).toBe(0);await pending;
+  for(let attempt=0;attempt<3;attempt++){
+    const reopened=await launch(userData);
+    try {
+      expect(reopened.recovery).toBe("ready");
+      expect(await reopened.backend.evidence.auxiliary(ownerFor(reopened.profile.hostEpoch),"import","fault-matrix")).toEqual(Uint8Array.from(bytes));
+    } finally {await reopened.backend.dispose();}
+  }
+},30000);
+it("kill after imported head before receipt reconciles original ticket without new IDs",async()=>{
+  const userData=path.join(directory,randomUUID()),env=await launch(userData),owner=ownerFor(env.profile.hostEpoch),bytes=new Uint8Array([7,0,255]);
+  const id="import/"+hash(Buffer.from(JSON.stringify(["test.synthetic-import",owner.sourceKey])));
+  const t=make(owner,bytes),tag={importId:id,itemKey:"item",sourceSha256:hash(bytes)},skipTicket=make(owner,bytes);
+  const plan:ImportPlan={formatVersion:1,id,descriptorId:"test.synthetic-import",preferencesEvidence:null,mappingVersion:1,targetSourceKey:owner.sourceKey,items:[
+    {key:"item",sourceFormat:1,sourceSha256:hash(bytes),mappedSha256:hash(bytes),byteLength:bytes.length,ticket:t,tag},
+    {key:"skip",sourceFormat:1,sourceSha256:hash(bytes),mappedSha256:hash(bytes),byteLength:bytes.length,ticket:skipTicket,tag:{...tag,itemKey:"skip"}},
+  ]};
+  await env.backend.imports.plan(owner,plan);
+  await env.backend.imports.record(owner,id,{key:"skip",state:"skipped",receipt:null,skipReason:"already-new",publicationTicket:null});
+  await expect(env.backend.imports.complete(owner,id)).rejects.toThrow();
+  const publication=await env.backend.imports.admit(owner,id,"item");
+  await env.backend.engine.reserve(publication,bytes.length);await env.backend.imports.tagImport(publication,tag);
+  await env.backend.engine.append(publication,0,bytes);await env.backend.engine.seal(publication,bytes.length,hash(bytes));
+  env.control.arm("after-publish","pause");const reached=env.control.reached("after-publish");const pending=env.backend.engine.publish(publication).catch(()=>null);
+  await reached;expect(persistenceWorkerCount(env.backend)).toBe(1);await env.control.terminate();expect(persistenceWorkerCount(env.backend)).toBe(0);await pending;
+  for(let attempt=0;attempt<3;attempt++){
+    const next=await launch(userData),current=ownerFor(next.profile.hostEpoch),saved=await next.backend.imports.load(current,id);
+    expect(current.hostEpoch).not.toBe(owner.hostEpoch);
+    await expect(next.backend.engine.reserve(t,bytes.length)).rejects.toThrow();
+    expect(saved?.plan).toEqual(plan);expect(saved?.items[1]?.skipReason).toBe("already-new");
+    expect((await next.backend.imports.reconcile(t)).disposition).toBe("committed");
+    const receipts=await next.backend.imports.importReceipts(current,id);expect(receipts).toHaveLength(1);expect(receipts[0]?.ticket.id).toBe(publication.id);
+    await next.backend.imports.complete(current,id);expect((await next.backend.imports.load(current,id))?.complete).toBe(true);
+    expect((await next.backend.reads.list(current,{limit:64})).entries).toHaveLength(1);
+    await next.backend.dispose();
+  }
+},30000);
+
+import { snapshotBytes, snapshotDigest, type LegacyNonceDocument } from "./import-sources.js";
+it("resolves a consumed nonce after host change without a renderer or filesystem fallback",async()=>{
+  const {syntheticPreferencesImportDescriptor}=await import("./import-fixtures.js");
+  const userData=path.join(directory,randomUUID()),first=await launch(userData),d=syntheticPreferencesImportDescriptor;
+  const owner={...ownerFor(first.profile.hostEpoch),sourceKey:d.targetSourceKey,pluginId:d.id};
+  const nonce=randomUUID(),scope={hostEpoch:owner.hostEpoch,workbenchInstance:randomUUID()},raw={nonce,scope,entries:[{key:"test.preference",raw:null}]};
+  const key="nonce/"+nonce,ticket:PublicationTicket={id:randomUUID(),owner,deadlineMonotonicMs:performance.now()+10000,
+    target:{kind:"import",key},metadata:{kind:"import",key}};
+  const digest=snapshotDigest(raw,d.rendererKeyAllowlist!),document:LegacyNonceDocument={formatVersion:1,kind:"nonce",descriptorId:d.id,
+    sourceKey:d.targetSourceKey,nonce,scope,allowlist:[...d.rendererKeyAllowlist!],state:"consumed",raw,digest,originalTicket:ticket,ticket};
+  await stage(first.backend,ticket,Buffer.from(JSON.stringify(document)));expect((await first.backend.engine.publish(ticket)).disposition).toBe("committed");
+  await first.backend.dispose();
+  const second=await launch(userData),current={...ownerFor(second.profile.hostEpoch),sourceKey:d.targetSourceKey,pluginId:d.id};
+  expect(current.hostEpoch).not.toBe(owner.hostEpoch);
+  await second.backend.sources.register({descriptorId:d.id,mapperId:d.id,sourceKind:d.sourceKind});
+  expect((await second.backend.sources.inventory(d.id)).state).toBe("blocked");
+  await expect(second.backend.sources.map(d.id,"preferences")).rejects.toThrow();
+  await second.backend.sources.resolvePreferences({descriptorId:d.id,owner:current,evidence:{nonce,digest}});
+  const expected=snapshotBytes(raw,d.rendererKeyAllowlist!);
+  expect(await second.backend.sources.inventory(d.id)).toEqual({state:"present",entries:[{key:"preferences",format:1,byteLength:expected.length,sha256:digest}]});
+  expect(await second.backend.sources.read(d.id,"preferences",0,262144)).toEqual(expected);
+  const mapped=await second.backend.sources.map(d.id,"preferences");expect(mapped.sourceSha256).toBe(digest);expect(mapped.mappedSha256).toBe(digest);
+  expect(mapped.byteLength).toBe(expected.length);await second.backend.sources.releaseMapped(mapped.mapped);
+  await expect(second.backend.sources.resolvePreferences({descriptorId:d.id,owner:current,evidence:{nonce:randomUUID(),digest}})).rejects.toThrow();
+  await expect(second.backend.sources.read(d.id,"preferences",0,262145)).rejects.toThrow();
+  await second.backend.dispose();
+},30000);
+it("strictly validates both new private tuples",()=>{
+  const owner=ownerFor(randomUUID()),nonce=randomUUID(),digest="0".repeat(64);
+  const valid=[{operation:"imports.admit",args:[owner,"import/"+digest,"item"]},
+    {operation:"sources.resolvePreferences",args:[{descriptorId:"test.synthetic-preferences",owner,evidence:{nonce,digest}}]}];
+  for(const request of valid) {
+    expect(PersistenceWorkerRequest.safeParse({version:1,id:1,...request}).success).toBe(true);
+    expect(PersistenceWorkerRequest.safeParse({version:1,id:1,...request,args:[...request.args,"extra"]}).success).toBe(false);
+  }
+  for(const evidence of [{nonce,digest,raw:[]},{nonce,digest,path:"/tmp/source"},{nonce:"bad",digest},{nonce,digest:"bad"},{nonce,digest,map(){}}])
+    expect(PersistenceWorkerRequest.safeParse({version:1,id:1,operation:"sources.resolvePreferences",
+      args:[{descriptorId:"test.synthetic-preferences",owner,evidence}]}).success).toBe(false);
+});
+import { WorkerSources,persistenceWorkerCount } from "./worker.js";
+import { AtomicStore } from "./atomic-store.js";
+import { createNodePersistenceFs } from "./filesystem.js";
+import type { LegacyImportDescriptor } from "./import-sources.js";
+it("sourceRoots rejects unknown, renderer, relative and conflicting roots before ready",async()=>{
+  const root=await realpath(await mkdtemp(path.join(tmpdir(),"sources-")));
+  try {
+    const fs=await createNodePersistenceFs(root,{hostEpoch:randomUUID(),assertHeld(){}}),store=new AtomicStore(fs);
+    const descriptor:LegacyImportDescriptor={id:"test.file",mappingVersion:1,targetSourceKey:"builtin:kobrixa.lab",sourceKind:"sensor-lab",sourceFormatVersions:[1],targetRecordSchemaVersions:[1],validate:()=>true,map:()=>{throw new Error("unused");}};
+    const renderer={...descriptor,id:"test.renderer",sourceKind:"renderer-preferences" as const},other={...descriptor,id:"test.other"},mappers=new Map([descriptor,renderer,other].map(d=>[d.id,d]));
+    for(const roots of [new Map([["unknown",root]]),new Map([[renderer.id,root]]),new Map([[descriptor.id,"relative"]]),new Map([[descriptor.id,path.join(root,"..","bad")+"/../bad"]]),new Map([[descriptor.id,root],[other.id,root]])])
+      expect(()=>new WorkerSources(fs.root,store,mappers,roots)).toThrow();
+    const sources=new WorkerSources(fs.root,store,mappers,new Map([[descriptor.id,root]]));
+    await sources.validateRoots();
+    await sources.register({descriptorId:descriptor.id,mapperId:descriptor.id,sourceKind:descriptor.sourceKind});
+    await expect(sources.register({descriptorId:descriptor.id,mapperId:other.id,sourceKind:descriptor.sourceKind})).rejects.toThrow();
+    await sources.register({descriptorId:renderer.id,mapperId:renderer.id,sourceKind:renderer.sourceKind});
+    expect(await sources.inventory(renderer.id)).toEqual({state:"blocked",entries:[]});
+    await expect(sources.read(renderer.id,"preferences",0,1)).rejects.toThrow("missing-evidence");
+    await expect(sources.map(renderer.id,"preferences")).rejects.toThrow("missing-evidence");
+    await store.dispose();
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+it("persistenceWorkerCount rejects objects that are not registered backends",()=>{
+  expect(()=>persistenceWorkerCount({} as PersistenceBackend)).toThrow("unknown-instance");
+});
+it("accepts finite fractional monotonic deadlines without relaxing integer counters",()=>{
+  const owner=ownerFor(randomUUID()),t={...make(owner,new Uint8Array()),deadlineMonotonicMs:1234.5};
+  expect(PersistenceWorkerRequest.safeParse({version:1,id:1,operation:"engine.reserve",args:[t,0],gate:{slot:0,sequence:1}}).success).toBe(true);
+  expect(PersistenceWorkerRequest.safeParse({version:1,id:1.5,operation:"engine.reserve",args:[t,0],gate:{slot:0,sequence:1}}).success).toBe(false);
+});
+
+async function mappedSetup(options:{hash?:string;schema?:number;large?:boolean}={}) {
+  const root=await realpath(await mkdtemp(path.join(tmpdir(),"mapped-source-")));
+  const profile={hostEpoch:randomUUID(),assertHeld(){}},fs=await createNodePersistenceFs(root,profile,{now:()=>0}),store=new AtomicStore(fs);
+  const legacy=path.join(root,"legacy");await mkdir(legacy);await writeFile(path.join(legacy,"item"),'{"formatVersion":1}');
+  const payload=new Uint8Array(options.large?262145:3).fill(7),owner=ownerFor(profile.hostEpoch),original=make(owner,payload);
+  if(original.metadata.kind!=="record")throw new Error("test-target");
+  if(options.hash)original.metadata.record.sha256=options.hash;
+  const descriptor:LegacyImportDescriptor={id:"test.mapped",mappingVersion:1,targetSourceKey:owner.sourceKey,sourceKind:"sensor-lab",sourceFormatVersions:[1],targetRecordSchemaVersions:[1],validate:()=>true,
+    map:()=>({kind:"record",bytes:payload,metadata:{kind:"test",schemaVersion:options.schema??1,label:"Mapped",mediaType:"application/octet-stream",byteLength:payload.length,sha256:hash(payload)}})};
+  const sources=new WorkerSources(fs.root,store,new Map([[descriptor.id,descriptor]]),new Map([[descriptor.id,legacy]]));await sources.validateRoots();
+  await sources.register({descriptorId:descriptor.id,mapperId:descriptor.id,sourceKind:descriptor.sourceKind});
+  const mapped=await sources.map(descriptor.id,"item"),id="import/"+hash(Buffer.from(JSON.stringify([descriptor.id,owner.sourceKey]))),tag={importId:id,itemKey:"item",sourceSha256:mapped.sourceSha256};
+  const plan:ImportPlan={formatVersion:1,id,descriptorId:descriptor.id,preferencesEvidence:null,mappingVersion:1,targetSourceKey:owner.sourceKey,
+    items:[{key:"item",sourceFormat:1,sourceSha256:mapped.sourceSha256,mappedSha256:options.hash??mapped.mappedSha256,byteLength:payload.length,ticket:original,tag}]};
+  await store.planImport(owner,plan);const attempt=await store.admitImport(owner,id,"item");await store.reserve(attempt,payload.length);
+  return {sources,store,mapped,attempt,tag,payload,close:async()=>{await store.dispose();await rm(root,{recursive:true,force:true});}};
+}
+it("appendMapped requires the matching tag before the first byte",async()=>{
+  const env=await mappedSetup();try {
+    await expect(env.sources.appendMapped({mapped:env.mapped.mapped,ticket:env.attempt,offset:0,maxBytes:262144})).rejects.toThrow("input-changed");
+    await env.store.tagImport(env.attempt,env.tag);
+    expect(await env.sources.appendMapped({mapped:env.mapped.mapped,ticket:env.attempt,offset:0,maxBytes:262144})).toEqual({nextOffset:3,done:true});
+  }finally{await env.close();}
+});
+it("file mapping binds attempt, sequential offset, bounded chunks and unresolved release",async()=>{
+  const env=await mappedSetup({large:true});try {
+    await env.store.tagImport(env.attempt,env.tag);
+    const input={mapped:env.mapped.mapped,ticket:env.attempt,offset:0,maxBytes:262144};
+    for(const invalid of [{...input,ticket:{...env.attempt,id:randomUUID()}},{...input,offset:1},{...input,maxBytes:262145}])await expect(env.sources.appendMapped(invalid)).rejects.toThrow();
+    expect(await env.sources.appendMapped(input)).toEqual({nextOffset:262144,done:false});
+    expect(await env.sources.appendMapped({...input,offset:262144})).toEqual({nextOffset:262145,done:true});
+    await env.store.seal(env.attempt,env.payload.length,hash(env.payload));
+    const replace=env.store.fs.atomicReplace.bind(env.store.fs);let resume!:()=>void,entered!:()=>void;
+    const reached=new Promise<void>(r=>{entered=r;}),release=new Promise<void>(r=>{resume=r;});
+    env.store.fs.atomicReplace=async(a,b)=>{if(env.store.fs.name(b).endsWith('head.json')){entered();await release;}return replace(a,b);};
+    const publish=env.store.publish(env.attempt);await reached;
+    try{await expect(env.sources.releaseMapped(env.mapped.mapped)).rejects.toThrow("publish-uncertain");}finally{resume();}
+    expect((await publish).disposition).toBe("committed");await env.sources.releaseMapped(env.mapped.mapped);
+    await expect(env.sources.appendMapped(input)).rejects.toThrow("stale");
+  }finally{await env.close();}
+});
+it.each([{hash:"0".repeat(64)},{schema:2}])("rejects mismatched plan hash or schema %j",async options=>{
+  const env=await mappedSetup(options);try {
+    await env.store.tagImport(env.attempt,env.tag);
+    await expect(env.sources.appendMapped({mapped:env.mapped.mapped,ticket:env.attempt,offset:0,maxBytes:262144})).rejects.toThrow("input-changed");
+  }finally{await env.close();}
+});
+it("T5 private continuations require original ticket, exact grant and a bound reserve gate",()=>{
+  const owner=ownerFor(randomUUID()),t=make(owner,new Uint8Array([1]));
+  const grant={owner,recordId:t.target.kind==="record"?t.target.id:randomUUID(),checkpoint:randomUUID(),token:randomUUID(),deadlineMonotonicMs:performance.now()+1000};
+  const request={version:1,id:1,operation:"engine.reserveFinal",args:[t,1,grant],gate:{slot:0,sequence:1}};
+  expect(PersistenceWorkerRequest.safeParse(request).success).toBe(true);
+  expect(PersistenceWorkerRequest.safeParse({...request,gate:undefined}).success).toBe(false);
+  expect(PersistenceWorkerRequest.safeParse({...request,args:[t,1,{...grant,invocation:"forged"}]}).success).toBe(false);
+  expect(PersistenceWorkerRequest.safeParse({version:1,id:2,operation:"engine.publishRecovery",args:[t,randomUUID(),performance.now()+1000]}).success).toBe(true);
+  expect(PersistenceWorkerRequest.safeParse({version:1,id:3,operation:"evidence.retainSealed",args:[t]}).success).toBe(true);
+  expect(PersistenceWorkerRequest.safeParse({version:1,id:4,operation:"engine.publishRecovery",args:[t,"fabricated",performance.now()+1000]}).success).toBe(false);
+});
+
+
+import { createLegacyImportCoordinator } from "./import-coordinator.js";
+import { createLegacyWriterBarrier, importIdFor } from "./import-sources.js";
+import { syntheticImportDescriptor } from "./import-fixtures.js";
+it("T6 fix round1 child ENOENT blocks actual-worker import and retry imports the survivor", async () => {
+  const sourceRoot=path.join(directory,"legacy","sensor-lab"),
+    survivor="11111111-1111-4111-8111-111111111111.json",
+    lost="22222222-2222-4222-8222-222222222222.json",
+    bytes=Buffer.from(JSON.stringify({formatVersion:1,value:"survivor"}));
+  await writeFile(path.join(sourceRoot,survivor),bytes);
+  await writeFile(path.join(sourceRoot,lost),Buffer.from(JSON.stringify({formatVersion:1,value:"lost"})));
+  const env=await launch(path.join(directory,randomUUID())),d=syntheticImportDescriptor,
+    owner={...ownerFor(env.profile.hostEpoch),sourceKey:d.targetSourceKey,pluginId:d.id};
+  const barrier=createLegacyWriterBarrier({backend:env.backend,descriptors:[d],writers:[],importOwner:()=>owner});
+  const coordinator=createLegacyImportCoordinator({backend:env.backend,sources:env.backend.sources,barrier,
+    descriptors:[d],currentScope:()=>true,currentSource:()=>true,importOwner:()=>owner});
+  try {
+    await writeFile(path.join(directory,"child-race.trigger"),"");
+    expect(await coordinator.run(d,new AbortController().signal)).toEqual({state:"blocked",completedItems:0,totalItems:0});
+    expect(await env.backend.imports.load(owner,importIdFor(d.id,d.targetSourceKey))).toBeNull();
+    expect((await env.backend.sources.inventory(d.id)).entries.map(e=>e.key)).toEqual([survivor]);
+    expect(await coordinator.run(d,new AbortController().signal)).toEqual({state:"complete",completedItems:1,totalItems:1});
+    const saved=await env.backend.imports.load(owner,importIdFor(d.id,d.targetSourceKey));
+    expect(saved?.plan.items.map(i=>i.key)).toEqual([survivor]);
+    const records=await env.backend.reads.list(owner,{limit:64});
+    expect(records.entries).toHaveLength(1);
+    expect(records.entries[0]?.sha256).toBe(hash(bytes));
+    // Only a subsequent conclusive check of the fixed root may report absent.
+    await rm(sourceRoot,{recursive:true});
+    expect(await env.backend.sources.inventory(d.id)).toEqual({state:"absent",entries:[]});
+  } finally {
+    await env.backend.dispose();
+    await rm(sourceRoot,{recursive:true,force:true});
+    await mkdir(sourceRoot,{recursive:true});
+    await rm(path.join(directory,"child-race.trigger"),{force:true});
+  }
+},30000);
+
+
+it("settings saved by the service reopen through the real worker with CAS, reset and migration", async () => {
+  const { createSettingsService } = await import("./settings-service.js");
+  const userData = path.join(directory, randomUUID());
+  let resource: SettingsResourceV1 = {
+    schemaVersion: 1,
+    title: { en: "Settings" },
+    fields: [{ key: "enabled", type: "boolean", label: { en: "Enabled" }, default: true }],
+  };
+  let validationDigest = "a".repeat(64);
+  const setup = (env: Awaited<ReturnType<typeof launch>>) => {
+    const owner = ownerFor(env.profile.hostEpoch);
+    const service = createSettingsService({
+      now: () => performance.now(),
+      allowed: () => true,
+      readResource: async () => ({ resource, digest: "b".repeat(64), validationDigest }),
+      validateResource: () => true,
+      evidence: env.backend.evidence,
+      read: env.backend.reads,
+      engine: env.backend.engine,
+      watch: { register: () => randomUUID(), changed: () => {}, invalidate: () => {} },
+    });
+    return {
+      owner,
+      service,
+      principal: { kind: "plugin" as const, owner, authorityContext: null },
+    };
+  };
+  const signal = () => new AbortController().signal;
+  const first = await launch(userData);
+  let savedRevision: string;
+  try {
+    const f = setup(first);
+    const saved = await f.service.request(
+      f.principal,
+      "settings/update",
+      {
+        schemaVersion: 1,
+        expectedRevision: null,
+        changes: [{ key: "enabled", value: false }],
+      },
+      signal(),
+    );
+    expect(saved.ok).toBe(true);
+    if (!saved.ok) throw new Error("save failed");
+    savedRevision = saved.value.snapshot.revision!;
+    expect(
+      await f.service.request(f.principal, "settings/read", { schemaVersion: 1 }, signal()),
+    ).toEqual({ ok: true, value: saved.value.snapshot });
+    expect(await first.backend.reads.settings(f.owner)).toEqual(saved.value.snapshot);
+  } finally {
+    await first.backend.dispose();
+  }
+  const second = await launch(userData);
+  try {
+    expect(second.profile.hostEpoch).not.toBe(first.profile.hostEpoch);
+    const f = setup(second);
+    expect(
+      await f.service.request(f.principal, "settings/read", { schemaVersion: 1 }, signal()),
+    ).toEqual({
+      ok: true,
+      value: {
+        schemaVersion: 1,
+        revision: savedRevision!,
+        values: [{ key: "enabled", value: false }],
+      },
+    });
+    expect(
+      await f.service.request(
+        f.principal,
+        "settings/update",
+        {
+          schemaVersion: 1,
+          expectedRevision: null,
+          changes: [{ key: "enabled", value: true }],
+        },
+        signal(),
+      ),
+    ).toMatchObject({ ok: false, error: { code: "PLUGIN_E_SETTINGS_CONFLICT" } });
+    const reset = await f.service.request(
+      f.principal,
+      "settings/reset",
+      {
+        schemaVersion: 1,
+        expectedRevision: savedRevision!,
+        keys: ["enabled"],
+      },
+      signal(),
+    );
+    expect(reset.ok).toBe(true);
+    if (!reset.ok) throw new Error("reset failed");
+    expect(await second.backend.reads.settings(f.owner)).toEqual(reset.value.snapshot);
+    resource = { ...resource, schemaVersion: 2 };
+    validationDigest = "c".repeat(64);
+    const migrated = await f.service.request(
+      f.principal,
+      "settings/migrate",
+      {
+        fromSchemaVersion: 1,
+        schemaVersion: 2,
+        expectedRevision: reset.value.receipt.revision,
+        values: [{ key: "enabled", value: false }],
+      },
+      signal(),
+    );
+    expect(migrated.ok).toBe(true);
+    if (!migrated.ok) throw new Error("migration failed");
+    expect(await second.backend.reads.settings(f.owner)).toEqual(migrated.value.snapshot);
+    expect(await second.backend.evidence.settingsDigest(f.owner)).toMatchObject({
+      schemaVersion: 2,
+      validationDigest,
+    });
+  } finally {
+    await second.backend.dispose();
+  }
+});
+
+it("preserves denied admission errors and cleanup through the real worker after unknown publication",async()=>{
+  const env=await launch(path.join(directory,randomUUID())),owner=ownerFor(env.profile.hostEpoch),bytes=Buffer.from("payload");
+  const service=createRecordService({now:()=>performance.now(),wall:Date.now,live:()=>true,permission:()=>true,
+    engine:env.backend.engine,read:env.backend.reads,evidence:env.backend.evidence,
+    checkpoint:{authorize:()=>"none",committed(){},open:()=>false,
+      register:async()=>{throw new Error("unused");},abandon:async()=>{throw new Error("unused");}}});
+  const principal={kind:"plugin" as const,owner,authorityContext:null},signal=new AbortController().signal;
+  const t=make(owner,bytes);
+  try {
+    await stage(env.backend,t,bytes);env.control.arm("after-publish","fail");
+    expect(await env.backend.engine.publish(t)).toEqual({disposition:"unknown"});
+    const quota=await env.backend.evidence.quota(owner),denied=make(owner,bytes);
+    await expect(env.backend.engine.reserve(denied,bytes.length)).rejects.toThrow("publish-uncertain");
+    await expect(env.backend.engine.abort({...denied,owner:{...owner,processEpoch:randomUUID()}})).rejects.toThrow("stale");
+    const input={target:{mode:"create" as const},kind:"test",schemaVersion:1,label:"Denied",mediaType:"application/octet-stream" as const,
+      byteLength:bytes.length,sha256:hash(bytes)};
+    for(let i=0;i<3;i++) {
+      expect(await service.request(principal,"storage/beginWrite",input,signal)).toMatchObject({ok:false,error:{detail:{reason:"publish-uncertain"}}});
+      expect(service.admittedWrites(owner)).toEqual([]);
+    }
+    const scope={kind:"namespace" as const,owner};
+    const ordinary=env.backend.evidence.capture(scope,performance.now()+10000);
+    const uncertain=env.backend.evidence.captureDrain!(scope,performance.now()+10000);
+    expect(env.backend.evidence.tickets(uncertain)).toContainEqual(t);
+    expect(await env.backend.engine.abort(denied)).toBe("aborted");
+    expect(await env.backend.engine.abort(denied)).toBe("aborted");
+    await expect(env.backend.engine.reserve(denied,bytes.length)).rejects.toThrow("stale");
+    await expect(env.backend.engine.append(denied,0,bytes)).rejects.toThrow("stale");
+    await expect(env.backend.engine.publish(denied)).rejects.toThrow("stale");
+    expect(await env.backend.evidence.quota(owner)).toEqual(quota);
+    expect(env.control.trace().filter(e=>e.point==="open-temp")).toHaveLength(1);
+    expect((await env.backend.engine.reconcile(t)).disposition).toBe("committed");
+    expect(await env.backend.engine.abort(t)).toBe("committed");
+    expect(env.backend.evidence.tickets(ordinary)).toContainEqual(denied);
+    expect(await env.backend.evidence.flush(ordinary)).toMatchObject({state:"failed",incomplete:expect.arrayContaining([denied.id])});
+    const clean=env.backend.evidence.captureDrain!(scope,performance.now()+10000);
+    expect(env.backend.evidence.tickets(clean)).toEqual([t]);
+    expect(await env.backend.evidence.flush(clean)).toMatchObject({state:"saved",incomplete:[],unknown:[]});
+    expect(await env.backend.evidence.flush(uncertain)).toMatchObject({state:"saved"});
+    const begun=await service.request(principal,"storage/beginWrite",input,signal);
+    expect(begun.ok).toBe(true);
+    for(const write of service.admittedWrites(owner))expect(await env.backend.engine.abort(write.ticket)).toBe("aborted");
+    const incomplete=env.backend.evidence.captureDrain!(scope,performance.now()+10000);
+    expect(await env.backend.evidence.flush(incomplete)).toMatchObject({state:"failed",incomplete:expect.arrayContaining(service.admittedWrites(owner).map(w=>w.ticket.id))});
+  }finally{
+    await env.backend.engine.reconcile(t);await service.close();await env.backend.dispose();
+  }
+});
+
+import { createPersistenceHost } from "./host-port.js";
+async function hostFor(env:Awaited<ReturnType<typeof launch>>,owner:PublicationTicket["owner"]) {
+  const fail=()=>{throw new Error("Unexpected I/O");};
+  const dispatchDrain=async()=>({ok:true as const,value:{status:"checkpoint-only" as const,writes:[]}});
+  const host=await createPersistenceHost({profile:env.profile,now:()=>performance.now(),hasPermission:()=>true,
+    composition:{backend:env.backend,
+      sources:{current:()=>true,settings:async()=>null,coreOwner:()=>owner},dispatchDrain,
+      events:{diagnostics:fail,create:fail,owns:fail,publish:fail,activate:fail,resync:fail,snapshot:fail,ack:fail,unsubscribe:fail,closeAfterControl:fail,onRemoved:()=>()=>{}},
+      imports:{run:fail,acceptPreferences:fail,issuePreferences:fail,retirePreferences:fail,acceptPreferencesEvidence:fail}},
+    reservations:{validate:()=>null,onEnded:fail},actions:{claim:fail},
+    actionAdapter:{chooseDestination:async()=>null,copyText:async()=>{}},
+    coreActions:{claim:()=>false,isClaimed:()=>false,complete:()=>{}}});
+  return {host,dispatchDrain};
+}
+it("real host drains rejected-clean attempts without source recovery after reconciliation and reload",async()=>{
+  const userData=path.join(directory,randomUUID()),env=await launch(userData),owner=ownerFor(env.profile.hostEpoch),bytes=Buffer.from("payload");
+  const {host,dispatchDrain}=await hostFor(env,owner);
+  try {
+    const original=make(owner,bytes);await stage(env.backend,original,bytes);
+    env.control.arm("after-publish","fail");
+    expect(await env.backend.engine.publish(original)).toEqual({disposition:"unknown"});
+    const denied=make(owner,bytes);
+    await expect(env.backend.engine.reserve(denied,bytes.length)).rejects.toThrow("publish-uncertain");
+    expect(await env.backend.engine.abort(denied)).toBe("aborted");
+    expect((await env.backend.engine.reconcile(original)).disposition).toBe("committed");
+    const second=make(owner,bytes);await stage(env.backend,second,bytes);
+    expect((await env.backend.engine.publish(second)).disposition).toBe("committed");
+    for(const current of [owner,{...owner,generation:2,processEpoch:randomUUID()}]) {
+      const offer=host.participant.freeze(current,"disable",performance.now()+10000);
+      expect(await host.participant.drain(offer,dispatchDrain)).toMatchObject({state:"saved",blocker:false,records:[]});
+      expect(host.recovery.snapshot().items).toEqual([]);
+    }
+    expect((await env.backend.evidence.recoveryPage()).items).toEqual([]);
+    await expect(env.backend.engine.reserve(denied,bytes.length)).rejects.toThrow("stale");
+  } finally {await host.dispose();}
+  expect(persistenceWorkerCount(env.backend)).toBe(0);
+  const reopened=await launch(userData),nextOwner=ownerFor(reopened.profile.hostEpoch),next=await hostFor(reopened,nextOwner);
+  try {expect(next.host.recovery.snapshot().items).toEqual([]);}
+  finally {await next.host.dispose();}
+  expect(persistenceWorkerCount(reopened.backend)).toBe(0);
+});
+it("drain keeps unknown publication and unconfirmed abort, then admitted aborted work",async()=>{
+  const env=await launch(path.join(directory,randomUUID())),owner=ownerFor(env.profile.hostEpoch),bytes=Buffer.from("payload"),t=make(owner,bytes);
+  let publication:Promise<unknown>|undefined;
+  try {
+    await stage(env.backend,t,bytes);env.control.arm("after-publish","pause");
+    const reached=env.control.reached("after-publish");publication=env.backend.engine.publish(t);await reached;
+    expect(await env.backend.engine.abort(t)).toBe("unknown");
+    const barrier=env.backend.evidence.captureDrain!({kind:"namespace",owner},performance.now()+10000);
+    expect(await env.backend.evidence.flush(barrier)).toMatchObject({state:"unknown",unknown:[t.id]});
+    env.control.release("after-publish");await publication;
+    const aborted=make(owner,bytes);await env.backend.engine.reserve(aborted,bytes.length);
+    expect(await env.backend.engine.abort(aborted)).toBe("aborted");
+    const next=env.backend.evidence.captureDrain!({kind:"namespace",owner},performance.now()+10000);
+    expect(await env.backend.evidence.flush(next)).toMatchObject({state:"failed",incomplete:[aborted.id]});
+  } finally {env.control.release("after-publish");await publication;await env.backend.dispose();}
+});
+it("a lost reserve response remains in both fixed drain and ordinary snapshots",async()=>{
+  const env=await launch(path.join(directory,randomUUID())),owner=ownerFor(env.profile.hostEpoch),bytes=Buffer.from("payload"),t=make(owner,bytes);
+  env.control.arm("open-temp","pause");const reached=env.control.reached("open-temp");
+  const reserve=env.backend.engine.reserve(t,bytes.length).catch(e=>e);await reached;
+  const scope={kind:"namespace" as const,owner},old=env.backend.evidence.captureDrain!(scope,performance.now()+10000);
+  await env.control.terminate();expect(await reserve).toBeInstanceOf(Error);
+  for(const barrier of [old,env.backend.evidence.captureDrain!(scope,performance.now()+10000),env.backend.evidence.capture(scope,performance.now()+10000)]) {
+    expect(env.backend.evidence.tickets(barrier)).toEqual([t]);
+    await expect(env.backend.evidence.flush(barrier)).rejects.toThrow("worker-lost");
+  }
+  await expect(env.backend.dispose()).rejects.toThrow("worker-dispose-unknown");
+});
+it("new drains omit confirmed clean reserve failure without rewriting earlier snapshots",async()=>{
+  const env=await launch(path.join(directory,randomUUID())),owner=ownerFor(env.profile.hostEpoch),bytes=Buffer.from("payload"),t=make(owner,bytes);
+  let reservation:Promise<unknown>|undefined;
+  try {
+    env.control.arm("reserve","pause");const reached=env.control.reached("reserve");
+    reservation=env.backend.engine.reserve(t,bytes.length).catch(e=>e);await reached;
+    const scope={kind:"namespace" as const,owner};
+    const oldDrain=env.backend.evidence.captureDrain!(scope,performance.now()+10000),ordinary=env.backend.evidence.capture(scope,performance.now()+10000);
+    env.control.arm("open-temp","fail");env.control.release("reserve");
+    expect(await reservation).toBeInstanceOf(Error);
+    expect(await env.backend.engine.abort(t)).toBe("aborted");
+    for(const old of [oldDrain,ordinary]) {
+      expect(env.backend.evidence.tickets(old)).toEqual([t]);
+      expect(await env.backend.evidence.flush(old)).toMatchObject({state:"failed",incomplete:[t.id]});
+    }
+    const fresh=env.backend.evidence.captureDrain!(scope,performance.now()+10000);
+    expect(env.backend.evidence.tickets(fresh)).toEqual([]);
+    expect(await env.backend.evidence.flush(fresh)).toMatchObject({state:"saved"});
+    await expect(env.backend.engine.reserve(t,bytes.length)).rejects.toThrow("stale");
+  } finally {env.control.release("reserve");await reservation;await env.backend.dispose();}
+});
+it("failed reserve cleanup and wrong-owner abort cannot clear a drain obligation",async()=>{
+  const env=await launch(path.join(directory,randomUUID())),owner=ownerFor(env.profile.hostEpoch),bytes=Buffer.from("payload"),t=make(owner,bytes);
+  const trigger=path.join(directory,"cleanup-failure.trigger"),scope={kind:"namespace" as const,owner};
+  try {
+    await writeFile(trigger,"");env.control.arm("open-temp","fail");
+    await expect(env.backend.engine.reserve(t,bytes.length)).rejects.toThrow();
+    await expect(env.backend.engine.abort({...t,owner:{...owner,processEpoch:randomUUID()}})).rejects.toThrow("stale");
+    await expect(env.backend.engine.abort(t)).rejects.toThrow();
+    const failed=env.backend.evidence.captureDrain!(scope,performance.now()+10000);
+    expect(env.backend.evidence.tickets(failed)).toEqual([t]);
+    expect(await env.backend.evidence.flush(failed)).toMatchObject({state:"unknown",unknown:[t.id]});
+    await rm(trigger);expect(await env.backend.engine.abort(t)).toBe("aborted");
+    // A later settlement is not retroactively classified as a clean reserve rejection.
+    const settled=env.backend.evidence.captureDrain!(scope,performance.now()+10000);
+    expect(await env.backend.evidence.flush(settled)).toMatchObject({state:"failed",incomplete:[t.id]});
+  } finally {await rm(trigger,{force:true});await env.backend.engine.abort(t);await env.backend.dispose();}
+});
+
+it("seals the zero-byte deletion through the public record service and real worker",async()=>{
+  const env=await launch(path.join(directory,randomUUID())),owner=ownerFor(env.profile.hostEpoch),bytes=Buffer.from("delete original");
+  const service=createRecordService({now:()=>performance.now(),wall:Date.now,live:()=>true,permission:()=>true,
+    engine:env.backend.engine,read:env.backend.reads,evidence:env.backend.evidence,
+    checkpoint:{authorize:()=>"none",committed(){},open:()=>false,register:async()=>{throw new Error("unused");},abandon:async()=>{throw new Error("unused");}}});
+  const principal={kind:"plugin" as const,owner,authorityContext:null},signal=new AbortController().signal,t=make(owner,bytes);
+  try {
+    await stage(env.backend,t,bytes);expect((await env.backend.engine.publish(t)).disposition).toBe("committed");
+    if(t.metadata.kind!=="record")throw new Error("record required");
+    const params={id:t.metadata.record.id,expectedRevision:t.metadata.record.revision};
+    const deleted=await service.request(principal,"storage/delete",params,signal);
+    expect(deleted).toMatchObject({ok:true,value:{deleted:true}});
+    expect(await service.request(principal,"storage/delete",params,signal)).toEqual(deleted);
+    expect((await env.backend.reads.list(owner,{limit:64})).entries).toEqual([]);
+  }finally{await env.backend.dispose();}
+});
+
+it("preserves the record on delete seal failure and permits a fresh explicit retry after proven abort",async()=>{
+  const env=await launch(path.join(directory,randomUUID())),owner=ownerFor(env.profile.hostEpoch),bytes=Buffer.from("keep on failure");
+  const service=createRecordService({now:()=>performance.now(),wall:Date.now,live:()=>true,permission:()=>true,
+    engine:env.backend.engine,read:env.backend.reads,evidence:env.backend.evidence,
+    checkpoint:{authorize:()=>"none",committed(){},open:()=>false,register:async()=>{throw new Error("unused");},abandon:async()=>{throw new Error("unused");}}});
+  const principal={kind:"plugin" as const,owner,authorityContext:null},signal=new AbortController().signal,t=make(owner,bytes);
+  try {
+    await stage(env.backend,t,bytes);await env.backend.engine.publish(t);
+    if(t.metadata.kind!=="record")throw new Error("record required");
+    const params={id:t.metadata.record.id,expectedRevision:t.metadata.record.revision};
+    env.control.arm("seal-sync","fail");
+    expect(await service.request(principal,"storage/delete",params,signal)).toMatchObject({ok:false});
+    expect(await env.backend.reads.stat(owner,params.id)).toMatchObject({revision:params.expectedRevision});
+    expect(await service.request(principal,"storage/delete",params,signal)).toMatchObject({ok:true,value:{deleted:true}});
+  }finally{await env.backend.dispose();}
+});

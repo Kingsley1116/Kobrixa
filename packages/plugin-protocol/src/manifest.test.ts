@@ -44,3 +44,90 @@ describe("plugin manifest", () => {
     expect(accepts({ ...valid, contributes: { commands } })).toBe(false);
   });
 });
+
+import { uiDeclarationProblems, staticLanguageDeclarationProblems } from "./manifest.js";
+it("U02 distinguishes source errors from quarantined resource headers", () => {
+  const value = {
+    id: "acme.ui",
+    version: "1.0.0",
+    apiVersion: "^1.6.0",
+    runtime: { kind: "node", entry: "main.js" },
+    permissions: ["ui.panels"],
+    contributes: {
+      panels: [
+        {
+          id: "acme.ui.main",
+          title: { en: "Panel" },
+          location: "right",
+          resource: { version: 99, path: "../outside.json" },
+        },
+      ],
+    },
+  };
+  const manifest = pluginManifestSchema.parse(value);
+  expect(uiDeclarationProblems(manifest)).toEqual([]);
+  expect(
+    uiDeclarationProblems(pluginManifestSchema.parse({ ...value, permissions: [] })),
+  ).not.toEqual([]);
+  expect(
+    uiDeclarationProblems(
+      pluginManifestSchema.parse({ ...value, activationEvents: ["onPanel:foreign.ui.panel"] }),
+    ),
+  ).not.toEqual([]);
+  for (const key of ["panels", "status"]) {
+    const parsed = pluginManifestSchema.parse({
+      ...value,
+      runtime: { kind: "static" },
+      contributes: { [key]: [] },
+    });
+    expect(staticLanguageDeclarationProblems(parsed).some((message) => message.includes(key))).toBe(
+      true,
+    );
+  }
+});
+
+it("makes settings a known strict packaged JSON contribution", () => {
+  const base = {
+    id: "test.settings",
+    version: "1.0.0",
+    apiVersion: "^1.7.0",
+    runtime: { kind: "node", entry: "main.cjs" },
+    permissions: ["settings.read", "settings.write"],
+  };
+  expect(
+    pluginManifestSchema.safeParse({
+      ...base,
+      contributes: { settings: { version: 1, path: "settings/preferences.json" } },
+    }).success,
+  ).toBe(true);
+  for (const settings of [
+    { version: 2, path: "settings.json" },
+    { version: 1, path: "../settings.json" },
+    { version: 1, path: "/settings.json" },
+    { version: 1, path: "https://invalid/settings.json" },
+    { version: 1, path: "settings.json", extra: true },
+  ])
+    expect(pluginManifestSchema.safeParse({ ...base, contributes: { settings } }).success).toBe(
+      false,
+    );
+});
+
+import { permissionSchema } from "./common.js";
+it("adds precisely the six persistence permissions to the cumulative registry", () => {
+  expect([...permissionSchema.options].sort()).toEqual(
+    [
+      "ui.notifications",
+      "devices.read",
+      "devices.connect",
+      "devices.control",
+      "ui.panels",
+      "ui.status",
+      "settings.read",
+      "settings.write",
+      "storage.read",
+      "storage.write",
+      "storage.export",
+      "ui.clipboard",
+    ].sort(),
+  );
+});

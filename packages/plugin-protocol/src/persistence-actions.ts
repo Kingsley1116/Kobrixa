@@ -1,17 +1,15 @@
-import type { z } from "zod";
-type Wire<T> = z.ZodType<T, T>;
-import type { Handle } from "./device-types.js";
+import { z } from "zod";
 import type { DefinitionMap } from "./business-result.js";
-import type { Sha256, Durability } from "./settings.js";
-import type { RecordMeta } from "./storage.js";
-import type { PersistenceFailureDetail, PersistenceResult } from "./persistence-validation.js";
-
-export declare const persistenceActionRequestSchemas: {
-  "storage/exportBegin": { params: Wire<{actionRef: Handle; suggestedName: string; mediaType: RecordMeta["mediaType"]; byteLength: number; sha256: Sha256}>; result: Wire<PersistenceResult<{export: Handle; state: "waiting"; expiresAt: number}>> };
-  "storage/exportChunk": { params: Wire<{export: Handle; offset: number; data: string}>; result: Wire<PersistenceResult<{receivedBytes: number; expiresAt: number}>> };
-  "storage/exportCommit": { params: Wire<{export: Handle}>; result: Wire<PersistenceResult<{exported: true; commitId: Handle; durability: Durability}>> };
-  "storage/exportStatus": { params: Wire<{export: Handle}>; result: Wire<PersistenceResult<{state: "waiting" | "receiving" | "publishing" | "completed" | "cancelled" | "expired" | "failed"; receivedBytes: number; expiresAt: number; commitId?: Handle; durability?: Durability; error?: {code: string; message: string; detail?: PersistenceFailureDetail}}>> };
-  "storage/exportCancel": { params: Wire<{export: Handle}>; result: Wire<PersistenceResult<{disposition: "aborted" | "committed" | "unknown"; commitId?: Handle}>> };
-  "ui/copyText": { params: Wire<{actionRef: Handle; text: string}>; result: Wire<PersistenceResult<{copied: true}>> };
+import { mediaTypeSchema } from "./storage.js";
+import { boundedText, safeIntegerSchema as n, handleSchema as h, sha256Schema, durabilitySchema, chunkSchema,
+  persistenceResultSchema, persistenceErrorSchema } from "./persistence-validation.js";
+const request = <P extends z.ZodType, V extends z.ZodType>(params: P, value: V) => ({ params, result: persistenceResultSchema(value) });
+export const persistenceActionRequestSchemas = {
+  "storage/exportBegin": request(z.strictObject({ actionRef: h, suggestedName: boundedText(1, 80, 320, true).refine(s => !/[\\/:]/.test(s) && s !== "." && s !== ".." && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(s)), mediaType: mediaTypeSchema, byteLength: n.max(8388608), sha256: sha256Schema }), z.strictObject({ export: h, state: z.literal("waiting"), expiresAt: n })),
+  "storage/exportChunk": request(z.strictObject({ export: h, offset: n, data: chunkSchema() }), z.strictObject({ receivedBytes: n.max(8388608), expiresAt: n })),
+  "storage/exportCommit": request(z.strictObject({ export: h }), z.strictObject({ exported: z.literal(true), commitId: h, durability: durabilitySchema })),
+  "storage/exportStatus": request(z.strictObject({ export: h }), z.strictObject({ state: z.enum(["waiting", "receiving", "publishing", "completed", "cancelled", "expired", "failed"]), receivedBytes: n.max(8388608), expiresAt: n, commitId: h.optional(), durability: durabilitySchema.optional(), error: persistenceErrorSchema.optional() })),
+  "storage/exportCancel": request(z.strictObject({ export: h }), z.strictObject({ disposition: z.enum(["aborted", "committed", "unknown"]), commitId: h.optional() })),
+  "ui/copyText": request(z.strictObject({ actionRef: h, text: boundedText(0, 16384, 65536) }), z.strictObject({ copied: z.literal(true) })),
 };
 export type PersistenceActionRequestMap = DefinitionMap<typeof persistenceActionRequestSchemas>;

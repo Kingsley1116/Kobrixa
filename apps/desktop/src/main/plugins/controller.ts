@@ -1,11 +1,10 @@
+import { SensorLabMigrationGate } from "./persistence/sensor-lab-migration.js";
+import { releaseUiRecording } from "./ui-bridge.js";
 import type {
   Permission as ImportedPermission,
   ResourceOwner as ImportedResourceOwner,
 } from "@kobrixa/plugin-protocol";
-import type {
-  CoreWindowScope as ImportedCoreWindowScope,
-  Stage3ChannelContext as ImportedStage3ChannelContext,
-} from "@kobrixa/plugin-runtime";
+import type { CoreWindowScope as ImportedCoreWindowScope } from "@kobrixa/plugin-runtime";
 import type { DeviceEvent as ImportedDeviceEvent } from "../../shared/api.js";
 import { realpath } from "node:fs/promises";
 import path from "node:path";
@@ -94,18 +93,29 @@ export type PluginManagerPort = Pick<
   | "leaveSafeMode"
   | "onEvent"
   | "active"
+  | "thirdPartyActive"
+  | "uiCatalogSources"
+  | "persistenceCatalogSources"
+  | "persistenceCoreSources"
   | "shutdown"
   | "resume"
   | "resolveCompiler"
   | "resolveLanguageService"
 >;
 export interface PluginControllerDependencies {
+  providerSettlement?: {
+    settle(): Promise<void>;
+    retry(): Promise<void>;
+  };
   manager: PluginManagerPort;
   settings: Pick<PluginSettingsStore, "settings" | "update">;
   dialogs: PluginDialogs;
   logs: PluginLogs;
   notices: PluginNotices;
-  marker: Pick<SessionMarkerFile, "update" | "finish" | "markThirdPartyStaticContributions">;
+  marker: Pick<
+    SessionMarkerFile,
+    "update" | "finish" | "markThirdPartyStaticContributions" | "markThirdPartyUiContributions"
+  >;
   probe(command: PythonCommand): Promise<PythonProbe>;
   realpath(directory: string): Promise<string>;
   locale: PluginLocale;
@@ -133,12 +143,14 @@ type Extra = { persisted?: false; outcome?: "cancelled" | "duplicate"; sourceKey
  */
 export class PluginController {
   #revision = 0;
+  #providerFailed = false;
   #helpCatalog: PluginHelpCatalogView | undefined;
   #staticRiskRecorded = false;
   #staticSaveProblem: PluginProblem | undefined;
   #developer: boolean;
   #commandLine: boolean;
   #closing = false;
+  #preparingUpdate = false;
   #changes: Promise<unknown> = Promise.resolve();
   #restoring: Promise<PluginsResult> | undefined;
   #sessionProblem: PluginProblem | undefined;
@@ -159,9 +171,7 @@ export class PluginController {
         return;
       }
       deps.marker.update({
-        thirdPartyRunning: deps.manager
-          .state()
-          .plugins.some((plugin) => plugin.source === "development" && plugin.running),
+        thirdPartyRunning: deps.manager.thirdPartyActive,
       });
       for (const plugin of event.state.plugins)
         if (!plugin.running) this.#pendingReload.delete(plugin.sourceKey);
@@ -169,6 +179,29 @@ export class PluginController {
     });
   }
 
+  #persistence170: DesktopPersistenceAttachment170 | undefined;
+  attachPersistence170(value: DesktopPersistenceAttachment170): void {
+    if (this.#persistence170) throw new Error("Persistence already attached");
+    this.#persistence170 = value;
+  }
+  get persistence170(): DesktopPersistenceAttachment170 | undefined {
+    return this.#persistence170;
+  }
+  persistenceCatalogSources(): ReturnType<PluginManager["persistenceCatalogSources"]> {
+    return this.deps.manager.persistenceCatalogSources();
+  }
+  persistenceCoreSources(): ReturnType<PluginManager["persistenceCoreSources"]> {
+    return this.deps.manager.persistenceCoreSources();
+  }
+  uiCatalogSources(): readonly UiCatalogSource[] {
+    return this.deps.manager.uiCatalogSources();
+  }
+  markThirdPartyUiContributions(sourceKey: string): void {
+    const plugin = this.deps.manager.state().plugins.find((item) => item.sourceKey === sourceKey);
+    if (!plugin || plugin.status !== "enabled")
+      throw new PluginError("PLUGIN_E_DISABLED", "UI source is unavailable.");
+    if (plugin.source === "development") this.deps.marker.markThirdPartyUiContributions();
+  }
   state(): PluginsView {
     return this.#view(this.deps.manager.state());
   }
@@ -332,6 +365,8 @@ export class PluginController {
   }
 
   async execute(commandId: string): Promise<PluginCommandResult> {
+    const refused = this.#refuse({});
+    if (refused) return refused;
     const owner = this.deps.manager
       .state()
       .plugins.find((plugin) =>
@@ -370,7 +405,7 @@ export class PluginController {
       outsideSafeMode: optionalBuiltin,
     });
     if (refused) return refused;
-    return this.#result(await this.deps.manager.setEnabled(sourceKey, enabled));
+    return this.#providerAction(sourceKey, () => this.deps.manager.setEnabled(sourceKey, enabled));
   }
 
   async setDeveloperMode(enabled: boolean): Promise<PluginsResult> {
@@ -485,7 +520,38 @@ export class PluginController {
     const refused = this.#refuse({ developer: !optionalBuiltin, outsideSafeMode: true });
     if (refused) return refused;
     this.#pendingReload.delete(sourceKey);
-    return this.#result(await this.deps.manager.reloadSource(sourceKey));
+    return this.#providerAction(sourceKey, () => this.deps.manager.reloadSource(sourceKey));
+  }
+
+  async #providerAction(
+    sourceKey: string,
+    action: () => Promise<PluginActionResult>,
+  ): Promise<PluginsResult> {
+    const retry = this.#providerFailed;
+    if (sourceKey !== "builtin:kobrixa.device-ev3") return this.#result(await action());
+    try {
+      const result = await action();
+      // The manager must release its own cleanup/admission holds first.
+      await this.#settleProvider(retry);
+      return this.#result(result);
+    } catch (error) {
+      return failure(
+        error instanceof PluginError ? error.code : "PLUGIN_E_DEVICE_OPERATION",
+        messageOf(error),
+      );
+    }
+  }
+
+  async #settleProvider(retry = false): Promise<void> {
+    try {
+      const settlement = this.deps.providerSettlement;
+      if (retry) await settlement?.retry();
+      else await settlement?.settle();
+      this.#providerFailed = false;
+    } catch (error) {
+      this.#providerFailed = true;
+      throw error;
+    }
   }
 
   async pythonCandidates(): Promise<PythonChoice[]> {
@@ -564,7 +630,9 @@ export class PluginController {
       const refused = this.#refuse({});
       if (refused) return refused;
       if (!this.deps.session.safeMode) {
-        const left = await this.deps.manager.leaveSafeMode();
+        const left = await this.#providerAction("builtin:kobrixa.device-ev3", () =>
+          this.deps.manager.leaveSafeMode(),
+        );
         if (!left.ok) return left;
       }
       this.#changed();
@@ -634,13 +702,26 @@ export class PluginController {
 
   shutdown(deadlineMs?: number): Promise<void> {
     this.#closing = true;
-    return this.deps.manager.shutdown(deadlineMs);
+    return this.#enqueue(async () => {
+      const retry = this.#providerFailed;
+      await this.deps.manager.shutdown(deadlineMs);
+      await this.#settleProvider(retry);
+    });
+  }
+
+  get acceptingUi(): boolean {
+    return !this.#closing && !this.#preparingUpdate;
+  }
+  beginUpdatePreparation(): void {
+    this.#preparingUpdate = true;
   }
 
   async resume(): Promise<void> {
     await this.#enqueue(async () => {
       await this.deps.manager.resume();
+      await this.#settleProvider(this.#providerFailed);
       this.#closing = false;
+      this.#preparingUpdate = false;
       this.#changed();
     });
   }
@@ -657,11 +738,6 @@ export class PluginController {
   }
 
   markRendererUnresponsive(): void {
-    if (
-      !this.#staticRiskRecorded &&
-      !this.deps.manager.state().plugins.some((plugin) => plugin.source === "development")
-    )
-      return;
     this.deps.marker.update({ rendererUnresponsive: true });
   }
 
@@ -728,7 +804,7 @@ export class PluginController {
   }
 
   #refuse(needs: { developer?: boolean; outsideSafeMode?: boolean }): Failure | undefined {
-    if (this.#closing)
+    if (this.#closing || this.#preparingUpdate)
       return failure("PLUGIN_E_SHUTTING_DOWN", "Kobrixa is shutting down plugins.");
     if (needs.developer && !this.#developer)
       return failure(
@@ -862,11 +938,12 @@ export class PluginController {
 }
 
 export interface StartPluginsOptions {
+  providerSettlement?: PluginControllerDependencies["providerSettlement"];
   stage3?: PluginManagerOptions["stage3"];
   stage3Host?: PluginManagerOptions["stage3Host"];
   onStage3Runtime?: (
     runtime: UiRuntimeAttachment,
-    providers: Pick<PluginManager, "state" | "onEvent">,
+    providers: Pick<PluginManager, "state" | "onEvent" | "builtinSourceEligibility">,
   ) => void;
   userData: string;
   builtins: readonly PluginSource[];
@@ -912,7 +989,12 @@ export async function startPlugins(options: StartPluginsOptions): Promise<Plugin
   const hasDevelopmentSources =
     developer && (document.sources.length > 0 || requestedDirectories.length > 0);
   const relevantUnclean =
-    hasDevelopmentSources || marker.previousThirdPartyStaticContributions ? unclean : undefined;
+    unclean === "renderer-unresponsive" ||
+    hasDevelopmentSources ||
+    marker.previousThirdPartyStaticContributions ||
+    marker.previousThirdPartyUiContributions
+      ? unclean
+      : undefined;
   const lock = document.safeModeLock;
   if (
     relevantUnclean &&
@@ -1030,6 +1112,7 @@ export async function startPlugins(options: StartPluginsOptions): Promise<Plugin
   }
   const commandLinePython = options.commandLine.python;
   const controller = new PluginController({
+    ...(options.providerSettlement ? { providerSettlement: options.providerSettlement } : {}),
     manager,
     settings,
     dialogs: options.dialogs,
@@ -1095,7 +1178,7 @@ import type {
   Stage3HostAttachment,
   UiRuntimeAttachment,
 } from "@kobrixa/plugin-runtime";
-import { unavailableUi150, resourceFreePersistence150 } from "@kobrixa/plugin-runtime";
+
 import { LifecycleCoordinator } from "../device-broker/lifecycle-coordinator.js";
 import type {
   DesktopMainComposition,
@@ -1128,19 +1211,185 @@ export function desktopLifecycle(composition: DesktopMainComposition): Lifecycle
   if (!coordinator) throw new Error("Unknown desktop composition.");
   return coordinator;
 }
+import {
+  createUiLifetimePort,
+  currentStatusBindings,
+  type UiCatalog,
+  type UiStateRegistry,
+  type UiSubscriptions,
+  type PluginUiBridge,
+  type UiCatalogSource,
+  type UiBridgeEvent,
+  type Stage3ChannelContext,
+  type Stage3ChannelBinding,
+  type DeviceChannelAttachment,
+} from "@kobrixa/plugin-runtime";
+import {
+  handleSchema,
+  resourceFailure,
+  type CommandValue,
+  type Result,
+} from "@kobrixa/plugin-protocol";
+import {
+  observeUiSite,
+  disposePluginUiBridge,
+  createUiRegistry,
+  createUiChannelBinding,
+  createUiExecutionAdapter,
+  createPluginUiBridge,
+  UiBridgeEvents,
+  type UiExecutionAdapter,
+} from "./ui-bridge.js";
+import { UiIntent } from "./ui-intent.js";
+import { UserPersistenceActions } from "./user-persistence-actions.js";
+import { ShutdownCoordinator } from "./shutdown-coordinator.js";
+
+function bindDesktopChannel(
+  context: Stage3ChannelContext,
+  broker: DeviceBrokerPort,
+  input: Omit<Parameters<typeof createUiChannelBinding>[1], "attachment"> & {
+    revokeIntent(owner: ImportedResourceOwner): void;
+  },
+  originalChannels: Map<string, Stage3ChannelContext>,
+  persistence: PersistenceHost,
+  admitted: () => boolean,
+): Stage3ChannelBinding {
+  const principal = context.principal();
+  const key = (owner: typeof context.owner) =>
+    JSON.stringify([
+      owner.sourceKey,
+      owner.pluginId,
+      owner.generation,
+      owner.hostEpoch,
+      owner.processEpoch,
+    ]);
+  if (principal.kind !== "plugin" || key(principal.owner) !== key(context.owner))
+    throw new Error("Channel owner mismatch.");
+  let attachment: DeviceChannelAttachment | undefined;
+  const routedBroker = new Proxy(broker, {
+    get(target, key, receiver) {
+      if (key === "attachChannel")
+        return (args: Parameters<DeviceBrokerPort["attachChannel"]>[0]) => {
+          if (attachment) throw new Error("Second channel attachment.");
+          attachment = target.attachChannel({
+            ...args,
+            send(event) {
+              if (
+                event.kind === "ui.data" &&
+                !input.data?.snapshot(event.owner, event.data.binding).ok
+              )
+                throw new Error("UI data delivery authority retired.");
+              // The common ledger already withdrew broker scopes. Withdraw the
+              // corresponding UI heartbeat/gesture before the consumer sees resync.
+              if (event.kind === "events.resyncRequired") input.revokeIntent(event.owner);
+              // T3's local invalidation uses the control queue. The published
+              // settings event envelope is telemetry; keep its original ledger
+              // owner, subscription and sequence when crossing the peer boundary.
+              args.send(
+                event.kind === "settings.changed" ? { ...event, delivery: "telemetry" } : event,
+              );
+            },
+          });
+          return attachment;
+        };
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  const offDevice = attachDeviceRpc({
+    peer: context.peer,
+    principal: context.principal,
+    broker: routedBroker,
+  });
+  if (!attachment) {
+    offDevice();
+    throw new Error("Device router did not attach the original channel.");
+  }
+  let ui: Stage3ChannelBinding | undefined;
+  try {
+    ui = createUiChannelBinding(context, { ...input, attachment });
+    const offPersistence = bindPersistenceRoutes170({
+      context,
+      host: persistence,
+      attachment,
+      apiVersion: () => persistenceChannelApiVersion(context.peer),
+      admitted: () => admitted() && input.runtime.current(context.owner),
+    });
+    const boundUi = ui;
+    originalChannels.set(key(context.owner), context);
+    let disposed = false;
+    return {
+      initialized: (signal) => boundUi.initialized(signal),
+      ready: (signal) => boundUi.ready(signal),
+      dispose() {
+        if (disposed) return;
+        disposed = true;
+        try {
+          offPersistence();
+          boundUi.dispose();
+          offDevice();
+        } finally {
+          originalChannels.delete(key(context.owner));
+        }
+      },
+    };
+  } catch (error) {
+    try {
+      ui?.dispose();
+    } finally {
+      offDevice();
+    }
+    throw error;
+  }
+}
+type DesktopUi = {
+  bridge: PluginUiBridge;
+  catalog: UiCatalog;
+  states: UiStateRegistry;
+  subscriptions: UiSubscriptions;
+  intent: UiIntent;
+  actions: UserPersistenceActions;
+  coordinator: ShutdownCoordinator;
+  prepareUpdate(): Promise<void>;
+  prepareWindowClose(): Promise<void>;
+  setRecoveryNavigation(navigate: () => void): void;
+};
+const desktopUis = new WeakMap<DesktopMainComposition, DesktopUi>();
+export function desktopUi(composition: DesktopMainComposition): DesktopUi {
+  const ui = desktopUis.get(composition);
+  if (!ui) throw new Error("Unknown desktop UI composition.");
+  return ui;
+}
 export async function composeDesktopMain(
   input: DesktopMainCompositionInput,
+  test?: DesktopCompositionTestOptions,
 ): Promise<DesktopMainComposition> {
-  input.foundationOptions.profile.assertHeld();
+  const { profile, now, coreActions } = input.foundationOptions;
+  profile.assertHeld();
   const foundation = await input.createFoundation(input.foundationOptions);
   const broker = foundation.broker;
-  const stage3: Stage3RuntimePorts = {
-    device: broker.resources,
-    persistence: resourceFreePersistence150(),
-    ui: unavailableUi150(),
-  };
   let runtimeAttachment: UiRuntimeAttachment | undefined;
-  const originalChannels = new Map<string, ImportedStage3ChannelContext>();
+  const originalChannels = new Map<string, Stage3ChannelContext>();
+  const observed = new Map<string, { context: Stage3ChannelContext; process: PluginProcess }>();
+  const launches = new Map<string, { owner: ResourceOwner; process: PluginProcess }>();
+  const observe =
+    (
+      launcher: ReturnType<NonNullable<StartPluginsOptions["launcher"]>>,
+    ): ReturnType<NonNullable<StartPluginsOptions["launcher"]>> =>
+    async (plugin) => {
+      const process = await launcher(plugin);
+      if (plugin.channelOwner) {
+        const owner = structuredClone(plugin.channelOwner),
+          key = deviceOwnerKey(owner);
+        if (launches.has(key)) {
+          process.kill();
+          throw new Error("Duplicate original process association");
+        }
+        launches.set(key, { owner, process });
+      }
+      return process;
+    };
+  let persistenceAdmitted = false;
+  let labMigration: SensorLabMigrationGate | undefined;
   const ownerKey = (owner: ImportedResourceOwner) =>
     JSON.stringify([
       owner.sourceKey,
@@ -1154,105 +1403,735 @@ export async function composeDesktopMain(
     if (!runtimeAttachment) throw new Error("Stage 3 runtime not attached.");
     return runtimeAttachment;
   };
-  const coordinator = new LifecycleCoordinator({
-    ports: stage3,
-    resources: broker.resources,
-    sessions: broker.sessions,
-    reservations: broker.reservations,
-    persistence: stage3.persistence,
-    now: input.foundationOptions.now,
-    alive: (owner) => {
-      const channel = originalChannels.get(ownerKey(owner));
-      return !!channel && !channel.peer.closed;
+  // The forwarding port is inert until the callback assigns the actual manager attachment.
+  const runtimePort: UiRuntimeAttachment = {
+    activateInitialized: async (source, signal) => {
+      if (!plugins?.acceptingUi) throw new Error("Plugin admission is paused.");
+      if (source === "builtin:kobrixa.sensor-lab") {
+        if (!labMigration) throw new Error("Sensor Lab migration is not attached.");
+        await labMigration.prepare(signal);
+        labMigration.assertReady();
+        if (!plugins.acceptingUi) throw new Error("Plugin admission is paused.");
+      }
+      signal.throwIfAborted();
+      return runtime().activateInitialized(source, signal);
     },
+    ready: (owner, signal) => {
+      if (!plugins?.acceptingUi) return Promise.reject(new Error("Plugin admission is paused."));
+      return runtime().ready(owner, signal);
+    },
+    current: (owner) => runtime().current(owner),
     owners: () => runtime().owners(),
-    dispatch: (owner, request, signal) => runtime().dispatchDrain(owner, request, signal),
-    shutdown: async () => {
-      if (plugins) await plugins.shutdown();
+    context: (owner, scope) => (input.currentScope(scope) ? runtime().context(owner, scope) : null),
+    commands: (source) => runtime().commands(source),
+    invoke: (owner, invocation, signal) => {
+      if (!plugins?.acceptingUi) return Promise.resolve(resourceFailure("stale"));
+      return runtime().invoke(owner, invocation, signal);
     },
-    legacyFlush: input.legacyFlush,
-    report: input.report,
+    dispatchDrain: (owner, request, signal) => runtime().dispatchDrain(owner, request, signal),
+  };
+  let catalogHint: Extract<UiBridgeEvent, { type: "catalog" }> = {
+    type: "catalog",
+    hostEpoch: profile.hostEpoch,
+    revision: 0,
+    owners: [],
+  };
+  const events = new UiBridgeEvents(() => {
+    let statuses: UiBridgeEvent[] = [];
+    try {
+      statuses = currentStatusBindings(states, input.scope()).map(({ binding, revision }) => ({
+        type: "state",
+        binding,
+        revision,
+      }));
+    } catch {
+      /* Before the first admitted workbench there are no status bindings. */
+    }
+    return [catalogHint, ...statuses];
   });
-  const stage3Host: Stage3HostAttachment = {
-    hostEpoch: input.foundationOptions.profile.hostEpoch,
-    principal: input.principal,
-    hasPermission: (owner, permission) =>
-      input.foundationOptions.hasPermission(input.principal(owner), permission),
-    requirements(owner) {
-      const declarations = input.foundationOptions.requirements(owner);
-      return declarations === null
-        ? null
-        : Object.freeze(declarations.map((value) => Object.freeze({ ...value })));
+  let bridge: PluginUiBridge;
+  const intent = new UiIntent(broker.intent, now, events.publish, (event) =>
+    observeUiSite(bridge, event),
+  );
+  const actions = new UserPersistenceActions(
+    now,
+    (owner, scope, uiResourceGeneration) =>
+      input.currentScope(scope) &&
+      runtime().current(owner) &&
+      catalog.isCurrent({
+        sourceKey: owner.sourceKey,
+        pluginId: owner.pluginId,
+        uiResourceGeneration,
+      }),
+  );
+  const { catalog, states, subscriptions, data } = createUiRegistry({
+    supportedResourceVersions: [1, 2],
+    hostEpoch: profile.hostEpoch,
+    broker,
+    now,
+    beforeDelivery(sourceKey) {
+      if (!plugins) throw new Error("Plugin controller not attached.");
+      plugins.markThirdPartyUiContributions(sourceKey);
     },
-    bindChannel(context) {
-      const principal = context.principal();
-      const key = (owner: typeof context.owner) =>
-        JSON.stringify([
-          owner.sourceKey,
-          owner.pluginId,
-          owner.generation,
-          owner.hostEpoch,
-          owner.processEpoch,
-        ]);
-      if (principal.kind !== "plugin" || key(principal.owner) !== key(context.owner))
-        throw new Error("Channel owner mismatch.");
-      originalChannels.set(ownerKey(context.owner), context);
-      const detach = attachDeviceRpc({ peer: context.peer, principal: context.principal, broker });
-      return {
-        async initialized(signal) {
-          signal.throwIfAborted();
-        },
-        async ready(signal) {
-          signal.throwIfAborted();
-        },
-        dispose() {
-          detach();
-          originalChannels.delete(ownerKey(context.owner));
-        },
-      };
+    revokeIntent(owner, binding) {
+      if (binding) intent.forget(binding);
+      else for (const current of states.instances(owner)) intent.forget(current);
     },
-    retireResources: (owner, reason) => coordinator.retire(owner, reason),
+  });
+  const ui = createUiLifetimePort({
+    data,
+    catalog,
+    states,
+    subscriptions,
+    revoke: (_owner, binding) => intent.forget(binding),
+  });
+  const sourceProjection = createPersistenceSources170({
+    onRetire: (sourceKey) => settingsRequests(backend).retire(sourceKey),
+    currentScope: input.currentScope,
+    currentRuntime: (owner) => runtimeAttachment?.current(owner) ?? false,
+    beforeDelivery: (sourceKey) => {
+      if (!plugins) throw new Error("Controller not attached");
+      plugins.markThirdPartyUiContributions(sourceKey);
+    },
+  });
+  const importOwner = (sourceKey: string): ResourceOwner => {
+    const owner = sourceProjection.port.coreOwner({ sourceKey, scope: input.scope() });
+    if (!owner) throw new Error("Import source not admitted");
+    return owner;
+  };
+  const legacyWriters = test?.legacy?.writers ?? [];
+  const legacyDescriptors = test?.legacy?.descriptors ?? [];
+  const dispatchDrain: DrainDispatcher = (owner, request, signal) => {
+    if (!runtimeAttachment) return Promise.reject(new Error("Runtime attachment not ready"));
+    return runtimeAttachment.dispatchDrain(owner, request, signal);
+  };
+  const worker = await (async () => {
+    try {
+      profile.assertHeld();
+      const root = await openStoreRoot({ userData: input.plugins.userData, profile });
+      const workerEntry =
+        test?.worker?.entry ??
+        persistenceWorkerPath({
+          packaged: app.isPackaged,
+          resourcesPath: process.resourcesPath,
+          buildRoot: __dirname,
+        });
+      return await startPersistenceWorker({
+        profile,
+        root,
+        workerEntry,
+        now,
+        ...(test?.worker ? { testControl: test.worker.control } : {}),
+      });
+    } catch (error) {
+      actions.dispose();
+      data.dispose();
+      subscriptions.dispose();
+      intent.dispose();
+      events.dispose();
+      await foundation.dispose();
+      throw error;
+    }
+  })();
+  const { backend, recovery } = worker;
+  if (input.legacyLabWriter) {
+    labMigration = new SensorLabMigrationGate({
+      backend,
+      writers: [input.legacyLabWriter],
+      active: () => sourceProjection.currentSource("builtin:kobrixa.sensor-lab"),
+      owner: () => importOwner("builtin:kobrixa.sensor-lab"),
+      currentScope: input.currentScope,
+    });
+  }
+  const claims = createPersistenceClaims170({
+    feature: actions,
+    core: coreActions,
+    scope: input.scope,
+    currentScope: input.currentScope,
+    currentOwner: sourceProjection.port.current,
+    now,
+  });
+  const actionAdapter = createNativePersistenceActions170({
+    claims: claims.lookup,
+    backend,
+    currentScope: input.currentScope,
+    now,
+    choose:
+      test?.nativeActions?.choose ??
+      (async (suggestedName) => {
+        const result = await dialog.showSaveDialog({ defaultPath: suggestedName });
+        return result.canceled || !result.filePath ? null : result.filePath;
+      }),
+    copy: test?.nativeActions?.copy ?? ((text) => clipboard.writeText(text)),
+  });
+  let imports: LegacyImportHostPort | undefined;
+  const pendingImports = (): LegacyImportHostPort => {
+    if (!imports) throw new Error("import-pending");
+    return imports;
+  };
+  const compositionInput: PersistenceCompositionInput = {
+    backend,
+    sources: sourceProjection.port,
+    events: broker.events,
+    dispatchDrain,
+    imports: {
+      run: (descriptor, signal) => pendingImports().run(descriptor, signal),
+      issuePreferences: (value) => pendingImports().issuePreferences(value),
+      acceptPreferences: (snapshot) => pendingImports().acceptPreferences(snapshot),
+      acceptPreferencesEvidence: (snapshot) => pendingImports().acceptPreferencesEvidence(snapshot),
+      retirePreferences: (scope) => pendingImports().retirePreferences(scope),
+    },
+  };
+  let persistence170: Awaited<ReturnType<typeof composePersistence170>>;
+  let cleanupLifecycle: LifecycleCoordinator | undefined;
+  let hostOwnsBackend = false;
+  try {
+    persistence170 = await attachPersistenceHost170(
+      {
+        profile,
+        composition: compositionInput,
+        reservations: broker.reservations,
+        actions: claims.feature,
+        actionAdapter,
+        coreActions: claims.core,
+        now,
+        hasPermission: input.foundationOptions.hasPermission,
+        reconciled: (id, report) => cleanupLifecycle?.reconcileRecovery(id, report),
+      },
+      { device: broker.resources, ui },
+      () => {
+        hostOwnsBackend = true;
+      },
+    );
+  } catch (error) {
+    // Ownership transfers only after the preconstruction lock check. The T6
+    // factory owns backend cleanup from entry, including failed construction.
+    if (!hostOwnsBackend) await backend.dispose();
+    actions.dispose();
+    data.dispose();
+    subscriptions.dispose();
+    intent.dispose();
+    events.dispose();
+    await foundation.dispose();
+    throw error;
+  }
+  const stage3 = persistence170.stage3;
+  let detail: ReturnType<typeof createPersistenceRecoveryBridge170>;
+  try {
+    if (recovery !== "ready" && recovery !== "blocked")
+      throw new Error("Invalid worker recovery state");
+    detail = createPersistenceRecoveryBridge170({
+      host: persistence170.host,
+      actions: coreActions,
+      scope: input.scope,
+      currentScope: input.currentScope,
+    });
+  } catch (error) {
+    actions.dispose();
+    data.dispose();
+    subscriptions.dispose();
+    intent.dispose();
+    events.dispose();
+    await persistence170.host.dispose();
+    await foundation.dispose();
+    throw error;
+  }
+  const uiDisposers: Array<() => void> = [
+    () => data.dispose(),
+    () => events.dispose(),
+    () => subscriptions.dispose(),
+    () => actions.dispose(),
+    () => intent.dispose(),
+  ];
+  const disposeUi = () => {
+    for (const dispose of uiDisposers.splice(0).reverse()) dispose();
   };
   try {
+    const lifecycle = new LifecycleCoordinator({
+      ports: stage3,
+      resources: broker.resources,
+      recovery: broker.recovery,
+      sessions: broker.sessions,
+      reservations: broker.reservations,
+      persistence: stage3.persistence,
+      now,
+      alive: (owner) => {
+        const channel = originalChannels.get(ownerKey(owner));
+        return !!channel && !channel.peer.closed;
+      },
+      owners: () => runtime().owners(),
+      dispatch: (owner, request, signal) => runtime().dispatchDrain(owner, request, signal),
+      shutdown: async () => {
+        if (plugins) await plugins.shutdown();
+      },
+      legacyFlush: input.legacyFlush,
+      report: input.report,
+    });
+    cleanupLifecycle = lifecycle;
+    const coordinator = new ShutdownCoordinator(lifecycle);
+    let navigateRecovery: () => void = () => {
+      throw new Error("Recovery navigation is not attached.");
+    };
+    const execution: UiExecutionAdapter = createUiExecutionAdapter({
+      data,
+      catalog,
+      states,
+      runtime: runtimePort,
+      scope: input.scope,
+      async core(resolved, nodeId): Promise<Result<CommandValue>> {
+        const node =
+          resolved.resource.kind === "panel"
+            ? resolved.resource.nodes.find((value) => value.id === nodeId)
+            : undefined;
+        const action =
+          node?.type === "action" && node.action.kind === "core"
+            ? node.action
+            : resolved.resource.kind === "status" && "actions" in resolved.resource
+              ? resolved.resource.actions.find((value) => value.id === nodeId)?.action
+              : undefined;
+        if (!action || !runtime().current(resolved.owner)) return resourceFailure("stale");
+        if (action.action === "stopRecording")
+          return releaseUiRecording({
+            owner: resolved.owner,
+            reservation: resolved.state.data[action.reservation.key],
+            principal: () => input.principal(resolved.owner),
+            current: () => {
+              const current = execution.resolve(resolved.state.binding);
+              return (
+                !!current &&
+                runtime().current(resolved.owner) &&
+                sameResourceOwner(current.owner, resolved.owner) &&
+                current.resource === resolved.resource
+              );
+            },
+            request: broker.request.bind(broker),
+          });
+        if (action.action === "openRecovery") {
+          navigateRecovery();
+          return { ok: true, value: { output: {}, fieldErrors: [] } };
+        }
+        if (action.action === "openPanel") {
+          let cursor: string | undefined;
+          do {
+            const page = await catalog.catalog(cursor ? { cursor } : {});
+            const current = execution.resolve(resolved.state.binding);
+            if (
+              !current ||
+              !runtime().current(resolved.owner) ||
+              !sameResourceOwner(current.owner, resolved.owner) ||
+              current.resource !== resolved.resource
+            )
+              return resourceFailure("stale");
+            if (!page.ok) return page;
+            const entry = page.value.entries.find(
+              (value) =>
+                value.sourceKey === resolved.owner.sourceKey && value.id === action.panelId,
+            );
+            if (entry) {
+              const result = await execution.open({
+                sourceKey: entry.sourceKey,
+                id: entry.id,
+                uiResourceGeneration: entry.uiResourceGeneration,
+              });
+              return result.ok ? { ok: true, value: { output: {}, fieldErrors: [] } } : result;
+            }
+            cursor = page.value.nextCursor ?? undefined;
+          } while (cursor);
+          return resourceFailure("stale");
+        }
+        if (action.action === "stop") {
+          const operationId = handleSchema.parse(resolved.state.data[action.operation.key]);
+          const result = await broker.request(
+            input.principal(resolved.owner),
+            "devices/motion/stop",
+            { operationId, stopMode: "brake" },
+            new AbortController().signal,
+          );
+          return result.ok
+            ? { ok: true, value: { output: {}, fieldErrors: [] } }
+            : uiRequestSchemas["command/invoke"].result.parse({
+                ok: false,
+                error: { code: result.error.code, message: result.error.message },
+              });
+        }
+        const sessionId = handleSchema.parse(resolved.state.data[action.session.key]);
+        const principal = input.principal(resolved.owner);
+        if (!input.foundationOptions.hasPermission(principal, "devices.connect"))
+          return resourceFailure("stale");
+        const owned = await broker.request(
+          principal,
+          "devices/session",
+          { sessionId },
+          new AbortController().signal,
+        );
+        if (!owned.ok || !runtime().current(resolved.owner)) return resourceFailure("stale");
+        const current = input.principal(resolved.owner);
+        if (!current.authorityContext) return resourceFailure("stale");
+        input.foundationOptions.authority.assertContinuation(current, current.authorityContext.ref);
+        const scope = input.scope();
+        if (!input.currentScope(scope)) return resourceFailure("stale");
+        const token = coreActions.mint(scope, { kind: "device-disconnect", sessionId });
+        try {
+          await lifecycle.disconnect(sessionId, token);
+          return { ok: true, value: { output: {}, fieldErrors: [] } };
+        } finally {
+          coreActions.complete(token);
+        }
+      },
+    });
+    uiDisposers.push(() => execution.dispose());
+    bridge = createPluginUiBridge({
+      catalog,
+      execution,
+      intent,
+      actions,
+      events,
+      scope: input.scope,
+      coreActionCount: () => coreActions.count(),
+    });
+    uiDisposers.push(() => disposePluginUiBridge(bridge));
+    const offCatalog = catalog.onEvent((event) => {
+      if (event.type === "catalog") catalogHint = event;
+      events.publish(event);
+    });
+    uiDisposers.push(offCatalog);
+    const offState = states.onEvent((owner, event) => {
+      if (event.kind === "ui.revoked") {
+        observeUiSite(bridge, {
+          kind: "revoke",
+          owner,
+          binding: event.data.binding,
+          time: performance.timeOrigin + performance.now(),
+        });
+        intent.forget(event.data.binding);
+        events.publish({ type: "revoked", binding: event.data.binding, reason: event.data.reason });
+      } else if (event.kind === "ui.state") {
+        observeUiSite(bridge, {
+          kind: "apply",
+          owner,
+          binding: event.data.binding,
+          time: performance.timeOrigin + performance.now(),
+        });
+        events.publish({
+          type: "state",
+          binding: event.data.binding,
+          revision: event.data.revision,
+        });
+      } else if (event.kind === "ui.visibility" && !event.data.visible)
+        intent.revoke(event.data.binding, "hidden");
+      else if (event.kind === "ui.form") {
+        intent.cancelHold(event.data.binding);
+        events.publish({
+          type: "form",
+          binding: event.data.binding,
+          formRevision: event.data.revision,
+        });
+      }
+    });
+    uiDisposers.push(offState);
+    uiDisposers.push(
+      data.onEvent((owner, event) => {
+        if (runtime().current(owner) && states.inScope(owner, event.data.binding, input.scope()))
+          events.publish({ type: "data", ...event.data });
+      }),
+    );
+    const stage3Host: Stage3HostAttachment = {
+      hostEpoch: profile.hostEpoch,
+      principal: input.principal,
+      hasPermission: (owner, permission) =>
+        input.foundationOptions.hasPermission(input.principal(owner), permission),
+      requirements(owner) {
+        const declarations = input.foundationOptions.requirements(owner);
+        return declarations === null
+          ? null
+          : Object.freeze(declarations.map((value) => Object.freeze({ ...value })));
+      },
+      bindChannel: (context) => {
+        const key = ownerKey(context.owner);
+        const launched = launches.get(key);
+        if (
+          test &&
+          (!launched || observed.has(key) || !sameResourceOwner(launched.owner, context.owner))
+        )
+          throw new Error("Missing or duplicate original process association");
+        let binding: Stage3ChannelBinding;
+        try {
+          binding = bindDesktopChannel(
+            context,
+            broker,
+            {
+              catalog,
+              states,
+              subscriptions,
+              data,
+              hasPanelsPermission: (owner) =>
+                input.foundationOptions.hasPermission(input.principal(owner), "ui.panels"),
+              runtime: runtimePort,
+              scope: input.scope,
+              revokeIntent: (owner) => intent.revokeOwner(owner),
+            },
+            originalChannels,
+            persistence170.host,
+            () => persistenceAdmitted,
+          );
+        } catch (error) {
+          launches.delete(key);
+          observed.delete(key);
+          throw error;
+        }
+        if (!test) return binding;
+        const row = Object.freeze({ context, process: launched!.process });
+        observed.set(key, row);
+        let disposed = false;
+        return {
+          initialized: (signal) => binding.initialized(signal),
+          ready: (signal) => binding.ready(signal),
+          dispose() {
+            if (disposed) return;
+            disposed = true;
+            try {
+              binding.dispose();
+            } finally {
+              if (observed.get(key) === row) {
+                observed.delete(key);
+                launches.delete(key);
+              }
+            }
+          },
+        };
+      },
+      retireResources: (owner, reason) => lifecycle.retire(owner, reason),
+    };
+    let offSources: (() => void) | undefined;
+    let refresh = Promise.resolve();
+    let inventory = "";
+    // Authority epochs change synchronously; do not wait for another command,
+    // provider exchange, or renderer heartbeat to withdraw the old UI intent.
+    const offAuthority = input.foundationOptions.authority.subscribe((ref) =>
+      intent.authorityChanged(ref),
+    );
+    uiDisposers.push(offAuthority, () => offSources?.());
+    const refreshCatalog = () => {
+      refresh = refresh.catch(input.report).then(async () => {
+        sourceProjection.reconcileCoreSources(plugins!.persistenceCoreSources());
+        const sources = plugins!.persistenceCatalogSources();
+        const key = JSON.stringify(sources);
+        sourceProjection.reconcileSources(sources);
+        if (key === inventory) return;
+        const loaded: Parameters<typeof sourceProjection.admit>[0][] = [];
+        for (const source of sources) {
+          const owner: UiOwner = {
+            sourceKey: source.owner.sourceKey,
+            pluginId: source.owner.pluginId,
+            uiResourceGeneration: source.owner.generation,
+          };
+          if (!source.eligible) {
+            sourceProjection.revoke(owner.sourceKey);
+            continue;
+          }
+          if (!source.settings) {
+            loaded.push({ owner, eligible: true });
+            continue;
+          }
+          try {
+            if (source.settings.version !== 1)
+              throw new Error("Unsupported settings resource version");
+            const document =
+              source.resources.kind === "builtin"
+                ? readBuiltinJson(source.resources.files, source.settings.path, 65536)
+                : await readPackagedJson(
+                    source.resources.root,
+                    source.settings.path,
+                    65536,
+                    new SourceReadBudget(5000, now),
+                  );
+            validateSettingsResource(document.value, document.bytes);
+            loaded.push({ owner, eligible: true, document });
+          } catch (cause) {
+            sourceProjection.revoke(owner.sourceKey);
+            loaded.push({ owner, eligible: true });
+            input.report(
+              new Error(`Settings contribution unavailable: ${owner.sourceKey}`, { cause }),
+            );
+          }
+        }
+        if (JSON.stringify(plugins!.persistenceCatalogSources()) !== key) return;
+        for (const source of loaded) {
+          const resolved = sourceProjection.admit(source);
+          if (resolved && source.document) {
+            const owner = sources.find(
+              (value) => value.owner.sourceKey === source.owner.sourceKey,
+            )!.owner;
+            // T3's delivered host-only admission facet seeds the same service used
+            // by host.request; no form or plugin activation is needed to read defaults.
+            settingsRequests(backend).admit(owner, source.document.digest, resolved);
+          }
+        }
+        await catalog.replace(sources);
+        inventory = key;
+      });
+      void refresh.catch(input.report);
+      return refresh;
+    };
+
     plugins = await startPlugins({
       ...input.plugins,
+      ...(test
+        ? { launcher: (hooks) => observe((input.plugins.launcher ?? createDesktopLauncher)(hooks)) }
+        : {}),
       stage3,
       stage3Host,
+      providerSettlement: {
+        settle: () => foundation.settleProvider(),
+        retry: () => foundation.retryProvider(),
+      },
       onStage3Runtime(attachment, providers) {
         if (runtimeAttachment) throw new Error("Runtime already attached.");
         runtimeAttachment = attachment;
         foundation.attachProvider(providers);
+        offSources = providers.onEvent((event) => {
+          if (event.type === "state" && plugins) {
+            // Fence core capabilities synchronously, before optional resource I/O.
+            sourceProjection.reconcileCoreSources(plugins.persistenceCoreSources());
+            if (sourceProjection.reconcileSources(plugins.persistenceCatalogSources()))
+              inventory = "";
+            void refreshCatalog();
+          }
+        });
       },
     });
     if (!runtimeAttachment) throw new Error("Missing runtime attachment.");
+    await refreshCatalog();
+    for (const descriptor of legacyDescriptors) {
+      if (!sourceProjection.currentSource(descriptor.targetSourceKey))
+        throw new Error("Import source not admitted");
+      // Worker-local mapper registration rejects descriptors absent from its installed inventory.
+      await backend.sources.register({
+        descriptorId: descriptor.id,
+        mapperId: descriptor.id,
+        sourceKind: descriptor.sourceKind,
+      });
+    }
+    const barrier = createLegacyWriterBarrier({
+      backend,
+      descriptors: legacyDescriptors,
+      writers: legacyWriters,
+      importOwner,
+    });
+    await barrier.restore();
+    imports = createLegacyImportCoordinator({
+      backend,
+      sources: backend.sources,
+      barrier,
+      descriptors: legacyDescriptors,
+      currentScope: input.currentScope,
+      currentSource: sourceProjection.currentSource,
+      importOwner,
+    });
+    plugins.attachPersistence170({
+      settings: persistence170.host.settings,
+      detail,
+      imports,
+      scope: input.scope,
+    });
+    persistenceAdmitted = true;
     let disposed = false;
+    let disposal: Promise<void> | undefined;
     const composition: DesktopMainComposition = {
       foundation,
       plugins,
       stage3,
       stage3Host,
-      async dispose() {
-        if (disposed) return;
-        await coordinator.close("close");
-        await foundation.dispose();
-        coordinator.dispose();
-        disposed = true;
+      dispose() {
+        if (disposed) return Promise.resolve();
+        if (disposal) return disposal;
+        const attempt = (async () => {
+          persistenceAdmitted = false;
+          await lifecycle.close("close");
+          await refresh.catch(input.report);
+          disposeUi();
+          detail.dispose();
+          await persistence170.host.dispose();
+          await foundation.dispose();
+          lifecycle.dispose();
+          disposed = true;
+        })();
+        disposal = attempt;
+        void attempt.catch(() => {
+          disposal = undefined;
+        });
+        return attempt;
       },
     };
-    lifecycles.set(composition, coordinator);
+    const prepareRetirement = async (reason: "update" | "window-destroyed") => {
+      plugins!.beginUpdatePreparation();
+      intent.dispose();
+      actions.dispose();
+      const owners = [...runtime().owners()];
+      const dispositions = owners.map((owner) => lifecycle.retire(owner, reason));
+      // Window close and update preparation are reversible. Global beginShutdown belongs to app exit.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const legacy = new Promise<void>((resolve, reject) => {
+        timer = setTimeout(() => reject(new Error("Legacy save deadline expired.")), 10_000);
+        void Promise.resolve()
+          .then(() => input.legacyFlush(reason === "update" ? "update" : "close"))
+          .then(resolve, reject);
+      }).finally(() => clearTimeout(timer));
+      // A failed save must not release update cancellation ahead of pending device retirement.
+      const settled = await Promise.allSettled([legacy, ...dispositions]);
+      await Promise.all(owners.map((owner) => desktopDeviceAccess(plugins!).retire(owner)));
+      lifecycle.reconcileProcesses();
+      const failure = settled.find((result) => result.status === "rejected");
+      if (failure?.status === "rejected") throw failure.reason;
+      if (lifecycle.reports().some((report) => report.blocker))
+        throw new Error("Plugin retirement remains blocked.");
+    };
+    if (test)
+      foundationTestHandles.set(
+        composition,
+        Object.freeze({
+          profile,
+          persistenceProfile: profile,
+          runtime: runtimeAttachment,
+          host: persistence170.host,
+          backend,
+          recovery,
+          channels: () => Object.freeze([...observed.values()]),
+        }),
+      );
+    lifecycles.set(composition, lifecycle);
+    desktopUis.set(composition, {
+      bridge,
+      catalog,
+      states,
+      subscriptions,
+      intent,
+      actions,
+      coordinator,
+      prepareUpdate: () => prepareRetirement("update"),
+      prepareWindowClose: () => prepareRetirement("window-destroyed"),
+      setRecoveryNavigation(navigate) {
+        navigateRecovery = navigate;
+      },
+    });
     windowRetirements.set(composition, (scope, destroyed) => {
+      actions.revokeWindow(scope);
+      imports!.retirePreferences(scope);
+      sourceProjection.retireScope(scope);
+      intent.dispose();
       const affected = [...originalChannels.values()].filter((channel) => {
         const principal = channel.principal();
         const binding = principal.authorityContext;
         const record = binding && input.foundationOptions.authority.current(principal, binding.ref);
         return (
           scope.hostEpoch === input.foundationOptions.profile.hostEpoch &&
-          record?.workbenchInstance === scope.workbenchInstance
+          (record?.workbenchInstance === scope.workbenchInstance ||
+            states.instances(channel.owner).length > 0)
         );
       });
       // Fence all affected owners in this turn, before the native caller invalidates the document.
       const retired = affected.map((channel) =>
-        coordinator.retire(channel.owner, destroyed ? "window-destroyed" : "renderer-crash"),
+        lifecycle.retire(channel.owner, destroyed ? "window-destroyed" : "renderer-crash"),
       );
       return Promise.all(retired).then(async () => {
         // Reload retires the old supervisor, then admits a lazy replacement generation.
@@ -1264,9 +2143,16 @@ export async function composeDesktopMain(
     });
     return composition;
   } catch (error) {
+    disposeUi();
     try {
+      persistenceAdmitted = false;
+      // Construction has not exposed requests or a workbench. Shut down the
+      // original runtime without invoking legacy services that do not yet exist.
+      if (plugins) await plugins.shutdown();
+      detail.dispose();
+      await persistence170.host.dispose();
       await foundation.dispose();
-      coordinator.dispose();
+      cleanupLifecycle?.dispose();
     } catch (cleanup) {
       input.report(cleanup);
       throw cleanup;
@@ -1274,6 +2160,7 @@ export async function composeDesktopMain(
     throw error;
   }
 }
+
 import type { Principal } from "@kobrixa/plugin-runtime";
 import type { DeviceBrokerPort } from "../device-broker/broker-port.js";
 import type { CoreActionLedger } from "./core-recovery.js";
@@ -1404,3 +2291,572 @@ export function createWindowRetirementHandler(input: {
     return Promise.all([retired, input.flush()]).then(() => input.pause());
   };
 }
+
+export function composePersistence170(
+  input: Parameters<typeof createPersistenceHost>[0],
+  ports: Pick<Stage3RuntimePorts, "device" | "ui">,
+): Promise<{ host: PersistenceHost; stage3: Stage3RuntimePorts }> {
+  return attachPersistenceHost170(input, ports);
+}
+async function attachPersistenceHost170(
+  input: Parameters<typeof createPersistenceHost>[0],
+  ports: Pick<Stage3RuntimePorts, "device" | "ui">,
+  transfer: () => void = () => {},
+): Promise<{ host: PersistenceHost; stage3: Stage3RuntimePorts }> {
+  input.profile.assertHeld();
+  transfer();
+  const host = await createPersistenceHost(input);
+  try {
+    input.profile.assertHeld();
+    return {
+      host,
+      stage3: {
+        device: ports.device,
+        persistence: host.participant,
+        ui: ports.ui,
+      },
+    };
+  } catch (error) {
+    await host.dispose();
+    throw error;
+  }
+}
+
+type InboundPersistence170 = Exclude<keyof PersistenceRequestMap, "storage/drain">;
+export const persistenceRoutes170 = [
+  "settings/read",
+  "settings/update",
+  "settings/reset",
+  "settings/watch",
+  "settings/readMigration",
+  "settings/migrate",
+  "storage/beginWrite",
+  "storage/writeChunk",
+  "storage/sealWrite",
+  "storage/commitWrite",
+  "storage/writeStatus",
+  "storage/abortWrite",
+  "storage/stat",
+  "storage/list",
+  "storage/openRead",
+  "storage/readChunk",
+  "storage/closeRead",
+  "storage/delete",
+  "storage/flush",
+  "storage/quota",
+  "storage/registerCheckpoint",
+  "storage/abandonCheckpoint",
+  "storage/exportBegin",
+  "storage/exportChunk",
+  "storage/exportCommit",
+  "storage/exportStatus",
+  "storage/exportCancel",
+  "ui/copyText",
+] as const satisfies readonly InboundPersistence170[];
+type MissingRoute170 = Exclude<InboundPersistence170, (typeof persistenceRoutes170)[number]>;
+const completeRoutes170: Record<MissingRoute170, never> = {};
+void completeRoutes170;
+
+export function bindPersistenceRoutes170(input: {
+  context: Stage3ChannelContext;
+  host: PersistenceHost;
+  attachment: DeviceChannelAttachment;
+  apiVersion(): string | undefined;
+  admitted(): boolean;
+}): () => void {
+  let disposed = false;
+  const originalOwner = structuredClone(input.context.owner);
+  if (!sameResourceOwner(originalOwner, input.attachment.owner))
+    throw new Error("Persistence attachment owner mismatch");
+  const principal = <M extends InboundPersistence170>(
+    method: M,
+    params: PersistenceRequestMap[M]["params"],
+  ) => {
+    const api = semverSchema.safeParse(input.apiVersion());
+    if (!api.success || api.data.split(".")[0] !== "1" || !gte(api.data, "1.7.0"))
+      throw new RpcError(RPC_ERRORS.methodNotFound, "Persistence is not negotiated");
+    const p = input.context.principal();
+    if (
+      disposed ||
+      input.context.peer.closed ||
+      (!input.admitted() && !permitsRetainedPersistenceRequest(input.host, p, method, params)) ||
+      p.kind !== "plugin" ||
+      !sameResourceOwner(p.owner, originalOwner) ||
+      !sameResourceOwner(input.context.owner, originalOwner)
+    )
+      throw new RpcError(RPC_ERRORS.permissionDenied, "Original admitted owner required");
+    return p;
+  };
+  // RpcPeer validates the public input/result schemas; this preserves the domain
+  // map correlation erased by its generic z.input signature (as in device RPC).
+  const register = input.context.peer.handle.bind(input.context.peer) as <
+    M extends InboundPersistence170,
+  >(
+    method: M,
+    handler: (
+      params: PersistenceRequestMap[M]["params"],
+      request: RequestContext,
+    ) => Promise<PersistenceRequestMap[M]["result"]>,
+  ) => void;
+  function bind<M extends Exclude<InboundPersistence170, "settings/watch">>(method: M): void {
+    register(method, (params, request) =>
+      input.host.request(principal(method, params), method, params, request.signal),
+    );
+  }
+  for (const method of persistenceRoutes170) if (method !== "settings/watch") bind(method);
+  input.context.peer.handle("settings/watch", async (params, request) => {
+    const p = principal("settings/watch", params);
+    const result = await input.host.request(p, "settings/watch", params, request.signal);
+    if (result.ok) {
+      const id = result.value.subscriptionId;
+      request.afterReply(
+        () => {
+          try {
+            principal("settings/watch", params);
+            input.attachment.negotiated("settings", 1);
+            input.attachment.activate(id);
+          } catch {
+            input.attachment.abandon(id);
+          }
+        },
+        () => input.attachment.abandon(id),
+      );
+    }
+    return result;
+  });
+  input.context.peer.handle("storage/drain", () => {
+    throw new RpcError(RPC_ERRORS.methodNotFound, "storage/drain is host to plugin only");
+  });
+  return () => {
+    disposed = true;
+  };
+}
+
+export function legacyPreferencesFor170(
+  scope: CoreWindowScope,
+  imports: Pick<LegacyImportHostPort, "issuePreferences" | "acceptPreferencesEvidence">,
+): LegacyPreferencesApi {
+  return {
+    challenge: (descriptorId) => imports.issuePreferences({ descriptorId, scope }),
+    submit: async (snapshot) => {
+      if (
+        !isLegacyPreferencesSnapshot(snapshot) ||
+        snapshot.scope.hostEpoch !== scope.hostEpoch ||
+        snapshot.scope.workbenchInstance !== scope.workbenchInstance
+      )
+        throw new Error("Invalid preference scope");
+      return imports.acceptPreferencesEvidence({ ...snapshot, scope });
+    },
+  };
+}
+
+type PersistenceSourceRow170 = {
+  owner: UiOwner;
+  sourceGeneration: number;
+  settings: {
+    resourceDigest: Sha256;
+    resource: SettingsResourceV1;
+    validationDigest: Sha256;
+  } | null;
+};
+export function createPersistenceSources170(input: {
+  onRetire?: (sourceKey: string) => void;
+  currentScope: (scope: CoreWindowScope) => boolean;
+  currentRuntime: (owner: ResourceOwner) => boolean;
+  beforeDelivery: (sourceKey: string) => void;
+}) {
+  const rows = new Map<string, PersistenceSourceRow170>();
+  type CoreSource = Pick<ResourceOwner, "sourceKey" | "pluginId" | "generation">;
+  const coreSources = new Map<string, CoreSource>();
+  const namespaces = new Map<string, { owner: ResourceOwner; scope: CoreWindowScope }>();
+  // Only the latest retiring window needs a fence; currentScope rejects all older windows.
+  let retiredScope: string | undefined;
+  let generation = 0;
+  const scopeKey = (scope: CoreWindowScope) =>
+    JSON.stringify([scope.hostEpoch, scope.workbenchInstance]);
+  const key = (owner: ResourceOwner) =>
+    JSON.stringify([
+      owner.sourceKey,
+      owner.pluginId,
+      owner.generation,
+      owner.hostEpoch,
+      owner.processEpoch,
+    ]);
+  const retire = (sourceKey: string) => {
+    if (rows.get(sourceKey)?.settings) input.onRetire?.(sourceKey);
+  };
+  const revokeNamespaces = (sourceKey: string) => {
+    for (const [id, value] of namespaces)
+      if (value.owner.sourceKey === sourceKey) namespaces.delete(id);
+  };
+  const port: PersistenceSourcePort = {
+    current(owner) {
+      return (
+        (rows.get(owner.sourceKey)?.owner.pluginId === owner.pluginId &&
+          rows.get(owner.sourceKey)?.sourceGeneration === owner.generation &&
+          input.currentRuntime(owner)) ||
+        [...namespaces.values()].some(
+          ({ owner: value, scope }) =>
+            key(value) === key(owner) &&
+            coreSources.get(value.sourceKey)?.pluginId === value.pluginId &&
+            coreSources.get(value.sourceKey)?.generation === value.generation &&
+            input.currentScope(scope),
+        )
+      );
+    },
+    async settings({ sourceKey, resourceDigest }) {
+      const row = rows.get(sourceKey);
+      if (!row?.settings || row.settings.resourceDigest !== resourceDigest) return null;
+      input.beforeDelivery(sourceKey);
+      return {
+        owner: structuredClone(row.owner),
+        resource: structuredClone(row.settings.resource),
+        validationDigest: row.settings.validationDigest,
+      };
+    },
+    coreOwner({ sourceKey, scope }) {
+      const row = coreSources.get(sourceKey);
+      if (!row || retiredScope === scopeKey(scope) || !input.currentScope(scope)) return null;
+      const id = JSON.stringify([sourceKey, scope.hostEpoch, scope.workbenchInstance]);
+      const existing = namespaces.get(id);
+      if (existing) return structuredClone(existing.owner);
+      const owner: ResourceOwner = {
+        sourceKey,
+        pluginId: row.pluginId,
+        generation: row.generation,
+        hostEpoch: scope.hostEpoch,
+        // A window may remove/re-add an identical source tuple. Its old capability
+        // must stay revoked even when the manager's generation is reused.
+        processEpoch: randomUUID(),
+      };
+      namespaces.set(id, { owner, scope: structuredClone(scope) });
+      return structuredClone(owner);
+    },
+  };
+  return {
+    port,
+    reconcileCoreSources(sources: readonly CoreSource[]) {
+      const next = new Map(sources.map((source) => [source.sourceKey, { ...source }]));
+      for (const [sourceKey, previous] of coreSources) {
+        const current = next.get(sourceKey);
+        if (
+          !current ||
+          current.pluginId !== previous.pluginId ||
+          current.generation !== previous.generation
+        )
+          revokeNamespaces(sourceKey);
+      }
+      coreSources.clear();
+      for (const [sourceKey, source] of next) coreSources.set(sourceKey, source);
+    },
+    admit(input: {
+      owner: UiOwner;
+      eligible: boolean;
+      document?: { value: unknown; bytes: number; digest: string };
+    }) {
+      if (!input.eligible) {
+        retire(input.owner.sourceKey);
+        rows.delete(input.owner.sourceKey);
+        revokeNamespaces(input.owner.sourceKey);
+        return null;
+      }
+      let settings: PersistenceSourceRow170["settings"] = null;
+      if (input.document !== undefined) {
+        const resource = validateSettingsResource(input.document.value, input.document.bytes);
+        const resourceDigest = input.document.digest;
+        const validationDigest = createHash("sha256")
+          .update(settingsValidationText(resource))
+          .digest("hex");
+        settings = { resourceDigest, resource, validationDigest };
+      }
+      const existing = rows.get(input.owner.sourceKey);
+      if (
+        existing &&
+        existing.sourceGeneration === input.owner.uiResourceGeneration &&
+        existing.owner.pluginId === input.owner.pluginId &&
+        existing.settings?.resourceDigest === settings?.resourceDigest &&
+        existing.settings?.validationDigest === settings?.validationDigest
+      ) {
+        return existing.settings
+          ? {
+              owner: structuredClone(existing.owner),
+              resource: structuredClone(existing.settings.resource),
+              validationDigest: existing.settings.validationDigest,
+            }
+          : null;
+      }
+      // Form authority has its own monotonic lifetime; durable backend ownership
+      // continues to use the manager's actual source generation.
+      retire(input.owner.sourceKey);
+      generation = Math.max(generation + 1, input.owner.uiResourceGeneration);
+      const owner = { ...input.owner, uiResourceGeneration: generation };
+      rows.set(input.owner.sourceKey, {
+        owner,
+        sourceGeneration: input.owner.uiResourceGeneration,
+        settings,
+      });
+      revokeNamespaces(input.owner.sourceKey);
+      return settings
+        ? {
+            owner: structuredClone(owner),
+            resource: structuredClone(settings.resource),
+            validationDigest: settings.validationDigest,
+          }
+        : null;
+    },
+    revoke(sourceKey: string) {
+      retire(sourceKey);
+      rows.delete(sourceKey);
+      revokeNamespaces(sourceKey);
+    },
+    retireScope(scope: CoreWindowScope) {
+      retiredScope = scopeKey(scope);
+      for (const [id, value] of namespaces)
+        if (scopeKey(value.scope) === scopeKey(scope)) namespaces.delete(id);
+    },
+    reconcileSources(sources: readonly { owner: ResourceOwner; eligible: boolean }[]) {
+      let changed = false;
+      const admitted = new Map(
+        sources
+          .filter((source) => source.eligible)
+          .map((source) => [source.owner.sourceKey, source.owner]),
+      );
+      for (const [key, row] of rows) {
+        const owner = admitted.get(key);
+        if (
+          owner &&
+          owner.pluginId === row.owner.pluginId &&
+          owner.generation === row.sourceGeneration
+        )
+          continue;
+        changed = true;
+        retire(key);
+        rows.delete(key);
+        revokeNamespaces(key);
+      }
+      return changed;
+    },
+    currentSource: (sourceKey: string) => rows.has(sourceKey),
+  };
+}
+
+type NativeClaim170 = {
+  scope: CoreWindowScope;
+  deadline: number;
+  purpose: "storage.export" | "ui.clipboard";
+  current: () => boolean;
+};
+export function createPersistenceClaims170(input: {
+  feature: UserPersistenceActionPort;
+  core: CoreActionValidationPort;
+  scope: () => CoreWindowScope;
+  currentScope: (scope: CoreWindowScope) => boolean;
+  currentOwner: (owner: ResourceOwner) => boolean;
+  now: () => number;
+}) {
+  const claims = new Map<string, NativeClaim170>();
+  const sweep = () => {
+    for (const [id, claim] of claims)
+      if (claim.deadline <= input.now() || !claim.current()) claims.delete(id);
+  };
+  const remember = (
+    id: string,
+    scope: CoreWindowScope,
+    purpose: NativeClaim170["purpose"],
+    current: () => boolean,
+  ) => {
+    sweep();
+    claims.set(id, {
+      scope: structuredClone(scope),
+      purpose,
+      deadline: input.now() + (purpose === "storage.export" ? 120000 : 5000),
+      current,
+    });
+  };
+  const feature: UserPersistenceActionPort = {
+    claim(context, purpose) {
+      const result = input.feature.claim(context, purpose);
+      if (result.ok) {
+        const scope = structuredClone(input.scope());
+        remember(
+          result.value.action,
+          scope,
+          purpose,
+          () => input.currentScope(scope) && input.currentOwner(context.owner),
+        );
+      }
+      return result;
+    },
+  };
+  const core: CoreActionValidationPort = {
+    claim(action, target) {
+      const accepted = input.core.claim(action, target);
+      if (accepted && target.kind === "persistence-export")
+        remember(
+          action.actionToken,
+          action.scope,
+          "storage.export",
+          () => input.currentScope(action.scope) && input.core.isClaimed(action, target),
+        );
+      return accepted;
+    },
+    isClaimed: (action, target) => input.core.isClaimed(action, target),
+    complete(action) {
+      claims.delete(action.actionToken);
+      input.core.complete(action);
+    },
+  };
+  return {
+    feature,
+    core,
+    lookup(id: string): NativeClaim170 | null {
+      sweep();
+      const value = claims.get(id);
+      claims.delete(id);
+      return value ?? null;
+    },
+  };
+}
+export function createNativePersistenceActions170(input: {
+  claims: (action: string) => NativeClaim170 | null;
+  backend: Pick<PersistenceBackend, "destinations">;
+  currentScope: (scope: CoreWindowScope) => boolean;
+  now: () => number;
+  choose: (suggestedName: string) => Promise<string | null>;
+  copy: (text: string) => void;
+}): PersistenceActionAdapter {
+  return {
+    async chooseDestination(action, suggestedName, signal) {
+      const claim = input.claims(action);
+      const current = () =>
+        !!claim &&
+        claim.purpose === "storage.export" &&
+        !signal.aborted &&
+        input.now() < claim.deadline &&
+        claim.current() &&
+        input.currentScope(claim.scope);
+      if (!claim || !current()) return null;
+      const nativePath = await input.choose(suggestedName);
+      if (!nativePath || !current()) return null;
+      const destination = await input.backend.destinations.register({
+        action,
+        scope: claim.scope,
+        nativePath,
+        deadlineMonotonicMs: claim.deadline,
+      });
+      if (!current()) {
+        await input.backend.destinations.release(destination);
+        return null;
+      }
+      return destination;
+    },
+    async copyText(action, text) {
+      const claim = input.claims(action);
+      if (
+        !claim ||
+        claim.purpose !== "ui.clipboard" ||
+        input.now() >= claim.deadline ||
+        !claim.current() ||
+        !input.currentScope(claim.scope)
+      )
+        throw new Error("Stale clipboard action");
+      input.copy(text);
+    },
+  };
+}
+
+import { app, dialog, clipboard } from "electron";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  RPC_ERRORS,
+  RpcError,
+  validateSettingsResource,
+  type SettingsResourceV1,
+  type Sha256,
+  type ResourceOwner,
+  type UiOwner,
+} from "@kobrixa/plugin-protocol";
+import {
+  sameResourceOwner,
+  persistenceChannelApiVersion,
+  readPackagedJson,
+  readBuiltinJson,
+  SourceReadBudget,
+  type BoundSettingsService,
+  type DrainDispatcher,
+  type CoreWindowScope,
+  type ProfileWriterLock,
+  type PluginProcess,
+  type CoreActionValidationPort,
+  type UserPersistenceActionPort,
+} from "@kobrixa/plugin-runtime";
+import {
+  createPersistenceHost,
+  permitsRetainedPersistenceRequest,
+  type PersistenceHost,
+  type PersistenceRequestMap,
+  type PersistenceSourcePort,
+  type PersistenceCompositionInput,
+} from "./persistence/host-port.js";
+import { openStoreRoot } from "./persistence/filesystem.js";
+import { startPersistenceWorker, type PersistenceFaultControl } from "./persistence/worker.js";
+import { persistenceWorkerPath } from "./persistence/worker-path.js";
+import {
+  createLegacyWriterBarrier,
+  type LegacyWriterPort,
+  type LegacyImportDescriptor,
+  type LegacyImportHostPort,
+} from "./persistence/import-sources.js";
+import { createLegacyImportCoordinator } from "./persistence/import-coordinator.js";
+import { createPersistenceRecoveryBridge170 } from "./core-recovery.js";
+import {
+  isLegacyPreferencesSnapshot,
+  type LegacyPreferencesApi,
+} from "../../shared/plugin-persistence.js";
+import type { PersistenceBackend } from "./persistence/engine-port.js";
+import type { PersistenceActionAdapter } from "./persistence/actions.js";
+
+type DesktopPersistenceAttachment170 = {
+  settings: BoundSettingsService;
+  detail: ReturnType<typeof createPersistenceRecoveryBridge170>;
+  imports: LegacyImportHostPort;
+  scope: () => CoreWindowScope;
+};
+
+export interface DesktopCompositionTestOptions {
+  /** Host-only I/O substitution; claims, liveness and destination registration stay production-owned. */
+  nativeActions?: {
+    choose(suggestedName: string): Promise<string | null>;
+    copy(text: string): void;
+  };
+  worker?: { entry: string; control(control: PersistenceFaultControl): void };
+  legacy?: { descriptors: readonly LegacyImportDescriptor[]; writers: readonly LegacyWriterPort[] };
+}
+export interface DesktopFoundationTestHandles {
+  readonly profile: ProfileWriterLock;
+  readonly persistenceProfile: ProfileWriterLock;
+  readonly runtime: UiRuntimeAttachment;
+  readonly host: PersistenceHost;
+  readonly backend: PersistenceBackend;
+  readonly recovery: "ready" | "blocked";
+  channels(): readonly Readonly<{ context: Stage3ChannelContext; process: PluginProcess }>[];
+}
+const foundationTestHandles = new WeakMap<DesktopMainComposition, DesktopFoundationTestHandles>();
+export function desktopFoundationTestHandles(
+  composition: DesktopMainComposition,
+): DesktopFoundationTestHandles {
+  const handles = foundationTestHandles.get(composition);
+  if (!handles) throw new Error("Unknown or non-test desktop composition");
+  return handles;
+}
+
+import { settingsValidationText } from "../../../../../packages/plugin-protocol/src/settings.js";
+
+import { uiRequestSchemas } from "@kobrixa/plugin-protocol";
+
+import { settingsRequests } from "./persistence/settings-service.js";
+
+import type { RequestContext } from "@kobrixa/plugin-protocol";
+
+import { gte } from "semver";
+import { semverSchema } from "@kobrixa/plugin-protocol";

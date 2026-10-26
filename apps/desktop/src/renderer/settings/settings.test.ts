@@ -8,6 +8,37 @@ function storage(values: Record<string, string> = {}) {
     }),
   };
 }
+it("U15 persists the exclusive plugins pane and notifies before render consumers", () => {
+  const backing = storage();
+  const store = new SettingsStore(() => backing, "en");
+  const order: string[] = [];
+  const off = store.beforeChange((next) =>
+    order.push(`${store.getSnapshot().values.rightPanel}->${next.rightPanel}`),
+  );
+  store.subscribe(() => order.push(`render:${store.getSnapshot().values.rightPanel}`));
+  store.set("rightPanel", "plugins");
+  store.set("rightPanel", "collab");
+  store.set("rightPanel", "ev3");
+  store.resetLayout();
+  expect(order).toEqual([
+    "null->plugins",
+    "render:plugins",
+    "plugins->collab",
+    "render:collab",
+    "collab->ev3",
+    "render:ev3",
+    "ev3->null",
+    "render:null",
+  ]);
+  store.set("rightPanel", "plugins");
+  expect(new SettingsStore(() => backing, "en").getSnapshot().values.rightPanel).toBe("plugins");
+  off();
+  order.length = 0;
+  store.set("rightPanel", "plugins");
+  expect(order).toEqual([]);
+  store.resetLayout();
+  expect(order).toEqual(["render:null"]);
+});
 describe("application settings", () => {
   it("uses offline defaults and the system language only until the user chooses", () => {
     const s = storage(),

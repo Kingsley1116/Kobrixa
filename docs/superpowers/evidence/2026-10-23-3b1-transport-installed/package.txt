@@ -1,0 +1,174 @@
+$ install-electron && node ../../tools/release/build-desktop.mjs
+vite v8.3.4 building client environment for production...
+
+ WARN  inlineDynamicImports option is deprecated, please use codeSplitting: false instead.
+
+transforming...
+✓ 428 modules transformed.
+rendering chunks...
+computing gzip size...
+.vite/build/main.cjs  893.29 kB │ gzip: 267.36 kB │ map: 3,474.66 kB
+
+✓ built in 132ms
+vite v8.3.4 building client environment for production...
+
+ WARN  inlineDynamicImports option is deprecated, please use codeSplitting: false instead.
+
+transforming...
+✓ 242 modules transformed.
+rendering chunks...
+computing gzip size...
+.vite/build/language-worker.cjs  335.38 kB │ gzip: 95.72 kB │ map: 1,469.93 kB
+
+✓ built in 45ms
+vite v8.3.4 building client environment for production...
+
+ WARN  inlineDynamicImports option is deprecated, please use codeSplitting: false instead.
+
+transforming...
+✓ 337 modules transformed.
+rendering chunks...
+computing gzip size...
+.vite/build/build-worker.cjs  489.79 kB │ gzip: 134.73 kB │ map: 2,176.69 kB
+
+✓ built in 62ms
+vite v8.3.4 building client environment for production...
+
+ WARN  inlineDynamicImports option is deprecated, please use codeSplitting: false instead.
+
+transforming...
+✓ 2 modules transformed.
+rendering chunks...
+computing gzip size...
+.vite/build/preload.cjs  9.88 kB │ gzip: 2.07 kB │ map: 25.44 kB
+
+✓ built in 5ms
+vite v8.3.4 building client environment for production...
+transforming...
+✓ 1634 modules transformed.
+rendering chunks...
+computing gzip size...
+.vite/renderer/main_window/index.html                                  0.67 kB │ gzip:     0.39 kB
+.vite/renderer/main_window/assets/preview-worker-COrGvtsT.js          54.11 kB
+.vite/renderer/main_window/assets/codicon-DF1abBS2.ttf               153.22 kB
+.vite/renderer/main_window/assets/editor.worker-BmdWdrHZ.js          303.82 kB
+.vite/renderer/main_window/assets/worker-Hcyo-D8p.js                 409.98 kB
+.vite/renderer/main_window/assets/json.worker-DdeUAmHa.js            433.18 kB
+.vite/renderer/main_window/assets/html.worker-C5yZDBHz.js            743.43 kB
+.vite/renderer/main_window/assets/css.worker-C6lDtRpF.js           1,078.30 kB
+.vite/renderer/main_window/assets/ts.worker-DGGa2mF8.js            6,928.08 kB
+.vite/renderer/main_window/assets/index-DYi2Y7zO.css                 318.65 kB │ gzip:    50.94 kB
+.vite/renderer/main_window/assets/javascript-Cg6B-yow.js               0.73 kB │ gzip:     0.44 kB │ map:      1.99 kB
+.vite/renderer/main_window/assets/azcli-Bc_sGQ0U.js                    0.75 kB │ gzip:     0.32 kB │ map:      2.38 kB
+.vite/renderer/main_window/assets/ini-sBoK_t0W.js                      1.00 kB │ gzip:     0.52 kB │ map:      3.09 kB
+.vite/renderer/main_window/assets/workers-CLsPzcpO.js                  1.26 kB │ gzip:     0.60 kB │ map:      9.03 kB
+.vite/renderer/main_window/assets/csp-bTuwJoIa.js                      1.31 kB │ gzip:     0.51 kB │ map:      2.95 kB
+.vite/renderer/main_window/assets/pla-CopQ2nXW.js                      1.58 kB │ gzip:     0.64 kB │ map:      5.00 kB
+.vite/renderer/main_window/assets/scheme-BeGwcela.js                   1.67 kB │ gzip:     0.81 kB │ map:      4.42 kB
+.vite/renderer/main_window/assets/flow9-C5_-GSwl.js                    1.71 kB │ gzip:     0.85 kB │ map:      4.99 kB
+.vite/renderer/main_window/assets/sb-CcwsVR0C.js                       1.72 kB │ gzip:     0.82 kB │ map:      4.90 kB
+.vite/renderer/main_window/assets/bat-i0X4ZdIN.js                      1.73 kB │ gzip:     0.85 kB │ map:      4.64 kB
+.vite/renderer/main_window/assets/dockerfile-DZFCIeNp.js               1.77 kB │ gzip:     0.66 kB │ map:      5.44 kB
+.vite/renderer/main_window/assets/pascaligo-D-ptJ9y-.js                1.90 kB │ gzip:     0.90 kB │ map:      5.79 kB
+.vite/renderer/main_window/assets/xml-v9bTQnG-.js                      1.95 kB │ gzip:     0.76 kB │ map:      5.01 kB
+.vite/renderer/main_window/assets/cameligo-DMUM7wLl.js                 2.02 kB │ gzip:     0.95 kB │ map:      6.09 kB
+.vite/renderer/main_window/assets/lua-CsQS60Ue.js                      2.02 kB │ gzip:     0.92 kB │ map:      5.98 kB
+.vite/renderer/main_window/assets/objective-c-FvmIjYaQ.js              2.15 kB │ gzip:     1.04 kB │ map:      5.78 kB
+.vite/renderer/main_window/assets/graphql-fmXr3nnJ.js                  2.16 kB │ gzip:     1.03 kB │ map:      6.27 kB
+.vite/renderer/main_window/assets/sparql-D_Lu-MrJ.js                   2.26 kB │ gzip:     1.14 kB │ map:      6.15 kB
+.vite/renderer/main_window/assets/lexon-CfSJPG6W.js                    2.33 kB │ gzip:     0.92 kB │ map:      6.54 kB
+.vite/renderer/main_window/assets/mips-CIPQ_RoX.js                     2.36 kB │ gzip:     1.06 kB │ map:      6.72 kB
+.vite/renderer/main_window/assets/go-C-y9NEjX.js                       2.39 kB │ gzip:     1.15 kB │ map:      7.19 kB
+.vite/renderer/main_window/assets/bicep-B5-_aFwp.js                    2.41 kB │ gzip:     0.95 kB │ map:      6.40 kB
+.vite/renderer/main_window/assets/sophia-CRfGWb83.js                   2.52 kB │ gzip:     1.19 kB │ map:      6.84 kB
+.vite/renderer/main_window/assets/m3-D-oSqn_W.js                       2.56 kB │ gzip:     1.32 kB │ map:      6.85 kB
+.vite/renderer/main_window/assets/typespec-B8J7ngcE.js                 2.67 kB │ gzip:     1.05 kB │ map:      7.17 kB
+.vite/renderer/main_window/assets/pascal-DrH0SRf2.js                   2.68 kB │ gzip:     1.38 kB │ map:      7.50 kB
+.vite/renderer/main_window/assets/fsharp-C8Ef5oNN.js                   2.69 kB │ gzip:     1.31 kB │ map:      7.17 kB
+.vite/renderer/main_window/assets/qsharp-DkqhCAOL.js                   2.76 kB │ gzip:     1.41 kB │ map:      7.87 kB
+.vite/renderer/main_window/assets/shell-CC2rA5mh.js                    2.85 kB │ gzip:     1.20 kB │ map:      7.57 kB
+.vite/renderer/main_window/assets/r-BwWrilGY.js                        2.87 kB │ gzip:     1.28 kB │ map:      7.71 kB
+.vite/renderer/main_window/assets/java-BEtHBSE6.js                     2.94 kB │ gzip:     1.38 kB │ map:      8.04 kB
+.vite/renderer/main_window/assets/cssMode-BQ09_nnq.js                  3.01 kB │ gzip:     1.16 kB │ map:      9.79 kB
+.vite/renderer/main_window/assets/redis-ClamHrr6.js                    3.07 kB │ gzip:     1.45 kB │ map:      7.86 kB
+.vite/renderer/main_window/assets/kotlin-BOotOW0E.js                   3.08 kB │ gzip:     1.45 kB │ map:      8.18 kB
+.vite/renderer/main_window/assets/cypher-CVaqCwHa.js                   3.09 kB │ gzip:     1.43 kB │ map:      8.32 kB
+.vite/renderer/main_window/assets/powershell-DmHpPYUd.js               3.10 kB │ gzip:     1.37 kB │ map:      8.69 kB
+.vite/renderer/main_window/assets/tcl-DISqw1ZD.js                      3.31 kB │ gzip:     1.36 kB │ map:      8.42 kB
+.vite/renderer/main_window/assets/liquid-Cjxn7Hxt.js                   3.38 kB │ gzip:     1.45 kB │ map:      8.38 kB
+.vite/renderer/main_window/assets/coffee-Ba7i2nA0.js                   3.40 kB │ gzip:     1.28 kB │ map:      9.39 kB
+.vite/renderer/main_window/assets/htmlMode-Clmp41wx.js                 3.46 kB │ gzip:     1.27 kB │ map:     11.07 kB
+.vite/renderer/main_window/assets/hcl-CpzslTdj.js                      3.49 kB │ gzip:     1.49 kB │ map:      8.19 kB
+.vite/renderer/main_window/assets/python-BH6bD2bh.js                   3.49 kB │ gzip:     1.46 kB │ map:      9.99 kB
+.vite/renderer/main_window/assets/apex-BWPQTe0t.js                     3.51 kB │ gzip:     1.74 kB │ map:      9.75 kB
+.vite/renderer/main_window/assets/yaml-Cu3lu9OX.js                     3.58 kB │ gzip:     1.32 kB │ map:      9.43 kB
+.vite/renderer/main_window/assets/markdown-Cimd5fb3.js                 3.68 kB │ gzip:     1.38 kB │ map:     10.54 kB
+.vite/renderer/main_window/assets/rust-DdL9SqIa.js                     3.70 kB │ gzip:     1.84 kB │ map:      9.67 kB
+.vite/renderer/main_window/assets/less-B9JPFI3C.js                     3.79 kB │ gzip:     1.40 kB │ map:      8.85 kB
+.vite/renderer/main_window/assets/restructuredtext-BYgofb2h.js         3.79 kB │ gzip:     1.37 kB │ map:      9.07 kB
+.vite/renderer/main_window/assets/dart-onAF5SnQ.js                     3.97 kB │ gzip:     1.64 kB │ map:     10.36 kB
+.vite/renderer/main_window/assets/csharp-BKxtCVv1.js                   4.16 kB │ gzip:     1.70 kB │ map:     11.25 kB
+.vite/renderer/main_window/assets/msdax-DauUninz.js                    4.31 kB │ gzip:     1.91 kB │ map:     10.22 kB
+.vite/renderer/main_window/assets/mdx-DkPKBQVe.js                      4.35 kB │ gzip:     1.24 kB │ map:     10.55 kB
+.vite/renderer/main_window/assets/css-DIMkf-bt.js                      4.40 kB │ gzip:     1.37 kB │ map:     10.85 kB
+.vite/renderer/main_window/assets/pug-Z5eAx3Zn.js                      4.50 kB │ gzip:     1.64 kB │ map:     13.26 kB
+.vite/renderer/main_window/assets/swift-Bxkupp3x.js                    4.52 kB │ gzip:     2.02 kB │ map:     10.83 kB
+.vite/renderer/main_window/assets/html-oqwVx8By.js                     4.55 kB │ gzip:     1.18 kB │ map:     12.44 kB
+.vite/renderer/main_window/assets/ecl-D05T4iGw.js                      4.66 kB │ gzip:     2.23 kB │ map:     11.72 kB
+.vite/renderer/main_window/assets/typescript-CMp2dPBw.js               4.71 kB │ gzip:     1.97 kB │ map:     12.11 kB
+.vite/renderer/main_window/assets/cpp-C7h46wYY.js                      4.78 kB │ gzip:     2.06 kB │ map:     12.17 kB
+.vite/renderer/main_window/assets/vb-DV3o63ZY.js                       5.34 kB │ gzip:     2.05 kB │ map:     12.87 kB
+.vite/renderer/main_window/assets/twig-De2hgUGE.js                     5.82 kB │ gzip:     1.52 kB │ map:     16.06 kB
+.vite/renderer/main_window/assets/scss-gp-XZpBa.js                     6.30 kB │ gzip:     1.74 kB │ map:     15.82 kB
+.vite/renderer/main_window/assets/handlebars-B3sMqR39.js               6.32 kB │ gzip:     1.40 kB │ map:     16.43 kB
+.vite/renderer/main_window/assets/julia-Bri6UV-V.js                    6.54 kB │ gzip:     2.68 kB │ map:     16.29 kB
+.vite/renderer/main_window/assets/systemverilog-Bz4Y3fRF.js            6.90 kB │ gzip:     2.76 kB │ map:     17.11 kB
+.vite/renderer/main_window/assets/st-DbInun42.js                       6.98 kB │ gzip:     2.28 kB │ map:     16.66 kB
+.vite/renderer/main_window/assets/scala-DHpiXF5c.js                    7.15 kB │ gzip:     2.11 kB │ map:     17.60 kB
+.vite/renderer/main_window/assets/wgsl-DpFanUEy.js                     7.22 kB │ gzip:     2.76 kB │ map:     13.97 kB
+.vite/renderer/main_window/assets/perl-oz_6vUea.js                     7.39 kB │ gzip:     3.13 kB │ map:     18.64 kB
+.vite/renderer/main_window/assets/postiats-43DmfD33.js                 7.41 kB │ gzip:     2.43 kB │ map:     26.31 kB
+.vite/renderer/main_window/assets/php-nr791fC2.js                      7.78 kB │ gzip:     2.06 kB │ map:     19.49 kB
+.vite/renderer/main_window/assets/razor-A7d1zlyl.js                    8.15 kB │ gzip:     2.08 kB │ map:     20.75 kB
+.vite/renderer/main_window/assets/clojure-Cm7r79vr.js                  8.25 kB │ gzip:     3.53 kB │ map:     17.91 kB
+.vite/renderer/main_window/assets/ruby-DezsRK8O.js                     8.25 kB │ gzip:     2.59 kB │ map:     22.95 kB
+.vite/renderer/main_window/assets/sql-NEE52Syq.js                      8.88 kB │ gzip:     3.78 kB │ map:     20.64 kB
+.vite/renderer/main_window/assets/protobuf-C531GsRP.js                 8.94 kB │ gzip:     2.08 kB │ map:     21.69 kB
+.vite/renderer/main_window/assets/mysql-SOo6toE5.js                    9.70 kB │ gzip:     4.02 kB │ map:     20.97 kB
+.vite/renderer/main_window/assets/elixir-6RTg0lbw.js                  10.16 kB │ gzip:     2.54 kB │ map:     27.35 kB
+.vite/renderer/main_window/assets/redshift-DT7zqm-g.js                10.37 kB │ gzip:     4.28 kB │ map:     20.85 kB
+.vite/renderer/main_window/assets/abap-08VXUWAP.js                    11.73 kB │ gzip:     5.18 kB │ map:     28.63 kB
+.vite/renderer/main_window/assets/pgsql-DTj74zXo.js                   11.95 kB │ gzip:     4.47 kB │ map:     22.89 kB
+.vite/renderer/main_window/assets/jsonMode-D6MQz5rg.js                12.24 kB │ gzip:     4.47 kB │ map:     74.61 kB
+.vite/renderer/main_window/assets/powerquery-D3hlyOfw.js              15.39 kB │ gzip:     4.77 kB │ map:     26.42 kB
+.vite/renderer/main_window/assets/freemarker2-BZqAfB3-.js             15.59 kB │ gzip:     4.01 kB │ map:     58.43 kB
+.vite/renderer/main_window/assets/solidity-BEEn4gHE.js                16.03 kB │ gzip:     4.43 kB │ map:     32.09 kB
+.vite/renderer/main_window/assets/tsMode-BsL87ruc.js                  21.86 kB │ gzip:     6.17 kB │ map:     67.49 kB
+.vite/renderer/main_window/assets/lspLanguageFeatures-6AUp7DOa.js     28.27 kB │ gzip:     7.20 kB │ map:    133.67 kB
+.vite/renderer/main_window/assets/index-2iQSb1en.js                5,712.45 kB │ gzip: 1,516.80 kB │ map: 21,713.09 kB
+
+✓ built in 2.33s
+[plugin builtin:vite-reporter]
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+vite v8.3.4 building client environment for production...
+
+ WARN  inlineDynamicImports option is deprecated, please use codeSplitting: false instead.
+
+transforming...
+✓ 132 modules transformed.
+rendering chunks...
+computing gzip size...
+.vite/build/plugins/motor-test/main.cjs  199.13 kB │ gzip: 58.23 kB │ map: 956.90 kB
+
+✓ built in 56ms
+  • electron-builder  version=26.15.3 os=24.6.0
+  • packageManager not detected by file, falling back to environment detection  resolvedPackageManager=pnpm detected=/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-3b1/apps/desktop
+  • detected workspace root for project using packageManager field  pm=pnpm config=pnpm@10.15.0 resolved=/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-3b1 projectDir=/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-3b1/apps/desktop
+  • packaging       platform=darwin arch=arm64 electron=44.7.0 appOutDir=out/builder/mac-arm64
+  • downloaded      label=electron progress=100%
+  • downloaded electron zip extracted successfully  output=/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-3b1/apps/desktop/out/builder/mac-arm64
+  • signing         file=out/builder/mac-arm64/kobrixa.app platform=darwin type=distribution identityName=- identityHash=none provisioningProfile=none
+  • skipped macOS notarization  reason=`notarize` options were set explicitly `false`

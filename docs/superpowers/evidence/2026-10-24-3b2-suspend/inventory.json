@@ -1,0 +1,37 @@
+[
+  {
+    "file": "native-receipt.json.gz",
+    "source": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/B2-suspend-grant-probe-native.json",
+    "uncompressedBytes": 81623,
+    "uncompressedSha256": "4e6444f2aaa35a24eb199d7d0dc415bc1de02b60552fa0ad3c732c5682dee99b",
+    "sha256": "c2bb26680c7bcf143bc3d342b442b866bfc0266d4469136f88fd48dc29f73209"
+  },
+  {
+    "file": "native-config.json.gz",
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-UFTiVj/suspend-wake.json",
+    "uncompressedBytes": 1168,
+    "uncompressedSha256": "dae7c715775612c753c61333109d59bbc98645cc92ed9d2d03c9b33775cb719c",
+    "sha256": "37e9ad4e9bbfab2dbb21886720b8b03c2ee8a011177bb2806826301417b5ffee"
+  },
+  {
+    "file": "candidate.json.gz",
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-UFTiVj/suspend-wake.candidate.json",
+    "uncompressedBytes": 31984,
+    "uncompressedSha256": "a2eab3a69751392459ca23305256389a5e42b254c0ba02cd0c1db582ca349d93",
+    "sha256": "072c4fe20de4c4379d1a6a5e72534105c6df2f98e858de8b167254e3d485c015"
+  },
+  {
+    "file": "renderer-artifact.json.gz",
+    "source": "/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-renderer-sI7bH2/renderer-artifact.json",
+    "uncompressedBytes": 21983,
+    "uncompressedSha256": "a40b7f4378c6157ee8e6a53ac8234c2ce2704e3954eb9df7dbc36969600c82ea",
+    "sha256": "f31a185d83fba19b4d1f1699cfabff0151396ac2e23236e5d9de907db66122bf"
+  },
+  {
+    "file": "native.log.gz",
+    "source": "/private/tmp/b2-suspend-grant-probe-native.log",
+    "uncompressedBytes": 1457,
+    "uncompressedSha256": "757f722e5aa45f4cb773e06473d21cf2c123116aa3e44d6834aa0f15ef0440e9",
+    "sha256": "ae9900814fb7194a81587cced09e6fd183f0a57d9686cb64a8d74a00ad2fa208"
+  }
+]

@@ -220,6 +220,46 @@ function syncLanguageFiles(fixture) {
     }
 }
 const staticHarness = createStaticLanguagesHarness(await basicPlusSmokeCatalog());
+// Explicit empty-plugin fixture for the general workbench suite. It cannot
+// provide evidence of UI resources, motion authority or persistence recovery.
+const smokeUiEpoch = randomUUID();
+const emptyUi = { hostEpoch: smokeUiEpoch, revision: 0, entries: [], nextCursor: null };
+ipcMain.handle("plugins:ui:catalog", () => ({ ok: true, value: emptyUi }));
+ipcMain.handle("plugins:ui:subscribe", (event, id) => {
+  event.sender.send(`plugins:ui:event:${id}`, {
+    type: "catalog",
+    hostEpoch: smokeUiEpoch,
+    revision: 0,
+    owners: [],
+  });
+});
+ipcMain.handle("plugins:ui:unsubscribe", () => {});
+for (const method of [
+  "resource",
+  "open",
+  "close",
+  "visibility",
+  "invoke",
+  "hold",
+  "pulse",
+  "snapshot",
+  "report-failure",
+])
+  ipcMain.handle(`plugins:ui:${method}`, () => {
+    throw new Error("No dynamic UI resources in the general smoke fixture.");
+  });
+ipcMain.handle("plugins:recovery:snapshot", () => ({
+  ok: true,
+  value: {
+    hostEpoch: smokeUiEpoch,
+    revision: 0,
+    items: [],
+    nextCursor: null,
+  },
+}));
+ipcMain.handle("plugins:recovery:act", () => {
+  throw new Error("No recovery actions in the general smoke fixture.");
+});
 // General UI fixture only; actual host authority is covered by the device broker harness.
 const authorityDocuments = new WeakMap();
 ipcMain.handle("plugins:state", () => staticHarness.state());

@@ -12,33 +12,36 @@ export * from "./memory-channel.js";
 export * from "./static-language-limits.js";
 export * from "./static-languages.js";
 
-export type {
-  Version,
-  SettingsRevision,
-  RecordRevision,
-  RecordId,
-  Sha256,
-  SettingKey,
-  Scalar as SettingsScalar,
-  Values,
-  Durability,
-  Receipt,
-  SettingsText,
-  CommonField,
-  SettingsField,
-  SettingsResourceV1,
-  SettingsSnapshot,
-  SettingsMutation,
-  SettingsRequestMap,
+export {
+  settingsRequestSchemas,
+  settingsResourceV1Schema,
+  type Version,
+  type SettingsRevision,
+  type RecordRevision,
+  type RecordId,
+  type Sha256,
+  type SettingKey,
+  type Scalar as SettingsScalar,
+  type Values,
+  type Durability,
+  type Receipt,
+  type SettingsText,
+  type CommonField,
+  type SettingsField,
+  type SettingsResourceV1,
+  type SettingsSnapshot,
+  type SettingsMutation,
+  type SettingsRequestMap,
 } from "./settings.js";
-export type {
-  RecordMeta,
-  RecordTarget,
-  RecordWrite,
-  WriteProgress,
-  DrainReason,
-  DrainRequest,
-  StorageRequestMap,
+export {
+  storageRequestSchemas,
+  type RecordMeta,
+  type RecordTarget,
+  type RecordWrite,
+  type WriteProgress,
+  type DrainReason,
+  type DrainRequest,
+  type StorageRequestMap,
 } from "./storage.js";
 export type {
   PersistenceDetail,
@@ -46,16 +49,48 @@ export type {
   PersistenceReason,
   PersistenceResult,
 } from "./persistence-validation.js";
-export type { PersistenceActionRequestMap } from "./persistence-actions.js";
+export {
+  persistenceActionRequestSchemas,
+  type PersistenceActionRequestMap,
+} from "./persistence-actions.js";
 export type * from "./device-types.js";
 export type * from "./business-result.js";
 export type * from "./events.js";
-export type * from "./ui-types.js";
-export type * from "./ui-methods.js";
-export type * from "./ui-validation.js";
+
+export type { Text } from "./ui-resource.js";
+export type * from "./device-methods.js";
+
+export * from "./device-types.js";
+export * from "./business-result.js";
+export * from "./device-methods.js";
+export * from "./device-limits.js";
+export * from "./device-validation.js";
+export * from "./events.js";
+
+export * from "./ui-limits.js";
+export * from "./ui-types.js";
+export * from "./ui-methods.js";
+export * from "./ui-validation.js";
+export {
+  localIdSchema,
+  uiTextSchema,
+  uiLabelSchema,
+  uiScalarSchema,
+  valueSpecSchema,
+  valueRefSchema,
+  displayValueSchema,
+  displayTextSchema,
+  conditionSchema,
+  argumentBindingsSchema,
+  uiActionSchema,
+  uiNodeV1Schema,
+  panelResourceV1Schema,
+  statusResourceV1Schema,
+  uiResourceV1Schema,
+} from "./ui-resource.js";
 export type {
   LocalId,
-  Text,
+  Text as UiText,
   Scalar as UiScalar,
   ValueSpec,
   DataSlot,
@@ -72,11 +107,14 @@ export type {
   UiNumberNode,
   UiNodeV1,
 } from "./ui-resource.js";
-export type * from "./device-methods.js";
 
-export * from "./device-types.js";
-export * from "./business-result.js";
-export * from "./device-methods.js";
-export * from "./device-limits.js";
-export * from "./device-validation.js";
-export * from "./events.js";
+export { validateSettingsResource } from "./persistence-validation.js";
+
+// Local UI v2 implementation leaves. Transport registration/negotiation is separate.
+export * from "./ui-v2-data.js";
+export * from "./ui-v2-resource.js";
+export * from "./ui-v2-methods.js";
+
+export * from "./ui-v2-session.js";
+
+export * from "./ui-v2-form.js";

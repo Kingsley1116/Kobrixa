@@ -1,3 +1,112 @@
+export type { UiResyncRequiredNotice, UiResyncSubscription } from "./ui.js";
+import { UiDataClient } from "./ui-data.js";
+import { supportsUiV2 } from "@kobrixa/plugin-protocol";
+export { UiDataClient } from "./ui-data.js";
+export type { UiDataRequestPort } from "./ui-data.js";
+import { createSettingsClient, type PersistenceRequest } from "./settings.js";
+import { createStorageClient } from "./storage.js";
+import { createPersistenceActionsClient } from "./persistence-actions.js";
+import { eventChannelBound, eventInbox } from "./events.js";
+import type {
+  DrainRequest,
+  Handle,
+  ParamsOf,
+  ResultOf,
+  Stage3EventEnvelope,
+  SettingsSnapshot,
+} from "@kobrixa/plugin-protocol";
+export * from "./settings.js";
+export * from "./storage.js";
+export * from "./persistence-actions.js";
+
+/** Local watch callback data; snapshots are real settings/read results, not wire events. */
+export type SettingsWatchNotice =
+  | { type: "event"; event: Extract<Stage3EventEnvelope, { kind: "settings.changed" }> }
+  | { type: "snapshot"; snapshot: SettingsSnapshot };
+
+export function createPersistenceContext(peer: RpcPeer, signal?: AbortSignal) {
+  const send = peer.request.bind(peer) as PersistenceRequest;
+  const request: PersistenceRequest = (method, params, options) => {
+    const boundSignal = options.signal ?? signal;
+    return send(method, params, { ...options, ...(boundSignal ? { signal: boundSignal } : {}) });
+  };
+  const client = createSettingsClient(request);
+  // The domain client is frozen. Compose queue/unwatch sugar without mutating it.
+  const settings = {
+    ...client,
+    async watch(
+      params: ParamsOf<"settings/watch">,
+      watchSignal?: AbortSignal,
+      listener: (notice: SettingsWatchNotice) => void | Promise<void> = () => {},
+    ) {
+      const inbox = eventInbox(peer);
+      inbox.enable();
+      const finish = inbox.beginSubscription();
+      try {
+        const result = await client.watch(params, watchSignal);
+        if (result.ok) {
+          let refreshed: SettingsSnapshot | undefined;
+          inbox.open(
+            result.value.subscriptionId,
+            async (event) => {
+              // The shared pump checks slot ownership after read and before entering here.
+              if (!eventChannelBound(peer) || eventInbox(peer) !== inbox) return;
+              const snapshot = refreshed;
+              refreshed = undefined;
+              if (snapshot !== undefined) await listener({ type: "snapshot", snapshot });
+              if (
+                !eventChannelBound(peer) ||
+                eventInbox(peer) !== inbox ||
+                inbox.last(event.subscriptionId) < event.sequence
+              )
+                return;
+              if (event.kind === "settings.changed") await listener({ type: "event", event });
+            },
+            async () => {
+              const snapshot = await client.read(params);
+              if (!snapshot.ok) throw new Error(snapshot.error.message);
+              refreshed = snapshot.value;
+            },
+            result.value.sequence,
+          );
+        }
+        return result;
+      } finally {
+        finish();
+      }
+    },
+    async unwatch(params: ParamsOf<"events/unsubscribe">, unwatchSignal?: AbortSignal) {
+      const boundSignal = unwatchSignal ?? signal;
+      const result = await peer.request("events/unsubscribe", params, {
+        timeoutMs: 10000,
+        ...(boundSignal ? { signal: boundSignal } : {}),
+      });
+      if (result.ok && eventChannelBound(peer)) eventInbox(peer).close(params.subscriptionId);
+      return result;
+    },
+  };
+  const storage = createStorageClient(request);
+  const actions: ReturnType<typeof createPersistenceActionsClient> & {
+    readonly actionRef?: Handle;
+  } = createPersistenceActionsClient(request);
+  return { settings, storage, actions, ui: { copyText: actions.copyText } };
+}
+export interface PersistenceDrainContext {
+  readonly request: DrainRequest;
+  readonly signal: AbortSignal;
+  readonly storage: ReturnType<typeof createStorageClient>;
+}
+function supportsPersistence(version: string): boolean {
+  const match = /^1\.([0-9]+)\.[0-9]+$/.exec(version);
+  return match !== null && Number(match[1]) >= 7;
+}
+
+import { ContextCommands, type ContextCommandHandler } from "./commands.js";
+import { UiClient } from "./ui.js";
+import { uiEventClientPort } from "./events.js";
+import { type ValueSpec, type CommandInvocation, uiFailure } from "@kobrixa/plugin-protocol";
+export type { ContextCommandContext, ContextCommandHandler } from "./commands.js";
+export { UiClient } from "./ui.js";
 import { bindEventChannel } from "./events.js";
 import { resourceOwnerSchema } from "@kobrixa/plugin-protocol";
 import { createDevicesClient, type DevicesClient } from "./devices.js";
@@ -10,20 +119,36 @@ import {
   RpcPeer,
   type MessageChannelLike,
   type PluginLocale,
-  type Severity,
+  type Result,
 } from "@kobrixa/plugin-protocol";
 
 export const API_VERSION = PLUGIN_API_VERSION;
 export const SDK_VERSION = "0.1.0";
 export type CommandHandler = (context: { readonly signal: AbortSignal }) => void | Promise<void>;
 export interface PluginContext {
+  readonly settings: ReturnType<typeof createPersistenceContext>["settings"];
+  readonly storage: ReturnType<typeof createStorageClient>;
+  readonly actions: ReturnType<typeof createPersistenceContext>["actions"];
   readonly devices: DevicesClient;
   readonly pluginId: string;
   readonly locale: PluginLocale;
-  readonly commands: { register(commandId: string, handler: CommandHandler): void };
-  readonly ui: { showMessage(message: string, severity?: Severity): Promise<void> };
+  readonly commands: {
+    register(commandId: string, handler: CommandHandler): void;
+    registerContext(
+      commandId: string,
+      argumentsSchema: Record<string, ValueSpec>,
+      handler: ContextCommandHandler,
+    ): void;
+  };
+  readonly ui: UiClient & { readonly data: UiDataClient } & ReturnType<
+      typeof createPersistenceContext
+    >["ui"];
 }
 export interface PluginDefinition {
+  drain?(
+    context: PersistenceDrainContext,
+  ): ResultOf<"storage/drain"> | Promise<ResultOf<"storage/drain">>;
+  ready?(context: PluginContext): void | Promise<void>;
   activate(context: PluginContext): void | Promise<void>;
   deactivate?(): void | Promise<void>;
 }
@@ -70,18 +195,117 @@ export async function runPlugin(
 ): Promise<RpcPeer> {
   const channel = options.channel ?? (await electronParentPortChannel());
   const exit = options.exit ?? ((code: number) => process.exit(code));
-  const peer = new RpcPeer(channel, { onProtocolError: () => exit(1) });
+  let retire = () => {};
+  const peer = new RpcPeer(channel, {
+    onProtocolError: () => {
+      retire();
+      exit(1);
+    },
+  });
   const launchOwner = process.env.KOBRIXA_RESOURCE_OWNER;
   if (launchOwner !== undefined)
     bindEventChannel(peer, resourceOwnerSchema.parse(JSON.parse(launchOwner)));
   const commands = new Map<string, CommandHandler>();
+  const persistence = createPersistenceContext(peer);
+  const data = new UiDataClient(peer.request.bind(peer));
+  const ui = Object.assign(
+    new UiClient(peer.request.bind(peer), uiEventClientPort(peer)),
+    persistence.ui,
+    { data },
+  );
+  let uiEpoch = 0;
+  retire = () => {
+    uiEpoch++;
+    ui.retire();
+    data.retire();
+    peer.setUiSession(null);
+  };
+  let persistenceNegotiated = false;
+  peer.handle("storage/drain", async (request, { signal }) => {
+    if (!persistenceNegotiated || !definition.drain)
+      throw new RpcError(
+        RPC_ERRORS.methodNotFound,
+        "Persistence drain was not negotiated or registered.",
+      );
+    const send = peer.request.bind(peer) as PersistenceRequest;
+    const drainRequest: PersistenceRequest = (method, params, options) =>
+      send(method, params, { ...options, signal: options.signal ?? signal });
+    return definition.drain({ request, signal, storage: createStorageClient(drainRequest) });
+  });
+  let contextCommands: ContextCommands | undefined;
+  let pluginContext: PluginContext | undefined;
+  let negotiated = false;
+  let candidate = false;
+  let resourceVersion: 1 | 2 | null = null;
+  let readyResult: Promise<Result<Record<string, never>>> | undefined;
+  peer.handle("ui/negotiate", async (params) => {
+    if (!pluginContext) return uiFailure("negotiation");
+    uiEpoch++;
+    ui.retire();
+    data.retire();
+    readyResult = undefined;
+    const versions = [1, ...(candidate ? [2] : [])].filter((v) =>
+      params.uiResourceVersions.some((offered) => offered === v),
+    );
+    resourceVersion = versions.includes(2) ? 2 : versions.includes(1) ? 1 : null;
+    negotiated = params.commandEnvelopeVersions.includes(1) && resourceVersion !== null;
+    return {
+      ok: true as const,
+      value: {
+        commandEnvelopeVersions: negotiated ? [1] : [],
+        uiResourceVersions: versions,
+      },
+    };
+  });
+  peer.handle("ui/ready", async (_params, request) => {
+    if (!negotiated || !pluginContext) return uiFailure("negotiation");
+    if (!readyResult) {
+      ui.markReady(resourceVersion === 2 ? 2 : 1);
+      peer.setUiSession(resourceVersion, true);
+      if (resourceVersion === 2) data.markReady();
+      const epoch = uiEpoch;
+      request.afterReply(
+        () => {},
+        () => {
+          if (epoch === uiEpoch) retire();
+        },
+      );
+      const context = pluginContext;
+      readyResult = Promise.resolve()
+        .then(() => definition.ready?.(context))
+        .then(
+          () => ({ ok: true as const, value: {} }),
+          () => {
+            if (epoch === uiEpoch) retire();
+            return uiFailure<Record<string, never>>("negotiation");
+          },
+        );
+    }
+    return readyResult;
+  });
+  peer.handle("command/invoke", async (invocation, { signal }) => {
+    if (!negotiated || !readyResult || !contextCommands) return uiFailure("negotiation");
+    const ready = await readyResult;
+    if (!ready.ok) return ready;
+    return contextCommands.invoke(invocation, signal);
+  });
+
   let initialized!: (version: string) => void;
   const ready = new Promise<string>((resolve) => {
     initialized = resolve;
   });
   const devices = createDevicesClient(peer, ready);
   peer.handle("initialize", async ({ pluginId, locale, apiVersion }, request) => {
-    await definition.activate({
+    candidate = supportsUiV2(apiVersion);
+    retire();
+    peer.setUiCandidate(candidate);
+    negotiated = false;
+    resourceVersion = null;
+    readyResult = undefined;
+    persistenceNegotiated = supportsPersistence(apiVersion);
+    contextCommands = new ContextCommands(pluginId);
+    pluginContext = {
+      ...persistence,
       devices,
       pluginId,
       locale,
@@ -91,13 +315,34 @@ export async function runPlugin(
             throw new Error(`Command ${commandId} is already registered.`);
           commands.set(commandId, handler);
         },
-      },
-      ui: {
-        async showMessage(message, severity = "info") {
-          await peer.request("ui/showMessage", { severity, message }, { timeoutMs: 10_000 });
+        registerContext(commandId, argumentsSchema, handler) {
+          if (commands.has(commandId))
+            throw new Error(`Command ${commandId} is already registered.`);
+          contextCommands!.registerContext(commandId, argumentsSchema, (invocation) => {
+            const { signal, ...wireInvocation } = invocation;
+            const local = createInvocationContext(pluginContext!, wireInvocation, signal);
+            return handler(
+              Object.freeze(
+                Object.assign(local, {
+                  version: invocation.version,
+                  invocationId: invocation.invocationId,
+                  command: invocation.command,
+                  arguments: invocation.arguments,
+                  context: invocation.context,
+                }),
+              ),
+            );
+          });
         },
       },
-    });
+      ui,
+    };
+    try {
+      await definition.activate(pluginContext);
+    } catch (error) {
+      retire();
+      throw error;
+    }
     // Readiness follows successful response publication, without a timer racing
     // the first command or activation continuations overtaking the handshake.
     request.afterReply(
@@ -117,9 +362,36 @@ export async function runPlugin(
     return null;
   });
   peer.handle("shutdown", async () => {
+    retire();
+    negotiated = false;
+    readyResult = undefined;
     await definition.deactivate?.();
     return null;
   });
-  peer.onNotification("exit", () => exit(0));
+  peer.onNotification("exit", () => {
+    retire();
+    exit(0);
+  });
   return peer;
+}
+
+export function createInvocationContext(
+  base: PluginContext,
+  invocation: CommandInvocation,
+  signal: AbortSignal,
+): PluginContext & { readonly invocation: CommandInvocation; readonly signal: AbortSignal } {
+  const actionRef = invocation.context.actionRef;
+  const actions = Object.create(base.actions);
+  if (actionRef !== undefined)
+    Object.defineProperty(actions, "actionRef", {
+      enumerable: true,
+      configurable: false,
+      get: () => actionRef,
+    });
+  Object.freeze(actions);
+  return Object.create(base, {
+    actions: { value: actions, enumerable: true },
+    invocation: { value: Object.freeze(structuredClone(invocation)), enumerable: true },
+    signal: { value: signal, enumerable: true },
+  });
 }

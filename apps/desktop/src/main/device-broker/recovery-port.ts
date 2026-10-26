@@ -4,6 +4,7 @@ import type {
   CoreActionTarget,
   CoreActionValidationPort,
   PhysicalIdentity,
+  SafetyFaultEntry,
 } from "@kobrixa/plugin-runtime";
 import type { IdleObservation, ProviderOutcome } from "./provider.js";
 import type { DeviceRecoverySnapshot, JournalPort } from "./journal-port.js";
@@ -18,8 +19,23 @@ type Result = BusinessResult<DeviceRecoverySnapshot, DeviceFailureDetail>;
 // Local dependency supplied by T2's registry. occupy must reserve the recovery lane
 // synchronously before its first await, reject foreground/recording, and retain
 // original occupancy through work, journal publication and cleanup settlement.
+export type RecoveryBinding = {
+  fault: SafetyFaultEntry;
+  session: { sessionId: Handle; providerGeneration: Counter; physical: PhysicalIdentity };
+};
+export function samePhysical(a: PhysicalIdentity, b: PhysicalIdentity): boolean {
+  return (
+    a.providerId === b.providerId &&
+    a.family === b.family &&
+    a.basis === b.basis &&
+    a.strength === b.strength &&
+    a.digest === b.digest
+  );
+}
 export interface RecoveryDriver {
   wallNow(): number; // Unix epoch milliseconds, independent of monotonic deadlines.
+  /** Retain exact journal evidence until its provider retirement completes. */
+  canClearResolved?(entryIds: readonly string[]): boolean;
   describe(
     sessionId: Handle,
   ): { sessionId: Handle; providerGeneration: Counter; physical: PhysicalIdentity } | null;
@@ -28,7 +44,12 @@ export interface RecoveryDriver {
     work: (lane: {
       observe(): Promise<ProviderOutcome<IdleObservation>>;
       stop(): Promise<ProviderOutcome<IdleObservation>>;
+      /** Binds a newly requested current-stop only after its initial commit. */
+      recorded?(entry: SafetyFaultEntry): void;
+      /** Called only after the exact resolution commit has completed. */
+      resolved?(entry: SafetyFaultEntry): void;
     }) => Promise<T>,
+    binding?: RecoveryBinding,
   ): Promise<T>;
 }
 const denied = (): Result => ({
@@ -122,57 +143,68 @@ export function createDeviceRecovery(input: {
     // user-confirmed-device and current-device stop are admitted only because the
     // ledger claim binds this fault/session to actual core confirmation evidence.
     try {
-      return await driver.occupy(target.sessionId, async (lane) => {
-        if (!actions.isClaimed(action, target)) return denied();
-        const outcome = await (target.kind === "device-stop" ? lane.stop() : lane.observe());
-        if (!actions.isClaimed(action, target)) return denied();
-        const current = driver.describe(target.sessionId);
-        if (
-          !current ||
-          current.providerGeneration !== session.providerGeneration ||
-          current.physical.digest !== session.physical.digest
-        )
-          return stale();
-        if (outcome.error || !isIdle(outcome.value)) return failure("readback-failed");
-        const document = await journal.load();
-        if (!actions.isClaimed(action, target)) return denied();
-        const existing = document.entries.find((e) => e.id === fault.id);
-        if (!existing || existing.revision !== fault.revision) return stale();
-        const same =
-          fault.sessionId === target.sessionId &&
-          fault.providerGeneration === session.providerGeneration;
-        const at = Math.max(driver.wallNow(), fault.updatedAt);
-        const entries = document.entries.map((e) =>
-          e.id !== fault.id
-            ? e
-            : {
-                ...fault,
-                revision: fault.revision + 1,
-                updatedAt: at,
-                state: "resolved" as const,
-                stopConfirmation: "confirmed" as const,
-                resolution: {
-                  kind:
-                    same && target.kind === "device-stop"
-                      ? ("confirmed-on-original-session" as const)
-                      : ("observed-idle" as const),
-                  at,
-                  sessionId: target.sessionId,
-                  identityEvidence: same
-                    ? ("same-session" as const)
-                    : target.kind === "device-reconcile"
-                      ? target.identityEvidence
-                      : ("user-confirmed-device" as const),
+      return await driver.occupy(
+        target.sessionId,
+        async (lane) => {
+          if (!actions.isClaimed(action, target)) return denied();
+          const outcome = await (target.kind === "device-stop" ? lane.stop() : lane.observe());
+          if (!actions.isClaimed(action, target)) return denied();
+          const current = driver.describe(target.sessionId);
+          if (
+            !current ||
+            current.providerGeneration !== session.providerGeneration ||
+            !samePhysical(current.physical, session.physical)
+          )
+            return stale();
+          if (
+            outcome.error ||
+            !isIdle(outcome.value) ||
+            (target.kind === "device-stop" && outcome.stopConfirmation !== "confirmed")
+          )
+            return failure("readback-failed");
+          const document = await journal.load();
+          if (!actions.isClaimed(action, target)) return denied();
+          const existing = document.entries.find((e) => e.id === fault.id);
+          if (!existing || existing.revision !== fault.revision) return stale();
+          const same =
+            fault.sessionId === target.sessionId &&
+            fault.providerGeneration === session.providerGeneration;
+          const at = Math.max(driver.wallNow(), fault.updatedAt);
+          const entries = document.entries.map((e) =>
+            e.id !== fault.id
+              ? e
+              : {
+                  ...fault,
+                  revision: fault.revision + 1,
+                  updatedAt: at,
+                  state: "resolved" as const,
+                  stopConfirmation: "confirmed" as const,
+                  resolution: {
+                    kind:
+                      same && target.kind === "device-stop"
+                        ? ("confirmed-on-original-session" as const)
+                        : ("observed-idle" as const),
+                    at,
+                    sessionId: target.sessionId,
+                    identityEvidence: same
+                      ? ("same-session" as const)
+                      : target.kind === "device-reconcile"
+                        ? target.identityEvidence
+                        : ("user-confirmed-device" as const),
+                  },
                 },
-              },
-        );
-        try {
-          await journal.commit(journalDocument(document.revision + 1, entries));
-        } catch {
-          return failure("journal-unwritable", true);
-        }
-        return { ok: true, value: journal.snapshot() };
-      });
+          );
+          try {
+            await journal.commit(journalDocument(document.revision + 1, entries));
+          } catch {
+            return failure("journal-unwritable", true);
+          }
+          if (!actions.isClaimed(action, target)) return denied();
+          lane.resolved?.(entries.find((entry) => entry.id === fault.id)!);
+          return { ok: true, value: journal.snapshot() };
+        },
+        { fault: structuredClone(fault), session },
+      );
     } catch {
       return failure("readback-failed");
     }
@@ -214,6 +246,7 @@ export function createDeviceRecovery(input: {
           )
         )
           return stale();
+        if (driver.canClearResolved?.(value.entryIds) === false) return stale();
         try {
           await journal.commit(
             journalDocument(

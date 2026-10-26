@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import type { DeviceBrokerOptions } from "./broker-port.js";
-import { createBroker } from "./broker.js";
+import { createBroker, readDeviceRecoverySessions, resumeQuiescedSession } from "./broker.js";
+import { WorkbenchLifecycle } from "../window/workbench-lifecycle.js";
 const factories: Parameters<typeof createBroker>[1] = {
   recovery: ({ journal }) => ({
     snapshot: () => journal.snapshot(),
@@ -114,6 +115,92 @@ it("F03 permissions fail without I/O; F20 secondary creates no provider work", a
       }),
     }),
   ).toThrow("secondary");
+});
+it("core recovery observes actual sessions after shutdown without admitting calls or exposing mutable state", async () => {
+  const h = setup();
+  const p = pluginPrincipal();
+  const candidates = await h.broker.request(
+    p,
+    "devices/discover",
+    { providerId: h.provider.id },
+    signal(),
+  );
+  if (!candidates.ok) throw new Error("discover failed");
+  const connected = await h.broker.request(
+    p,
+    "devices/connect",
+    { target: { kind: "candidate", candidateId: candidates.value.candidates[0]!.candidateId } },
+    signal(),
+  );
+  if (!connected.ok) throw new Error("connect failed");
+  const before = readDeviceRecoverySessions(h.broker);
+  expect(before[0]?.sessionId).toBe(connected.value.session.sessionId);
+  await h.broker.resources.beginShutdown();
+  expect(await h.broker.request(p, "devices/list", {}, signal())).toMatchObject({
+    ok: false,
+    error: { code: "PLUGIN_E_SHUTTING_DOWN" },
+  });
+  const calls = h.provider.calls.length;
+  const observed = readDeviceRecoverySessions(h.broker);
+  expect(observed).toHaveLength(1);
+  expect(observed[0]?.sessionId).toBe(before[0]?.sessionId);
+  observed[0]!.name = "not the stored name";
+  expect(readDeviceRecoverySessions(h.broker)[0]?.name).not.toBe("not the stored name");
+  expect(h.provider.calls).toHaveLength(calls);
+  expect(
+    await h.broker.request(p, "devices/discover", { providerId: h.provider.id }, signal()),
+  ).toMatchObject({ ok: false, error: { code: "PLUGIN_E_SHUTTING_DOWN" } });
+});
+it("a device lost between last-window close and activation leaves recovery reachable and admission fenced", async () => {
+  const h = setup();
+  const connected = await h.broker.request(
+    pluginPrincipal(),
+    "devices/connect",
+    { target: { kind: "wifi-address", providerId: h.provider.id, address: "127.0.0.1" } },
+    signal(),
+  );
+  if (!connected.ok) throw new Error("connect failed");
+  const sessionId = connected.value.session.sessionId;
+  let original: ReturnType<typeof h.broker.sessions.quiesce> | undefined;
+  let readmitted = false;
+  const life = new WorkbenchLifecycle({
+    sessions: () => [sessionId],
+    suspend: async (id) => {
+      original = h.broker.sessions.quiesce(id, { reason: "suspended" });
+      await original.settled;
+    },
+    verify: async () => {
+      await original!.settled;
+    },
+    retire: async () => {},
+    resume: async () => {
+      if (resumeQuiescedSession(h.broker.sessions, original!) !== "resumed")
+        throw new Error("wake blocked");
+    },
+    readmit: async () => {
+      readmitted = true;
+    },
+  });
+  await life.close();
+  const receipt = original;
+  h.provider.lose();
+  let created = false;
+  const errors: unknown[] = [];
+  await life.openWindow(
+    () => {
+      created = true;
+    },
+    (error) => errors.push(error),
+  );
+  expect(created).toBe(true);
+  expect(errors).toHaveLength(1);
+  expect(life.closing).toBe(true);
+  expect(readmitted).toBe(false);
+  expect(original).toBe(receipt);
+  expect(readDeviceRecoverySessions(h.broker)[0]).toMatchObject({
+    sessionId,
+    state: "disconnected",
+  });
 });
 it("F02 reconnect issues a new session; old owner cannot use candidate/session", async () => {
   const h = setup(),
@@ -347,7 +434,7 @@ it("provider catalog freezes policy during connect and validates full tuples", a
       usbRetryLimit: 3,
     }),
   });
-  h.unregister();
+  await h.unregister.retirement!.retire();
   const catalog = h.broker.providerCatalog(h.provider.id);
   const { provider } = createFakeDeviceProvider({ catalog, now: h.dependencies.now });
   expect(() =>
@@ -391,7 +478,7 @@ it("provider catalog freezes policy during connect and validates full tuples", a
 });
 it("connection cancellation blocks a delayed exchange dispatch", async () => {
   const h = setup();
-  h.unregister();
+  await h.unregister.retirement!.retire();
   const catalog = h.broker.providerCatalog(h.provider.id),
     fake = createFakeDeviceProvider({ catalog, now: h.dependencies.now });
   h.broker.registerProvider(fake.provider);
@@ -512,7 +599,7 @@ it("gate loss during a file chunk prevents the next chunk but preserves exactly 
             },
           },
   });
-  h.unregister();
+  await h.unregister.retirement!.retire();
   const fake = createFakeDeviceProvider({
     catalog: h.broker.providerCatalog(h.provider.id),
     now: h.dependencies.now,
@@ -657,7 +744,7 @@ it.each(["duplicate", "changed"])("USB recovery rejects %s serial evidence", asy
 
 it("retained legacy cancellation owns the lane until file-close settles", async () => {
   const h = setup();
-  h.unregister();
+  await h.unregister.retirement!.retire();
   const fake = createFakeDeviceProvider({
     catalog: h.broker.providerCatalog(h.provider.id),
     now: h.dependencies.now,
@@ -704,7 +791,7 @@ it("retained legacy cancellation owns the lane until file-close settles", async 
 
 it("mode changes allocate a new catalog revision and stamp the snapshot in the session sequence", async () => {
   const h = setup();
-  h.unregister();
+  await h.unregister.retirement!.retire();
   const catalog = h.broker.providerCatalog(h.provider.id),
     fake = createFakeDeviceProvider({ catalog, now: h.dependencies.now });
   h.broker.registerProvider(fake.provider);
@@ -880,7 +967,7 @@ it("each connect exchange is clamped to the one captured attempt deadline", asyn
 });
 it("conflicting and replaced provider generations cannot reuse a catalog allocator", async () => {
   const h = setup();
-  h.unregister();
+  await h.unregister.retirement!.retire();
   const old = h.broker.providerCatalog(h.provider.id),
     fake = createFakeDeviceProvider({ catalog: old, now: h.dependencies.now });
   const remove = h.broker.registerProvider(fake.provider);
@@ -902,8 +989,8 @@ it("conflicting and replaced provider generations cannot reuse a catalog allocat
   const id = old.identify(tuple);
   const conflict = h.broker.registerProvider(h.provider);
   expect(() => old.identify(tuple)).toThrow();
-  conflict();
-  remove();
+  await conflict.retirement!.retire();
+  await remove.retirement!.retire();
   const next = h.broker.providerCatalog(h.provider.id),
     replacement = createFakeDeviceProvider({ catalog: next, now: h.dependencies.now });
   h.broker.registerProvider(replacement.provider);

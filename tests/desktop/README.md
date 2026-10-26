@@ -105,6 +105,57 @@ Hardware acceptance for these preferences requires Windows, macOS and Linux with
 
 For the faster headless version of the 1,700 ms regression, run `KOBRIXA_MAIN_SIMPLE_PROJECT=/path/to/project node node_modules/vitest/vitest.mjs run apps/desktop/src/simulation/main-simple-project.test.ts`. The private project is optional, so this test is skipped in ordinary CI.
 
+## Persistence outcome checks
+
+`pnpm test:persistence:oracles` checks the shared outcome rules for all fifteen
+foundation cases. It also runs in `test`, `test:desktop` and `test:ci`. The Electron
+producer applies these rules before serialization; the outside controller applies
+them again before accepting a receipt. Retirement additionally checks original grant
+object identity inside Electron, and grant contents after serialization.
+
+These are pure unit tests of the verifier. Their synthetic values are never written
+as acceptance evidence. Missing observations, failed safety outcomes, renewed expiry,
+insufficient samples and exceeded load budgets must fail. Passing these tests does
+not implement a missing producer or close P170, X-T1, native, installed or hardware
+acceptance. The full persistence runner remains blocked until every required live
+producer and evidence set is available.
+
+The scoped `--case=contention` producer uses the admitted recording and settings
+consumers, the actual broker and persistence host, and native input into the
+production contributed-settings controls. It probes both owners against a live
+conflicting reservation while the original checkpoint registration publication is
+paused in the actual worker. The admitted recovery ticket and its staged registration
+bytes identify the original record, owner, reservation, session and provider generation
+before probing. Registration is unresolved during this phase; it is resumed and
+awaited for durability afterwards. Recording-against-motion probes follow the drain. It waits for the actual SDK final drain before motion, then submits
+two native settings forms with distinct authority scopes and the same CAS revision. A real worker publication pause remains held until
+the original motion reports confirmed stop. The report retains both CAS replies,
+the losing draft and field map, trusted input observations, original resource IDs
+and worker fault trace. Host-side device admission probes do not establish public
+SDK transport or generic UI intent provenance; those retain separate gates.
+
+Build a fresh persistence renderer artifact after changing the settings resource.
+The production settings service retains independent bindings and watches for admitted
+native window scopes on one backend and one CAS lane. The pure production-service
+regression checks one publish/one conflict at the same revision and that closing
+one binding leaves the other usable. The producer checks both original bindings
+at the same revision before motion/CAS. Native acceptance still requires a fresh controller-reviewed run; the
+pure regression is not a native acceptance receipt.
+
+Checkpoint evidence includes the original record, bytes/hash, commit receipt,
+worker ticket and independent worker reconciliation, staged and durable registration
+documents, and publication acknowledgement plus independent recovery reconciliation.
+The original reservation-end event and grant bound the drain offer, SDK request and
+deadline. The SDK final begin-write token/checkpoint/target and returned write handle
+are correlated to the final worker ticket, reconciled receipt and drain report. The outside verifier rejects missing or
+mismatched identities. The paused settings publication must match the original
+new settings ticket, and stop must be confirmed before release. Every unexpectedly
+admitted recording reservation is retained before assertions and released even if
+scope revocation, motion stop or another reservation release fails. A probe failure
+while registration is paused releases the worker and settles the registration before
+restoring observers and releasing the original reservation. Do not
+promote pure oracle tests or a successful build to a completed contention case.
+
 ## README screenshots
 
 Use `KOBRIXA_SCREENSHOTS_README=1 KOBRIXA_SMOKE_KEEP_ARTIFACTS=1 node tests/desktop/run-smoke.mjs` for the English and Traditional Chinese editor images. This loads the public Hello EV3 example into the isolated fixture and captures the real renderer without connecting a device.

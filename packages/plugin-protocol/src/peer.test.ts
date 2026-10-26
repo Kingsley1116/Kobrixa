@@ -380,3 +380,25 @@ it("enforces device parameter bytes before whitespace is discarded", async () =>
   expect(JSON.parse(sent[0]!).error.code).toBe(RPC_ERRORS.invalidParams);
   peer.close();
 });
+
+import { encodeContentLength, ContentLengthDecoder } from "./index.js";
+it.each([1_048_576, 1_048_577])("checks actual escaping-expanded frame bytes at %s", (size) => {
+  const shell = JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "fixture/frame",
+    params: { text: "" },
+  });
+  const available = size - new TextEncoder().encode(shell).length;
+  const text = "\n".repeat(Math.floor(available / 2)) + "x".repeat(available % 2);
+  const serialized = JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "fixture/frame",
+    params: { text },
+  });
+  expect(new TextEncoder().encode(serialized).length).toBe(size);
+  if (size === 1_048_576) {
+    expect(new ContentLengthDecoder().push(encodeContentLength(serialized))).toEqual([serialized]);
+  } else expect(() => encodeContentLength(serialized)).toThrowError(/1 MiB/);
+});

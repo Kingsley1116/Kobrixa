@@ -135,3 +135,7 @@ pnpm test:plugins:smoke
 ```
 
 兩個執行器都依序嘗試 `KOBRIXA_TEST_PYTHON`、`python3` 與 `python`，選用第一個符合 Python 3.10 以上要求的直譯器。環境變數必須指定執行檔，不可夾帶額外參數。兩者都將 `PYTHONPATH` 設為 SDK 原始碼目錄，因此測試不需要可編輯安裝。SDK 執行器涵蓋共用 schema 案例、訊息邊界與協定行為；本機缺少 Python 時會略過，CI 則會失敗。插件 smoke 必須具備 Python，會驗證真實 Electron、兩個範例插件、當機隔離與離開時的清理。詳見 [Plugin smoke](../../tests/desktop/README.md#plugin-smoke)。
+
+## UI terminal resync
+
+`ui.on_resync_required(handler)` adds a session-scoped common-terminal hook while preserving raw subscription IDs and the existing UI callback event union. See the [JS/Python terminal resync guide](../../packages/plugin-sdk-js/docs/ui-terminal-resync.md) for bounded cleanup, lifetime checks and explicit query/new-subscribe examples. Reinstall the hook in each ready session; the SDK does not automatically resubscribe.

@@ -1,0 +1,12 @@
+[
+  {
+    "file": "browser.json.gz",
+    "sha256": "8190c85c4ee4c83f730186c78237b1c702760544eeea46f290a2419d3581367e",
+    "bytes": 29487
+  },
+  {
+    "file": "electron.log.gz",
+    "sha256": "963df550552a1cc66200c88a0caccc99693b7377d6c0310ada5ef5a1cbe1343f",
+    "bytes": 4681
+  }
+]

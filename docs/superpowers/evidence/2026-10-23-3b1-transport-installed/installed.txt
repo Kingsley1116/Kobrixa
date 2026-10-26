@@ -1,0 +1,16 @@
+Installed fixture workspace (retained on failure): /var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-installed-ui-NV9SLv
+/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-installed-ui-NV9SLv/installed/kobrixa.app: replacing existing signature
+/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-installed-ui-NV9SLv/installed/kobrixa.app: replacing existing signature
+/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-installed-ui-NV9SLv/installed/kobrixa.app: replacing existing signature
+✔ U14/B1-RF5: missing/corrupt/foreign/traversing payloads fail closed (15.672708ms)
+✔ U14: installed receipt contains actual isolated process evidence (0.481791ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 211.467125
+Synthetic installed evidence: /var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-installed-ui-NV9SLv/installed.json
+Clean installation/offline/no-checkout access remains a controller environment gate.

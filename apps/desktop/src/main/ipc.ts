@@ -1,3 +1,4 @@
+import { UpdateInstallation } from "./updates/installation.js";
 import { filePreferencesPatchSchema } from "./workspace/preferences.js";
 import { devicePreferencesPatchSchema } from "./device/preferences.js";
 import type { UpdateService, UpdateOperationGate } from "./updates/service.js";
@@ -100,7 +101,10 @@ export function registerIpc(
   beforeUpdateInstall: () => Promise<void> = async () => {},
   plugins?: Pick<PluginController, "diagnosticHelpEntry">,
   deviceFoundation?: DesktopDeviceIpc,
-): void {
+  beforeWindowClose?: () => Promise<void>,
+  beforeUpdatePrepare?: () => Promise<void>,
+  resumeAfterUpdate?: () => Promise<void>,
+): UpdateInstallation {
   const trusted = (event: IpcMainInvokeEvent): void => {
     const renderer = trustedRenderer();
     if (!renderer || event.sender.id !== renderer.id || event.senderFrame !== renderer.mainFrame) {
@@ -250,16 +254,22 @@ export function registerIpc(
     ),
   );
   handle("updates:check", () => updates.check());
-  handle("updates:prepare", async () => {
-    await sensorTools?.motors?.flush();
-    await sensorTools?.lab.flush("update");
-    updates.prepareInstall();
-  });
-  handle("updates:cancel", () => updates.cancelInstall());
-  handle("updates:install", async () => {
-    await beforeUpdateInstall();
-    updates.install();
-  });
+  const installation = new UpdateInstallation(
+    updates,
+    async () => {
+      if (beforeUpdatePrepare) await beforeUpdatePrepare();
+      else {
+        await sensorTools?.motors?.flush();
+        await sensorTools?.lab.flush("update");
+      }
+    },
+    beforeUpdateInstall,
+    resumeAfterUpdate,
+    (error) => console.error("Update recovery blocked.", error),
+  );
+  handle("updates:prepare", () => installation.prepare());
+  handle("updates:cancel", () => installation.cancel());
+  handle("updates:install", () => installation.install());
   handle("updates:open", () => updates.openRelease());
   handle("keyboard:context", (event, value: unknown) => {
     const context = z
@@ -299,7 +309,8 @@ export function registerIpc(
     if (parsedReady) {
       await sensorTools?.motors?.flush();
       await sensorTools?.lab.flush("close");
-      await deviceFoundation?.beforeClose();
+      if (beforeWindowClose) await beforeWindowClose();
+      else await deviceFoundation?.beforeClose();
     }
     finishClose(parsedId, parsedReady);
   });
@@ -516,6 +527,7 @@ export function registerIpc(
   handle("device:delete", (_event, sessionId: unknown, remotePath: unknown) =>
     devices.delete(id.parse(sessionId), file.parse(remotePath)),
   );
+  return installation;
 }
 
 import type { Principal } from "@kobrixa/plugin-runtime";
@@ -526,3 +538,164 @@ export interface DesktopDeviceIpc {
   disconnect(sessionId: string, principal: Principal): Promise<void>;
   beforeClose(): Promise<void>;
 }
+
+export function registerLegacyPreferencesIpc170(
+  handle: IpcHandle,
+  imports: LegacyImportHostPort,
+  scopeFor: (event: IpcMainInvokeEvent) => CoreWindowScope,
+): () => void {
+  let disposed = false;
+  const bridge = (event: IpcMainInvokeEvent) => {
+    if (disposed) throw new Error("Stale preferences window");
+    return legacyPreferencesFor170(scopeFor(event), imports);
+  };
+  handle("persistence:legacy-preferences-challenge", (event, descriptorId: string) =>
+    bridge(event).challenge(descriptorId),
+  );
+  handle("persistence:legacy-preferences-submit", (event, snapshot: LegacyPreferencesSnapshot) =>
+    bridge(event).submit(snapshot),
+  );
+  return () => {
+    disposed = true;
+  };
+}
+
+import type { CoreWindowScope } from "@kobrixa/plugin-runtime";
+export function registerPersistenceWindow170(input: {
+  handle: IpcHandle;
+  facets: NonNullable<PluginController["persistence170"]>;
+  coreRecovery: CoreRecovery;
+  renderer: () => Electron.WebContents | undefined;
+}): () => void {
+  const original = input.renderer();
+  if (!original) throw new Error("No workbench renderer");
+  let disposed = false;
+  let documentScope = structuredClone(input.facets.scope());
+  let documentFrame = original.mainFrame;
+  let attached = false;
+  let documentReady = true;
+  let retireDocument = () => {};
+  const routes = new Map<string, (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown>();
+  const registered = new Set<string>();
+  const sameScope = (a: CoreWindowScope, b: CoreWindowScope) =>
+    a.hostEpoch === b.hostEpoch && a.workbenchInstance === b.workbenchInstance;
+  const scope = () => {
+    if (
+      disposed ||
+      !attached ||
+      input.renderer() !== original ||
+      original.isDestroyed() ||
+      original.mainFrame !== documentFrame ||
+      !sameScope(input.facets.scope(), documentScope)
+    )
+      throw new Error("Stale persistence window");
+    return documentScope;
+  };
+  // Register native-window routes once. Their document handlers are replaceable,
+  // so pending old opens and subscriptions retain their retired closures.
+  const handle: IpcHandle = (channel, action) => {
+    routes.set(channel, action as (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown);
+    if (registered.has(channel)) return;
+    registered.add(channel);
+    input.handle(channel, (event, ...args: unknown[]) => {
+      if (event.sender !== original || event.senderFrame !== original.mainFrame)
+        throw new Error("Rejected IPC from an untrusted sender.");
+      if (
+        !disposed &&
+        documentReady &&
+        !attached &&
+        !sameScope(input.facets.scope(), documentScope)
+      )
+        attach();
+      scope();
+      return routes.get(channel)!(event, ...args);
+    });
+  };
+  const publish = (expected: CoreWindowScope, channel: string, value: unknown) => {
+    try {
+      if (sameScope(expected, scope())) original.send(channel, value);
+    } catch {
+      /* Retired document publications are dropped. */
+    }
+  };
+  const attach = () => {
+    documentScope = structuredClone(input.facets.scope());
+    documentFrame = original.mainFrame;
+    attached = true;
+    const expected = documentScope;
+    const documentScopeFor = () => {
+      const current = scope();
+      if (!sameScope(expected, current)) throw new Error("Stale persistence window");
+      return expected;
+    };
+    const offLegacy = registerLegacyPreferencesIpc170(
+      handle,
+      input.facets.imports,
+      documentScopeFor,
+    );
+    const offCore = input.coreRecovery.attachPersistence170(input.facets.detail);
+    const offSettings = registerSettingsIpc170({
+      handle,
+      service: input.facets.settings,
+      scope: documentScopeFor,
+      publish,
+    });
+    const offRecovery = registerPersistenceRecoveryIpc170({
+      handle,
+      bridge: input.facets.detail.bridge,
+      scope: documentScopeFor,
+      publish,
+    });
+    retireDocument = () => {
+      if (!attached) return;
+      attached = false;
+      offLegacy();
+      offSettings();
+      offRecovery();
+      offCore();
+      input.facets.imports.retirePreferences(expected);
+    };
+  };
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    retireDocument();
+    routes.clear();
+    original.removeListener("destroyed", dispose);
+    original.removeListener("render-process-gone", retireDocumentOnCrash);
+    original.removeListener("did-start-navigation", navigation);
+    original.removeListener("did-navigate", documentCommitted);
+  };
+  const retireDocumentOnCrash = () => {
+    documentReady = false;
+    retireDocument();
+  };
+  const documentCommitted = () => {
+    documentReady = true;
+  };
+  const navigation = (
+    _event: Electron.Event,
+    _url: string,
+    inPlace: boolean,
+    mainFrame: boolean,
+  ) => {
+    if (mainFrame && !inPlace) {
+      documentReady = false;
+      retireDocument();
+    }
+  };
+  attach();
+  original.once("destroyed", dispose);
+  original.on("render-process-gone", retireDocumentOnCrash);
+  original.on("did-start-navigation", navigation);
+  original.on("did-navigate", documentCommitted);
+  return dispose;
+}
+
+import { legacyPreferencesFor170 } from "./plugins/controller.js";
+import type {
+  LegacyImportHostPort,
+  LegacyPreferencesSnapshot,
+} from "./plugins/persistence/import-sources.js";
+import type { CoreRecovery } from "./plugins/core-recovery.js";
+import { registerSettingsIpc170, registerPersistenceRecoveryIpc170 } from "./plugins/ipc.js";

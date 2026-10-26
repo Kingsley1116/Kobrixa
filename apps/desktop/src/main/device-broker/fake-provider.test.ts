@@ -39,6 +39,58 @@ import { createFakeDeviceProvider, pluginPrincipal } from "./fake-provider.js";
 import { createProviderCatalog, EventLedger } from "./registry.js";
 import { IntentRegistry } from "./intent.js";
 it.each(["before-exchange", "after-exchange"] as const)(
+  "staged fake exposes helper-arm %s and forbids continuation after cancellation",
+  async (point) => {
+    const h = operationHarness();
+    const fake = createFakeDeviceProvider({
+      catalog: createProviderCatalog(),
+      now: h.dependencies.now,
+      motionProfile: "staged",
+    });
+    h.admission.lane.reserve(ID);
+    const c = createContexts({
+      id: ID,
+      sessionId: ID,
+      generation: 1,
+      operationClass: "finite-motion",
+      deadline: 30000,
+      now: h.dependencies.now,
+      lane: h.admission.lane,
+      check: () => {},
+      progress: () => {},
+      onStop: () => {},
+    });
+    fake.control.block(point, "helper-arm");
+    const motion = fake.provider.executeFiniteMotion(
+      h.provider.session,
+      { mode: "relative-angle", actuatorId: ID, power: 20, direction: 1, brake: true, degrees: 90 },
+      c.work,
+    );
+    const rejected = expect(motion).rejects.toThrow();
+    await fake.control.reached(point, "helper-arm");
+    c.stop("cancelled", true);
+    fake.control.release(point, "helper-arm");
+    await rejected;
+    await fake.provider.stopAndReadback(
+      h.provider.session,
+      { kind: "operation", operationId: ID },
+      c.cleanup,
+    );
+    const sent = fake.control
+      .trace()
+      .filter((row) => row.dispatch === "sent")
+      .map((row) => row.step);
+    expect(sent).toEqual([
+      "preflight",
+      "helper-upload",
+      "helper-run",
+      ...(point === "after-exchange" ? ["helper-arm"] : []),
+      "stop",
+      "readback",
+    ]);
+  },
+);
+it.each(["before-exchange", "after-exchange"] as const)(
   "formal fake %s cancellation has single dispatch and original cleanup",
   async (point) => {
     const h = operationHarness(),
@@ -123,6 +175,7 @@ it("control pressure immediately revokes motion intent before any ACK", () => {
 
 import { randomUUID } from "node:crypto";
 import { ExchangeLane } from "./provider.js";
+import { OperationStore } from "./operations.js";
 import type { ProviderSessionKey } from "./provider.js";
 function fixtureContext(sessionId = randomUUID()) {
   return createContexts({
@@ -410,6 +463,37 @@ it.each([100, 5000])(
   },
 );
 
+it("maximum timed motion exposes running state before the original stop interrupts it", async () => {
+  vi.useFakeTimers();
+  const h = operationHarness();
+  const fake = createFakeDeviceProvider({
+    catalog: createProviderCatalog(),
+    now: h.dependencies.now,
+    profile: "maximum",
+  });
+  const store = new OperationStore(h.dependencies);
+  const prepared = store.prepare({ ...h.admission, provider: fake.provider });
+  try {
+    store.start(h.admission.principal, prepared.operationId);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(store.query(h.admission.principal, prepared.operationId)).toMatchObject({
+      phase: "running",
+      stage: "moving",
+      stopRequested: false,
+    });
+  } finally {
+    store.stop(h.admission.principal, prepared.operationId, "brake");
+    await store.settled(prepared.operationId);
+    expect(store.query(h.admission.principal, prepared.operationId)).toMatchObject({
+      movement: "interrupted",
+      stopRequested: true,
+      stopConfirmation: "confirmed",
+    });
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
+  }
+});
+
 it("maximum timed motion remains active at 20ms and Stop interrupts it before original cleanup", async () => {
   vi.useFakeTimers();
   try {
@@ -448,4 +532,21 @@ it("maximum timed motion remains active at 20ms and Stop interrupts it before or
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("loss control delivers the original provider session and leaves reconnection explicit", async () => {
+  const fake = createFakeDeviceProvider({ catalog: createProviderCatalog(), now: () => 0 });
+  const ctx = fixtureContext();
+  const candidate = (await fake.provider.discover(ctx.work)).value![0]!;
+  const connection = (await fake.provider.connect(candidate.key, ctx.work)).value!;
+  const lost = vi.fn();
+  const off = fake.provider.onDisconnect(lost);
+  fake.control.lose();
+  expect(lost).toHaveBeenCalledExactlyOnceWith(connection.key, "connection-lost");
+  expect(fake.control.trace().filter((row) => row.step === "connect")).toHaveLength(2);
+  await fake.provider.connect(candidate.key, ctx.work);
+  expect(fake.control.trace().filter((row) => row.step === "connect")).toHaveLength(4);
+  off();
+  fake.control.lose();
+  expect(lost).toHaveBeenCalledOnce();
 });

@@ -22,3 +22,23 @@ For each run record OS/version, application commit/version, EV3 firmware, motor 
 10. Check temporary-file cleanup, including a cleanup failure; unrelated projects remain intact. Repeat key UI cases in English and Traditional Chinese at narrow sidebar width.
 
 Attach observed results and limitations before marking any cell passed. 如有任何無法確認的停止或非選定埠影響，請保留原始紀錄，不標示成功。
+
+
+## Stage 3 public-plugin acceptance — UNRUN
+
+The earlier card-based checklist records legacy behavior. For Stage 3 use **Plugin tools → Motor test → Use current connection**, not the removed Monitor-card route. Product activation/removal is still pending integration. No row below has been performed or signed off.
+
+Record tester/date, OS/architecture, app commit and installed artifact SHA-256, EV3 firmware, motor type/port, transport, requested motion, load, and raw logs/video. Record three separate timestamps/outcomes: stop requested; host readback/confirmation; physical motion observed stopped. A successful request does not fill the other two columns.
+
+| Public-route case | USB | Wi-Fi | Evidence |
+| --- | --- | --- | --- |
+| Jog, timed and angle on A–D, both motor types; defaults and bounds | UNRUN | UNRUN | — |
+| Release/cancel during prepare, start, arm and pulse; lost/late reply never repeats start | UNRUN | UNRUN | — |
+| Hide, close, blur, renderer crash/freeze, plugin kill or authority loss | UNRUN | UNRUN | — |
+| Core Stop with invalid fields or busy command; confirmed versus unconfirmed recovery | UNRUN | UNRUN | — |
+| Recording/program ownership blocks motion; no interference with unselected outputs | UNRUN | UNRUN | — |
+| Disconnect/reconnect, sleep/wake, disable/re-enable and provider toggle never resume | UNRUN | UNRUN | — |
+| Normal quit blocker and forced exit uncertainty; second instance does not start motion | UNRUN | UNRUN | — |
+| Port drafts, invalid raw, close/reopen; new resource/process clears drafts | UNRUN | UNRUN | — |
+
+Clean-install/manual S3-15: test each delivered OS/architecture without checkout or user Node, offline launch, missing/corrupt payload, independent feature/provider toggles, safe-mode cold suppression and core recovery, both locales/themes, 320 CSS px at 125%, keyboard/focus and actual screen-reader speech. All remain **UNRUN**. Attach named observations before changing status; simulated provider and accessibility-tree output cannot sign these rows.

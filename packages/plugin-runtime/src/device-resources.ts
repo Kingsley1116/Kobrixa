@@ -1,5 +1,5 @@
 import type { Handle, Counter, Timestamp, ResourceOwner, MotionSnapshot, ReservationSnapshot, DeviceErrorReason } from "@kobrixa/plugin-protocol";
-import type { BusinessResult, DispatchOutcome, DeviceErrorDetail, PermissionErrorDetail, ResourceErrorDetail } from "@kobrixa/plugin-protocol";
+import type { BusinessResult, DispatchOutcome, DeviceErrorDetail, PermissionErrorDetail, ResourceErrorDetail, ResourceErrorDetailFor } from "@kobrixa/plugin-protocol";
 import type { CoreActionReference } from "./core-actions.js";
 export type OperationClass =
   | "connection"
@@ -188,16 +188,16 @@ export type Stage3Event =
 export type Stage3EventEnvelope = Omit<EventEnvelope<unknown>, "kind" | "data"> & Stage3Event;
 export interface CommonEventLedgerPort {
   diagnostics(): Readonly<{ subscriptions: number; queuedEvents: number; queuedBytes: number }>;
-  create(owner: ResourceOwner): BusinessResult<{ subscriptionId: Handle; sequence: 0 }, ResourceErrorDetail>;
+  create(owner: ResourceOwner): BusinessResult<{ subscriptionId: Handle; sequence: 0 }, ResourceErrorDetailFor<"subscription">, PluginErrorCodeV150>;
   owns(owner: ResourceOwner, subscriptionId: Handle): boolean;
   publish(owner: ResourceOwner, subscriptionId: Handle, event: Stage3Event,
-    delivery: "control" | "telemetry"): BusinessResult<{ accepted: true }, ResourceErrorDetail>;
+    delivery: "control" | "telemetry"): BusinessResult<{ accepted: true }, ResourceErrorDetailFor<"subscription">, PluginErrorCodeV150>;
   activate(owner: ResourceOwner, subscriptionId: Handle): void;
-  resync(owner: ResourceOwner, subscriptionId: Handle): BusinessResult<{ accepted: true }, ResourceErrorDetail>;
+  resync(owner: ResourceOwner, subscriptionId: Handle): BusinessResult<{ accepted: true }, ResourceErrorDetailFor<"subscription">, PluginErrorCodeV150>;
   snapshot<T,D,C extends Stage3PluginErrorCode>(owner: ResourceOwner, subscriptionId: Handle,
-    read: () => BusinessResult<T,D,C>): BusinessResult<{ sequence: Counter; snapshot: T }, D | ResourceErrorDetail, C | PluginErrorCodeV150>;
-  ack(owner: ResourceOwner, subscriptionId: Handle, sequence: Counter): BusinessResult<{ acknowledged: Counter }, ResourceErrorDetail>;
-  unsubscribe(owner: ResourceOwner, subscriptionId: Handle): BusinessResult<{ removed: boolean }, ResourceErrorDetail>;
+    read: () => BusinessResult<T,D,C>): BusinessResult<{ sequence: Counter; snapshot: T }, D | ResourceErrorDetailFor<"subscription">, C | PluginErrorCodeV150>;
+  ack(owner: ResourceOwner, subscriptionId: Handle, sequence: Counter): BusinessResult<{ acknowledged: Counter }, ResourceErrorDetailFor<"subscription">, PluginErrorCodeV150>;
+  unsubscribe(owner: ResourceOwner, subscriptionId: Handle): BusinessResult<{ removed: boolean }, ResourceErrorDetailFor<"subscription">, PluginErrorCodeV150>;
   closeAfterControl(owner: ResourceOwner, subscriptionId: Handle): void;
   onRemoved(listener: (subscriptionId: Handle) => void): () => void;
 }

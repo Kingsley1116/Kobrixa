@@ -1,3 +1,6 @@
+import { uiRequestSchemas } from "./ui-methods.js";
+import { validUiWireV2, isUiV2OnlyMethod, supportsUiV2 } from "./ui-v2-session.js";
+import { validUiWire } from "./ui-validation.js";
 import type { z } from "zod";
 import { validateDeviceWire } from "./device-validation.js";
 import { RPC_ERRORS } from "./errors.js";
@@ -61,6 +64,9 @@ export interface RpcPeerOptions {
 type Definition = { params: z.ZodType; result: z.ZodType };
 type AnyHandler = (params: unknown, context: RequestContext) => unknown;
 interface Pending {
+  uiInput?: unknown;
+  definition: Definition;
+  uiEpoch: number;
   method: RequestMethod;
   resolve(value: unknown): void;
   reject(error: Error): void;
@@ -95,6 +101,59 @@ const invokeCallback = (callback: () => void): void => {
 
 export class RpcPeer {
   #nextId = 1;
+  #uiCandidate = false;
+  #uiEpoch = 0;
+  #uiVersion: 1 | 2 | null = null;
+  #uiReady = false;
+  readonly #incomingMethods = new Map<JsonRpcId, string>();
+  get uiSessionEpoch(): number {
+    return this.#uiEpoch;
+  }
+  get uiResourceVersion(): 1 | 2 | null {
+    return this.#uiVersion;
+  }
+  /** Lifecycle attachment calls this only from initialized/negotiated host state. */
+  setUiSession(version: 1 | 2 | null, ready = false): void {
+    if (version === 2 && !this.#uiCandidate) throw new Error("UI v2 was not initialized.");
+    if (version === null) this.#uiEpoch++;
+    this.#uiVersion = version;
+    this.#uiReady = ready && version !== null;
+  }
+  setUiCandidate(enabled: boolean): void {
+    this.#uiCandidate = enabled;
+    this.setUiSession(null);
+  }
+  #definition(method: string): Definition | undefined {
+    if (method === "ui/negotiate" ? !this.#uiCandidate : this.#uiVersion !== 2) {
+      const old = own<Definition>(uiRequestSchemas, method);
+      if (old) return old;
+    }
+    return own<Definition>(requestMethods, method);
+  }
+  #valid(method: string, phase: "params" | "result", value: unknown, params?: unknown): boolean {
+    return (this.#uiCandidate ? validUiWireV2 : validUiWire)(method, phase, value, params);
+  }
+  #observe(method: string, result: unknown, initializeOffer?: unknown): void {
+    // Only an outgoing initialize's correlated, validated offer/reply can enable
+    // the caller side. Incoming params alone never establish remote support.
+    if (method === "initialize" && initializeOffer !== undefined) {
+      const offer = requestMethods.initialize.params.parse(initializeOffer);
+      const reply = requestMethods.initialize.result.parse(result);
+      this.setUiCandidate(supportsUiV2(offer.apiVersion) && supportsUiV2(reply.apiVersion));
+    }
+    const reply = result as {
+      ok?: boolean;
+      value?: { uiResourceVersions?: number[]; commandEnvelopeVersions?: number[] };
+    };
+    if (method === "ui/negotiate") {
+      const versions =
+        reply.ok && reply.value?.commandEnvelopeVersions?.includes(1)
+          ? (reply.value.uiResourceVersions ?? [])
+          : [];
+      this.setUiSession(versions.includes(2) ? 2 : versions.includes(1) ? 1 : null);
+    }
+    if (method === "ui/ready") this.#uiReady = !!reply.ok && this.#uiVersion !== null;
+  }
   #closed: RpcError | undefined;
   readonly #pending = new Map<JsonRpcId, Pending>();
   readonly #abandoned = new Map<JsonRpcId, ReturnType<typeof setTimeout>>();
@@ -146,10 +205,24 @@ export class RpcPeer {
     options: { timeoutMs?: number; signal?: AbortSignal } = {},
   ): Promise<ResultOf<M>> {
     if (this.#closed) return Promise.reject(this.#closed);
+    // Initialization is not capability negotiation until a successful reply.
+    // Clear even for a pre-aborted or locally invalid initialization attempt.
+    if (method === "initialize") this.setUiCandidate(false);
     if (options.signal?.aborted)
       return Promise.reject(new RpcError(RPC_ERRORS.requestCancelled, `${method} was cancelled.`));
-    const parsed = (requestMethods[method].params as z.ZodType).parse(params);
+    if (isUiV2OnlyMethod(method) && (this.#uiVersion !== 2 || !this.#uiReady))
+      return Promise.reject(new RpcError(RPC_ERRORS.invalidRequest, "UI v2 data is not ready."));
+    if (method === "shutdown") this.setUiSession(null);
+    const definition = this.#definition(method)!;
+    const parsed = definition.params.parse(params);
     validateDeviceWire(`${method}.params`, parsed);
+    if (!this.#valid(method, "params", params))
+      return Promise.reject(
+        new RpcError(RPC_ERRORS.invalidParams, `Invalid parameters for ${method}.`),
+      );
+    if (method === "ui/negotiate") this.setUiSession(null);
+    const uiEpoch = this.#uiEpoch;
+    if (method === "ui/ready") this.#uiReady = this.#uiVersion !== null;
     const id = this.#nextId++;
     return new Promise<ResultOf<M>>((resolve, reject) => {
       const timeoutMs = options.timeoutMs ?? this.options.timeoutMs ?? 30_000;
@@ -158,6 +231,8 @@ export class RpcPeer {
         if (!pending) return;
         pending.cleanup();
         this.#pending.delete(id);
+        if (uiEpoch === this.#uiEpoch && (method === "ui/ready" || method === "ui/negotiate"))
+          this.setUiSession(null);
         this.#abandoned.set(
           id,
           setTimeout(() => {
@@ -177,6 +252,9 @@ export class RpcPeer {
       );
       options.signal?.addEventListener("abort", onAbort, { once: true });
       this.#pending.set(id, {
+        uiInput: structuredClone(parsed),
+        definition,
+        uiEpoch,
         method,
         resolve: resolve as (value: unknown) => void,
         reject,
@@ -190,6 +268,8 @@ export class RpcPeer {
       } catch (error) {
         this.#pending.get(id)?.cleanup();
         this.#pending.delete(id);
+        if (uiEpoch === this.#uiEpoch && (method === "ui/ready" || method === "ui/negotiate"))
+          this.setUiSession(null);
         reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
@@ -209,6 +289,7 @@ export class RpcPeer {
 
   close(error = new RpcError(RPC_ERRORS.connectionClosed, "The connection was closed.")): void {
     if (this.#closed) return;
+    this.setUiSession(null);
     this.#closed = error;
     this.#unsubscribe();
     for (const pending of this.#pending.values()) {
@@ -222,10 +303,18 @@ export class RpcPeer {
   }
 
   #send(message: object): void {
-    const wire = message as { method?: string; params?: unknown };
+    const wire = message as { id?: JsonRpcId; method?: string; params?: { kind?: string } };
+    const method =
+      wire.method ?? (wire.id === undefined ? undefined : this.#incomingMethods.get(wire.id));
     if (wire.method) validateDeviceWire(`${wire.method}.params`, wire.params);
     const text = JSON.stringify(message);
     if (tooLarge(text)) throw new RpcError(RPC_ERRORS.internalError, "Message exceeds 1 MiB.");
+    if ((method && isUiV2OnlyMethod(method)) || wire.params?.kind === "ui.data") {
+      if (encoder.encode(text).length > 65536)
+        throw new RpcError(RPC_ERRORS.internalError, "UI data frame exceeds 64 KiB.");
+    }
+    if (wire.params?.kind === "ui.data" && (this.#uiVersion !== 2 || !this.#uiReady))
+      throw new RpcError(RPC_ERRORS.invalidRequest, "UI v2 data is not ready.");
     this.channel.send(text);
   }
 
@@ -246,6 +335,7 @@ export class RpcPeer {
   #receive(text: string): void {
     if (this.#closed) return;
     if (tooLarge(text)) return this.#protocolError("Message exceeds 1 MiB.");
+    const frameBytes = encoder.encode(text).length;
     let value: unknown;
     try {
       value = JSON.parse(text);
@@ -255,6 +345,33 @@ export class RpcPeer {
     const parsed = jsonRpcMessageSchema.safeParse(value);
     if (!parsed.success) return this.#protocolError("Message is not a valid JSON-RPC 2.0 message.");
     const message = parsed.data;
+    const method =
+      "method" in message
+        ? message.method
+        : message.id === null
+          ? undefined
+          : this.#pending.get(message.id)?.method;
+    const dataEvent =
+      "method" in message &&
+      message.method === "events/deliver" &&
+      message.params?.kind === "ui.data";
+    if (((method && isUiV2OnlyMethod(method)) || dataEvent) && frameBytes > 65536) {
+      if (!("method" in message) && message.id !== null) {
+        const pending = this.#pending.get(message.id);
+        pending?.cleanup();
+        this.#pending.delete(message.id);
+        pending?.reject(new RpcError(RPC_ERRORS.internalError, "UI data frame exceeds 64 KiB."));
+      } else if ("id" in message)
+        this.#trySend({
+          jsonrpc: "2.0",
+          id: message.id,
+          error: { code: RPC_ERRORS.invalidParams, message: "UI data frame exceeds 64 KiB." },
+        });
+      else this.#protocolError("UI data frame exceeds 64 KiB.");
+      return;
+    }
+    if (dataEvent && (this.#uiVersion !== 2 || !this.#uiReady))
+      return this.#protocolError("UI data event before v2 ready.");
     if ("method" in message) {
       if ("id" in message)
         void this.#onRequest(
@@ -277,8 +394,12 @@ export class RpcPeer {
     serialized?: string,
   ): Promise<void> {
     const handler = this.#handlers.get(method);
-    const definition = own<Definition>(requestMethods, method);
-    if (!handler || !definition)
+    const definition = this.#definition(method);
+    if (
+      !handler ||
+      !definition ||
+      (isUiV2OnlyMethod(method) && (this.#uiVersion !== 2 || !this.#uiReady))
+    )
       return this.#trySend({
         jsonrpc: "2.0",
         id,
@@ -291,7 +412,7 @@ export class RpcPeer {
         error: { code: RPC_ERRORS.invalidRequest, message: "Duplicate request id." },
       });
     const input = definition.params.safeParse(params);
-    if (!input.success)
+    if (!input.success || !this.#valid(method, "params", params))
       return this.#trySend({
         jsonrpc: "2.0",
         id,
@@ -306,8 +427,11 @@ export class RpcPeer {
         error: { code: RPC_ERRORS.invalidParams, message: `Invalid parameters for ${method}.` },
       });
     }
+    if (method === "ui/negotiate") this.setUiSession(null);
+    const uiEpoch = this.#uiEpoch;
     const controller = new AbortController();
     this.#incoming.set(id, controller);
+    this.#incomingMethods.set(id, method);
     let outcome: "pending" | "published" | "abandoned" = "pending";
     const callbacks: Array<{ published: () => void; abandoned: () => void }> = [];
     const settle = (next: "published" | "abandoned") => {
@@ -325,14 +449,26 @@ export class RpcPeer {
       },
     };
     try {
-      const result = definition.result.parse(await handler(input.data, context));
+      const rawResult = await handler(input.data, context);
+      const result = definition.result.parse(rawResult);
+      if (!this.#valid(method, "result", rawResult, input.data))
+        throw new RpcError(RPC_ERRORS.internalError, `Invalid result for ${method}.`);
       validateDeviceWire(`${method}.result`, result);
       if (controller.signal.aborted)
         throw new RpcError(RPC_ERRORS.requestCancelled, `${method} was cancelled.`);
       if (this.#closed) throw this.#closed;
+      if (
+        method.startsWith("ui/") &&
+        uiEpoch !== this.#uiEpoch &&
+        !(typeof result === "object" && result !== null && "ok" in result && result.ok === false)
+      )
+        throw new RpcError(RPC_ERRORS.requestCancelled, "UI session retired.");
       this.#send({ jsonrpc: "2.0", id, result });
+      if (uiEpoch === this.#uiEpoch) this.#observe(method, result);
       settle("published");
     } catch (error) {
+      if (uiEpoch === this.#uiEpoch && (method === "ui/ready" || method === "ui/negotiate"))
+        this.setUiSession(null);
       settle("abandoned");
       const code = controller.signal.aborted
         ? RPC_ERRORS.requestCancelled
@@ -352,6 +488,7 @@ export class RpcPeer {
       settle("abandoned");
       controller.signal.removeEventListener("abort", onAbort);
       this.#incoming.delete(id);
+      this.#incomingMethods.delete(id);
     }
   }
 
@@ -386,21 +523,33 @@ export class RpcPeer {
     }
     pending.cleanup();
     this.#pending.delete(id);
-    if ("error" in outcome)
+    if (
+      (pending.method === "initialize" || pending.method.startsWith("ui/")) &&
+      pending.uiEpoch !== this.#uiEpoch
+    )
+      return pending.reject(new RpcError(RPC_ERRORS.requestCancelled, "UI session retired."));
+    if ("error" in outcome) {
+      if (pending.method === "ui/ready" || pending.method === "ui/negotiate")
+        this.setUiSession(null);
       return pending.reject(new RpcError(outcome.error.code, outcome.error.message));
-    const result = requestMethods[pending.method].result.safeParse(outcome.result);
-    if (result.success) {
+    }
+    const result = pending.definition.result.safeParse(outcome.result);
+    if (result.success && this.#valid(pending.method, "result", outcome.result, pending.uiInput)) {
       try {
         validateDeviceWire(`${pending.method}.result`, result.data, serialized);
+        this.#observe(pending.method, result.data, pending.uiInput);
         pending.resolve(result.data);
       } catch {
         pending.reject(
           new RpcError(RPC_ERRORS.internalError, `Invalid result for ${pending.method}.`),
         );
       }
-    } else
+    } else {
+      if (pending.method === "ui/ready" || pending.method === "ui/negotiate")
+        this.setUiSession(null);
       pending.reject(
         new RpcError(RPC_ERRORS.internalError, `Invalid result for ${pending.method}.`),
       );
+    }
   }
 }

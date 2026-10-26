@@ -245,9 +245,14 @@ export class Reservations<Owner extends ResourceOwner | CoreOwner = ResourceOwne
       }
     return row.ended;
   }
+  // Retirement only carries a grant for work it is ending now. Prior ends retain
+  // their own immutable grant and persistence coordinator; reusing one here can
+  // expire an unrelated later shutdown (or a newer recording) immediately.
   endOwner(owner: Owner, reason: ReservationEnded["reason"], healthy: boolean): Ended<Owner>[] {
     return [...this.#rows.values()]
-      .filter((r) => reservationOwnerKey(owner) === reservationOwnerKey(r.binding.owner))
+      .filter(
+        (r) => !r.ended && reservationOwnerKey(owner) === reservationOwnerKey(r.binding.owner),
+      )
       .map((r) => this.end(r.binding.reservationId, reason, healthy)!)
       .filter(Boolean);
   }

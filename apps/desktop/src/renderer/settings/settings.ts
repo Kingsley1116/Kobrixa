@@ -71,7 +71,7 @@ export interface Settings extends EditorPreferences {
   filesWidth: number;
   deviceWidth: number;
   problemsHeight: number;
-  rightPanel: "ev3" | "collab" | null;
+  rightPanel: "ev3" | "collab" | "plugins" | null;
   ev3Tab: "connection" | "monitor" | "files";
   bottomTab: "problems" | "activity";
   toolTab: "connection" | "monitor" | "files" | "activity" | "collab";
@@ -87,7 +87,7 @@ export const SETTINGS_CHOICES = {
   codeSize: CODE_SIZES,
   motion: ["system", "reduce"],
   indentSize: [2, 4],
-  rightPanel: ["ev3", "collab", null],
+  rightPanel: ["ev3", "collab", "plugins", null],
   ev3Tab: ["connection", "monitor", "files"],
   bottomTab: ["problems", "activity"],
   toolTab: ["connection", "monitor", "files", "activity", "collab"],
@@ -207,6 +207,13 @@ export class SettingsStore {
   private wifiAddress = "";
   readonly defaults: Settings;
   private listeners = new Set<() => void>();
+  private transitions = new Set<(next: Settings) => void>();
+  beforeChange = (listener: (next: Settings) => void): (() => void) => {
+    this.transitions.add(listener);
+    return () => {
+      this.transitions.delete(listener);
+    };
+  };
   constructor(
     private storage: StorageAccess,
     language: string,
@@ -240,22 +247,23 @@ export class SettingsStore {
   ): void {
     const next = typeof value === "function" ? value(this.state.values[key]) : value;
     if (next === this.state.values[key]) return;
-    this.state = { ...this.state, values: { ...this.state.values, [key]: next } };
+    const values = { ...this.state.values, [key]: next };
+    this.transitions.forEach((listener) => listener(values));
+    this.state = { ...this.state, values };
     if (key === "rememberWifiAddress" && !next) this.wifiAddress = "";
     this.save();
   }
   resetLayout = (): void => {
-    this.state = {
-      ...this.state,
-      values: {
-        ...this.state.values,
-        ...LAYOUT_DEFAULTS,
-        toolTab: "connection",
-        rightPanel: null,
-        ev3Tab: "connection",
-        bottomTab: "problems",
-      },
+    const values: Settings = {
+      ...this.state.values,
+      ...LAYOUT_DEFAULTS,
+      toolTab: "connection",
+      rightPanel: null,
+      ev3Tab: "connection",
+      bottomTab: "problems",
     };
+    this.transitions.forEach((listener) => listener(values));
+    this.state = { ...this.state, values };
     this.save();
   };
   save = (): void => {
