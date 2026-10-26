@@ -1,9 +1,31 @@
-from ._ui_data import UiData
-"""UI v1 semantic validation and a facade over the shared event client."""
+"""UI semantic validation and a facade over the shared event client."""
 import json
 import math
 import re
+from ._ui_data import UiData
 from ._schema import Validator, SchemaError
+import asyncio
+import copy
+import inspect
+from dataclasses import dataclass
+from typing import Awaitable, Callable
+
+class _Cleanup:
+    def __init__(self, future): self._future = future
+    def __await__(self): return asyncio.shield(self._future).__await__()
+
+@dataclass(frozen=True)
+class UiResyncSubscription:
+    subscription_id: str
+    params: dict
+    is_current: Callable[[], bool]
+
+@dataclass(frozen=True)
+class UiResyncRequiredNotice:
+    event: dict
+    subscriptions: tuple[UiResyncSubscription, ...]
+    cleanup: Awaitable[list[dict]]
+
 
 
 def size(value):
@@ -296,6 +318,79 @@ class Ui:
         self.data = UiData(request)
         self._ready = False
         self._epoch = 0
+        self._records = {}
+        self._notices = []
+        self._hook = None
+        self._cleanup = set()
+
+    def on_resync_required(self, callback):
+        self._check()
+        if self._hook is not None: self._detach(self._hook)
+        hook = {'callback':callback, 'active':True, 'records':[]}
+        self._hook = hook
+        self._events.terminal(self._terminal)
+        def detach():
+            self._detach(hook)
+            if self._hook is hook: self._hook = None
+        return detach
+
+    def _detach(self, hook):
+        hook['active'] = False
+        for record in hook['records']: record['cancelled'] = True
+
+    def _close(self, id):
+        task = asyncio.create_task(self._request('events/unsubscribe', {'subscriptionId':id}))
+        self._cleanup.add(task)
+        def done(task):
+            self._cleanup.discard(task)
+            if not task.cancelled(): task.exception()
+        task.add_done_callback(done)
+        return task
+
+    def _terminal(self, event):
+        records = {}
+        cleanup_tasks = []
+        for id in event['data']['affected']:
+            record = self._records.pop(id, None)
+            if record is None: continue
+            self._events.forget(id)
+            if not record['current']():
+                record['cancelled'] = True
+                continue
+            task = self._close(id)
+            cleanup_tasks.append(task)
+            records[id] = record
+        if not records: return None
+        closed = asyncio.gather(*cleanup_tasks)
+        # Observe errors even when no user hook awaits cleanup; awaiting still raises.
+        closed.add_done_callback(lambda future: None if future.cancelled() else future.exception())
+        hook = self._hook
+        if hook is None:
+            for record in records.values(): record['cancelled'] = True
+            return None
+        self._notices.append(records)
+        hook['records'].extend(records.values())
+        async def deliver():
+            try:
+                subscriptions = tuple(UiResyncSubscription(id, copy.deepcopy(record['params']),
+                    lambda record=record: record['current']() and not record['cancelled'] and hook['active'])
+                    for id,record in records.items() if record['current']() and not record['cancelled'])
+                if hook['active'] and subscriptions:
+                    result = hook['callback'](UiResyncRequiredNotice(copy.deepcopy(event), subscriptions, _Cleanup(closed)))
+                    if inspect.isawaitable(result): await result
+            finally:
+                self._notices.remove(records)
+                for record in records.values():
+                    record['cancelled'] = True
+                    hook['records'].remove(record)
+        return deliver
+
+    def _cancel(self, id, forget=True):
+        record = self._records.pop(id, None)
+        if record is not None: record['cancelled'] = True
+        for records in self._notices:
+            if id in records: records[id]['cancelled'] = True
+        if forget: self._events.forget(id)
 
     def mark_ready(self, version=1):
         self._resource_version = version
@@ -305,6 +400,11 @@ class Ui:
 
     def retire(self):
         self._epoch += 1
+        if self._hook is not None: self._detach(self._hook)
+        self._hook = None
+        for id in list(self._records): self._cancel(id)
+        for records in self._notices:
+            for record in records.values(): record['cancelled'] = True
         self._ready = False
         self.data.retire()
 
@@ -330,24 +430,44 @@ class Ui:
     async def subscribe(self, topics, callback, binding=None):
         self._check()
         epoch = self._epoch
+        channel_current = self._events.current() if hasattr(self._events, 'current') else lambda: True
         require(len(set(topics)) == len(topics) and 1 <= len(topics) <= (6 if self._resource_version == 2 else 5))
         require(binding is not None or set(topics).issubset({"instances", "environment"}))
         params = {"topics": topics}
         if binding is not None:
             params["binding"] = binding
+        params = copy.deepcopy(params)
+        if hasattr(self._events, 'terminal'): self._events.terminal(self._terminal)
         finish = self._events.begin()
         try:
             result = await self._request("ui/subscribe", params)
             # Readiness may have been restored for a different session while
             # the request was pending. Fence before the event port adopts it.
-            if not self._ready or epoch != self._epoch:
-                raise RuntimeError("UI session retired.")
+            if (not self._ready or epoch != self._epoch or not channel_current() or
+                (result['ok'] and hasattr(self._events, 'cancelled') and self._events.cancelled(result['value']['subscriptionId']))):
+                if result['ok']: self._close(result['value']['subscriptionId'])
+                raise RuntimeError("UI session retired or subscription cancelled.")
             if result["ok"]:
                 value = result["value"]
-                async def snapshot():
-                    return await self.snapshot(value["subscriptionId"])
-                self._events.adopt(subscription_id=value["subscriptionId"], sequence=value["sequence"],
-                                   snapshot=snapshot, listener=callback)
+                id = value['subscriptionId']
+                record = {'params':copy.deepcopy(params), 'cancelled':False,
+                          'current':lambda: self._ready and self._epoch == epoch and channel_current()}
+                try:
+                    self._records[id] = record
+                    terminal = self._events.pending_terminal(id) if hasattr(self._events, 'pending_terminal') else None
+                    if terminal is not None:
+                        self._events.adopt_terminal(terminal, lambda: self._terminal(terminal))
+                        return result
+                    def receive(event):
+                        if record['current']() and not record['cancelled']: return callback(event)
+                    async def snapshot():
+                        return await self.snapshot(value["subscriptionId"])
+                    self._events.adopt(subscription_id=value["subscriptionId"], sequence=value["sequence"],
+                                       snapshot=snapshot, listener=receive)
+                except Exception:
+                    self._cancel(id)
+                    self._close(id)
+                    raise
             return result
         finally:
             finish()
@@ -357,6 +477,7 @@ class Ui:
         return await self._request("ui/snapshot", {"subscriptionId": subscription_id})
 
     async def unsubscribe(self, subscription_id):
+        self._cancel(subscription_id, forget=False)
         result = await self._request("events/unsubscribe", {"subscriptionId": subscription_id})
         if result["ok"]:
             self._events.forget(subscription_id)

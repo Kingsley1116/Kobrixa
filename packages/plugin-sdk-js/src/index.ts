@@ -1,3 +1,4 @@
+export type { UiResyncRequiredNotice, UiResyncSubscription } from "./ui.js";
 import { UiDataClient } from "./ui-data.js";
 import { supportsUiV2 } from "@kobrixa/plugin-protocol";
 export { UiDataClient } from "./ui-data.js";

@@ -5,6 +5,15 @@ import {
   uiEventEnvelopeSchemaV2,
   type ResourceOwner,
 } from "@kobrixa/plugin-protocol";
+export type ResyncRequiredEvent = Extract<Stage3EventEnvelope, { kind: "events.resyncRequired" }>;
+type TerminalJob = {
+  event: ResyncRequiredEvent;
+  run: () => Promise<void>;
+  late: (() => Promise<void>)[];
+  wake?: () => void;
+  carrier?: Slot;
+  carrierReady?: () => void;
+};
 type Listener = (event: Stage3EventEnvelope) => void | Promise<void>;
 type Slot = {
   last: number;
@@ -14,6 +23,8 @@ type Slot = {
   bytes: number;
   controls: number;
   running: boolean;
+  terminal: boolean;
+  drained: Set<() => void>;
   listener: Listener;
   resync: () => Promise<void>;
 };
@@ -23,6 +34,32 @@ export class EventInbox {
   #pending = 0;
   #early: Stage3EventEnvelope[] = [];
   #slots = new Map<string, Slot>();
+  #terminalJobs: TerminalJob[] = [];
+  #earlyTerminal = new Map<string, ResyncRequiredEvent>();
+  #cancelledEarly = new Set<string>();
+  cancelled(id: string): boolean {
+    return this.#cancelledEarly.has(id);
+  }
+  #terminalHandler?: (event: ResyncRequiredEvent) => (() => Promise<void>) | undefined;
+  // One UI projection per channel. This is internal, not a user callback registry.
+  terminalHandler(
+    handler: (event: ResyncRequiredEvent) => (() => Promise<void>) | undefined,
+  ): void {
+    this.#terminalHandler = handler;
+  }
+  adoptTerminal(
+    event: ResyncRequiredEvent,
+    prepare: () => (() => Promise<void>) | undefined,
+  ): void {
+    const job = this.#terminalJobs.find((job) => job.event === event);
+    if (!job) throw new Error("Terminal adoption expired");
+    const run = prepare();
+    if (run) job.late.push(run);
+    job.wake?.();
+  }
+  pendingTerminal(id: string): ResyncRequiredEvent | undefined {
+    return this.#earlyTerminal.get(id);
+  }
   constructor(
     private readonly ack: (id: string, sequence: number) => Promise<void>,
     private readonly expectedOwner: ResourceOwner,
@@ -36,7 +73,15 @@ export class EventInbox {
     this.#pending++;
     return () => {
       this.#pending--;
-      if (!this.#pending) this.#early = [];
+      if (!this.#pending) {
+        this.#early = [];
+        this.#earlyTerminal.clear();
+        this.#cancelledEarly.clear();
+        for (const job of this.#terminalJobs) {
+          job.wake?.();
+          job.carrierReady?.();
+        }
+      }
     };
   }
   open(id: string, listener: Listener, resync: () => Promise<void>, sequence = 0): void {
@@ -49,9 +94,21 @@ export class EventInbox {
       bytes: 0,
       controls: 0,
       running: false,
+      terminal: false,
+      drained: new Set(),
       listener,
       resync,
     });
+    const terminal = this.#earlyTerminal.get(id);
+    if (terminal) {
+      const slot = this.#slots.get(id)!;
+      slot.terminal = true;
+      const job = this.#terminalJobs.find((job) => job.event === terminal);
+      if (job && terminal.subscriptionId === id) {
+        job.carrier = slot;
+        job.carrierReady?.();
+      }
+    }
     const early = this.#early;
     this.#early = [];
     for (const event of early)
@@ -69,7 +126,10 @@ export class EventInbox {
     return this.#slots.get(id)?.last ?? 0;
   }
   close(id: string): void {
+    if (this.#earlyTerminal.has(id)) this.#cancelledEarly.add(id);
+    const slot = this.#slots.get(id);
     this.#slots.delete(id);
+    if (slot) for (const resolve of slot.drained) resolve();
     this.#early = this.#early.filter((event) => event.subscriptionId !== id);
   }
   accept(value: unknown): boolean {
@@ -85,23 +145,99 @@ export class EventInbox {
       slot = this.#slots.get(event.subscriptionId),
       n = size(event);
     if (JSON.stringify(event.owner) !== JSON.stringify(this.expectedOwner)) return false;
+    if (event.kind === "events.resyncRequired" && this.#terminalHandler) {
+      if (
+        (!slot && !this.#pending) ||
+        (slot && (slot.terminal || event.sequence <= slot.last)) ||
+        this.#terminalJobs.some((job) => job.event.subscriptionId === event.subscriptionId) ||
+        this.#earlyTerminal.has(event.subscriptionId)
+      )
+        return false;
+      const affected = new Set([
+        ...this.#terminalJobs.flatMap((job) => job.event.data.affected),
+        ...this.#earlyTerminal.keys(),
+        ...event.data.affected,
+      ]);
+      if (
+        affected.size > 32 ||
+        this.#terminalJobs.length + [...this.#slots.values()].reduce((n, s) => n + s.controls, 0) >=
+          8 ||
+        (!slot && this.#early.length + this.#terminalJobs.length >= 8)
+      )
+        return false;
+      // Reserve the actual control item before ACK. Do not await user work.
+      const job: TerminalJob = { event, run: async () => {}, late: [] };
+      if (slot) job.carrier = slot;
+      this.#terminalJobs.push(job);
+      if (slot) slot.last = event.sequence;
+      for (const id of event.data.affected) {
+        const affectedSlot = this.#slots.get(id);
+        if (affectedSlot) affectedSlot.terminal = true;
+      }
+      if (this.#pending) for (const id of event.data.affected) this.#earlyTerminal.set(id, event);
+      void this.ack(event.subscriptionId, event.sequence).catch(() => {});
+      const ui = this.#terminalHandler(event);
+      job.run = async () => {
+        const legacy = async () => {
+          if (!job.carrier && this.#pending)
+            await new Promise<void>((resolve) => {
+              job.carrierReady = resolve;
+            });
+          delete job.carrierReady;
+          const slot = job.carrier;
+          if (!slot || this.#slots.get(event.subscriptionId) !== slot) return;
+          if (slot.running) await new Promise<void>((resolve) => slot.drained.add(resolve));
+          if (this.#slots.get(event.subscriptionId) !== slot) return;
+          // Device/settings adapters retain serial callback order and resource queries.
+          await slot.resync();
+          if (this.#slots.get(event.subscriptionId) === slot) await slot.listener(event);
+        };
+        const deliverUi = async () => {
+          await Promise.allSettled([ui?.()]);
+          while (true) {
+            const next = job.late.shift();
+            if (next) {
+              await Promise.allSettled([next()]);
+              continue;
+            }
+            if (!this.#pending) break;
+            await new Promise<void>((resolve) => {
+              job.wake = resolve;
+            });
+            delete job.wake;
+          }
+        };
+        await Promise.allSettled([legacy(), deliverUi()]);
+      };
+      queueMicrotask(() => {
+        void job.run().finally(() => {
+          const at = this.#terminalJobs.indexOf(job);
+          if (at >= 0) this.#terminalJobs.splice(at, 1);
+        });
+      });
+      return true;
+    }
     if (!slot) {
       if (
         !this.#pending ||
-        this.#early.length >= 8 ||
+        this.#early.length + this.#terminalJobs.length >= 8 ||
         this.#early.reduce((sum, e) => sum + size(e), 0) + n > 262144
       )
         return false;
       this.#early.push(event);
       return true;
     }
+    if (slot.terminal) return false;
     const owner = JSON.stringify(event.owner);
     if ((slot.owner !== null && slot.owner !== owner) || event.sequence <= slot.last) return false;
     if (
       event.delivery === "control"
-        ? [...this.#slots.values()].reduce((n, s) => n + s.controls, 0) >= 8
+        ? [...this.#slots.values()].reduce((n, s) => n + s.controls, 0) +
+            this.#terminalJobs.length >=
+          8
         : [...this.#slots.values()].reduce((n, s) => n + s.bytes, 0) +
             this.#early.reduce((n, e) => n + size(e), 0) +
+            this.#terminalJobs.reduce((n, job) => n + size(job.event), 0) +
             n >
           262144
     )
@@ -140,6 +276,8 @@ export class EventInbox {
       }
     } finally {
       slot.running = false;
+      for (const resolve of slot.drained) resolve();
+      slot.drained.clear();
     }
   }
 }
@@ -172,6 +310,14 @@ import type {
   RpcPeer,
 } from "@kobrixa/plugin-protocol";
 export interface UiEventClientPort {
+  cancelled?(id: Handle): boolean;
+  adoptTerminal?(
+    event: ResyncRequiredEvent,
+    prepare: () => (() => Promise<void>) | undefined,
+  ): void;
+  terminal?(handler: (event: ResyncRequiredEvent) => (() => Promise<void>) | undefined): void;
+  pendingTerminal?(id: Handle): ResyncRequiredEvent | undefined;
+  current?(): () => boolean;
   adopt(input: {
     subscriptionId: Handle;
     sequence: Counter;
@@ -189,6 +335,14 @@ export function beginUiSubscription(port: UiEventClientPort): () => void {
 }
 export function uiEventClientPort(peer: RpcPeer): UiEventClientPort {
   const port: UiEventClientPort = {
+    cancelled: (id) => eventInbox(peer).cancelled(id),
+    adoptTerminal: (event, prepare) => eventInbox(peer).adoptTerminal(event, prepare),
+    terminal: (handler) => eventInbox(peer).terminalHandler(handler),
+    pendingTerminal: (id) => eventInbox(peer).pendingTerminal(id),
+    current() {
+      const epoch = peer.uiSessionEpoch;
+      return () => !peer.closed && peer.uiSessionEpoch === epoch;
+    },
     adopt({ subscriptionId, sequence, snapshot, listener }) {
       const epoch = peer.uiSessionEpoch;
       const inbox = eventInbox(peer);
@@ -196,7 +350,7 @@ export function uiEventClientPort(peer: RpcPeer): UiEventClientPort {
       inbox.open(
         subscriptionId,
         (event) => {
-          if (event.kind.startsWith("ui.")) {
+          if (!peer.closed && peer.uiSessionEpoch === epoch && event.kind.startsWith("ui.")) {
             const parsed = uiEventEnvelopeSchemaV2.parse(event);
             if (
               parsed.kind === "ui.data" &&
@@ -207,7 +361,9 @@ export function uiEventClientPort(peer: RpcPeer): UiEventClientPort {
           }
         },
         async () => {
+          if (peer.closed || peer.uiSessionEpoch !== epoch) return;
           const result = await snapshot();
+          if (peer.closed || peer.uiSessionEpoch !== epoch) return;
           if (!result.ok) throw new Error(result.error.message);
           inbox.reconcile(subscriptionId, result.value.sequence);
         },

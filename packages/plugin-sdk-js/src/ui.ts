@@ -8,7 +8,7 @@ import {
   type Severity,
 } from "@kobrixa/plugin-protocol";
 type Query = "ui/instances" | "ui/state" | "ui/patch" | "ui/subscribe" | "ui/snapshot";
-import { beginUiSubscription, type UiEventClientPort } from "./events.js";
+import { beginUiSubscription, type UiEventClientPort, type ResyncRequiredEvent } from "./events.js";
 export interface UiRequestPort {
   <M extends Query>(
     method: M,
@@ -26,9 +26,109 @@ export interface UiRequestPort {
     options: { timeoutMs: number },
   ): Promise<null>;
 }
+export interface UiResyncSubscription {
+  readonly subscriptionId: Handle;
+  readonly params: UiRequestMap["ui/subscribe"]["params"];
+  readonly signal: AbortSignal;
+  isCurrent(): boolean;
+}
+export interface UiResyncRequiredNotice {
+  readonly event: ResyncRequiredEvent;
+  readonly cleanup: Promise<readonly Result<{ removed: boolean }>[]>;
+  readonly subscriptions: readonly UiResyncSubscription[];
+}
+type SubscriptionRecord = {
+  params: UiRequestMap["ui/subscribe"]["params"];
+  lifetime: AbortController;
+  current: () => boolean;
+};
+type Hook = {
+  callback: (notice: UiResyncRequiredNotice) => void | Promise<void>;
+  lifetime: AbortController;
+  records: Set<SubscriptionRecord>;
+};
 export class UiClient {
   #ready = false;
   #epoch = 0;
+  #records = new Map<Handle, SubscriptionRecord>();
+  #notices = new Set<Map<Handle, SubscriptionRecord>>();
+  #hook: Hook | undefined;
+  #cleanup = new Set<Promise<Result<{ removed: boolean }>>>();
+  onResyncRequired(callback: (notice: UiResyncRequiredNotice) => void | Promise<void>): () => void {
+    this.check();
+    if (this.#hook) this.#detach(this.#hook);
+    const hook: Hook = { callback, lifetime: new AbortController(), records: new Set() };
+    this.#hook = hook;
+    this.events.terminal?.((event) => this.#terminal(event));
+    return () => {
+      this.#detach(hook);
+      if (this.#hook === hook) this.#hook = undefined;
+    };
+  }
+  #detach(hook: Hook): void {
+    hook.lifetime.abort();
+    for (const record of hook.records) record.lifetime.abort();
+  }
+  #close(id: Handle): Promise<Result<{ removed: boolean }>> {
+    const closing = this.request("events/unsubscribe", { subscriptionId: id }, { timeoutMs: 5000 });
+    this.#cleanup.add(closing);
+    void closing.finally(() => this.#cleanup.delete(closing)).catch(() => {});
+    return closing;
+  }
+  #terminal(event: ResyncRequiredEvent): (() => Promise<void>) | undefined {
+    const records = new Map<Handle, SubscriptionRecord>();
+    const cleanup: Promise<Result<{ removed: boolean }>>[] = [];
+    for (const id of event.data.affected) {
+      const record = this.#records.get(id);
+      if (!record) continue;
+      this.#records.delete(id);
+      this.events.forget(id);
+      // Cleanup is independent of user delivery, including throw/hung callbacks.
+      if (!record.current()) {
+        record.lifetime.abort();
+        continue;
+      }
+      cleanup.push(this.#close(id));
+      records.set(id, record);
+    }
+    if (!records.size) return;
+    const closed = Promise.all(cleanup);
+    void closed.catch(() => {});
+    const hook = this.#hook;
+    if (!hook) {
+      for (const record of records.values()) record.lifetime.abort();
+      return;
+    }
+    this.#notices.add(records);
+    for (const record of records.values()) hook.records.add(record);
+    return async () => {
+      try {
+        const subscriptions = [...records]
+          .filter(([, record]) => record.current() && !record.lifetime.signal.aborted)
+          .map(([subscriptionId, record]) => ({
+            subscriptionId,
+            params: structuredClone(record.params),
+            signal: record.lifetime.signal,
+            isCurrent: () =>
+              record.current() && !record.lifetime.signal.aborted && !hook.lifetime.signal.aborted,
+          }));
+        if (!hook.lifetime.signal.aborted && subscriptions.length)
+          await hook.callback({ event: structuredClone(event), subscriptions, cleanup: closed });
+      } finally {
+        this.#notices.delete(records);
+        for (const record of records.values()) {
+          record.lifetime.abort();
+          hook.records.delete(record);
+        }
+      }
+    };
+  }
+  #cancel(id: Handle, forget = true): void {
+    this.#records.get(id)?.lifetime.abort();
+    this.#records.delete(id);
+    for (const records of this.#notices) records.get(id)?.lifetime.abort();
+    if (forget) this.events.forget(id);
+  }
   constructor(
     private readonly request: UiRequestPort,
     private readonly events: UiEventClientPort,
@@ -38,6 +138,11 @@ export class UiClient {
   }
   retire(): void {
     this.#epoch++;
+    if (this.#hook) this.#detach(this.#hook);
+    this.#hook = undefined;
+    for (const id of this.#records.keys()) this.#cancel(id);
+    for (const records of this.#notices)
+      for (const record of records.values()) record.lifetime.abort();
     this.#ready = false;
   }
   private check(): void {
@@ -81,11 +186,14 @@ export class UiClient {
   ): Promise<UiRequestMap["ui/subscribe"]["result"]> {
     this.check();
     const epoch = this.#epoch;
+    const channelCurrent = this.events.current?.() ?? (() => true);
+    params = structuredClone(params);
     if (
       new Set(params.topics).size !== params.topics.length ||
       (!params.binding && params.topics.some((t) => t !== "instances" && t !== "environment"))
     )
       throw new TypeError("Invalid UI subscription topics.");
+    this.events.terminal?.((event) => this.#terminal(event));
     const finish = beginUiSubscription(this.events);
     try {
       const result = await this.request("ui/subscribe", params, {
@@ -94,14 +202,45 @@ export class UiClient {
       });
       // Retirement can run after RpcPeer resolves the reply but before this
       // continuation. Never adopt that reply into a newer ready session.
-      if (!this.#ready || epoch !== this.#epoch) throw new Error("UI session retired.");
-      if (result.ok)
-        this.events.adopt({
-          subscriptionId: result.value.subscriptionId,
-          sequence: result.value.sequence,
-          listener,
-          snapshot: () => this.snapshot(result.value.subscriptionId),
-        });
+      if (
+        !this.#ready ||
+        epoch !== this.#epoch ||
+        !channelCurrent() ||
+        signal?.aborted ||
+        (result.ok && this.events.cancelled?.(result.value.subscriptionId))
+      ) {
+        if (result.ok) void this.#close(result.value.subscriptionId).catch(() => {});
+        throw new Error("UI session retired or subscription cancelled.");
+      }
+      if (result.ok) {
+        const id = result.value.subscriptionId;
+        const record: SubscriptionRecord = {
+          params: structuredClone(params),
+          lifetime: new AbortController(),
+          current: () => this.#ready && this.#epoch === epoch && channelCurrent(),
+        };
+        try {
+          this.#records.set(id, record);
+          const terminal = this.events.pendingTerminal?.(id);
+          if (terminal) {
+            // Pending terminal is already charged to the inbox control queue.
+            // Attach adoption work to that queue rather than starting an unbounded task.
+            this.events.adoptTerminal?.(terminal, () => this.#terminal(terminal));
+          } else
+            this.events.adopt({
+              subscriptionId: result.value.subscriptionId,
+              sequence: result.value.sequence,
+              listener: (event) => {
+                if (record.current() && !record.lifetime.signal.aborted) return listener(event);
+              },
+              snapshot: () => this.snapshot(id),
+            });
+        } catch (error) {
+          this.#cancel(id);
+          void this.#close(id).catch(() => {});
+          throw error;
+        }
+      }
       return result;
     } finally {
       finish();
@@ -112,6 +251,7 @@ export class UiClient {
     return this.request("ui/snapshot", { subscriptionId }, { timeoutMs: 5000 });
   }
   async unsubscribe(subscriptionId: Handle): Promise<Result<{ removed: boolean }>> {
+    this.#cancel(subscriptionId, false);
     const result = await this.request(
       "events/unsubscribe",
       { subscriptionId },

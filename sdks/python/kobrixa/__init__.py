@@ -8,3 +8,6 @@ __all__ += ["Devices", "Subscription", "PluginBusinessError", "unwrap"]
 
 from ._plugin import create_invocation_context
 from ._commands import ContextCommandContext
+
+from ._ui import UiResyncRequiredNotice, UiResyncSubscription
+__all__ += ["UiResyncRequiredNotice", "UiResyncSubscription"]
