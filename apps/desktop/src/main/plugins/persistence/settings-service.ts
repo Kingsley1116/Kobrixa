@@ -1,3 +1,7 @@
+import {
+  normalizeSettingsValues,
+  validateSettingsValues,
+} from "../../../../../../packages/plugin-protocol/src/settings.js";
 import type {
   BoundSettingsService,
   CommonEventLedgerPort,
@@ -178,8 +182,11 @@ export function createSettingsService(deps: SettingsDependencies) {
         );
       if ((await deps.evidence.settingsDigest(owner))?.validationDigest !== loaded.validationDigest)
         throw settingsFailure("PLUGIN_E_SETTINGS_SCHEMA", "schema-changed-without-version");
-      const valid = valuesFor(loaded.resource, stored.values, true);
-      if (!Array.isArray(valid)) throw settingsFailure("PLUGIN_E_SETTINGS_SCHEMA", "corrupt");
+      try {
+        validateSettingsValues(loaded.resource, stored.values, true);
+      } catch {
+        throw settingsFailure("PLUGIN_E_SETTINGS_SCHEMA", "corrupt");
+      }
     }
     await current();
     return {
@@ -239,12 +246,24 @@ export function createSettingsService(deps: SettingsDependencies) {
       (cause === "migrate" ? [] : state.snapshot.values).map((x) => [x.key, x.value]),
     );
     for (const { key, value } of checked) map.set(key, value);
-    const values = valuesFor(
+    let values = valuesFor(
       state.resource,
       [...map].map(([key, value]) => ({ key, value })),
       true,
     );
     if (!Array.isArray(values)) return values;
+    try {
+      values = normalizeSettingsValues(state.resource, values);
+    } catch {
+      return settingsFailure("PLUGIN_E_SETTINGS_SCHEMA", "invalid-value");
+    }
+    const previous = new Map(state.snapshot.values.map(({ key, value }) => [key, value]));
+    const changedKeys = [
+      ...new Set([
+        ...checked.map((x) => x.key),
+        ...values.filter((x) => previous.get(x.key) !== x.value).map((x) => x.key),
+      ]),
+    ].sort();
     const ticket: PublicationTicket = Object.freeze({
       id: randomUUID(),
       owner: Object.freeze({ ...owner }),
@@ -291,7 +310,7 @@ export function createSettingsService(deps: SettingsDependencies) {
       );
       await current();
       check();
-      const change = { schemaVersion: version, changedKeys: checked.map((x) => x.key), cause };
+      const change = { schemaVersion: version, changedKeys, cause };
       unresolved.set(owner.sourceKey, { ticket, change });
       const result = await deps.engine.publish(ticket);
       if (result.disposition === "unknown") return uncertain();

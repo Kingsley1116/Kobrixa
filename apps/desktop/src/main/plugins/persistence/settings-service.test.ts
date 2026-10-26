@@ -1058,3 +1058,114 @@ it("bound: replacement during open's initial read cannot be removed by stale ope
   expect(await f.bound.read((await replacement).binding)).toMatchObject({ ok: true });
   await settingsRequests(f.backend).dispose();
 });
+const dependentResource: SettingsResourceV1 = {
+  schemaVersion: 1,
+  title: { en: "Dependent" },
+  fields: [
+    { key: "remember", type: "boolean", label: { en: "Remember" }, default: false },
+    {
+      key: "address",
+      type: "string",
+      label: { en: "Address" },
+      default: "",
+      minLength: 0,
+      maxLength: 45,
+      maxBytes: 180,
+      resetWhen: { key: "remember", equals: false },
+    },
+  ],
+};
+function dependentFixture() {
+  const f = fixture();
+  f.deps.readResource = async () => ({
+    resource: dependentResource,
+    digest: "a".repeat(64),
+    validationDigest: "b".repeat(64),
+  });
+  return f;
+}
+it.each(["settings/update", "settings/reset"] as const)(
+  "%s normalizes one full CAS and notifies implicit keys",
+  async (method) => {
+    const f = dependentFixture();
+    const first = await f.service.request(
+      principal,
+      "settings/update",
+      {
+        schemaVersion: 1,
+        expectedRevision: null,
+        changes: [
+          { key: "remember", value: true },
+          { key: "address", value: "kept" },
+        ],
+      },
+      signal(),
+    );
+    if (!first.ok) throw new Error("seed");
+    f.changed.mockClear();
+    f.publish.mockClear();
+    const result =
+      method === "settings/update"
+        ? await f.service.request(
+            principal,
+            method,
+            {
+              schemaVersion: 1,
+              expectedRevision: first.value.receipt.revision,
+              changes: [{ key: "remember", value: false }],
+            },
+            signal(),
+          )
+        : await f.service.request(
+            principal,
+            method,
+            {
+              schemaVersion: 1,
+              expectedRevision: first.value.receipt.revision,
+              keys: ["remember"],
+            },
+            signal(),
+          );
+    expect(result.ok && result.value.snapshot.values).toEqual([
+      { key: "address", value: "" },
+      { key: "remember", value: false },
+    ]);
+    expect(f.publish).toHaveBeenCalledOnce();
+    expect(f.changed).toHaveBeenCalledOnce();
+    expect(f.changed.mock.calls[0]![1]).toMatchObject({ changedKeys: ["address", "remember"] });
+  },
+);
+it("migration normalizes before publication; same-schema inconsistent committed/imported data is rejected on read", async () => {
+  const f = dependentFixture();
+  f.setStored({
+    schemaVersion: 1,
+    revision: "r_" + "1".repeat(32),
+    values: [
+      { key: "remember", value: false },
+      { key: "address", value: "inconsistent" },
+    ],
+  });
+  expect(
+    await f.service.request(principal, "settings/read", { schemaVersion: 1 }, signal()),
+  ).toMatchObject({ ok: false, error: { detail: { reason: "corrupt" } } });
+  f.deps.readResource = async () => ({
+    resource: { ...dependentResource, schemaVersion: 2 },
+    digest: "a".repeat(64),
+    validationDigest: "b".repeat(64),
+  });
+  const result = await f.service.request(
+    principal,
+    "settings/migrate",
+    {
+      schemaVersion: 2,
+      fromSchemaVersion: 1,
+      expectedRevision: "r_" + "1".repeat(32),
+      values: [
+        { key: "remember", value: false },
+        { key: "address", value: "old" },
+      ],
+    },
+    signal(),
+  );
+  expect(result.ok && result.value.snapshot.values).toContainEqual({ key: "address", value: "" });
+});

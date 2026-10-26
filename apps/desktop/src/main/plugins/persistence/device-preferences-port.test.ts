@@ -326,7 +326,7 @@ it("disposing while a read is pending cannot return the previous ready state", a
   gate.resolve();
   expect(await read).toMatchObject({ state: "unavailable", problem: "Disposed." });
 });
-it("existing service lacks atomic dependent-field reset (explicit E1 blocker); reader fails closed", async () => {
+it("dependent reset commits false and empty address atomically through the real store", async () => {
   const f = await fixture();
   await f.port.read();
   const saved = await f.service.requestOwner(
@@ -357,12 +357,12 @@ it("existing service lacks atomic dependent-field reset (explicit E1 blocker); r
   );
   expect(reset).toMatchObject({ ok: true });
   if (!reset.ok) throw new Error("reset failed");
-  // This documents the CURRENT missing contract, not a successful normalization claim.
-  expect(reset.value.snapshot.values).toContainEqual({
-    key: "lastWifiAddress",
-    value: "192.168.0.2",
+  expect(reset.value.snapshot.values).toContainEqual({ key: "lastWifiAddress", value: "" });
+  expect(await f.port.read()).toMatchObject({
+    state: "ready",
+    values: { rememberWifiAddress: false, lastWifiAddress: "" },
+    snapshot: { revision: reset.value.receipt.revision },
   });
-  expect((await f.port.read()).state).toBe("unavailable");
 });
 it("already resolved snapshot is rejected if the namespace retires before the reader continuation", async () => {
   const f = await fixture();
@@ -373,4 +373,58 @@ it("already resolved snapshot is rejected if the namespace retires before the re
     return value;
   });
   expect((await f.port.read()).state).toBe("unavailable");
+});
+it("real store: failed dependent update leaves BOTH committed values, then competing CAS publishes only one", async () => {
+  const f = await fixture();
+  await f.port.read();
+  const request = (
+    changes: Array<{ key: string; value: string | boolean }>,
+    expectedRevision: string | null,
+  ) =>
+    f.service.requestOwner(
+      f.owner,
+      "settings/update",
+      { schemaVersion: 1, expectedRevision, changes },
+      new AbortController().signal,
+      async () => {},
+    );
+  const first = await request(
+    [
+      { key: "rememberWifiAddress", value: true },
+      { key: "lastWifiAddress", value: "192.168.0.2" },
+    ],
+    null,
+  );
+  if (!first.ok) throw new Error("seed failed");
+  vi.spyOn(f.store, "seal").mockRejectedValueOnce(new Error("ENOSPC"));
+  expect(
+    (await request([{ key: "rememberWifiAddress", value: false }], first.value.receipt.revision))
+      .ok,
+  ).toBe(false);
+  expect(await f.port.read()).toMatchObject({
+    state: "ready",
+    values: { rememberWifiAddress: true, lastWifiAddress: "192.168.0.2" },
+    snapshot: { revision: first.value.receipt.revision },
+  });
+  const publish = vi.spyOn(f.store, "publish");
+  const results = await Promise.all([
+    request([{ key: "rememberWifiAddress", value: false }], first.value.receipt.revision),
+    request([{ key: "lastWifiAddress", value: "192.168.0.3" }], first.value.receipt.revision),
+  ]);
+  expect(results.filter((r) => r.ok)).toHaveLength(1);
+  expect(publish).toHaveBeenCalledTimes(1);
+  expect(await f.port.read()).toMatchObject({
+    state: "ready",
+    values: { rememberWifiAddress: false, lastWifiAddress: "" },
+  });
+  const current = await f.port.read();
+  if (current.state !== "ready") throw new Error("read failed");
+  const explicit = await request(
+    [{ key: "lastWifiAddress", value: "192.168.0.4" }],
+    current.snapshot.revision,
+  );
+  expect(explicit.ok && explicit.value.snapshot.values).toContainEqual({
+    key: "lastWifiAddress",
+    value: "",
+  });
 });

@@ -69,6 +69,12 @@ def validate_values(resource, values, complete):
         elif f["type"] == "string": text(v, f["minLength"], f["maxLength"], f["maxBytes"])
         elif enum_token(v) not in [enum_token(o["value"]) for o in f["options"]]: raise ValueError("invalid-value")
     if complete and seen != set(fields): raise ValueError("invalid-value")
+    if complete:
+        mapped = {entry["key"]: entry["value"] for entry in values}
+        for f in fields.values():
+            rule = f.get("resetWhen")
+            if rule and mapped[rule["key"]] is rule["equals"] and mapped[f["key"]] != f["default"]:
+                raise ValueError("invalid-value")
     return values
 
 def validate_resource(resource, raw_bytes):
@@ -83,12 +89,16 @@ def validate_resource(resource, raw_bytes):
         kind = f.get("type")
         extras = {"boolean": [], "number": ["minimum", "maximum"], "integer": ["minimum", "maximum"], "string": ["minLength", "maxLength", "maxBytes"], "enum": ["options"]}
         if kind not in extras: raise ValueError("invalid-type")
-        obj(f, ["key", "label", "type", "default"] + extras[kind], ["help"])
+        obj(f, ["key", "label", "type", "default"] + extras[kind], ["help", "resetWhen"])
         k = key(f["key"])
         if k in seen: raise ValueError("duplicate-key")
         seen.add(k)
         localized(f["label"])
         if "help" in f: localized(f["help"], True)
+        if "resetWhen" in f:
+            rule = obj(f["resetWhen"], ["key", "equals"])
+            key(rule["key"])
+            if type(rule["equals"]) is not bool: raise ValueError("invalid-reset-rule")
         if kind in ("number", "integer"):
             number(f["minimum"], kind == "integer"); number(f["maximum"], kind == "integer")
             if f["minimum"] > f["maximum"]: raise ValueError("invalid-range")
@@ -101,6 +111,13 @@ def validate_resource(resource, raw_bytes):
             for option in f["options"]:
                 obj(option, ["value", "label"]); localized(option["label"]); tokens.append(enum_token(option["value"]))
             if len(set(tokens)) != len(tokens): raise ValueError("duplicate-key")
+    fields = {f["key"]: f for f in resource["fields"]}
+    for f in fields.values():
+        rule = f.get("resetWhen")
+        if rule:
+            controller = fields.get(rule["key"])
+            if rule["key"] == f["key"] or not controller or controller["type"] != "boolean" or "resetWhen" in controller:
+                raise ValueError("invalid-reset-rule")
     validate_values(resource, [{"key": f["key"], "value": f["default"]} for f in resource["fields"]], True)
     return resource
 

@@ -15,6 +15,7 @@ export * from "./static-languages.js";
 export {
   settingsRequestSchemas,
   settingsResourceV1Schema,
+  normalizeSettingsValues,
   type Version,
   type SettingsRevision,
   type RecordRevision,

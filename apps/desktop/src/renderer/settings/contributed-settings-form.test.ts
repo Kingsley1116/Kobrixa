@@ -375,3 +375,94 @@ it("renderer browser bundle resolves the cross-package T1 validators", async () 
     if (chunk.type === "chunk") expect(chunk.imports).toEqual([]);
   }
 });
+it("failed controller draft gates target callbacks; explicit retry uses fresh CAS and adopts implicit reset", async () => {
+  const r: SettingsResourceV1 = {
+    schemaVersion: 1,
+    title: { en: "Dependent" },
+    fields: [
+      { key: "remember", type: "boolean", default: false, label: { en: "Remember" } },
+      {
+        key: "address",
+        type: "string",
+        default: "",
+        label: { en: "Address" },
+        minLength: 0,
+        maxLength: 45,
+        maxBytes: 180,
+        resetWhen: { key: "remember", equals: false },
+      },
+    ],
+  };
+  let committed: SettingsSnapshot = {
+    schemaVersion: 1,
+    revision: "r_" + "1".repeat(32),
+    values: [
+      { key: "remember", value: true },
+      { key: "address", value: "kept" },
+    ],
+  };
+  let change!: Parameters<SettingsControlsPort["onChange"]>[0];
+  let rendered!: SettingsDraftState;
+  let fail = true;
+  const update = vi.fn<BoundSettingsService["update"]>(async (_binding, input) => {
+    if (fail)
+      return { ok: false, error: { code: "PLUGIN_E_SETTINGS_CONFLICT", message: "Conflict" } };
+    expect(input.expectedRevision).toBe("r_" + "2".repeat(32));
+    committed = {
+      schemaVersion: 1,
+      revision: "r_" + "3".repeat(32),
+      values: [
+        { key: "remember", value: false },
+        { key: "address", value: "" },
+      ],
+    };
+    return {
+      ok: true,
+      value: {
+        snapshot: committed,
+        receipt: {
+          revision: committed.revision!,
+          commitId: "00000000-0000-4000-8000-000000000009",
+          durability: "file-and-directory-sync",
+        },
+      },
+    };
+  });
+  const service: BoundSettingsService = {
+    open: async () => ({ binding, resource: r, snapshot: committed }),
+    read: async () => ({ ok: true, value: committed }),
+    update,
+    reset: async () => {
+      throw new Error("unexpected reset");
+    },
+    watch: () => () => {},
+    dispose: () => {},
+  };
+  const form = createContributedSettingsForm(
+    {
+      render: (_b, _r, state) => {
+        rendered = state;
+      },
+      dispose: () => {},
+      onChange: (cb) => {
+        change = cb;
+        return () => {};
+      },
+    },
+    service,
+  );
+  form.open(binding, r, committed);
+  change(binding, "remember", false, "change");
+  await vi.waitFor(() => expect(rendered.errors.some((e) => e.key === "remember")).toBe(true));
+  expect(rendered.draft).toContainEqual({ key: "remember", value: false });
+  expect(rendered.baseline.values).toContainEqual({ key: "address", value: "kept" });
+  change(binding, "address", "forged", "enter");
+  expect(update).toHaveBeenCalledTimes(1);
+  fail = false;
+  committed = { ...committed, revision: "r_" + "2".repeat(32) };
+  await form.retry(binding, "remember");
+  expect(update).toHaveBeenCalledTimes(2);
+  expect(rendered.draft).toContainEqual({ key: "address", value: "" });
+  expect(rendered.errors).toEqual([]);
+  form.dispose(binding);
+});

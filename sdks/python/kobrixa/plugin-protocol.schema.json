@@ -70,6 +70,24 @@
                     ],
                     "additionalProperties": false
                   },
+                  "resetWhen": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "maxLength": 64,
+                        "pattern": "^[a-z][A-Za-z0-9]*(?:\\.[a-z][A-Za-z0-9]*)*$"
+                      },
+                      "equals": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "equals"
+                    ],
+                    "additionalProperties": false
+                  },
                   "type": {
                     "type": "string",
                     "const": "boolean"
@@ -121,6 +139,24 @@
                     },
                     "required": [
                       "en"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "resetWhen": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "maxLength": 64,
+                        "pattern": "^[a-z][A-Za-z0-9]*(?:\\.[a-z][A-Za-z0-9]*)*$"
+                      },
+                      "equals": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "equals"
                     ],
                     "additionalProperties": false
                   },
@@ -183,6 +219,24 @@
                     },
                     "required": [
                       "en"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "resetWhen": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "maxLength": 64,
+                        "pattern": "^[a-z][A-Za-z0-9]*(?:\\.[a-z][A-Za-z0-9]*)*$"
+                      },
+                      "equals": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "equals"
                     ],
                     "additionalProperties": false
                   },
@@ -251,6 +305,24 @@
                     },
                     "required": [
                       "en"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "resetWhen": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "maxLength": 64,
+                        "pattern": "^[a-z][A-Za-z0-9]*(?:\\.[a-z][A-Za-z0-9]*)*$"
+                      },
+                      "equals": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "equals"
                     ],
                     "additionalProperties": false
                   },
@@ -323,6 +395,24 @@
                     },
                     "required": [
                       "en"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "resetWhen": {
+                    "type": "object",
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "maxLength": 64,
+                        "pattern": "^[a-z][A-Za-z0-9]*(?:\\.[a-z][A-Za-z0-9]*)*$"
+                      },
+                      "equals": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "key",
+                      "equals"
                     ],
                     "additionalProperties": false
                   },

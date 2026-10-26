@@ -68,6 +68,7 @@ const expected: SettingsResourceV1 = {
     },
     {
       key: "lastWifiAddress",
+      resetWhen: { key: "rememberWifiAddress", equals: false },
       label: { en: "Last Wi-Fi address" },
       type: "string",
       default: "",
@@ -92,10 +93,6 @@ export function devicePreferenceValues(snapshot: SettingsSnapshot): DevicePrefer
   const result = Object.fromEntries(
     values.map(({ key, value }) => [key, value]),
   ) as unknown as DevicePreferenceValues;
-  // Until the public dependent-field rule is wired, inconsistent committed data
-  // must block policy consumption; a reader must never silently normalize it.
-  if (!result.rememberWifiAddress && result.lastWifiAddress !== "")
-    throw new Error("Inconsistent remembered Wi-Fi address.");
   return result;
 }
 type HostSnapshot = Awaited<ReturnType<ReturnType<typeof settingsRequests>["hostSnapshot"]>>;

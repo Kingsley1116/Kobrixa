@@ -182,7 +182,13 @@ export function createContributedSettingsForm(
       const change = controls.onChange((incoming, key, value, phase) => {
         if (!matches(incoming)) return;
         const field = resource.fields.find((x) => x.key === key);
-        if (!field) return;
+        if (
+          !field ||
+          (field.resetWhen &&
+            store.state().draft.find((item) => item.key === field.resetWhen!.key)?.value ===
+              field.resetWhen.equals)
+        )
+          return;
         store.edit(
           key,
           phase === "reset" ? field.default : value,
@@ -216,7 +222,16 @@ export function createContributedSettingsForm(
       if (matches(binding)) close();
     },
     async retry(binding, key) {
-      if (matches(binding)) await current!.store.retry(key);
+      if (matches(binding)) {
+        const field = current!.resource.fields.find((field) => field.key === key);
+        if (
+          field?.resetWhen &&
+          current!.store.state().draft.find((item) => item.key === field.resetWhen!.key)?.value ===
+            field.resetWhen.equals
+        )
+          return;
+        await current!.store.retry(key);
+      }
     },
     async reload(binding) {
       if (matches(binding)) await current!.store.reload();

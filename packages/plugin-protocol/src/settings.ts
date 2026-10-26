@@ -20,7 +20,7 @@ export type Receipt<R extends SettingsRevision | RecordRevision> = {
 };
 
 export type SettingsText = { en: string; "zh-TW"?: string };
-export type CommonField = { key: SettingKey; label: SettingsText; help?: SettingsText };
+export type CommonField = { key: SettingKey; label: SettingsText; help?: SettingsText; resetWhen?: { key: SettingKey; equals: boolean } };
 export type SettingsField = CommonField &
   (
     | { type: "boolean"; default: boolean }
@@ -50,7 +50,7 @@ const settingsText = (value: { en: string; "zh-TW"?: string | undefined }): Sett
   ({ en: value.en, ...(value["zh-TW"] === undefined ? {} : { "zh-TW": value["zh-TW"] }) });
 const title = z.strictObject({ en: boundedText(1, 200, 800, true), "zh-TW": boundedText(1, 200, 800, true).optional() }).transform(settingsText);
 const help = z.strictObject({ en: boundedText(0, 2000, 8192), "zh-TW": boundedText(0, 2000, 8192).optional() }).transform(settingsText);
-const common = { key: keySchema, label: title, help: help.optional() };
+const common = { key: keySchema, label: title, help: help.optional(), resetWhen: z.strictObject({ key: keySchema, equals: z.boolean() }).optional() };
 const scalar = z.union([z.boolean(), z.number(), boundedText(0, 4000, 4096)]);
 const optionValue = z.union([z.number().int().min(-Number.MAX_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER), boundedText(0, 4000, 4096)]);
 export const settingsFieldSchema = z.discriminatedUnion("type", [
@@ -59,7 +59,7 @@ export const settingsFieldSchema = z.discriminatedUnion("type", [
   z.strictObject({ ...common, type: z.literal("integer"), default: z.number().int().min(-Number.MAX_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER), minimum: z.number().int().min(-Number.MAX_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER), maximum: z.number().int().min(-Number.MAX_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER) }),
   z.strictObject({ ...common, type: z.literal("string"), default: boundedText(0, 4000, 4096), minLength: z.number().int().min(0).max(4000), maxLength: z.number().int().min(0).max(4000), maxBytes: z.number().int().min(1).max(4096) }),
   z.strictObject({ ...common, type: z.literal("enum"), default: optionValue, options: z.array(z.strictObject({ value: optionValue, label: title })).min(1).max(32) }),
-]).transform(({ help, ...field }): SettingsField => ({ ...field, ...(help === undefined ? {} : { help }) }));
+]).transform(({ help, resetWhen, ...field }): SettingsField => ({ ...field, ...(help === undefined ? {} : { help }), ...(resetWhen === undefined ? {} : { resetWhen }) }));
 export const valuesSchema = z.array(z.strictObject({ key: keySchema, value: scalar })).max(128)
   .refine(v => new Set(v.map(x => x.key)).size === v.length && jsonBytes(v) <= 65536);
 export const settingsResourceV1Schema: z.ZodType<SettingsResourceV1> = z.strictObject({ schemaVersion: versionSchema, title, fields: z.array(settingsFieldSchema).min(1).max(128) });
@@ -89,12 +89,30 @@ export function validateSettingsValues(resource: SettingsResourceV1, input: unkn
       case "enum": if (!f.options.some(o => typeof o.value === typeof value && o.value === value)) return failure("invalid-value"); break;
     }
   }
+  if (complete) {
+    const map = new Map(values.map(entry => [entry.key, entry.value]));
+    for (const field of resource.fields)
+      if (field.resetWhen && map.get(field.resetWhen.key) === field.resetWhen.equals && map.get(field.key) !== field.default)
+        return failure("invalid-value");
+  }
   return values;
+}
+
+/** Normalize an otherwise valid complete candidate before the host's single CAS.
+ * Persisted reads must use validateSettingsValues instead, never repair on read. */
+export function normalizeSettingsValues(resource: SettingsResourceV1, input: unknown): Values {
+  const values = validateSettingsValues(resource, input, false);
+  if (values.length !== resource.fields.length) return failure("invalid-value");
+  const map = new Map(values.map(entry => [entry.key, entry.value]));
+  for (const field of resource.fields)
+    if (field.resetWhen && map.get(field.resetWhen.key) === field.resetWhen.equals)
+      map.set(field.key, field.default);
+  return validateSettingsValues(resource, values.map(({ key }) => ({ key, value: map.get(key)! })), true);
 }
 
 export function settingsValidationText(resource: SettingsResourceV1): string {
   return JSON.stringify({ schemaVersion: resource.schemaVersion, fields: [...resource.fields].sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0).map(f => {
-    const base = { key: f.key, type: f.type, default: f.default };
+    const base = { key: f.key, type: f.type, default: f.default, ...(f.resetWhen ? { resetWhen: { key: f.resetWhen.key, equals: f.resetWhen.equals } } : {}) };
     if (f.type === "number" || f.type === "integer") return { ...base, minimum: f.minimum, maximum: f.maximum };
     if (f.type === "string") return { ...base, minLength: f.minLength, maxLength: f.maxLength, maxBytes: f.maxBytes };
     if (f.type === "enum") return { ...base, options: f.options.map(o => [typeof o.value, o.value]).sort((a, b) => JSON.stringify(a) < JSON.stringify(b) ? -1 : JSON.stringify(a) > JSON.stringify(b) ? 1 : 0) };

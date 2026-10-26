@@ -28,6 +28,14 @@ const keyOf = (binding: SettingsFormBinding) =>
     binding.scope.workbenchInstance,
     binding.resourceDigest,
   ]);
+function dependentDisabled(field: Field, state: SettingsDraftState): boolean {
+  const rule = field.resetWhen;
+  if (!rule) return false;
+  const value =
+    state.draft.find((item) => item.key === rule.key)?.value ??
+    state.baseline.values.find((item) => item.key === rule.key)?.value;
+  return value === rule.equals;
+}
 export function settingValid(field: Field, value: SettingsScalar): boolean {
   switch (field.type) {
     case "boolean":
@@ -98,7 +106,24 @@ export class SettingsControls implements SettingsControlsPort {
         }
       }
     }
-    this.view = { binding, resource, state, raw, invalid: same ? previous.invalid : [] };
+    let invalid = same ? previous.invalid : [];
+    // A committed dependent reset retires unsent native text too. A failed
+    // controller draft alone does not discard it or pretend the save succeeded.
+    for (const field of resource.fields) {
+      if (
+        same &&
+        field.resetWhen &&
+        previous.state.baseline.values.find((item) => item.key === field.resetWhen!.key)?.value !==
+          field.resetWhen.equals &&
+        state.baseline.values.find((item) => item.key === field.resetWhen!.key)?.value ===
+          field.resetWhen.equals
+      ) {
+        delete raw[field.key];
+        this.sent.delete(field.key);
+        invalid = invalid.filter((key) => key !== field.key);
+      }
+    }
+    this.view = { binding, resource, state, raw, invalid };
     this.publish();
   }
   onChange(listener: Change): () => void {
@@ -117,7 +142,10 @@ export class SettingsControls implements SettingsControlsPort {
   retry(key: string): Promise<void> {
     const view = this.view;
     const attachment = settingsAttachment(this);
-    return view && attachment ? attachment.retry(view.binding, key) : Promise.resolve();
+    const field = view?.resource.fields.find((field) => field.key === key);
+    return view && attachment && field && !dependentDisabled(field, view.state)
+      ? attachment.retry(view.binding, key)
+      : Promise.resolve();
   }
   async reload(): Promise<void> {
     const view = this.view;
@@ -141,6 +169,8 @@ export class SettingsControls implements SettingsControlsPort {
   }
   raw(key: string, raw: string): void {
     if (Array.from(raw).length > 4000 || !this.view) return;
+    const field = this.view.resource.fields.find((field) => field.key === key);
+    if (!field || dependentDisabled(field, this.view.state)) return;
     this.view = {
       ...this.view,
       raw: { ...this.view.raw, [key]: raw },
@@ -155,7 +185,13 @@ export class SettingsControls implements SettingsControlsPort {
   ): void {
     const view = this.view;
     const field = view?.resource.fields.find((item) => item.key === key);
-    if (!view || !field || view.state.busyKeys.includes(key)) return;
+    if (
+      !view ||
+      !field ||
+      view.state.busyKeys.includes(key) ||
+      dependentDisabled(field, view.state)
+    )
+      return;
     const raw = view.raw[key];
     const draft = view.state.draft.find((item) => item.key === key)?.value ?? field.default;
     const value =
@@ -221,13 +257,15 @@ export function SettingsControlsView({
         const fieldId = map?.field(field.key) ?? `field${index}`;
         const key = map ? map.key(fieldId) : field.key;
         const id = `setting-${view.binding.scope.workbenchInstance}-${fieldId}`;
-        const value =
-          view.state.draft.find((item) => item.key === field.key)?.value ?? field.default;
+        const dependent = dependentDisabled(field, view.state);
+        const value = dependent
+          ? field.default
+          : (view.state.draft.find((item) => item.key === field.key)?.value ?? field.default);
         const error = view.state.errors.find((item) => item.key === field.key);
         const invalid =
           view.invalid.includes(field.key) ||
           (field.type === "enum" && !settingValid(field, value));
-        const disabled = view.state.busyKeys.includes(field.key);
+        const disabled = view.state.busyKeys.includes(field.key) || dependent;
         const description =
           [field.help && `${id}-help`, (error || invalid) && `${id}-error`]
             .filter(Boolean)
@@ -289,7 +327,7 @@ export function SettingsControlsView({
                 disabled={disabled}
                 aria-invalid={!!error || invalid}
                 aria-describedby={description}
-                value={view.raw[field.key] ?? String(value)}
+                value={dependent ? String(field.default) : (view.raw[field.key] ?? String(value))}
                 onValue={(value) => controls.raw(field.key, value)}
                 onBlur={() => commit("blur")}
                 onKeyDown={(event) => {

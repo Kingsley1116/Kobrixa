@@ -17,3 +17,15 @@ it("leaves numeric transport errors untouched and never retries a mutation", asy
   await expect(createSettingsClient(request).reset({ schemaVersion: 1, expectedRevision: null, keys: ["a"] })).rejects.toBe(error);
   expect(count).toBe(1);
 });
+
+import type { SettingsResourceV1 } from "./settings.js";
+import { validateSettingsResource } from "../../plugin-protocol/src/persistence-validation.js";
+import { validateSettingsValues } from "../../plugin-protocol/src/settings.js";
+it("public resource types carry resetWhen; shared validator rejects inconsistent complete snapshots", () => {
+  const resource: SettingsResourceV1 = { schemaVersion: 1, title: { en: "T" }, fields: [
+    { key: "remember", label: { en: "Remember" }, type: "boolean", default: false },
+    { key: "address", label: { en: "Address" }, type: "string", default: "", minLength: 0, maxLength: 45, maxBytes: 180, resetWhen: { key: "remember", equals: false } },
+  ] };
+  expect(validateSettingsResource(resource, Buffer.byteLength(JSON.stringify(resource)))).toEqual(resource);
+  expect(() => validateSettingsValues(resource, [{ key: "remember", value: false }, { key: "address", value: "old" }], true)).toThrow();
+});

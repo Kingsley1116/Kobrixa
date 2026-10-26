@@ -1,3 +1,4 @@
+import type { SettingsResourceV1 } from "./settings.js";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { settingsRequestSchemas, settingsResourceV1Schema,
@@ -65,4 +66,37 @@ describe("settings v1", () => {
     expect("settings/unwatch" in settingsRequestSchemas).toBe(false);
     expect(settingsRequestSchemas["settings/update"].params.safeParse({ schemaVersion: 1, expectedRevision: null, changes: [], retry: true }).success).toBe(false);
   });
+});
+
+import { normalizeSettingsValues } from "./settings.js";
+const dependent = (): SettingsResourceV1 => ({ schemaVersion: 1, title: { en: "Dependent" }, fields: [
+  { key: "remember", label: { en: "Remember" }, type: "boolean" as const, default: true },
+  { ...field("address"), resetWhen: { key: "remember", equals: false } },
+] });
+it("dependent defaults normalize full candidates without mutating inputs; committed inconsistency is rejected", () => {
+  const r = validate(dependent());
+  const values = [{ key: "remember", value: false }, { key: "address", value: "original" }];
+  expect(normalizeSettingsValues(r, values)).toEqual([{ key: "remember", value: false }, { key: "address", value: "" }]);
+  expect(values[1]!.value).toBe("original");
+  expect(() => validateSettingsValues(r, values, true)).toThrow("invalid-value");
+  expect(validateSettingsValues(r, [{ key: "address", value: "original" }], false)).toHaveLength(1);
+  expect(() => normalizeSettingsValues(r, [{ key: "remember", value: false }])).toThrow();
+  expect(normalizeSettingsValues(r, [{ key: "remember", value: true }, { key: "address", value: "original" }])[1]!.value).toBe("original");
+});
+it("dependent rules are strict, reference independent booleans, reject self/chains/cycles and invalid defaults", () => {
+  for (const resetWhen of [{ key: "missing", equals: false }, { key: "address", equals: false }, { key: "remember", equals: 0 }, { key: "remember", equals: false, extra: true }, null]) {
+    const r = dependent(); Object.assign(r.fields[1]!, { resetWhen }); expect(() => validate(r)).toThrow();
+  }
+  const chain = dependent(); Object.assign(chain.fields[0]!, { resetWhen: { key: "other", equals: false } });
+  expect(() => validate({ ...chain, fields: [...chain.fields, { key: "other", label: { en: "Other" }, type: "boolean", default: true }] })).toThrow();
+  const cycle = dependent(); Object.assign(cycle.fields[0]!, { resetWhen: { key: "address", equals: true } }); expect(() => validate(cycle)).toThrow();
+  const nonBoolean = dependent(); Object.assign(nonBoolean.fields[0]!, { type: "string", default: "", minLength: 0, maxLength: 20, maxBytes: 20 }); expect(() => validate(nonBoolean)).toThrow();
+  const invalidDefault = dependent(); Object.assign(invalidDefault.fields[1]!, { default: true }); expect(() => validate(invalidDefault)).toThrow();
+});
+it("dependent rule changes digest, while absent rules preserve prior digest bytes", () => {
+  const r = dependent(), plain = { ...r, fields: [r.fields[0]!, field("address")] };
+  expect(settingsValidationText(r)).not.toBe(settingsValidationText(plain));
+  expect(settingsValidationText({ ...r, fields: [...r.fields].reverse() })).toBe(settingsValidationText(r));
+  const before = settingsValidationText(r); r.fields[1]!.resetWhen!.equals = true;
+  expect(settingsValidationText(r)).not.toBe(before);
 });

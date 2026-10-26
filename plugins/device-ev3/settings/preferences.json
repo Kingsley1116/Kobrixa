@@ -201,7 +201,11 @@
       },
       "minLength": 0,
       "maxLength": 45,
-      "maxBytes": 180
+      "maxBytes": 180,
+      "resetWhen": {
+        "key": "rememberWifiAddress",
+        "equals": false
+      }
     }
   ]
 }

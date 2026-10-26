@@ -527,3 +527,114 @@ it("U01 clean blur stays idle while edits after success and failed-save blur rem
     controls.destroy();
   }
 });
+it("dependent controls use current draft, reject stale edits, and restore after failed controller draft changes", async () => {
+  const controls = new SettingsControls(),
+    change = vi.fn();
+  controls.onChange(change);
+  const r: SettingsResourceV1 = {
+    schemaVersion: 1,
+    title: { en: "Dependent" },
+    fields: [
+      { key: "remember", type: "boolean", default: true, label: { en: "Remember" } },
+      {
+        key: "address",
+        type: "string",
+        default: "",
+        label: { en: "Address" },
+        minLength: 0,
+        maxLength: 45,
+        maxBytes: 180,
+        resetWhen: { key: "remember", equals: false },
+      },
+    ],
+  };
+  const baseline = {
+    schemaVersion: 1,
+    revision: null,
+    values: [
+      { key: "remember", value: true },
+      { key: "address", value: "kept" },
+    ],
+  };
+  controls.render(binding, r, { baseline, draft: baseline.values, busyKeys: [], errors: [] });
+  controls.raw("address", "unsent");
+  const div = document.createElement("div"),
+    root = createRoot(div);
+  document.body.append(div);
+  await act(async () => {
+    root.render(createElement(SettingsControlsView, { controls, locale: "en", labels }));
+  });
+  const address = () => div.querySelector<HTMLInputElement>('input[type="text"]')!;
+  expect(address().disabled).toBe(false);
+  expect(address().value).toBe("unsent");
+  const failed = {
+    baseline,
+    draft: [
+      { key: "remember", value: false },
+      { key: "address", value: "kept" },
+    ],
+    busyKeys: [],
+    errors: [{ key: "remember", message: { en: "Save failed" } }],
+  };
+  await act(async () => {
+    controls.render(binding, r, failed);
+  });
+  expect(address().disabled).toBe(true);
+  expect(address().value).toBe("");
+  controls.raw("address", "forged");
+  controls.commit("address", "enter");
+  controls.commit("address", "reset");
+  expect(change).not.toHaveBeenCalled();
+  expect(controls.getSnapshot()!.raw.address).toBe("unsent");
+  await act(async () => {
+    controls.render(binding, r, { ...failed, draft: baseline.values });
+  });
+  expect(address().disabled).toBe(false);
+  expect(address().value).toBe("unsent");
+  const committed = {
+    ...baseline,
+    revision: "r_" + "1".repeat(32),
+    values: [
+      { key: "remember", value: false },
+      { key: "address", value: "" },
+    ],
+  };
+  await act(async () => {
+    controls.render(binding, r, {
+      baseline: committed,
+      draft: committed.values,
+      busyKeys: [],
+      errors: [],
+    });
+  });
+  expect(controls.getSnapshot()!.raw.address).toBeUndefined();
+  await act(async () => {
+    controls.render(binding, r, {
+      baseline: committed,
+      draft: [
+        { key: "remember", value: true },
+        { key: "address", value: "" },
+      ],
+      busyKeys: [],
+      errors: [],
+    });
+  });
+  expect(address().disabled).toBe(false);
+  expect(address().value).toBe("");
+  await act(async () => {
+    controls.raw("address", "new unsent");
+    controls.render(binding, r, {
+      baseline: committed,
+      draft: [
+        { key: "remember", value: true },
+        { key: "address", value: "" },
+      ],
+      busyKeys: ["remember"],
+      errors: [],
+    });
+  });
+  expect(address().value).toBe("new unsent");
+  await act(async () => root.unmount());
+  div.remove();
+  controls.destroy();
+});

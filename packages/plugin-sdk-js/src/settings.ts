@@ -1,3 +1,4 @@
+export type { SettingsField, SettingsResourceV1 } from "@kobrixa/plugin-protocol";
 import type { SettingsRequestMap, StorageRequestMap, PersistenceActionRequestMap } from "@kobrixa/plugin-protocol";
 export type PersistenceMaps = SettingsRequestMap & StorageRequestMap & PersistenceActionRequestMap;
 export type PersistenceClientFor<K extends keyof PersistenceMaps> = {

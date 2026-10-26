@@ -8,7 +8,13 @@ export function validateSettingsResource(input: unknown, rawBytes: number): Sett
   if (!parsed.success) throw new PersistenceValidationError("invalid-resource");
   const resource = parsed.data;
   if (new Set(resource.fields.map(f => f.key)).size !== resource.fields.length) throw new PersistenceValidationError("duplicate-key");
+  const fields = new Map(resource.fields.map(f => [f.key, f]));
   for (const f of resource.fields) {
+    if (f.resetWhen) {
+      const controller = fields.get(f.resetWhen.key);
+      if (f.resetWhen.key === f.key || !controller || controller.type !== "boolean" || controller.resetWhen)
+        throw new PersistenceValidationError("invalid-resource");
+    }
     if ((f.type === "number" || f.type === "integer") && f.minimum > f.maximum) throw new PersistenceValidationError("invalid-resource");
     if (f.type === "string" && f.minLength > f.maxLength) throw new PersistenceValidationError("invalid-resource");
     if (f.type === "enum" && new Set(f.options.map(o => JSON.stringify([typeof o.value, o.value]))).size !== f.options.length) throw new PersistenceValidationError("duplicate-key");

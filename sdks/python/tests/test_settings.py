@@ -50,3 +50,16 @@ class SettingsClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(await client.update(params), error)
         self.assertEqual(calls, [("settings/update", params)])
         self.assertFalse(hasattr(client, "unwatch"))
+
+class DependentDefaultsTests(unittest.TestCase):
+    def test_complete_values_reject_inconsistent_persisted_data(self):
+        resource = {"schemaVersion": 1, "title": {"en": "T"}, "fields": [
+            {"key": "remember", "type": "boolean", "label": {"en": "Remember"}, "default": False},
+            {"key": "address", "type": "string", "label": {"en": "Address"}, "default": "", "minLength": 0, "maxLength": 45, "maxBytes": 180, "resetWhen": {"key": "remember", "equals": False}},
+        ]}
+        validate_resource(resource, wire_bytes(resource))
+        validate_values(resource, [{"key": "address", "value": "pending"}], False)
+        with self.assertRaises(ValueError):
+            validate_values(resource, [{"key": "remember", "value": False}, {"key": "address", "value": "old"}], True)
+        validate_values(resource, [{"key": "remember", "value": False}, {"key": "address", "value": ""}], True)
+        validate_values(resource, [{"key": "remember", "value": True}, {"key": "address", "value": "kept"}], True)
