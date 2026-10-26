@@ -136417,6 +136417,10 @@
                 ]
               }
             },
+            "formSync": {
+              "type": "boolean",
+              "const": true
+            },
             "datasets": {
               "type": "object",
               "propertyNames": {
@@ -172288,6 +172292,638 @@
                     "code",
                     "message",
                     "detail"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "ok",
+                "error"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      ]
+    },
+    "ui/formPatch.params": {
+      "type": "object",
+      "properties": {
+        "binding": {
+          "type": "object",
+          "properties": {
+            "contributionId": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 128,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:\\.[a-z0-9]+(?:-[a-z0-9]+)*)+$"
+            },
+            "panelInstance": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "kind": {
+              "type": "string",
+              "const": "panel"
+            },
+            "uiResourceGeneration": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "hostEpoch": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "processEpoch": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            }
+          },
+          "required": [
+            "contributionId",
+            "panelInstance",
+            "kind",
+            "uiResourceGeneration",
+            "generation",
+            "hostEpoch",
+            "processEpoch"
+          ],
+          "additionalProperties": false
+        },
+        "baseFormRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "set": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32,
+            "pattern": "^[a-z][a-z0-9-]{0,31}$"
+          },
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "minProperties": 1,
+          "maxProperties": 32
+        }
+      },
+      "required": [
+        "binding",
+        "baseFormRevision",
+        "set"
+      ],
+      "additionalProperties": false
+    },
+    "ui/formPatch.result": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "type": "boolean",
+              "const": true
+            },
+            "value": {
+              "type": "object",
+              "properties": {
+                "formRevision": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "form": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 32,
+                    "pattern": "^[a-z][a-z0-9-]{0,31}$"
+                  },
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 8000
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "minProperties": 0,
+                  "maxProperties": 32
+                }
+              },
+              "required": [
+                "formRevision",
+                "form"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "ok",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "ok": {
+                  "type": "boolean",
+                  "const": false
+                },
+                "error": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "PLUGIN_E_PERMISSION_DENIED"
+                    },
+                    "message": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4000,
+                      "pattern": "^[^\\u0000-\\u001F\\u007F]*$"
+                    },
+                    "detail": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "permission"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "enum": [
+                            "permission",
+                            "user-action-required"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "reason"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message",
+                    "detail"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "ok",
+                "error"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "ok": {
+                  "type": "boolean",
+                  "const": false
+                },
+                "error": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "PLUGIN_E_STALE_RESOURCE"
+                    },
+                    "message": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4000,
+                      "pattern": "^[^\\u0000-\\u001F\\u007F]*$"
+                    },
+                    "detail": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "resource"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "const": "stale"
+                        },
+                        "resource": {
+                          "type": "string",
+                          "enum": [
+                            "operation",
+                            "subscription",
+                            "candidate",
+                            "reservation",
+                            "journal",
+                            "rpc",
+                            "ui-binding"
+                          ]
+                        },
+                        "limit": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "reason",
+                        "resource"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message",
+                    "detail"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "ok",
+                "error"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "ok": {
+                  "type": "boolean",
+                  "const": false
+                },
+                "error": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "PLUGIN_E_RESOURCE_LIMIT"
+                    },
+                    "message": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4000,
+                      "pattern": "^[^\\u0000-\\u001F\\u007F]*$"
+                    },
+                    "detail": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "resource"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "enum": [
+                            "quota",
+                            "rate",
+                            "queue"
+                          ]
+                        },
+                        "resource": {
+                          "type": "string",
+                          "enum": [
+                            "operation",
+                            "subscription",
+                            "candidate",
+                            "reservation",
+                            "journal",
+                            "rpc",
+                            "ui-binding"
+                          ]
+                        },
+                        "limit": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "reason",
+                        "resource"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message",
+                    "detail"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "ok",
+                "error"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "ok": {
+                  "type": "boolean",
+                  "const": false
+                },
+                "error": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "PLUGIN_E_UI_RESOURCE"
+                    },
+                    "message": {
+                      "type": "string",
+                      "maxLength": 4000
+                    },
+                    "detail": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "ui"
+                        },
+                        "contributionId": {
+                          "type": "string",
+                          "minLength": 3,
+                          "maxLength": 128,
+                          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:\\.[a-z0-9]+(?:-[a-z0-9]+)*)+$"
+                        },
+                        "fieldPath": {
+                          "type": "string",
+                          "maxLength": 256,
+                          "pattern": "^[A-Za-z0-9_$.[\\]-]*$"
+                        },
+                        "limit": {
+                          "type": "string",
+                          "enum": [
+                            "resourceBytes",
+                            "sourceBytes",
+                            "hostBytes",
+                            "nodes",
+                            "depth",
+                            "dataSlots",
+                            "fields",
+                            "stringCodePoints",
+                            "labelCodePoints",
+                            "enumValues",
+                            "enumCodePoints",
+                            "conditionDepth",
+                            "conditionNodes",
+                            "resourceConditionNodes",
+                            "sourcePanels",
+                            "sourceStatus",
+                            "hostPanels",
+                            "hostStatus",
+                            "dataBytes",
+                            "formBytes",
+                            "statusDataBytes",
+                            "patchBytes",
+                            "patchEntries",
+                            "patchesPerSecond",
+                            "pendingPatches",
+                            "argumentBytes",
+                            "invokeBytes",
+                            "resultBytes",
+                            "sourcePending",
+                            "hostPending",
+                            "sourceSubscriptions",
+                            "eventBytes",
+                            "queueBytes",
+                            "controlSlots",
+                            "controlBytes",
+                            "activeHolds",
+                            "challengeMs",
+                            "expiryMs",
+                            "pendingChallenges",
+                            "sourceReadMs",
+                            "initializeMs",
+                            "commandMs",
+                            "queryMs",
+                            "shutdownRequestMs",
+                            "cursorMs",
+                            "catalogEntries",
+                            "catalogBytes",
+                            "resourceReplyBytes",
+                            "detailBytes",
+                            "completedInvocations",
+                            "invocationRetentionMs",
+                            "hostCompletedInvocations",
+                            "hostCompletedBytes"
+                          ]
+                        },
+                        "allowed": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "actual": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "reason": {
+                          "type": "string",
+                          "enum": [
+                            "read",
+                            "path",
+                            "schema",
+                            "reference",
+                            "cycle",
+                            "translation",
+                            "limit",
+                            "renderer"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "reason"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "ok",
+                "error"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "ok": {
+                  "type": "boolean",
+                  "const": false
+                },
+                "error": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "PLUGIN_E_UI_VERSION"
+                    },
+                    "message": {
+                      "type": "string",
+                      "maxLength": 4000
+                    },
+                    "detail": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "const": "ui"
+                        },
+                        "contributionId": {
+                          "type": "string",
+                          "minLength": 3,
+                          "maxLength": 128,
+                          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*(?:\\.[a-z0-9]+(?:-[a-z0-9]+)*)+$"
+                        },
+                        "fieldPath": {
+                          "type": "string",
+                          "maxLength": 256,
+                          "pattern": "^[A-Za-z0-9_$.[\\]-]*$"
+                        },
+                        "limit": {
+                          "type": "string",
+                          "enum": [
+                            "resourceBytes",
+                            "sourceBytes",
+                            "hostBytes",
+                            "nodes",
+                            "depth",
+                            "dataSlots",
+                            "fields",
+                            "stringCodePoints",
+                            "labelCodePoints",
+                            "enumValues",
+                            "enumCodePoints",
+                            "conditionDepth",
+                            "conditionNodes",
+                            "resourceConditionNodes",
+                            "sourcePanels",
+                            "sourceStatus",
+                            "hostPanels",
+                            "hostStatus",
+                            "dataBytes",
+                            "formBytes",
+                            "statusDataBytes",
+                            "patchBytes",
+                            "patchEntries",
+                            "patchesPerSecond",
+                            "pendingPatches",
+                            "argumentBytes",
+                            "invokeBytes",
+                            "resultBytes",
+                            "sourcePending",
+                            "hostPending",
+                            "sourceSubscriptions",
+                            "eventBytes",
+                            "queueBytes",
+                            "controlSlots",
+                            "controlBytes",
+                            "activeHolds",
+                            "challengeMs",
+                            "expiryMs",
+                            "pendingChallenges",
+                            "sourceReadMs",
+                            "initializeMs",
+                            "commandMs",
+                            "queryMs",
+                            "shutdownRequestMs",
+                            "cursorMs",
+                            "catalogEntries",
+                            "catalogBytes",
+                            "resourceReplyBytes",
+                            "detailBytes",
+                            "completedInvocations",
+                            "invocationRetentionMs",
+                            "hostCompletedInvocations",
+                            "hostCompletedBytes"
+                          ]
+                        },
+                        "allowed": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "actual": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "reason": {
+                          "type": "string",
+                          "enum": [
+                            "version",
+                            "negotiation"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "reason"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
                   ],
                   "additionalProperties": false
                 }

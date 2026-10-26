@@ -1,5 +1,5 @@
 import { uiRequestSchemas } from "./ui-methods.js";
-import { validUiWireV2, isUiDataMethod, supportsUiV2 } from "./ui-v2-session.js";
+import { validUiWireV2, isUiV2OnlyMethod, supportsUiV2 } from "./ui-v2-session.js";
 import { validUiWire } from "./ui-validation.js";
 import type { z } from "zod";
 import { validateDeviceWire } from "./device-validation.js";
@@ -210,7 +210,7 @@ export class RpcPeer {
     if (method === "initialize") this.setUiCandidate(false);
     if (options.signal?.aborted)
       return Promise.reject(new RpcError(RPC_ERRORS.requestCancelled, `${method} was cancelled.`));
-    if (isUiDataMethod(method) && (this.#uiVersion !== 2 || !this.#uiReady))
+    if (isUiV2OnlyMethod(method) && (this.#uiVersion !== 2 || !this.#uiReady))
       return Promise.reject(new RpcError(RPC_ERRORS.invalidRequest, "UI v2 data is not ready."));
     if (method === "shutdown") this.setUiSession(null);
     const definition = this.#definition(method)!;
@@ -309,7 +309,7 @@ export class RpcPeer {
     if (wire.method) validateDeviceWire(`${wire.method}.params`, wire.params);
     const text = JSON.stringify(message);
     if (tooLarge(text)) throw new RpcError(RPC_ERRORS.internalError, "Message exceeds 1 MiB.");
-    if ((method && isUiDataMethod(method)) || wire.params?.kind === "ui.data") {
+    if ((method && isUiV2OnlyMethod(method)) || wire.params?.kind === "ui.data") {
       if (encoder.encode(text).length > 65536)
         throw new RpcError(RPC_ERRORS.internalError, "UI data frame exceeds 64 KiB.");
     }
@@ -355,7 +355,7 @@ export class RpcPeer {
       "method" in message &&
       message.method === "events/deliver" &&
       message.params?.kind === "ui.data";
-    if (((method && isUiDataMethod(method)) || dataEvent) && frameBytes > 65536) {
+    if (((method && isUiV2OnlyMethod(method)) || dataEvent) && frameBytes > 65536) {
       if (!("method" in message) && message.id !== null) {
         const pending = this.#pending.get(message.id);
         pending?.cleanup();
@@ -398,7 +398,7 @@ export class RpcPeer {
     if (
       !handler ||
       !definition ||
-      (isUiDataMethod(method) && (this.#uiVersion !== 2 || !this.#uiReady))
+      (isUiV2OnlyMethod(method) && (this.#uiVersion !== 2 || !this.#uiReady))
     )
       return this.#trySend({
         jsonrpc: "2.0",

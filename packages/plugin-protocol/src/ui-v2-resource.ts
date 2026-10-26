@@ -125,6 +125,7 @@ export const uiNodeV2Schema = z.union([
   }),
 ]);
 export const panelResourceV2Schema = panelResourceV1Schema.extend({
+  formSync: z.literal(true).exactOptional(),
   nodes: z.array(uiNodeV2Schema).min(1).max(256),
   datasets: z.record(localIdSchema, datasetDeclarationV2Schema),
   presentationKey: localIdSchema,

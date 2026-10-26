@@ -3,6 +3,7 @@ import json
 import math
 import re
 from ._ui_data import UiData
+from ._ui_v2_canonical import canonical_json_bytes
 from ._schema import Validator, SchemaError
 import asyncio
 import copy
@@ -393,6 +394,7 @@ class Ui:
         if forget: self._events.forget(id)
 
     def mark_ready(self, version=1):
+        self._epoch += 1
         self._resource_version = version
         self._ready = True
         if version == 2: self.data.mark_ready()
@@ -426,6 +428,19 @@ class Ui:
     async def patch(self, binding, base_revision, values):
         self._check()
         return await self._request("ui/patch", {"binding": binding, "baseRevision": base_revision, "set": values})
+
+    async def form_patch(self, binding, base_form_revision, set):
+        self._check()
+        if self._resource_version != 2:
+            raise RuntimeError("UI v2 form is not ready.")
+        epoch = self._epoch
+        params = copy.deepcopy({"binding": binding, "baseFormRevision": base_form_revision, "set": set})
+        require(valid_form_wire("params", params))
+        result = await self._request("ui/formPatch", copy.deepcopy(params), timeout=5)
+        if not self._ready or epoch != self._epoch:
+            raise RuntimeError("UI form session retired.")
+        require(valid_form_wire("result", result, params))
+        return copy.deepcopy(result)
 
     async def subscribe(self, topics, callback, binding=None):
         self._check()
@@ -483,7 +498,34 @@ class Ui:
             self._events.forget(subscription_id)
         return result
 
+def valid_form_wire(phase, value, params=None):
+    try:
+        Validator.bundled().validate(f"ui/formPatch.{phase}", value)
+        def plain(item):
+            if isinstance(item, dict):
+                require(type(item) is dict and not any(k in {"__proto__", "prototype", "constructor"} for k in item))
+                for child in item.values(): plain(child)
+        plain(value)
+        if phase == "result" and not value["ok"]:
+            return text_valid(value["error"]["message"], 2000) and ("detail" not in value["error"] or size(value["error"]["detail"]) <= 4096)
+        fields = value["set"] if phase == "params" else value["value"]["form"]
+        require((1 if phase == "params" else 0) <= len(fields) <= 32)
+        require(all(key_valid(k) for k in fields))
+        require(all(not isinstance(v, str) or text_valid(v) for v in fields.values()))
+        require(len(canonical_json_bytes(fields)) <= 16384)
+        if phase == "result":
+            require(valid_form_wire("params", params))
+            require(value["value"]["formRevision"] == params["baseFormRevision"] + 1)
+            for key, item in params["set"].items():
+                require(key in fields and fields[key] == item and
+                        (isinstance(fields[key], bool) == isinstance(item, bool)))
+        return True
+    except (SchemaError, KeyError, TypeError, ValueError, UnicodeError, RecursionError, OverflowError):
+        return False
+
+
 def valid_wire(method, phase, value, params=None):
+    if method == "ui/formPatch": return valid_form_wire(phase, value, params)
     methods = {"ui/negotiate", "ui/ready", "ui/instances", "ui/state", "ui/patch", "ui/subscribe", "ui/snapshot", "command/invoke"}
     if method not in methods:
         return True

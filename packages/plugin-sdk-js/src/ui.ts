@@ -1,4 +1,6 @@
 import {
+  uiFormRequestSchemasV2,
+  validUiFormWireV2,
   type UiRequestMapV2 as UiRequestMap,
   type UiEventEnvelopeV2 as UiEventEnvelope,
   type Handle,
@@ -7,7 +9,8 @@ import {
   type Result,
   type Severity,
 } from "@kobrixa/plugin-protocol";
-type Query = "ui/instances" | "ui/state" | "ui/patch" | "ui/subscribe" | "ui/snapshot";
+type Query =
+  "ui/formPatch" | "ui/instances" | "ui/state" | "ui/patch" | "ui/subscribe" | "ui/snapshot";
 import { beginUiSubscription, type UiEventClientPort, type ResyncRequiredEvent } from "./events.js";
 export interface UiRequestPort {
   <M extends Query>(
@@ -49,6 +52,7 @@ type Hook = {
 };
 export class UiClient {
   #ready = false;
+  #version: 1 | 2 = 1;
   #epoch = 0;
   #records = new Map<Handle, SubscriptionRecord>();
   #notices = new Set<Map<Handle, SubscriptionRecord>>();
@@ -133,7 +137,9 @@ export class UiClient {
     private readonly request: UiRequestPort,
     private readonly events: UiEventClientPort,
   ) {}
-  markReady(): void {
+  markReady(version: 1 | 2 = 1): void {
+    this.#epoch++;
+    this.#version = version;
     this.#ready = true;
   }
   retire(): void {
@@ -178,6 +184,29 @@ export class UiClient {
       { binding, baseRevision, set },
       { timeoutMs: 5000, ...(signal ? { signal } : {}) },
     );
+  }
+  async formPatch(
+    binding: UiBinding,
+    baseFormRevision: number,
+    set: Record<string, UiScalar>,
+    signal?: AbortSignal,
+  ): Promise<UiRequestMap["ui/formPatch"]["result"]> {
+    this.check();
+    if (this.#version !== 2) throw new Error("UI v2 form is not ready.");
+    if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
+    const epoch = this.#epoch;
+    const input = { binding, baseFormRevision, set };
+    if (!validUiFormWireV2("params", input)) throw new TypeError("Invalid UI form parameters.");
+    const params = uiFormRequestSchemasV2["ui/formPatch"].params.parse(input);
+    const result = await this.request("ui/formPatch", structuredClone(params), {
+      timeoutMs: 5000,
+      ...(signal ? { signal } : {}),
+    });
+    if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError");
+    if (!this.#ready || this.#epoch !== epoch) throw new Error("UI form session retired.");
+    if (!validUiFormWireV2("result", result, params))
+      throw new TypeError("Invalid UI form result.");
+    return uiFormRequestSchemasV2["ui/formPatch"].result.parse(result);
   }
   async subscribe(
     params: UiRequestMap["ui/subscribe"]["params"],

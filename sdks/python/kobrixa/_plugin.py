@@ -210,7 +210,7 @@ class Plugin:
             return
         try:
             method = message.get("method") or self._incoming_methods.get(message.get("id"), "")
-            data_frame = method.startswith("ui/data") or message.get("params", {}).get("kind") == "ui.data"
+            data_frame = (method.startswith("ui/data") or method == "ui/formPatch") or message.get("params", {}).get("kind") == "ui.data"
             text = json.dumps(message, ensure_ascii=not data_frame, separators=(",", ":"))
             if data_frame and len(text.encode("utf-8")) > 65536:
                 raise RpcError(_INTERNAL, "UI data frame exceeds 64 KiB.")
@@ -248,7 +248,7 @@ class Plugin:
             self._validator.validate("message", message)
             method = message.get("method") or self._pending_methods.get(message.get("id"), "")
             data_event = message.get("method") == "events/deliver" and message.get("params", {}).get("kind") == "ui.data"
-            if (method.startswith("ui/data") or data_event) and frame_bytes > 65536:
+            if ((method.startswith("ui/data") or method == "ui/formPatch") or data_event) and frame_bytes > 65536:
                 error = RpcError(_INTERNAL, "UI data frame exceeds 64 KiB.")
                 if "method" not in message:
                     pending = self._pending.pop(message.get("id"), None)
@@ -436,7 +436,7 @@ class Plugin:
     async def _request(self, method: str, params: dict, timeout: float = 10):
         ui_epoch = self._ui_epoch if method.startswith("ui/") else None
         params = copy.deepcopy(params)
-        if method.startswith("ui/data") and (self._ui_version != 2 or not self._ui_data_ready):
+        if (method.startswith("ui/data") or method == "ui/formPatch") and (self._ui_version != 2 or not self._ui_data_ready):
             raise RpcError(_INVALID_REQUEST, "UI v2 data is not ready.")
         self._validate_ui(method, "params", params)
         if not valid_wire(method, "params", params):

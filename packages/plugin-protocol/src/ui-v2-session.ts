@@ -1,3 +1,4 @@
+import { uiFormRequestSchemasV2, validUiFormWireV2 } from "./ui-v2-form.js";
 import { z } from "zod";
 import { uiRequestSchemas } from "./ui-methods.js";
 import {
@@ -39,6 +40,7 @@ export const uiSubscriptionSnapshotV2Schema = uiSubscriptionSnapshotSchema.exten
 export const uiRequestSchemasV2 = {
   ...uiRequestSchemas,
   ...uiDataRequestSchemasV2,
+  ...uiFormRequestSchemasV2,
   "ui/negotiate": {
     params: z.strictObject({
       commandEnvelopeVersions: z.tuple([z.literal(1)]),
@@ -88,6 +90,8 @@ export const uiEventEnvelopeSchemaV2 = z.union([
 export type UiEventEnvelopeV2 = z.infer<typeof uiEventEnvelopeSchemaV2>;
 export const isUiDataMethod = (method: string): boolean =>
   Object.hasOwn(uiDataRequestSchemasV2, method);
+export const isUiV2OnlyMethod = (method: string): boolean =>
+  isUiDataMethod(method) || Object.hasOwn(uiFormRequestSchemasV2, method);
 export const supportsUiV2 = (version: string): boolean =>
   /^1\.(?:[89]|[1-9][0-9]+)\.\d+$/.test(version);
 /** Semantic checks after the selected session's structural wire parser. */
@@ -97,6 +101,7 @@ export function validUiWireV2(
   value: unknown,
   params?: unknown,
 ): boolean {
+  if (method === "ui/formPatch") return validUiFormWireV2(phase, value, params);
   if (!validUiWire(method, phase, value, params)) return false;
   try {
     if (phase === "params") {

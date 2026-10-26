@@ -260,7 +260,7 @@ export async function runPlugin(
   peer.handle("ui/ready", async (_params, request) => {
     if (!negotiated || !pluginContext) return uiFailure("negotiation");
     if (!readyResult) {
-      ui.markReady();
+      ui.markReady(resourceVersion === 2 ? 2 : 1);
       peer.setUiSession(resourceVersion, true);
       if (resourceVersion === 2) data.markReady();
       const epoch = uiEpoch;

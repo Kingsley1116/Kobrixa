@@ -116,3 +116,5 @@ export * from "./ui-v2-resource.js";
 export * from "./ui-v2-methods.js";
 
 export * from "./ui-v2-session.js";
+
+export * from "./ui-v2-form.js";
