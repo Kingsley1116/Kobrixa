@@ -35,13 +35,18 @@ test("release packaging builds, validates and unpacks the same builtin leaves as
   await createPackageWithOptions(stage, archive, {
     unpack: withPersistenceWorkerUnpack(BUILTIN_PAYLOAD_UNPACK),
   });
-  for (const name of [...index.files.map((file) => file.path), "resource-index.json"]) {
-    const relative = `.vite/build/plugins/motor-test/${name}`;
-    assert.equal(statFile(archive, relative).unpacked, true);
-    assert.deepEqual(
-      await readFile(path.join(`${archive}.unpacked`, relative)),
-      await readFile(path.join(leaf, name)),
-    );
+  for (const slug of ["motor-test", "sensor-lab"]) {
+    const payload = path.join(stage, ".vite/build/plugins", slug);
+    const manifest = JSON.parse(await readFile(path.join(payload, "resource-index.json"), "utf8"));
+    assert.equal(manifest.pluginId, `kobrixa.${slug}`);
+    for (const name of [...manifest.files.map((file) => file.path), "resource-index.json"]) {
+      const relative = `.vite/build/plugins/${slug}/${name}`;
+      assert.equal(statFile(archive, relative).unpacked, true);
+      assert.deepEqual(
+        await readFile(path.join(`${archive}.unpacked`, relative)),
+        await readFile(path.join(payload, name)),
+      );
+    }
   }
   assert.equal(statFile(archive, "node_modules/native/addon.node").unpacked, true);
   assert.equal(statFile(archive, ".vite/build/persistence-worker.cjs").unpacked, true);

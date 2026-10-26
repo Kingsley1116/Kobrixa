@@ -48,6 +48,10 @@ export function parseBuiltinResourceIndex(value: unknown): BuiltinResourceIndex 
 export function declaredJsonPaths(manifest: PluginManifest): string[] {
   const declarations: Array<{ path: string; version: number }> = [];
   const contributes = manifest.contributes;
+  const uiResources = new Set([
+    ...(contributes?.panels ?? []).map((item) => item.resource),
+    ...(contributes?.status ?? []).map((item) => item.resource),
+  ]);
   for (const item of contributes?.panels ?? []) declarations.push(item.resource);
   for (const item of contributes?.status ?? []) declarations.push(item.resource);
   for (const item of contributes?.languages ?? [])
@@ -57,7 +61,7 @@ export function declaredJsonPaths(manifest: PluginManifest): string[] {
   const paths = new Set<string>();
   for (const declaration of declarations) {
     if (
-      declaration.version !== 1 ||
+      (declaration.version !== 1 && !(declaration.version === 2 && uiResources.has(declaration))) ||
       !diagnosticHelpDeclSchema.shape.path.safeParse(declaration.path).success
     )
       fail();

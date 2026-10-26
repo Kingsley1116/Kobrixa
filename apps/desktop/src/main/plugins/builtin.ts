@@ -53,37 +53,39 @@ export async function assembleBuiltinPluginSources(input: {
   appPath: string;
   buildRoot: string;
 }): Promise<readonly PluginSource[]> {
-  try {
-    const launch = await resolveBuiltinLaunch({
-      ...input,
-      slug: "motor-test",
-      pluginId: "kobrixa.motor-test",
-      sourceKey: "builtin:kobrixa.motor-test",
-    });
-    const { manifest, resources } = await validateBuiltinLeaf(launch.packageRoot, launch.pluginId);
-    return [
-      ...BUILTIN_PLUGIN_SOURCES,
-      { kind: "builtin", policy: "optional", manifest, resources, launch },
-    ];
-  } catch {
-    // Host-only pre-read failure; no error text or physical paths cross this boundary.
-    return [
-      ...BUILTIN_PLUGIN_SOURCES,
-      {
+  const sources: PluginSource[] = [...BUILTIN_PLUGIN_SOURCES];
+  for (const feature of [
+    { slug: "motor-test", en: "Motor test", zh: "馬達測試" },
+    { slug: "sensor-lab", en: "Sensor Lab", zh: "感測器實驗室" },
+  ]) {
+    const pluginId = `kobrixa.${feature.slug}`;
+    try {
+      const launch = await resolveBuiltinLaunch({
+        ...input,
+        slug: feature.slug,
+        pluginId,
+        sourceKey: `builtin:${pluginId}`,
+      });
+      const { manifest, resources } = await validateBuiltinLeaf(launch.packageRoot, pluginId);
+      sources.push({ kind: "builtin", policy: "optional", manifest, resources, launch });
+    } catch {
+      // Host-only pre-read failure; no error text or physical paths cross this boundary.
+      sources.push({
         kind: "builtin",
         policy: "optional",
         payloadUnavailable: true,
         resources: {},
         manifest: {
-          id: "kobrixa.motor-test",
+          id: pluginId,
           displayName: {
-            en: "Motor test — shipped payload unavailable or invalid",
-            "zh-TW": "馬達測試 — 隨附套件遺失或無效",
+            en: `${feature.en} — shipped payload unavailable or invalid`,
+            "zh-TW": `${feature.zh} — 隨附套件遺失或無效`,
           },
         },
-      },
-    ];
+      });
+    }
   }
+  return sources;
 }
 
 export const BUILTIN_DEVICE_PROVIDER_FACTORIES: Readonly<

@@ -165,6 +165,13 @@ export const DELIVERED_BUILTIN_PROCESS_BUILDS: readonly {
     slug: "motor-test",
     pluginId: "kobrixa.motor-test",
   },
+  {
+    entry: "../../plugins/sensor-lab/src/main.ts",
+    config: "vite.plugin-lab.config.ts",
+    target: "main",
+    slug: "sensor-lab",
+    pluginId: "kobrixa.sensor-lab",
+  },
 ]);
 export function builtinProcessBuilds(fixture: boolean) {
   // The installed acceptance fixture uses an already allowed identity without
