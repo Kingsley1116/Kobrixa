@@ -19,11 +19,12 @@ afterEach(() => {
   vi.useRealTimers();
   document.body.replaceChildren();
 });
-function setup(synchronized = false) {
+function setup(synchronized = false, derived = false) {
   const f = fixture();
   const panel: PanelResourceV2 = {
     kind: "panel",
     ...(synchronized ? { formSync: true as const } : {}),
+    ...(derived ? { derivedFormRevisionKey: "computedForm" } : {}),
     root: "root",
     fields: synchronized
       ? {
@@ -35,6 +36,20 @@ function setup(synchronized = false) {
         }
       : {},
     data: {
+      ...(derived
+        ? {
+            computedForm: {
+              schema: {
+                type: "number" as const,
+                min: 0,
+                max: Number.MAX_SAFE_INTEGER,
+                integer: true,
+                nullable: false as const,
+              },
+              initial: 0,
+            },
+          }
+        : {}),
       presentation: {
         schema: {
           type: "number",
@@ -52,7 +67,14 @@ function setup(synchronized = false) {
       code: { kind: "code" },
     },
     nodes: [
-      { id: "root", type: "group", layout: "stack", children: ["chart", "code"] },
+      {
+        id: "apply",
+        type: "action",
+        variant: "normal",
+        label: { en: "Apply" },
+        action: { kind: "command", command: "acme.ui.apply", arguments: {} },
+      },
+      { id: "root", type: "group", layout: "stack", children: ["chart", "code", "apply"] },
       {
         id: "code",
         type: "code",
@@ -95,7 +117,7 @@ function setup(synchronized = false) {
     ...snapshot(),
     form: synchronized ? { draft: "" } : {},
     visible: true,
-    data: { presentation: 1 },
+    data: { presentation: 1, ...(derived ? { computedForm: 0 } : {}) },
   };
   f.bridge.snapshot.mockResolvedValue({ ok: true, value: initial });
   const syncForm = vi.fn<NonNullable<PluginUiBridge["syncForm"]>>(async (q) => {
@@ -418,4 +440,71 @@ it("interaction commands flush a synchronized full form before next revision sub
   f.store.dispose();
   f.state.retire();
   f.data.retire();
+});
+
+it("disables command controls and fences cursors until a synchronized draft has matching computed data", async () => {
+  vi.useFakeTimers();
+  const f = setup(true, true);
+  await f.store.refresh();
+  const intent = new UiIntentController(f.bridge, f.state);
+  const div = document.createElement("div");
+  document.body.append(div);
+  const root = createRoot(div);
+  try {
+    await act(async () =>
+      root.render(
+        createElement(PanelTree, {
+          state: f.state,
+          intent,
+          locale: "en",
+          labels,
+          datasets: f.data,
+          interactions: f.store,
+        }),
+      ),
+    );
+    expect(div.querySelector<HTMLButtonElement>('[data-ui-node="apply"] button')!.disabled).toBe(
+      false,
+    );
+    await act(async () => {
+      f.state.edit("draft", "changed");
+      const flush = f.state.flushForm();
+      await vi.advanceTimersByTimeAsync(0);
+      await flush;
+    });
+    expect(f.state.formCurrent()).toBe(true);
+    expect(f.state.derivedCurrent()).toBe(false);
+    expect(div.querySelector<HTMLButtonElement>('[data-ui-node="apply"] button')!.disabled).toBe(
+      true,
+    );
+    const before = f.calls().length;
+    f.cursor(20);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(f.calls()).toHaveLength(before);
+    const current = f.state.getSnapshot().snapshot;
+    f.bridge.snapshot.mockResolvedValue({
+      ok: true,
+      value: {
+        ...current,
+        revision: current.revision + 1,
+        data: { ...current.data, computedForm: current.formRevision },
+      },
+    });
+    await act(async () => {
+      await f.state.invalidate(current.revision + 1);
+    });
+    expect(f.state.derivedCurrent()).toBe(true);
+    expect(div.querySelector<HTMLButtonElement>('[data-ui-node="apply"] button')!.disabled).toBe(
+      false,
+    );
+    f.cursor(30);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(f.calls().length).toBeGreaterThan(before);
+  } finally {
+    await act(async () => root.unmount());
+    intent.dispose();
+    f.store.dispose();
+    f.state.retire();
+    f.data.retire();
+  }
 });

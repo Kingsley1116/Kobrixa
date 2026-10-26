@@ -83,7 +83,12 @@ export class UiInteractionStore {
     const signature = JSON.stringify([
       s.snapshot.visible,
       ...(this.state.formSync
-        ? [s.localRevision, s.snapshot.formRevision, this.state.formCurrent()]
+        ? [
+            s.localRevision,
+            s.snapshot.formRevision,
+            this.state.formCurrent(),
+            this.state.derivedCurrent(),
+          ]
         : []),
       s.snapshot.data[this.resource.presentationKey],
       this.data.getSnapshot().presentation,
@@ -106,7 +111,8 @@ export class UiInteractionStore {
       !this.#alive ||
       !this.bridge.interact ||
       !this.state.getSnapshot().snapshot.visible ||
-      !this.state.formCurrent()
+      !this.state.formCurrent() ||
+      !this.state.derivedCurrent()
     )
       return;
     this.#refreshAgain = true;
@@ -215,6 +221,7 @@ export class UiInteractionStore {
     if (
       !this.#alive ||
       !this.state.formCurrent() ||
+      !this.state.derivedCurrent() ||
       !this.#snapshot.view ||
       revision === undefined ||
       (time !== null && !Number.isFinite(time))
@@ -227,7 +234,13 @@ export class UiInteractionStore {
   }
   #followCursor(): void {
     const view = this.#snapshot.view;
-    if (!this.#alive || !view || !this.#viewCurrent || !this.state.getSnapshot().snapshot.visible)
+    if (
+      !this.#alive ||
+      !view ||
+      !this.#viewCurrent ||
+      !this.state.derivedCurrent() ||
+      !this.state.getSnapshot().snapshot.visible
+    )
       return;
     const nodes = this.state.presentation(view.dialogId);
     const node = this.resource.nodes.find(
@@ -283,7 +296,8 @@ export class UiInteractionStore {
       !this.#viewCurrent ||
       !this.bridge.interact ||
       !this.#alive ||
-      !this.state.formCurrent()
+      !this.state.formCurrent() ||
+      !this.state.derivedCurrent()
     )
       return;
     this.#cursorRunning = true;

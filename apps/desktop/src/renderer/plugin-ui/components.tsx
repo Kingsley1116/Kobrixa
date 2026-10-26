@@ -337,7 +337,8 @@ export function PanelTree({
                   ? disabled ||
                     interaction.busy ||
                     !interaction.view ||
-                    (node.action.kind !== "view" && (!state.valid() || view.busy))
+                    (node.action.kind !== "view" &&
+                      (!state.valid() || view.busy || !state.derivedCurrent()))
                   : !state.actionEnabled(node.id)
             }
             data-variant={node.variant}
