@@ -1,4 +1,5 @@
 import type {
+  ConnectionRecoveryRef,
   Handle,
   Counter,
   ResourceOwner,
@@ -59,6 +60,7 @@ export type UserPersistenceActionContext = { owner: ResourceOwner; actionRef: Ha
 // Core-only action ledger validation seam; B1-T3 declarations, B1-T5 implementation.
 // Minting is deliberately absent from this consumer-facing host port.
 export type CoreActionTarget =
+  | ({ kind: "device-connection-recovery-cancel" } & ConnectionRecoveryRef)
   | { kind: "device-stop"; faultId: Handle; sessionId: Handle }
   | {
       kind: "device-reconcile";

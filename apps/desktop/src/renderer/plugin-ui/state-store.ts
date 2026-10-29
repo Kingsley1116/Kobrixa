@@ -523,7 +523,9 @@ export class UiStateStore {
     return (
       node?.type === "action" &&
       node.action.kind === "core" &&
-      ["stop", "stopRecording", "disconnect", "openRecovery"].includes(node.action.action)
+      ["stop", "stopRecording", "cancelConnectionRecovery", "disconnect", "openRecovery"].includes(
+        node.action.action,
+      )
     );
   }
   actionEnabled(id: string): boolean {

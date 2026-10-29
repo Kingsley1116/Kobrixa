@@ -622,3 +622,57 @@ it("admits an explicit derived-form correlation only on synchronized panels and 
     });
   }
 });
+
+it("connection recovery cancel is v2-only and requires the original UUID scalar slot", () => {
+  const panel = make();
+  panel.data.recovery = {
+    schema: { type: "string", maxLength: 36, nullable: true },
+    initial: null,
+  };
+  panel.nodes.push({
+    id: "cancel-recovery",
+    type: "action",
+    variant: "normal",
+    label: { en: "Cancel recovery" },
+    action: {
+      kind: "core",
+      action: "cancelConnectionRecovery",
+      recovery: { scope: "data", key: "recovery" },
+    },
+  });
+  const root = panel.nodes.find((n) => n.id === panel.root);
+  if (root?.type !== "group") throw Error("root");
+  root.children.push("cancel-recovery");
+  expect(check(panel).ok).toBe(true);
+  expect(uiResourceV1Schema.safeParse(panel).success).toBe(false);
+  const status = {
+    kind: "status",
+    tone: "neutral",
+    text: { text: { en: "Recovery" } },
+    data: { recovery: panel.data.recovery },
+    actions: [
+      {
+        id: "cancel",
+        label: { en: "Cancel" },
+        action: {
+          kind: "core",
+          action: "cancelConnectionRecovery",
+          recovery: { scope: "data", key: "recovery" },
+        },
+      },
+    ],
+  };
+  expect(check(status).ok).toBe(true);
+  for (const schema of [
+    { type: "string", maxLength: 35, nullable: true },
+    { type: "string", maxLength: 37, nullable: true },
+    { type: "string", maxLength: 36, nullable: false },
+  ])
+    expect(check({ ...status, data: { recovery: { schema, initial: null } } }).ok).toBe(false);
+  expect(
+    check({
+      ...status,
+      data: { recovery: { schema: panel.data.recovery.schema, initial: "forged" } },
+    }).ok,
+  ).toBe(false);
+});

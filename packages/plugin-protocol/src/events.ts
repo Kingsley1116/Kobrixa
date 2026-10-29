@@ -1,3 +1,7 @@
+import {
+  connectionRecoverySnapshotSchema,
+  type ConnectionRecoverySnapshot,
+} from "./device-connection-recovery.js";
 import type { Handle, ResourceOwner, Counter } from "./device-types.js";
 // 新增通用通知名稱 events/deliver；kind 決定 data 的 strict schema。
 export type EventKindV150 =
@@ -9,7 +13,8 @@ export type EventKindV150 =
   | "devices.recordingFrames"
   | "devices.authority"
   | "events.resyncRequired";
-export type EventKind = EventKindV150 | UiEvent["kind"] | "ui.data" | "settings.changed"; // 後續 API 批次由唯一 registry 擴充。
+export type EventKind =
+  "devices.connectionRecovery" | EventKindV150 | UiEvent["kind"] | "ui.data" | "settings.changed"; // 後續 API 批次由唯一 registry 擴充。
 export type EventEnvelope<Data> = {
   version: 1;
   subscriptionId: Handle;
@@ -24,7 +29,7 @@ import type { UiEvent } from "./ui-types.js";
 import { settingsChangedSchema } from "./settings.js";
 import type { SettingsRevision, Version, SettingKey } from "./settings.js";
 
-export type Stage3EventData = {
+export type Stage3EventData = { "devices.connectionRecovery": ConnectionRecoverySnapshot } & {
   [K in keyof typeof deviceEventDataSchemas]: z.output<(typeof deviceEventDataSchemas)[K]>;
 } & {
   [K in keyof typeof uiEventDataSchemas]: z.output<(typeof uiEventDataSchemas)[K]>;
@@ -117,3 +122,11 @@ export const eventEnvelopeSchema = z.discriminatedUnion("kind", [
 export type DeviceEvent = z.output<typeof eventEnvelopeSchema>;
 
 export type Stage3EventEnvelope = z.output<typeof eventEnvelopeSchema>;
+
+export const eventEnvelopeSchemaV180 = z.discriminatedUnion("kind", [
+  ...eventEnvelopeSchema.options,
+  event("devices.connectionRecovery", "control", connectionRecoverySnapshotSchema),
+]);
+export type DeviceEventV180 = z.output<typeof eventEnvelopeSchemaV180>;
+
+export type Stage3EventEnvelopeV180 = z.output<typeof eventEnvelopeSchemaV180>;

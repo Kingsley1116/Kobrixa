@@ -10,15 +10,18 @@ class EventInbox:
         self._owner=dict(owner)
         self._acks=set()
         self._terminal_handler = None
+        self._terminal_pending = 0
         self._terminal_jobs = []
         self._early_terminal = {}
         self._cancelled_early = set()
         self._ack=ack;self._enabled=False;self._pending=0;self._early=[];self._slots={};self._validator=Validator.bundled()
     def enable(self): self._enabled=True
-    def begin_subscription(self):
+    def begin_subscription(self,terminal=False):
         self._pending+=1
+        if terminal:self._terminal_pending+=1
         def finish():
             self._pending-=1
+            if terminal:self._terminal_pending-=1
             if not self._pending:
                 self._early=[]
                 self._early_terminal.clear()
@@ -33,14 +36,17 @@ class EventInbox:
         if run is not None: job['late'].append(run)
         job['wake'].set()
 
-    def open(self,id,listener,resync,sequence=0):
+    def open(self,id,listener,resync,sequence=0,on_terminal=None,cleanup=None):
         if len(self._slots)>=32: raise ValueError('Subscription queue full')
-        self._slots[id]={'last':sequence,'watermark':sequence,'owner':None,'queue':[],'bytes':0,'controls':0,'task':None,'terminal':False,'listener':listener,'resync':resync}
+        self._slots[id]={'last':sequence,'watermark':sequence,'owner':None,'queue':[],'bytes':0,'controls':0,'task':None,'terminal':False,'listener':listener,'resync':resync,'on_terminal':on_terminal,'cleanup':cleanup,'closing':None}
         terminal = self._early_terminal.get(id)
         if terminal is not None:
             slot = self._slots[id]
             slot['terminal'] = True
+            self._cleanup_terminal(slot)
             job = next((job for job in self._terminal_jobs if job['event'] is terminal), None)
+            if job is not None and on_terminal is not None:
+                job['late'].append(lambda: self._finish_terminal(id,slot,terminal))
             if job is not None and terminal['subscriptionId'] == id:
                 job['carrier'] = slot
                 job['carrier_ready'].set()
@@ -48,17 +54,28 @@ class EventInbox:
         for event in early:
             if event['subscriptionId']==id: self.accept(event)
             else: self._early.append(event)
+    def _cleanup_terminal(self,slot):
+        if slot['closing'] is None and slot['cleanup'] is not None:
+            slot['closing']=slot['cleanup']()
+    async def _finish_terminal(self,id,slot,event):
+        if slot['task'] is not None: await asyncio.gather(asyncio.shield(slot['task']),return_exceptions=True)
+        if slot['closing'] is not None:await asyncio.gather(asyncio.shield(slot['closing']),return_exceptions=True)
+        if self._slots.get(id) is not slot:return
+        self.close(id)
+        result=slot['on_terminal'](event)
+        if inspect.isawaitable(result):await result
+
     def reconcile(self,id,sequence):
         slot=self._slots.get(id)
         if slot is None or sequence < slot['watermark']: return
         slot['watermark']=sequence
         slot['last']=max(slot['last'],sequence)
     def last(self,id): return self._slots.get(id,{}).get('last',0)
-    def close(self,id):
+    def close(self,id,cancel_running=True):
         if id in self._early_terminal: self._cancelled_early.add(id)
         slot=self._slots.pop(id,None)
         self._early=[event for event in self._early if event['subscriptionId']!=id]
-        if slot and slot['task'] and slot['task'] is not asyncio.current_task(): slot['task'].cancel()
+        if cancel_running and slot and slot['task'] and slot['task'] is not asyncio.current_task(): slot['task'].cancel()
     def accept(self,event):
         if not self._enabled: return False
         try: self._validator.validate('events/deliver.params',event)
@@ -66,7 +83,7 @@ class EventInbox:
         if event['owner']!=self._owner: return False
         event = copy.deepcopy(event)
         slot=self._slots.get(event['subscriptionId']);size=_size(event)
-        if event['kind'] == 'events.resyncRequired' and self._terminal_handler is not None:
+        if event['kind'] == 'events.resyncRequired' and (self._terminal_handler is not None or self._terminal_pending or (slot is not None and slot['on_terminal'] is not None) or any(self._slots.get(id,{}).get('on_terminal') is not None for id in event['data']['affected'])):
             if ((slot is None and not self._pending) or (slot is not None and (slot['terminal'] or event['sequence'] <= slot['last'])) or
                 any(job['event']['subscriptionId'] == event['subscriptionId'] for job in self._terminal_jobs) or
                 event['subscriptionId'] in self._early_terminal): return False
@@ -78,16 +95,21 @@ class EventInbox:
             self._terminal_jobs.append(job)
             if slot is not None: slot['last'] = event['sequence']
             for id in event['data']['affected']:
-                if id in self._slots: self._slots[id]['terminal'] = True
+                if id in self._slots:
+                    affected_slot=self._slots[id]
+                    affected_slot['terminal']=True
+                    self._cleanup_terminal(affected_slot)
+                    if affected_slot['on_terminal'] is not None:
+                        job['late'].append(lambda id=id,slot=affected_slot: self._finish_terminal(id,slot,event))
             if self._pending:
                 for id in event['data']['affected']: self._early_terminal[id] = event
             task = asyncio.create_task(self._ack_safe(event['subscriptionId'], event['sequence']))
             self._acks.add(task); task.add_done_callback(self._acks.discard)
-            ui = self._terminal_handler(event)
+            ui = self._terminal_handler(event) if self._terminal_handler is not None else None
             async def legacy():
                 if job['carrier'] is None and self._pending: await job['carrier_ready'].wait()
                 slot = job['carrier']
-                if slot is None or self._slots.get(event['subscriptionId']) is not slot: return
+                if slot is None or slot['on_terminal'] is not None or self._slots.get(event['subscriptionId']) is not slot: return
                 if slot['task'] is not None:
                     await asyncio.gather(asyncio.shield(slot['task']), return_exceptions=True)
                 if self._slots.get(event['subscriptionId']) is not slot: return
@@ -133,10 +155,12 @@ class EventInbox:
     async def _pump(self,slot):
         try:
             while slot['queue']:
+                if slot['terminal'] and slot['on_terminal'] is not None:return
                 event,gap=slot['queue'][0]
                 try:
                     if self._slots.get(event['subscriptionId']) is not slot: return
                     if gap or event['kind']=='events.resyncRequired':await slot['resync']()
+                    if slot['terminal'] and slot['on_terminal'] is not None:return
                     if self._slots.get(event['subscriptionId']) is not slot: return
                     if event['sequence']>slot['watermark']:
                         result=slot['listener'](event)

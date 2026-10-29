@@ -1,11 +1,12 @@
 import type { RpcPeer } from "@kobrixa/plugin-protocol";
 import {
-  type DeviceMethod,
-  type DeviceParams,
-  type DeviceResult,
-  type DeviceEvent,
-  type DeviceSubscriptionParams,
-  type DeviceSubscriptionSnapshot,
+  supportsConnectionRecovery,
+  type DeviceMethodV180 as DeviceMethod,
+  type DeviceParamsV180 as DeviceParams,
+  type DeviceResultV180 as DeviceResult,
+  type DeviceEventV180 as DeviceEvent,
+  type DeviceSubscriptionParamsV180 as DeviceSubscriptionParams,
+  type DeviceSubscriptionSnapshotV180 as DeviceSubscriptionSnapshot,
   type BusinessResult,
   type DeviceFailureDetail,
 } from "@kobrixa/plugin-protocol";
@@ -33,11 +34,33 @@ const unavailable = {
     },
   },
 } as const;
+const lifetimes = new WeakMap<RpcPeer, { retire(): void; initialized(version: string): void }>();
+export function retireDevicesClient(peer: RpcPeer): void {
+  lifetimes.get(peer)?.retire();
+}
+export function initializeDevicesClient(peer: RpcPeer, version: string): void {
+  lifetimes.get(peer)?.initialized(version);
+}
 export function createDevicesClient(peer: RpcPeer, ready: Promise<string>): DevicesClient {
   let version: string | null = null,
     negotiation: Promise<DeviceResult<"devices/negotiate">> | null = null;
+  let epoch = 0;
+  const observers = new Set<() => void>();
+  let cleanupTail: Promise<unknown> = Promise.resolve();
+  lifetimes.set(peer, {
+    retire() {
+      epoch++;
+      version = null;
+      negotiation = null;
+      for (const retire of [...observers]) retire();
+    },
+    initialized(value) {
+      version = value;
+    },
+  });
+  const initialEpoch = epoch;
   void ready.then((value) => {
-    version = value;
+    if (epoch === initialEpoch) version = value;
   });
   const timeout = (method: DeviceMethod) =>
     ["devices/connect", "devices/disconnect", "devices/inputModes/set"].includes(method)
@@ -62,15 +85,17 @@ export function createDevicesClient(peer: RpcPeer, ready: Promise<string>): Devi
       (version.startsWith("1.") && Number(version.split(".")[1]) < 5)
     )
       return unavailable;
+    const admittedEpoch = epoch;
     if (!negotiation)
       negotiation = send("devices/negotiate", {})
         .then((result) => {
+          if (epoch !== admittedEpoch) return unavailable;
           if (!result.ok) negotiation = null;
           else if (eventChannelBound(peer)) inbox().enable();
           return result;
         })
         .catch((error: unknown) => {
-          negotiation = null;
+          if (epoch === admittedEpoch) negotiation = null;
           throw error;
         });
     return negotiation;
@@ -78,7 +103,14 @@ export function createDevicesClient(peer: RpcPeer, ready: Promise<string>): Devi
   const call =
     <M extends DeviceMethod>(method: M): Call<M> =>
     async (params, signal) => {
+      if (
+        method === "devices/connectionRecovery/read" &&
+        (!version || !supportsConnectionRecovery(version))
+      )
+        return unavailable as DeviceResult<M>;
+      if (signal?.aborted) throw signal.reason ?? new Error("Cancelled");
       const status = await negotiate();
+      if (signal?.aborted) throw signal.reason ?? new Error("Cancelled");
       if (!status.ok) return status as DeviceResult<M>;
       return send(method, params, signal);
     };
@@ -98,6 +130,7 @@ export function createDevicesClient(peer: RpcPeer, ready: Promise<string>): Devi
       query: call("devices/motion/query"),
       stop: call("devices/motion/stop"),
     },
+    connectionRecovery: { read: call("devices/connectionRecovery/read") },
     recording: {
       reserve: call("devices/recording/reserve"),
       query: call("devices/recording/query"),
@@ -109,28 +142,88 @@ export function createDevicesClient(peer: RpcPeer, ready: Promise<string>): Devi
       listener: (event: DeviceEvent) => void | Promise<void>,
       signal?: AbortSignal,
     ): Promise<BusinessResult<DeviceSubscription, DeviceFailureDetail>> {
+      params = structuredClone(params);
+      if (
+        params.topic === "connectionRecovery" &&
+        (!version || !supportsConnectionRecovery(version))
+      )
+        return unavailable;
+      if (signal?.aborted) throw signal.reason ?? new Error("Cancelled");
       const status = await negotiate();
+      if (signal?.aborted) throw signal.reason ?? new Error("Cancelled");
       if (!status.ok) return status;
       if (!eventChannelBound(peer)) return unavailable;
-      const finish = inbox().beginSubscription();
+      const recovery = params.topic === "connectionRecovery";
+      const ownerEpoch = epoch;
+      const originalInbox = inbox();
+      const live = () => !peer.closed && epoch === ownerEpoch && peer.connectionRecoveryReady;
+      const finish = originalInbox.beginSubscription(recovery);
       try {
         const result = await send("devices/subscribe", params, signal);
         if (!result.ok) return result;
         const id = result.value.subscriptionId;
         let snapshot = result.value.snapshot;
+        let disposed = false,
+          terminal = false;
+        let cleanup: Promise<DeviceResult<"events/unsubscribe">> | undefined;
+        const closeHost = () => {
+          if (!cleanup) {
+            const pending = cleanupTail.then(() =>
+              peer.closed ? unavailable : send("events/unsubscribe", { subscriptionId: id }),
+            );
+            // One source can have 32 affected observers but only a bounded RPC
+            // window. Drain cleanup independently of user callbacks, in order.
+            cleanupTail = pending.catch(() => {});
+            cleanup = pending;
+            void pending.then(
+              (result) => {
+                if (!result.ok && cleanup === pending) cleanup = undefined;
+              },
+              () => {
+                if (cleanup === pending) cleanup = undefined;
+              },
+            );
+          }
+          return cleanup;
+        };
+        const retire = () => {
+          disposed = true;
+          originalInbox.close(id);
+          observers.delete(retire);
+          void closeHost();
+        };
+        const current = () => !disposed && !terminal && live();
+        if (recovery) {
+          if (!live()) {
+            retire();
+            return unavailable;
+          }
+          observers.add(retire);
+        }
         const refresh = async () => {
-          const current =
-            params.topic === "catalog"
-              ? await client.list({})
-              : params.topic === "session" || params.topic === "telemetry"
-                ? await client.session({ sessionId: params.sessionId })
-                : params.topic === "motion"
-                  ? await client.motion.query({ operationId: params.operationId })
-                  : params.topic === "reservation"
-                    ? await client.recording.query({ reservationId: params.reservationId })
-                    : await client.context({ contextRef: params.contextRef });
-          if (current.ok) {
-            const value = current.value;
+          if (recovery && !current()) return;
+          const refreshed =
+            params.topic === "connectionRecovery"
+              ? await client.connectionRecovery.read({})
+              : params.topic === "catalog"
+                ? await client.list({})
+                : params.topic === "session" || params.topic === "telemetry"
+                  ? await client.session({ sessionId: params.sessionId })
+                  : params.topic === "motion"
+                    ? await client.motion.query({ operationId: params.operationId })
+                    : params.topic === "reservation"
+                      ? await client.recording.query({ reservationId: params.reservationId })
+                      : await client.context({ contextRef: params.contextRef });
+          if (recovery && !(!disposed && !terminal && live())) return;
+          if (refreshed.ok) {
+            const value = refreshed.value;
+            if (
+              params.topic === "connectionRecovery" &&
+              "hostEpoch" in snapshot &&
+              "hostEpoch" in value &&
+              (value.hostEpoch !== snapshot.hostEpoch || value.revision < snapshot.revision)
+            )
+              return;
             snapshot =
               "operation" in value
                 ? value.operation
@@ -139,7 +232,42 @@ export function createDevicesClient(peer: RpcPeer, ready: Promise<string>): Devi
                   : value;
           }
         };
-        inbox().open(id, listener, refresh);
+        originalInbox.open(
+          id,
+          async (event) => {
+            if (recovery && !current()) {
+              retire();
+              return;
+            }
+            if (
+              params.topic === "connectionRecovery" &&
+              event.kind === "devices.connectionRecovery"
+            ) {
+              if (
+                "hostEpoch" in snapshot &&
+                (event.data.hostEpoch !== snapshot.hostEpoch ||
+                  event.data.revision < snapshot.revision)
+              )
+                return;
+              snapshot = event.data;
+            }
+            await listener(event);
+          },
+          refresh,
+          0,
+          recovery
+            ? async (event) => {
+                observers.delete(retire);
+                if (!disposed && live()) await listener(event);
+              }
+            : undefined,
+          recovery
+            ? () => {
+                terminal = true;
+                return closeHost();
+              }
+            : undefined,
+        );
         return {
           ok: true,
           value: {
@@ -148,11 +276,15 @@ export function createDevicesClient(peer: RpcPeer, ready: Promise<string>): Devi
               return snapshot;
             },
             get lastSequence() {
-              return inbox().last(id);
+              return originalInbox.last(id);
             },
             async dispose() {
+              if (recovery) {
+                retire();
+                return closeHost();
+              }
               const ended = await send("events/unsubscribe", { subscriptionId: id });
-              if (ended.ok) inbox().close(id);
+              if (ended.ok) originalInbox.close(id);
               return ended;
             },
           },
@@ -165,6 +297,7 @@ export function createDevicesClient(peer: RpcPeer, ready: Promise<string>): Devi
   return client;
 }
 export interface DevicesClient {
+  connectionRecovery: { read: Call<"devices/connectionRecovery/read"> };
   negotiate(): Promise<DeviceResult<"devices/negotiate">>;
   context: Call<"devices/context">;
   list: Call<"devices/list">;
@@ -192,3 +325,9 @@ export interface DevicesClient {
     signal?: AbortSignal,
   ): Promise<BusinessResult<DeviceSubscription, DeviceFailureDetail>>;
 }
+
+export type {
+  ConnectionRecoveryRef,
+  ConnectionRecovery,
+  ConnectionRecoverySnapshot,
+} from "@kobrixa/plugin-protocol";

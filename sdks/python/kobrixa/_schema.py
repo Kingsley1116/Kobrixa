@@ -113,6 +113,10 @@ class Validator:
             raise SchemaError(errors[0])
         _device_semantics(name, value)
         _persistence_semantics(name, value)
+        from ._connection_recovery import validate_snapshot
+        if name == "connection-recovery-snapshot": validate_snapshot(value)
+        if name == "devices/connectionRecovery/read.result" and value.get("ok"): validate_snapshot(value["value"])
+        if name == "events/deliver.params" and value.get("kind") == "devices.connectionRecovery": validate_snapshot(value["data"])
 
     def _check(self, schema: dict, value, path: str) -> list:
         if schema is False: return [f"{path}: forbidden value"]

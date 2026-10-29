@@ -1,3 +1,4 @@
+from ._connection_recovery import supported as recovery_supported, request as recovery_request, validate_result as validate_recovery_result
 import copy
 from ._ui_data import validate_read, validate_snapshot
 from ._ui_v2_data import validate_header, validate_chunk
@@ -100,6 +101,11 @@ class Plugin:
         self._context_commands = ContextCommands(lambda: self.plugin_id)
         self.ui = Ui(self._request, ui_event_client_port(self))
         self._host_api_version = "0.0.0"
+        self._recovery_candidate = False
+        self._recovery_ready = False
+        self._device_epoch = 0
+        self._device_topics = {}
+        self._device_inputs = {}
         self._drain_handler = None
         self._ready_callback = None
         self._deactivate_callback = None
@@ -167,11 +173,26 @@ class Plugin:
             if text is None:
                 break  # The host closed stdin: exit so no orphan process remains.
             self._receive(text)
+        self._retire_devices(False)
         self._retire_ui()
         self._stopping = True  # Nothing is sent after exit or EOF, including cancellation replies.
         close_event_channel(self)
         for task in list(self._tasks.values()):
             task.cancel()
+
+    def _retire_devices(self,reachable=True):
+        self.devices.retire(reachable)
+        self._device_epoch += 1
+        self._recovery_candidate = False
+        self._recovery_ready = False
+        self._device_topics.clear()
+
+    def _observe_device_result(self, method, result, params):
+        if method == "devices/negotiate": self._recovery_ready = self._recovery_candidate and result.get("ok", False)
+        if method == "devices/subscribe" and result.get("ok"):
+            self._device_topics[result["value"]["subscriptionId"]] = params["topic"]
+        if method == "events/unsubscribe" and result.get("ok"):
+            self._device_topics.pop(params["subscriptionId"], None)
 
     def _ui_v2_candidate(self):
         parts = self._host_api_version.split(".")
@@ -181,7 +202,17 @@ class Plugin:
         name = f"{method}.{phase}"
         if self._validator.has(f"{method}.v1.{phase}") and not (self._ui_v2_candidate() if method == "ui/negotiate" else self._ui_version == 2):
             name = f"{method}.v1.{phase}"
+        if not self._recovery_candidate and self._validator.has(f"{method}.v170.{phase}"):
+            name = f"{method}.v170.{phase}"
         self._validator.validate(name, value)
+        if phase == "result" and self._recovery_candidate:
+            validate_recovery_result(method, value, params)
+        if method == "events/deliver" and phase == "params":
+            topic = self._device_topics.get(value["subscriptionId"])
+            if value["kind"] == "devices.connectionRecovery" and (not self._recovery_ready or topic != "connectionRecovery" or value["data"]["hostEpoch"] != value["owner"]["hostEpoch"]):
+                raise SchemaError("Recovery event is not correlated to a current subscription")
+            if topic == "connectionRecovery" and value["kind"] not in ("devices.connectionRecovery", "events.resyncRequired"):
+                raise SchemaError("Wrong recovery event topic")
         if not valid_wire(method, phase, value, params):
             raise SchemaError("Invalid UI semantics")
         if phase == "params":
@@ -227,6 +258,7 @@ class Plugin:
                 remaining = remaining[written:]
             self._output.flush()
         except OSError:
+            self._retire_devices(False)
             self._retire_ui()
             close_event_channel(self)
             self._stopping = True  # The host closed the pipe; the read loop ends on EOF.
@@ -265,6 +297,7 @@ class Plugin:
                                 "error": {"code": _INVALID_REQUEST,
                                           "message": "Duplicate request id."}})
                     return
+                if method in ("initialize", "shutdown"): self._retire_devices()
                 task = asyncio.ensure_future(self._handle(message))
                 self._tasks[request_id] = task
                 task.add_done_callback(lambda done: self._finished(request_id, method, done))
@@ -278,14 +311,28 @@ class Plugin:
                     if task:
                         task.cancel()
                 elif method == "events/deliver":
+                    if params["kind"] == "events.resyncRequired" and params["subscriptionId"] in self._device_topics:
+                        for id in [params["subscriptionId"], *params["data"]["affected"]]:
+                            if self._device_topics.get(id) == "connectionRecovery": self._device_topics.pop(id, None)
                     self.devices.inbox.accept(params) if self.devices.inbox is not None else None
                 elif method == "exit":
+                    self._retire_devices(False)
                     self._retire_ui()
                     close_event_channel(self)
                     self._stopping = True
             else:
                 future = self._pending.pop(message["id"], None)
                 if future and not future.done():
+                    original = self._device_inputs.get(message["id"])
+                    if original and "result" in message:
+                        original_method, original_params, original_epoch = original
+                        try:
+                            if original_epoch != self._device_epoch: raise SchemaError("Device session retired")
+                            self._validate_ui(original_method, "result", message["result"], original_params)
+                            self._observe_device_result(original_method, message["result"], original_params)
+                        except (ValueError, SchemaError) as error:
+                            future.set_exception(error)
+                            return
                     future.set_result(message)
         except (ValueError, SchemaError) as error:
             print(f"kobrixa: ignored invalid message from host: {error}", file=sys.stderr)
@@ -350,7 +397,9 @@ class Plugin:
     async def _handle(self, message: dict) -> None:
         request_id, method = message["id"], message["method"]
         self._incoming_methods[request_id] = method
+        if method in ("initialize", "shutdown"): self._retire_devices()
         epoch = self._ui_epoch
+        device_epoch = self._device_epoch
         try:
             if not self._validator.has(f"{method}.params") or method == "ui/showMessage":
                 raise RpcError(_METHOD_NOT_FOUND, f"Unknown method {method}.")
@@ -365,7 +414,11 @@ class Plugin:
             self._validate_ui(method, "result", result, params)
             if not valid_wire(method, "result", result, params):
                 raise RpcError(_INTERNAL, "Invalid UI result.")
+            if method == "initialize" and device_epoch != self._device_epoch: raise asyncio.CancelledError()
             self._send({"jsonrpc": "2.0", "id": request_id, "result": result})
+            if method == "initialize" and not self._stopping:
+                self._recovery_candidate = recovery_supported(params["apiVersion"]) and recovery_supported(result["apiVersion"])
+                self.devices.initialized(params["apiVersion"])
         except asyncio.CancelledError:
             if method == "ui/ready" and epoch == self._ui_epoch: self._retire_ui()
             self._send({"jsonrpc": "2.0", "id": request_id,
@@ -385,7 +438,6 @@ class Plugin:
             self.plugin_id, self.locale = params["pluginId"], params["locale"]
             self._host_api_version = params["apiVersion"]
             self._retire_ui()
-            asyncio.get_running_loop().call_soon(self.devices.initialized, params["apiVersion"])
             return {"apiVersion": API_VERSION, "sdk": {"name": "kobrixa-plugin-sdk", "version": SDK_VERSION}}
         if method == "storage/drain":
             if not _supports_persistence(self._host_api_version) or self._drain_handler is None:
@@ -398,6 +450,7 @@ class Plugin:
             await handler(CommandContext(self))
             return None
         if method == "shutdown":
+            self._retire_devices()
             self._retire_ui()
             if self._deactivate_callback is not None:
                 await self._deactivate_callback()
@@ -436,6 +489,9 @@ class Plugin:
     async def _request(self, method: str, params: dict, timeout: float = 10):
         ui_epoch = self._ui_epoch if method.startswith("ui/") else None
         params = copy.deepcopy(params)
+        device_epoch = self._device_epoch
+        if recovery_request(method, params) and not self._recovery_ready:
+            raise RpcError(_INVALID_REQUEST, "Connection recovery is not negotiated.")
         if (method.startswith("ui/data") or method == "ui/formPatch") and (self._ui_version != 2 or not self._ui_data_ready):
             raise RpcError(_INVALID_REQUEST, "UI v2 data is not ready.")
         self._validate_ui(method, "params", params)
@@ -447,6 +503,8 @@ class Plugin:
         future = self._loop.create_future()
         self._pending[request_id] = future
         self._pending_methods[request_id] = method
+        if method.startswith("devices/") or method == "events/unsubscribe":
+            self._device_inputs[request_id] = (method, copy.deepcopy(params), device_epoch)
         try:
             self._send({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
             reply = await asyncio.wait_for(future, timeout)
@@ -456,6 +514,9 @@ class Plugin:
         finally:
             self._pending.pop(request_id, None)
             self._pending_methods.pop(request_id, None)
+            self._device_inputs.pop(request_id, None)
+        if (method.startswith("devices/") or method == "events/unsubscribe") and device_epoch != self._device_epoch:
+            raise RpcError(_CANCELLED, "Device session retired.")
         # Check after the await, before interpreting either success or error
         # using the current session's schemas. Non-UI replies are unaffected.
         if ui_epoch is not None and ui_epoch != self._ui_epoch:

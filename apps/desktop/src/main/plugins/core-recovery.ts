@@ -629,3 +629,96 @@ export function createPersistenceRecoveryBridge170(input: {
     },
   };
 }
+
+import {
+  connectionRecoveryRefSchema,
+  handleSchema,
+  resourceFailure,
+  uiRequestSchemas,
+  validateConnectionRecoverySnapshot,
+  type CommandValue,
+  type ResourceOwner,
+  type Result,
+} from "@kobrixa/plugin-protocol";
+import {
+  sameResourceOwner,
+  type DeviceConnectionRecoveryPort,
+  type Principal,
+} from "@kobrixa/plugin-runtime";
+
+/** Called only after the trusted bridge re-resolves the original visible declaration.
+ * The public recovery UUID is a selector, never cancellation authority. */
+export async function cancelUiConnectionRecovery(input: {
+  owner: ResourceOwner;
+  recoveryId: unknown;
+  recovery: DeviceConnectionRecoveryPort | undefined;
+  principal(): Principal;
+  hasPermission(principal: Principal, permission: "devices.read"): boolean;
+  current(): boolean;
+  scope(): CoreWindowScope;
+  currentScope(scope: CoreWindowScope): boolean;
+  actions: CoreActionLedger;
+}): Promise<Result<CommandValue>> {
+  let token: CoreActionReference | undefined;
+  try {
+    const id = handleSchema.safeParse(input.recoveryId);
+    if (!id.success || !input.recovery) return resourceFailure("stale");
+    const scope = structuredClone(input.scope());
+    const current = () => {
+      const principal = input.principal();
+      const nextScope = input.scope();
+      return (
+        input.current() &&
+        input.currentScope(scope) &&
+        nextScope.hostEpoch === scope.hostEpoch &&
+        nextScope.workbenchInstance === scope.workbenchInstance &&
+        scope.hostEpoch === input.owner.hostEpoch &&
+        principal.kind === "plugin" &&
+        sameResourceOwner(principal.owner, input.owner) &&
+        input.hasPermission(principal, "devices.read")
+      );
+    };
+    if (!current()) return resourceFailure("stale");
+    const snapshot = validateConnectionRecoverySnapshot(input.recovery.snapshot());
+    const episode = snapshot.recovery;
+    if (
+      snapshot.hostEpoch !== scope.hostEpoch ||
+      !episode ||
+      episode.recoveryId !== id.data ||
+      !["waiting", "connecting", "cancel-failed"].includes(episode.phase)
+    )
+      return resourceFailure("stale");
+    const target = connectionRecoveryRefSchema.parse({
+      recoveryId: episode.recoveryId,
+      providerId: episode.providerId,
+      providerGeneration: episode.providerGeneration,
+      previousSessionId: episode.previousSessionId,
+    });
+    if (!current()) return resourceFailure("stale");
+    token = input.actions.mint(scope, { kind: "device-connection-recovery-cancel", ...target });
+    const result = await input.recovery.cancel({ target, action: token });
+    if (!current()) return resourceFailure("stale");
+    if (!result.ok)
+      return uiRequestSchemas["command/invoke"].result.parse({
+        ok: false,
+        error: { code: result.error.code, message: result.error.message },
+      });
+    const final = validateConnectionRecoverySnapshot(result.value);
+    if (
+      final.hostEpoch !== snapshot.hostEpoch ||
+      final.revision < snapshot.revision ||
+      !final.recovery ||
+      final.recovery.phase !== "cancelled" ||
+      final.recovery.recoveryId !== target.recoveryId ||
+      final.recovery.providerId !== target.providerId ||
+      final.recovery.providerGeneration !== target.providerGeneration ||
+      final.recovery.previousSessionId !== target.previousSessionId
+    )
+      return resourceFailure("stale");
+    return { ok: true, value: { output: {}, fieldErrors: [] } };
+  } catch {
+    return resourceFailure("stale");
+  } finally {
+    if (token) input.actions.complete(token);
+  }
+}

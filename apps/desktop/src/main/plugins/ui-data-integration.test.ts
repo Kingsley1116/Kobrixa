@@ -16,6 +16,7 @@ import {
 import {
   ChannelActivation,
   registerActivationDeadline,
+  type DeviceConnectionRecoveryPort,
   type Stage3ChannelContext,
   type UiRuntimeAttachment,
 } from "@kobrixa/plugin-runtime";
@@ -45,6 +46,8 @@ async function harness(
     version?: string;
     resourceVersion?: 1 | 2;
     formSync?: boolean;
+    recovery?: boolean;
+    core?: Parameters<typeof createUiExecutionAdapter>[0]["core"];
     ready?: (ctx: PluginContext) => Promise<void>;
   } = {},
 ) {
@@ -89,7 +92,9 @@ async function harness(
   host.handle("events/ack", ({ subscriptionId, sequence }) =>
     ledger.ack(owner, subscriptionId, sequence),
   );
-  host.handle("events/unsubscribe", ({subscriptionId}) => ledger.unsubscribe(owner,subscriptionId));
+  host.handle("events/unsubscribe", ({ subscriptionId }) =>
+    ledger.unsubscribe(owner, subscriptionId),
+  );
   const context: Stage3ChannelContext = {
     peer: host,
     owner,
@@ -142,7 +147,7 @@ async function harness(
     runtime,
     scope: () => scope,
     now: () => now,
-    core: async () => ({ ok: true, value: { output: {}, fieldErrors: [] } }),
+    core: options.core ?? (async () => ({ ok: true, value: { output: {}, fieldErrors: [] } })),
   });
   const events = new UiBridgeEvents(() => []);
   const intent = new UiIntent(
@@ -221,6 +226,26 @@ async function harness(
     resource.nodes.push({ id: "input", type: "textInput", field: "value", label: { en: "Value" } });
     const root = resource.nodes[0];
     if (root?.type === "group") root.children.push("input");
+  }
+  if (options.recovery) {
+    resource.data.recovery = {
+      schema: { type: "string", maxLength: 36, nullable: true },
+      initial: null,
+    };
+    resource.nodes.push({
+      id: "cancel",
+      type: "action",
+      variant: "normal",
+      label: { en: "Cancel recovery" },
+      enabledWhen: { op: "eq", left: { scope: "data", key: "presentation" }, right: 99 },
+      action: {
+        kind: "core",
+        action: "cancelConnectionRecovery",
+        recovery: { scope: "data", key: "recovery" },
+      },
+    });
+    const root = resource.nodes[0];
+    if (root?.type === "group") root.children.push("cancel");
   }
   const resourceVersion = options.resourceVersion ?? 2;
   const admittedResource =
@@ -678,4 +703,97 @@ it("catalog removal physically withdraws old data and staging registrations", as
   expect(h.states.instances(h.owner)).toEqual([]);
   expect((await h.ctx.ui.data.commit({ binding, dataset: "code", transfer })).ok).toBe(false);
   expect((await h.bridge.dataSnapshot({ binding })).ok).toBe(false);
+});
+
+import { createCoreActionLedger, cancelUiConnectionRecovery } from "./core-recovery.js";
+it("actual UI SDK publication/current main bridge dispatches recovery core cancellation without form admission", async () => {
+  const scope = { hostEpoch: id(1), workbenchInstance: id(3) };
+  const actions = createCoreActionLedger({ now: () => 0, current: () => true });
+  const ref = {
+    recoveryId: id(30),
+    providerId: "test.usb",
+    providerGeneration: 3,
+    previousSessionId: id(31),
+  };
+  const cancel = vi.fn(
+    async ({ target, action }: Parameters<DeviceConnectionRecoveryPort["cancel"]>[0]) => {
+      expect(actions.claim(action, { kind: "device-connection-recovery-cancel", ...target })).toBe(
+        true,
+      );
+      return {
+        ok: true as const,
+        value: {
+          hostEpoch: id(1),
+          revision: 2,
+          recovery: {
+            ...ref,
+            name: "USB",
+            retryLimit: 3 as const,
+            attemptsStarted: 1,
+            phase: "cancelled" as const,
+            reason: "user" as const,
+          },
+        },
+      };
+    },
+  );
+  const h = await harness({
+    formSync: true,
+    recovery: true,
+    core: (resolved) =>
+      cancelUiConnectionRecovery({
+        owner: resolved.owner,
+        recoveryId: resolved.state.data.recovery,
+        recovery: {
+          snapshot: () => ({
+            hostEpoch: id(1),
+            revision: 1,
+            recovery: {
+              ...ref,
+              name: "USB",
+              retryLimit: 3,
+              attemptsStarted: 1,
+              phase: "connecting",
+            },
+          }),
+          cancel,
+        },
+        principal: () => ({ kind: "plugin", owner: resolved.owner, authorityContext: null }),
+        hasPermission: () => true,
+        current: () => true,
+        scope: () => scope,
+        currentScope: () => true,
+        actions,
+      }),
+  });
+  const binding = value(await h.open()).binding;
+  const first = value(await h.bridge.snapshot({ binding }));
+  expect((await h.ctx.ui.patch(binding, first.revision, { recovery: ref.recoveryId })).ok).toBe(
+    true,
+  );
+  // Stale form data cannot trap Cancel, and caller supplies no action/owner authority.
+  expect(
+    (
+      await h.bridge.invoke({
+        binding,
+        nodeId: "cancel",
+        formRevision: 999,
+        form: { forged: true },
+      })
+    ).ok,
+  ).toBe(true);
+  expect(cancel).toHaveBeenCalledOnce();
+  expect(actions.count()).toBe(0);
+  expect(
+    (
+      await h.bridge.interact!({
+        kind: "core",
+        binding: { ...binding, processEpoch: id(99) },
+        actionId: "cancel",
+      })
+    ).ok,
+  ).toBe(false);
+  await h.bridge.visibility({ binding, visible: false, reason: "tab" });
+  expect((await h.bridge.interact!({ kind: "core", binding, actionId: "cancel" })).ok).toBe(false);
+  expect(cancel).toHaveBeenCalledOnce();
 });

@@ -28,7 +28,7 @@ afterEach(async () => {
   session = undefined;
   document.body.replaceChildren();
 });
-async function setup(locale: "en" | "zh-TW", withOpen = false) {
+async function setup(locale: "en" | "zh-TW", withOpen = false, recoveryCancel = false) {
   const f = fixture();
   const panelResource = await f.bridge.resource({
     sourceKey: entry.sourceKey,
@@ -88,12 +88,20 @@ async function setup(locale: "en" | "zh-TW", withOpen = false) {
             : []),
           {
             id: "stop",
-            label: { en: "Stop", "zh-TW": "停止" },
-            action: {
-              kind: "core",
-              action: "stopRecording",
-              reservation: { scope: "data", key: "reservation" },
-            },
+            label: recoveryCancel
+              ? { en: "Cancel recovery", "zh-TW": "取消重新連線" }
+              : { en: "Stop", "zh-TW": "停止" },
+            action: recoveryCancel
+              ? {
+                  kind: "core",
+                  action: "cancelConnectionRecovery",
+                  recovery: { scope: "data", key: "reservation" },
+                }
+              : {
+                  kind: "core",
+                  action: "stopRecording",
+                  reservation: { scope: "data", key: "reservation" },
+                },
           },
         ],
       },
@@ -177,4 +185,31 @@ it("status Open switches the real right-pane setting before opening its declared
     uiResourceGeneration: entry.uiResourceGeneration,
   });
   expect(session!.record(entry)).toBeDefined();
+});
+
+it("recovery status uses trusted core interaction and disables a null episode slot", async () => {
+  const f = await setup("en", false, true);
+  const button = document.querySelector("button")!;
+  expect(button.textContent).toBe("Cancel recovery");
+  await act(async () => button.click());
+  expect(f.interact).toHaveBeenCalledExactlyOnceWith({
+    kind: "core",
+    binding: f.statusBinding,
+    actionId: "stop",
+  });
+  f.bridge.snapshot.mockResolvedValue({
+    ok: true,
+    value: {
+      ...snapshot(),
+      revision: 1,
+      binding: f.statusBinding,
+      form: {},
+      data: { reservation: null },
+    },
+  });
+  await act(async () => {
+    f.emit({ type: "state", binding: f.statusBinding, revision: 1 });
+  });
+  await vi.waitFor(() => expect(button.disabled).toBe(true));
+  expect(f.bridge.invoke).not.toHaveBeenCalled();
 });

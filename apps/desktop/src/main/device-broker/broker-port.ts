@@ -5,7 +5,9 @@ import type {
   ReadSnapshot,
   SourceCatalog,
   BusinessResult,
-  DeviceRequestMap,
+  DeviceRequestMapV180 as DeviceRequestMap,
+  ConnectionRecoveryRef,
+  ConnectionRecoverySnapshot,
   Permission,
 } from "@kobrixa/plugin-protocol";
 import type {
@@ -85,6 +87,13 @@ export interface DeviceBrokerPort {
   readonly sessions: DeviceSessionControlPort;
   readonly resources: DeviceResourceParticipant;
   readonly recovery: DeviceRecoveryPort;
+  readonly connectionRecovery: {
+    snapshot(): ConnectionRecoverySnapshot;
+    cancel(input: {
+      target: ConnectionRecoveryRef;
+      action: CoreActionReference;
+    }): Promise<BusinessResult<ConnectionRecoverySnapshot, DeviceFailureDetail>>;
+  };
   request<M extends DeviceMethod>(
     principal: Principal,
     method: M,
@@ -148,6 +157,8 @@ export type DeviceBrokerOptions = {
   requirements: (owner: ResourceOwner) => readonly DeviceRequirement[] | null;
   operationGate: DeviceOperationGate;
   connectionPolicy: () => DeviceConnectionPolicy;
+  /** Host committed-policy notification; observation itself performs no reads. */
+  subscribeConnectionPolicy?: (changed: () => void) => () => void;
 };
 import { createBroker } from "./broker.js";
 import { createDeviceRecovery } from "./recovery-port.js";

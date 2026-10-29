@@ -38,7 +38,9 @@ function BoundStatus({
             disabled={
               pending.has(item.id) ||
               (item.action.action === "stopRecording" &&
-                typeof view.snapshot.data[item.action.reservation.key] !== "string")
+                typeof view.snapshot.data[item.action.reservation.key] !== "string") ||
+              (item.action.action === "cancelConnectionRecovery" &&
+                typeof view.snapshot.data[item.action.recovery.key] !== "string")
             }
             onClick={() => {
               setPending((previous) => new Set([...previous, item.id]));

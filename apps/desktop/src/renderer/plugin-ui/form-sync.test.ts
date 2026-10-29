@@ -71,7 +71,7 @@ const resource: PanelResourceV2 = {
     },
   ],
 };
-function setup(correlated = false) {
+function setup(correlated = false, recoveryCancel = false) {
   vi.useFakeTimers();
   const f = fixture();
   let host: UiStateSnapshot = {
@@ -95,6 +95,15 @@ function setup(correlated = false) {
   });
   const bridge = { ...f.bridge, syncForm };
   const selectedResource = structuredClone(resource);
+  if (recoveryCancel) {
+    const node = selectedResource.nodes.find((n) => n.id === "stop");
+    if (!node || node.type !== "action") throw Error("fixture");
+    node.action = {
+      kind: "core",
+      action: "cancelConnectionRecovery",
+      recovery: { scope: "data", key: "reservation" },
+    };
+  }
   if (correlated) {
     selectedResource.derivedFormRevisionKey = "derived";
     selectedResource.data.derived = { ...structuredClone(selectedResource.data.presentation!) };
@@ -349,5 +358,18 @@ it("keeps derived datasets stale until the same canonical draft is explicitly pu
   f.patch({ text: "backfill" });
   await f.state.invalidateForm(f.host().formRevision);
   expect(f.state.derivedCurrent()).toBe(false);
+  f.state.retire();
+});
+
+it("recovery Cancel is a safety action while canonical form synchronization is pending", async () => {
+  const f = setup(false, true);
+  f.syncForm.mockImplementation(() => new Promise(() => {}));
+  f.state.edit("text", "pending");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(f.state.formCurrent()).toBe(false);
+  expect(f.state.safetyAction("stop")).toBe(true);
+  expect(f.state.actionEnabled("stop")).toBe(true);
+  f.state.setVisible(false);
+  expect(f.state.actionEnabled("stop")).toBe(false);
   f.state.retire();
 });

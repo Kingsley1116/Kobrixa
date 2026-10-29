@@ -466,19 +466,43 @@ export class UiInteractions {
     if (
       !action ||
       action.kind !== "core" ||
-      (action.action !== "stopRecording" && action.action !== "openPanel")
+      (action.action !== "stopRecording" &&
+        action.action !== "openPanel" &&
+        action.action !== "cancelConnectionRecovery")
     )
       return stale();
+    const recoveryCancel = action.action === "cancelConnectionRecovery";
+    if (recoveryCancel && !this.#coreVisible(r, id)) return stale();
     const idKey = `${key(r.state.binding)}:${action.action}`;
     if (this.#controls.has(idKey)) return resourceFailure("queue", 1);
     this.#controls.add(idKey);
     try {
       const result = await this.ports.core(r, id);
-      if (!this.#current(r)) return stale();
+      const current = this.#current(r);
+      if (!current || (recoveryCancel && !this.#coreVisible(current, id))) return stale();
       return result.ok ? { ok: true, value: { kind: "control", accepted: true } } : result;
     } finally {
       this.#controls.delete(idKey);
     }
+  }
+  // Safety cancellation ignores enabledWhen and form validity, but never visibility.
+  #coreVisible(r: UiInteractionResolved, id: string): boolean {
+    if (!r.state.visible) return false;
+    const resource = r.resource;
+    if (resource.kind === "status") return condition(resource.visibleWhen, r.state.data, {});
+    if (!("datasets" in resource)) return false;
+    const nodes = new Map(resource.nodes.map((node) => [node.id, node]));
+    const dialog = this.#views.get(key(r.state.binding))?.view.dialogId;
+    const visit = (nodeId: string): boolean => {
+      const node = nodes.get(nodeId);
+      if (!node || !condition(node.visibleWhen, r.state.data, r.state.form)) return false;
+      if (node.id === id) return true;
+      return (
+        (node.type === "group" || (node.type === "dialog" && node.id === dialog)) &&
+        node.children.some(visit)
+      );
+    };
+    return visit(resource.root) || (!!dialog && visit(dialog));
   }
   #currentView(r: UiInteractionResolved, v: View, q: UiPanelInteraction, sync: Synced): boolean {
     const current = this.#current(r);

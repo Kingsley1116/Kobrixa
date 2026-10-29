@@ -59,12 +59,22 @@ const recordingStop = z.strictObject({
   action: z.literal("stopRecording"),
   reservation: dataRef,
 });
+const recoveryCancel = z.strictObject({
+  kind: z.literal("core"),
+  action: z.literal("cancelConnectionRecovery"),
+  recovery: dataRef,
+});
 const dialogAction = z.strictObject({
   kind: z.literal("view"),
   action: z.enum(["openDialog", "closeDialog"]),
   dialogId: localIdSchema,
 });
-export const uiActionV2Schema = z.union([uiActionSchema, recordingStop, dialogAction]);
+export const uiActionV2Schema = z.union([
+  uiActionSchema,
+  recordingStop,
+  recoveryCancel,
+  dialogAction,
+]);
 const base = {
   id: localIdSchema,
   visibleWhen: conditionSchema.exactOptional(),
@@ -144,6 +154,7 @@ export const statusResourceV2Schema = statusResourceV1Schema.extend({
             panelId: namespacedIdSchema,
           }),
           recordingStop,
+          recoveryCancel,
         ]),
       }),
     )
@@ -348,6 +359,8 @@ export function validateUiResourceV2(
         const action = entry.action;
         if (action.action === "stopRecording") {
           reservation(action.reservation, "$.actions.reservation");
+        } else if (action.action === "cancelConnectionRecovery") {
+          reservation(action.recovery, "$.actions.recovery");
         } else if (
           !action.panelId.startsWith(`${context.pluginId}.`) ||
           !context.panels.some((p) => p.id === action.panelId)
@@ -632,6 +645,8 @@ function validatePanelExtensions(
       const a = node.action;
       if (a.kind === "core" && a.action === "stopRecording") {
         reservation(a.reservation, "$.reservation");
+      } else if (a.kind === "core" && a.action === "cancelConnectionRecovery") {
+        reservation(a.recovery, "$.recovery");
       } else if (a.kind === "view") {
         if (a.action === "openDialog") openDialog(node, a.dialogId);
         else if (dialogOf.get(node.id) !== a.dialogId) fail("reference", "$.dialog.close");

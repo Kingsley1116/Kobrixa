@@ -1,3 +1,4 @@
+import { cancelUiConnectionRecovery } from "./core-recovery.js";
 import { SensorLabMigrationGate } from "./persistence/sensor-lab-migration.js";
 import { releaseUiRecording } from "./ui-bridge.js";
 import type {
@@ -1275,6 +1276,11 @@ function bindDesktopChannel(
             ...args,
             send(event) {
               if (
+                event.kind === "devices.connectionRecovery" &&
+                !context.peer.connectionRecoveryReady
+              )
+                throw new Error("Connection recovery delivery is not negotiated.");
+              if (
                 event.kind === "ui.data" &&
                 !input.data?.snapshot(event.owner, event.data.binding).ok
               )
@@ -1702,6 +1708,37 @@ export async function composeDesktopMain(
               ? resolved.resource.actions.find((value) => value.id === nodeId)?.action
               : undefined;
         if (!action || !runtime().current(resolved.owner)) return resourceFailure("stale");
+        if (action.action === "cancelConnectionRecovery") {
+          const selected = resolved.state.data[action.recovery.key];
+          const presentation =
+            resolved.resource.kind === "panel" && "presentationKey" in resolved.resource
+              ? resolved.state.data[resolved.resource.presentationKey]
+              : undefined;
+          return cancelUiConnectionRecovery({
+            owner: resolved.owner,
+            recoveryId: selected,
+            recovery: broker.connectionRecovery,
+            principal: () => input.principal(resolved.owner),
+            hasPermission: input.foundationOptions.hasPermission,
+            scope: input.scope,
+            currentScope: input.currentScope,
+            actions: coreActions,
+            current: () => {
+              const current = execution.resolve(resolved.state.binding);
+              return (
+                !!current &&
+                current.state.visible &&
+                runtime().current(resolved.owner) &&
+                sameResourceOwner(current.owner, resolved.owner) &&
+                current.resource === resolved.resource &&
+                current.state.data[action.recovery.key] === selected &&
+                (current.resource.kind !== "panel" ||
+                  !("presentationKey" in current.resource) ||
+                  current.state.data[current.resource.presentationKey] === presentation)
+              );
+            },
+          });
+        }
         if (action.action === "stopRecording")
           return releaseUiRecording({
             owner: resolved.owner,

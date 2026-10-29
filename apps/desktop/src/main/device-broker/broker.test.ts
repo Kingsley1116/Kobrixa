@@ -1,6 +1,11 @@
 import { expect, it } from "vitest";
 import type { DeviceBrokerOptions } from "./broker-port.js";
-import { createBroker, readDeviceRecoverySessions, resumeQuiescedSession } from "./broker.js";
+import {
+  createBroker,
+  readDeviceRecoverySessions,
+  resumeQuiescedSession,
+  observeBrokerLifecycle,
+} from "./broker.js";
 import { WorkbenchLifecycle } from "../window/workbench-lifecycle.js";
 const factories: Parameters<typeof createBroker>[1] = {
   recovery: ({ journal }) => ({
@@ -42,7 +47,15 @@ const signal = () => new AbortController().signal;
 function setup(
   allowed = true,
   overrides: Partial<
-    Pick<DeviceBrokerOptions, "requirements" | "operationGate" | "connectionPolicy">
+    Pick<
+      DeviceBrokerOptions,
+      | "requirements"
+      | "operationGate"
+      | "connectionPolicy"
+      | "subscribeConnectionPolicy"
+      | "coreActions"
+      | "authority"
+    >
   > = {},
 ) {
   const h = operationHarness();
@@ -640,6 +653,102 @@ it("gate loss during a file chunk prevents the next chunk but preserves exactly 
   expect(sent.filter((row) => row.step === "file-chunk")).toHaveLength(1);
   expect(sent.filter((row) => row.step === "file-close")).toHaveLength(1);
 });
+it("cancellation during source initialization closes only the acquiring connection and never publishes it", async () => {
+  const h = setup();
+  const original = h.provider.sources.bind(h.provider);
+  let entered!: () => void, release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  h.provider.sources = async (...args) => {
+    const outcome = await original(...args);
+    entered();
+    await blocked;
+    return outcome;
+  };
+  const abort = new AbortController();
+  const connecting = h.broker.request(
+    pluginPrincipal(),
+    "devices/connect",
+    {
+      target: { kind: "wifi-address", providerId: h.provider.id, address: "127.0.0.1" },
+    },
+    abort.signal,
+  );
+  await started;
+  const pending = await h.broker.request(pluginPrincipal(2), "devices/list", {}, signal());
+  expect(pending.ok && pending.value.sessions).toEqual([]);
+  abort.abort();
+  release();
+  expect(await connecting).toMatchObject({ ok: false, error: { code: "PLUGIN_E_CANCELLED" } });
+  expect(h.provider.calls.filter((call) => call === "disconnect")).toHaveLength(1);
+  const after = await h.broker.request(pluginPrincipal(), "devices/list", {}, signal());
+  expect(after.ok && after.value.sessions.some((session) => session.state === "connected")).toBe(
+    false,
+  );
+  await h.broker.resources.beginShutdown();
+});
+
+it.each(["pending", "unconfirmed"] as const)(
+  "retains %s cancellation cleanup and blocks replacement connection",
+  async (confirmation) => {
+    const h = setup();
+    const sources = h.provider.sources.bind(h.provider);
+    const disconnect = h.provider.disconnect.bind(h.provider);
+    let entered!: () => void, release!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    h.provider.sources = async (...args) => {
+      const result = await sources(...args);
+      entered();
+      await blocked;
+      return result;
+    };
+    h.provider.disconnect = async () => ({
+      value: null,
+      dispatch: "sent",
+      stopConfirmation: confirmation,
+      error: null,
+    });
+    const abort = new AbortController();
+    const connecting = h.broker.request(
+      pluginPrincipal(),
+      "devices/connect",
+      {
+        target: { kind: "wifi-address", providerId: h.provider.id, address: "127.0.0.1" },
+      },
+      abort.signal,
+    );
+    await started;
+    abort.abort();
+    release();
+    expect((await connecting).ok).toBe(false);
+    const listed = await h.broker.request(pluginPrincipal(), "devices/list", {}, signal());
+    expect(listed).toMatchObject({ ok: true, value: { sessions: [{ state: "quarantined" }] } });
+    const calls = [...h.provider.calls];
+    expect(
+      await h.broker.request(
+        pluginPrincipal(),
+        "devices/connect",
+        {
+          target: { kind: "wifi-address", providerId: h.provider.id, address: "127.0.0.2" },
+        },
+        signal(),
+      ),
+    ).toMatchObject({ ok: false, error: { code: "PLUGIN_E_DEVICE_BUSY" } });
+    expect(h.provider.calls).toEqual(calls);
+    h.provider.disconnect = disconnect;
+    await h.broker.resources.beginShutdown();
+  },
+);
+
 it("USB loss schedules a fresh serial-only reconnect with no operation replay", async () => {
   vi.useFakeTimers();
   try {
@@ -693,6 +802,78 @@ it("USB loss schedules a fresh serial-only reconnect with no operation replay", 
     vi.useRealTimers();
   }
 });
+it("retiring the original recovery owner during initialization fences late restored publication", async () => {
+  const h = setup(true, {
+    connectionPolicy: () => ({
+      wifiConnectTimeoutMs: 5000,
+      wifiHandshakeTimeoutMs: 3000,
+      usbAutoReconnect: true,
+      usbRetryInterval: 10000,
+      usbRetryLimit: 3,
+    }),
+  });
+  h.provider.describe = () => ({
+    key: h.provider.session,
+    descriptor: { ...h.provider.descriptor, transport: "usb" },
+    physical: h.provider.physical,
+    capabilities: [...h.provider.capabilities],
+  });
+  h.provider.discover = async () => ({
+    value: [
+      {
+        key: h.provider.candidate,
+        descriptor: { ...h.provider.descriptor, transport: "usb" },
+        physical: h.provider.physical,
+      },
+    ],
+    error: null,
+    dispatch: "not-sent",
+    stopConfirmation: "not-required",
+  });
+  const connected = await h.broker.request(
+    pluginPrincipal(),
+    "devices/connect",
+    {
+      target: { kind: "wifi-address", providerId: h.provider.id, address: "127.0.0.1" },
+    },
+    signal(),
+  );
+  if (!connected.ok) throw new Error("connect");
+  h.provider.lose();
+  const sources = h.provider.sources.bind(h.provider);
+  let entered!: () => void, release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  h.provider.sources = async (...args) => {
+    const result = await sources(...args);
+    entered();
+    await blocked;
+    return result;
+  };
+  const restored: string[] = [];
+  const off = observeBrokerLifecycle(h.broker, (event) => {
+    if (event.kind === "recovery" && event.state === "restored")
+      restored.push(event.previousSessionId);
+  });
+  const work = h.broker.reconnectForRecovery({
+    previousSessionId: connected.value.session.sessionId,
+    signal: signal(),
+  });
+  await started;
+  const retired = h.broker.resources.retire(pluginPrincipal().owner, "crashed");
+  release();
+  expect((await work).ok).toBe(false);
+  expect(restored).toEqual([]);
+  expect(h.provider.calls.filter((call) => call === "disconnect")).toHaveLength(1);
+  await retired.settled;
+  off();
+  await h.broker.resources.beginShutdown();
+});
+
 it.each(["duplicate", "changed"])("USB recovery rejects %s serial evidence", async (kind) => {
   const h = setup(true, {
     connectionPolicy: () => ({
@@ -1702,5 +1883,1062 @@ it("fences a failed sink until its original attachment is disposed", async () =>
   } finally {
     channel.dispose();
     await h.broker.resources.beginShutdown();
+  }
+});
+
+it("independent: recovery owner retirement after native connect closes the returned original handle", async () => {
+  const h = setup(true, {
+    connectionPolicy: () => ({
+      wifiConnectTimeoutMs: 5000,
+      wifiHandshakeTimeoutMs: 3000,
+      usbAutoReconnect: true,
+      usbRetryInterval: 10000,
+      usbRetryLimit: 3,
+    }),
+  });
+  h.provider.describe = () => ({
+    key: h.provider.session,
+    descriptor: { ...h.provider.descriptor, transport: "usb" },
+    physical: h.provider.physical,
+    capabilities: [...h.provider.capabilities],
+  });
+  h.provider.discover = async () => ({
+    value: [
+      {
+        key: h.provider.candidate,
+        descriptor: { ...h.provider.descriptor, transport: "usb" },
+        physical: h.provider.physical,
+      },
+    ],
+    error: null,
+    dispatch: "not-sent",
+    stopConfirmation: "not-required",
+  });
+  const connected = await h.broker.request(
+    pluginPrincipal(),
+    "devices/connect",
+    {
+      target: { kind: "wifi-address", providerId: h.provider.id, address: "127.0.0.1" },
+    },
+    signal(),
+  );
+  if (!connected.ok) throw new Error("connect");
+  h.provider.lose();
+  const connect = h.provider.connect.bind(h.provider);
+  let entered!: () => void, release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  h.provider.connect = async (...args) => {
+    const result = await connect(...args);
+    entered();
+    await blocked;
+    return result;
+  };
+  const restored: string[] = [];
+  const off = observeBrokerLifecycle(h.broker, (event) => {
+    if (event.kind === "recovery" && event.state === "restored")
+      restored.push(event.previousSessionId);
+  });
+  const work = h.broker.reconnectForRecovery({
+    previousSessionId: connected.value.session.sessionId,
+    signal: signal(),
+  });
+  await started;
+  const retired = h.broker.resources.retire(pluginPrincipal().owner, "crashed");
+  release();
+  expect((await work).ok).toBe(false);
+  expect(restored).toEqual([]);
+  expect(h.provider.calls.filter((call) => call === "disconnect")).toHaveLength(1);
+  await retired.settled;
+  off();
+  await h.broker.resources.beginShutdown();
+});
+
+// These use the actual broker, shared EventLedger and exact-target core ledger.
+import { createCoreActionLedger } from "../plugins/core-recovery.js";
+import type { ConnectionRecoveryRef } from "@kobrixa/plugin-protocol";
+const recoveryPolicy = {
+  wifiConnectTimeoutMs: 5000,
+  wifiHandshakeTimeoutMs: 3000,
+  usbAutoReconnect: true,
+  usbRetryInterval: 10000,
+  usbRetryLimit: 3,
+} as const;
+async function recoveryFixture(overrides: Parameters<typeof setup>[1] = {}) {
+  let actionNow = 0;
+  const actions = createCoreActionLedger({ now: () => actionNow, current: () => true });
+  const h = setup(true, {
+    connectionPolicy: () => recoveryPolicy,
+    coreActions: actions,
+    ...overrides,
+  });
+  h.provider.describe = () => ({
+    key: h.provider.session,
+    descriptor: { ...h.provider.descriptor, transport: "usb" },
+    physical: h.provider.physical,
+    capabilities: [...h.provider.capabilities],
+  });
+  h.provider.discover = async () => ({
+    value: [
+      {
+        key: h.provider.candidate,
+        descriptor: { ...h.provider.descriptor, transport: "usb" },
+        physical: h.provider.physical,
+      },
+    ],
+    error: null,
+    dispatch: "not-sent",
+    stopConfirmation: "not-required",
+  });
+  const connected = await h.broker.request(
+    pluginPrincipal(),
+    "devices/connect",
+    {
+      target: { kind: "wifi-address", providerId: h.provider.id, address: "127.0.0.1" },
+    },
+    signal(),
+  );
+  if (!connected.ok) throw new Error("initial connect");
+  h.provider.lose();
+  const snapshot = () => h.broker.connectionRecovery.snapshot();
+  const recovery = snapshot().recovery!;
+  const target: ConnectionRecoveryRef = {
+    recoveryId: recovery.recoveryId,
+    providerId: recovery.providerId,
+    providerGeneration: recovery.providerGeneration,
+    previousSessionId: recovery.previousSessionId,
+  };
+  const mint = (ref = target) =>
+    actions.mint(
+      { hostEpoch: ID, workbenchInstance: ID },
+      {
+        kind: "device-connection-recovery-cancel",
+        ...ref,
+      },
+    );
+  return {
+    ...h,
+    actions,
+    target,
+    snapshot,
+    mint,
+    expire: () => {
+      actionNow += 5001;
+    },
+    reconnect: () =>
+      h.broker.reconnectForRecovery({
+        previousSessionId: target.previousSessionId,
+        signal: signal(),
+      }),
+    cancel: () => h.broker.connectionRecovery.cancel({ target, action: mint() }),
+  };
+}
+function paused() {
+  let release!: () => void, enter!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  return { release, enter, blocked, entered };
+}
+it("connection recovery cold/read snapshots perform no I/O and grant no session", async () => {
+  const h = setup();
+  expect(h.broker.connectionRecovery.snapshot()).toEqual({
+    hostEpoch: ID,
+    revision: 0,
+    recovery: null,
+  });
+  expect(
+    await h.broker.request(pluginPrincipal(), "devices/connectionRecovery/read", {}, signal()),
+  ).toEqual({ ok: true, value: { hostEpoch: ID, revision: 0, recovery: null } });
+  expect(h.provider.calls).toEqual([]);
+  const denied = setup(false);
+  expect(
+    await denied.broker.request(pluginPrincipal(), "devices/connectionRecovery/read", {}, signal()),
+  ).toMatchObject({ ok: false, error: { code: "PLUGIN_E_PERMISSION_DENIED" } });
+});
+it("connection recovery exact ledger target rejects foreign, missing, expired and replayed actions", async () => {
+  const f = await recoveryFixture();
+  const foreign = { ...f.target, providerGeneration: f.target.providerGeneration + 1 };
+  const action = f.mint();
+  expect(await f.broker.connectionRecovery.cancel({ target: foreign, action })).toMatchObject({
+    ok: false,
+    error: { code: "PLUGIN_E_STALE_RESOURCE" },
+  });
+  expect(
+    await f.broker.connectionRecovery.cancel({ target: f.target, action: f.mint(foreign) }),
+  ).toMatchObject({ ok: false, error: { code: "PLUGIN_E_PERMISSION_DENIED" } });
+  const expired = f.mint();
+  f.expire();
+  expect(
+    await f.broker.connectionRecovery.cancel({ target: f.target, action: expired }),
+  ).toMatchObject({ ok: false, error: { code: "PLUGIN_E_PERMISSION_DENIED" } });
+  const fresh = f.mint();
+  expect(
+    await f.broker.connectionRecovery.cancel({ target: f.target, action: fresh }),
+  ).toMatchObject({ ok: true, value: { recovery: { phase: "cancelled", reason: "user" } } });
+  expect(
+    await f.broker.connectionRecovery.cancel({ target: f.target, action: fresh }),
+  ).toMatchObject({ ok: false, error: { code: "PLUGIN_E_STALE_RESOURCE" } });
+  expect(f.provider.calls.filter((call) => call === "disconnect")).toHaveLength(0);
+  await f.broker.resources.beginShutdown();
+});
+it.each(["connect", "sources"] as const)(
+  "cancel during delayed original %s cleans that handle/context without restored publication",
+  async (step) => {
+    const f = await recoveryFixture();
+    const pause = paused();
+    let operationId: string | undefined;
+    const connect = f.provider.connect.bind(f.provider);
+    f.provider.connect = async (...args) => {
+      operationId = args[1].operationId;
+      const result = await connect(...args);
+      if (step === "connect") {
+        pause.enter();
+        await pause.blocked;
+      }
+      return result;
+    };
+    const sources = f.provider.sources.bind(f.provider);
+    if (step === "sources")
+      f.provider.sources = async (...args) => {
+        pause.enter();
+        await pause.blocked;
+        return sources(...args);
+      };
+    const disconnect = vi.spyOn(f.provider, "disconnect");
+    const restored: string[] = [];
+    const off = observeBrokerLifecycle(f.broker, (e) => {
+      if (e.kind === "recovery" && e.state === "restored") restored.push(e.previousSessionId);
+    });
+    const work = f.reconnect();
+    await pause.entered;
+    const action = f.mint();
+    const cancelling = f.broker.connectionRecovery.cancel({ target: f.target, action });
+    expect(f.snapshot().recovery?.phase).toBe("cancelling");
+    expect(await f.broker.connectionRecovery.cancel({ target: f.target, action })).toMatchObject({
+      ok: false,
+      error: { code: "PLUGIN_E_PERMISSION_DENIED" },
+    });
+    pause.release();
+    expect((await work).ok).toBe(false);
+    expect(await cancelling).toMatchObject({
+      ok: true,
+      value: { recovery: { phase: "cancelled" } },
+    });
+    expect(disconnect).toHaveBeenCalledTimes(1);
+    expect(disconnect.mock.calls[0]![0]).toBe(f.provider.session);
+    expect(disconnect.mock.calls[0]![1].operationId).toBe(operationId);
+    expect(disconnect.mock.calls[0]![1].providerGeneration).toBe(f.target.providerGeneration);
+    expect(restored).toEqual([]);
+    expect(f.actions.count()).toBe(0);
+    off();
+    await f.broker.resources.beginShutdown();
+  },
+);
+it("adoption wins synchronously: late cancel is stale and never disconnects the restored session", async () => {
+  const f = await recoveryFixture();
+  const action = f.mint();
+  const result = await f.reconnect();
+  expect(result.ok).toBe(true);
+  expect(f.snapshot().recovery).toMatchObject({ phase: "restored", attemptsStarted: 1 });
+  expect(await f.broker.connectionRecovery.cancel({ target: f.target, action })).toMatchObject({
+    ok: false,
+    error: { code: "PLUGIN_E_STALE_RESOURCE" },
+  });
+  expect(f.provider.calls.filter((call) => call === "disconnect")).toHaveLength(0);
+  await f.broker.resources.beginShutdown();
+});
+it("unconfirmed original cleanup keeps quarantine; a new action retries original cleanup and deadline", async () => {
+  const f = await recoveryFixture();
+  const pause = paused();
+  const connect = f.provider.connect.bind(f.provider);
+  f.provider.connect = async (...args) => {
+    const value = await connect(...args);
+    pause.enter();
+    await pause.blocked;
+    return value;
+  };
+  const disconnect = vi.spyOn(f.provider, "disconnect").mockResolvedValueOnce({
+    value: null,
+    error: null,
+    dispatch: "unknown",
+    stopConfirmation: "pending",
+  });
+  const work = f.reconnect();
+  await pause.entered;
+  const cancelled = f.cancel();
+  pause.release();
+  await work;
+  expect(await cancelled).toMatchObject({
+    ok: true,
+    value: { recovery: { phase: "cancel-failed" } },
+  });
+  expect(disconnect).toHaveBeenCalledTimes(1);
+  expect(
+    await f.broker.request(
+      pluginPrincipal(),
+      "devices/connect",
+      {
+        target: { kind: "wifi-address", providerId: f.provider.id, address: "127.0.0.1" },
+      },
+      signal(),
+    ),
+  ).toMatchObject({ ok: false, error: { code: "PLUGIN_E_DEVICE_BUSY" } });
+  const cleanup = disconnect.mock.calls[0]![1];
+  const deadline = cleanup.deadlineMonotonicMs;
+  expect(await f.cancel()).toMatchObject({ ok: true, value: { recovery: { phase: "cancelled" } } });
+  expect(disconnect).toHaveBeenCalledTimes(2);
+  expect(disconnect.mock.calls[1]![1]).toBe(cleanup);
+  expect(cleanup.deadlineMonotonicMs).toBe(deadline);
+  await f.broker.resources.beginShutdown();
+});
+it("pending native connect outlives cancellation timeout without releasing custody or replaying", async () => {
+  vi.useFakeTimers();
+  try {
+    const f = await recoveryFixture();
+    const pause = paused();
+    const connect = f.provider.connect.bind(f.provider);
+    f.provider.connect = async (...args) => {
+      const value = await connect(...args);
+      pause.enter();
+      await pause.blocked;
+      return value;
+    };
+    const work = f.reconnect();
+    await pause.entered;
+    const cancelled = f.cancel();
+    await vi.advanceTimersByTimeAsync(15000);
+    expect(await cancelled).toMatchObject({
+      ok: true,
+      value: { recovery: { phase: "cancel-failed", error: { reason: "cleanup-pending" } } },
+    });
+    expect((await f.reconnect()).ok).toBe(false);
+    pause.release();
+    expect((await work).ok).toBe(false);
+    expect(f.provider.calls.filter((c) => c === "disconnect")).toHaveLength(1);
+    expect(await f.cancel()).toMatchObject({
+      ok: true,
+      value: { recovery: { phase: "cancelled" } },
+    });
+    await f.broker.resources.beginShutdown();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("recovery common controls retain terminal snapshots after ACK and keep the subscription for later episodes", async () => {
+  const f = await recoveryFixture();
+  const p = pluginPrincipal();
+  const delivered: Stage3EventEnvelope[] = [];
+  const channel = f.broker.attachChannel({
+    owner: p.owner,
+    principal: () => p,
+    send: (event) => delivered.push(event),
+  });
+  channel.negotiated("devices", 1);
+  const subscribed = await f.broker.request(
+    p,
+    "devices/subscribe",
+    { topic: "connectionRecovery" },
+    signal(),
+  );
+  if (!subscribed.ok) throw new Error("subscribe");
+  channel.activate(subscribed.value.subscriptionId);
+  const beforeCalls = [...f.provider.calls];
+  const copy = f.snapshot();
+  copy.recovery!.name = "mutated";
+  expect(f.snapshot().recovery!.name).not.toBe("mutated");
+  expect(f.provider.calls).toEqual(beforeCalls);
+  await f.cancel();
+  const terminal = delivered.at(-1)!;
+  expect(terminal.kind).toBe("devices.connectionRecovery");
+  expect(terminal.delivery).toBe("control");
+  expect(terminal.data).toMatchObject({ recovery: { phase: "cancelled" } });
+  await f.broker.request(
+    p,
+    "events/ack",
+    { subscriptionId: terminal.subscriptionId, sequence: terminal.sequence },
+    signal(),
+  );
+  expect(f.broker.events.owns(p.owner, subscribed.value.subscriptionId)).toBe(true);
+  expect(f.snapshot().recovery?.phase).toBe("cancelled");
+  channel.dispose();
+  await f.broker.resources.beginShutdown();
+});
+it.each(["policy", "owner", "provider", "authority", "shutdown"] as const)(
+  "%s retirement fences delayed native recovery and cleans its original handle",
+  async (cause) => {
+    let policy = { ...recoveryPolicy, usbAutoReconnect: true };
+    let policyChanged = () => {};
+    let authorityChanged: (ref: string, epoch: string) => void = () => {};
+    let authorized = true;
+    const f = await recoveryFixture({
+      connectionPolicy: () => policy,
+      subscribeConnectionPolicy: (changed) => {
+        policyChanged = changed;
+        return () => {};
+      },
+      authority: {
+        current: () =>
+          authorized
+            ? {
+                ref: ID,
+                epoch: ID,
+                workbenchInstance: ID,
+                state: "local",
+                roomBinding: null,
+                connected: false,
+                synced: true,
+                role: null,
+                isHolder: true,
+              }
+            : null,
+        assertContinuation() {},
+        subscribe: (changed) => {
+          authorityChanged = changed;
+          return () => {};
+        },
+      },
+    });
+    const pause = paused();
+    const connect = f.provider.connect.bind(f.provider);
+    f.provider.connect = async (...args) => {
+      const value = await connect(...args);
+      pause.enter();
+      await pause.blocked;
+      return value;
+    };
+    const work = f.reconnect();
+    await pause.entered;
+    if (cause === "policy") {
+      policy = { ...policy, usbAutoReconnect: false };
+      policyChanged();
+    }
+    if (cause === "owner") f.broker.resources.retire(pluginPrincipal().owner, "crashed");
+    if (cause === "provider") f.unregister.retirement!.admission(false);
+    if (cause === "authority") {
+      authorized = false;
+      authorityChanged(ID, ID);
+    }
+    if (cause === "shutdown") void f.broker.resources.beginShutdown();
+    pause.release();
+    expect((await work).ok).toBe(false);
+    await vi.waitFor(() => expect(f.snapshot().recovery?.phase).toBe("cancelled"));
+    expect(f.provider.calls.filter((c) => c === "disconnect")).toHaveLength(1);
+    expect((await f.reconnect()).ok).toBe(false);
+    await f.broker.resources.beginShutdown();
+  },
+);
+it("each admitted recovery counts once and exhaustion remains retained without another discover", async () => {
+  const f = await recoveryFixture();
+  const discover = vi.spyOn(f.provider, "discover").mockResolvedValue({
+    value: [],
+    error: null,
+    dispatch: "not-sent",
+    stopConfirmation: "not-required",
+  });
+  for (let n = 1; n <= 3; n++) {
+    await f.reconnect();
+    expect(f.snapshot().recovery?.attemptsStarted).toBe(n);
+  }
+  expect(f.snapshot().recovery?.phase).toBe("retry-exhausted");
+  expect((await f.reconnect()).ok).toBe(false);
+  expect(discover).toHaveBeenCalledTimes(3);
+  await f.broker.resources.beginShutdown();
+});
+
+it.each(["discover", "journal"] as const)(
+  "cancel during %s prevents candidate handoff and native connect",
+  async (step) => {
+    const f = await recoveryFixture();
+    const pause = paused();
+    const discover = f.provider.discover.bind(f.provider);
+    const load = f.dependencies.journal.load.bind(f.dependencies.journal);
+    if (step === "discover")
+      f.provider.discover = async (...args) => {
+        const result = await discover(...args);
+        pause.enter();
+        await pause.blocked;
+        return result;
+      };
+    else
+      f.dependencies.journal.load = async () => {
+        const result = await load();
+        pause.enter();
+        await pause.blocked;
+        return result;
+      };
+    const connect = vi.spyOn(f.provider, "connect");
+    const work = f.reconnect();
+    await pause.entered;
+    const cancelling = f.cancel();
+    expect(f.snapshot().recovery?.phase).toBe("cancelling");
+    pause.release();
+    expect((await work).ok).toBe(false);
+    expect(await cancelling).toMatchObject({
+      ok: true,
+      value: { recovery: { phase: "cancelled" } },
+    });
+    expect(connect).not.toHaveBeenCalled();
+    expect(f.actions.count()).toBe(0);
+    await f.broker.resources.beginShutdown();
+  },
+);
+
+it("provider retirement cannot dispose an unconfirmed returned recovery handle", async () => {
+  const f = await recoveryFixture();
+  const pause = paused();
+  const connect = f.provider.connect.bind(f.provider);
+  f.provider.connect = async (...args) => {
+    const result = await connect(...args);
+    pause.enter();
+    await pause.blocked;
+    return result;
+  };
+  const disconnect = vi.spyOn(f.provider, "disconnect").mockResolvedValueOnce({
+    value: null,
+    error: null,
+    dispatch: "unknown",
+    stopConfirmation: "unconfirmed",
+  });
+  const dispose = vi.spyOn(f.provider, "dispose");
+  const work = f.reconnect();
+  await pause.entered;
+  const cancelling = f.cancel();
+  pause.release();
+  await work;
+  await cancelling;
+  expect(f.snapshot().recovery?.phase).toBe("cancel-failed");
+  await expect(f.unregister.retirement!.retire()).rejects.toThrow(
+    "Provider retirement disposition is incomplete",
+  );
+  expect(dispose).not.toHaveBeenCalled();
+  expect(() => f.broker.registerProvider(f.provider)).toThrow(
+    "Previous provider retirement is pending",
+  );
+  expect(await f.cancel()).toMatchObject({ ok: true, value: { recovery: { phase: "cancelled" } } });
+  expect(disconnect.mock.calls[1]![1]).toBe(disconnect.mock.calls[0]![1]);
+  await f.unregister.retirement!.retire();
+  expect(dispose).toHaveBeenCalledOnce();
+  await f.broker.resources.beginShutdown();
+});
+
+it("returned handle after the original cleanup deadline stays quarantined without a fresh cleanup grant", async () => {
+  vi.useFakeTimers();
+  try {
+    const f = await recoveryFixture();
+    const pause = paused();
+    const connect = f.provider.connect.bind(f.provider);
+    f.provider.connect = async (...args) => {
+      const result = await connect(...args);
+      pause.enter();
+      await pause.blocked;
+      return result;
+    };
+    const disconnect = vi.spyOn(f.provider, "disconnect");
+    const work = f.reconnect();
+    await pause.entered;
+    const cancelling = f.cancel();
+    f.setNow(15001);
+    await vi.advanceTimersByTimeAsync(15000);
+    expect(await cancelling).toMatchObject({
+      ok: true,
+      value: { recovery: { phase: "cancel-failed", error: { reason: "cleanup-pending" } } },
+    });
+    pause.release();
+    expect((await work).ok).toBe(false);
+    expect(await f.cancel()).toMatchObject({
+      ok: true,
+      value: { recovery: { phase: "cancel-failed", error: { reason: "cleanup-failed" } } },
+    });
+    expect(disconnect).not.toHaveBeenCalled();
+    expect(
+      await f.broker.request(
+        pluginPrincipal(),
+        "devices/connect",
+        {
+          target: { kind: "wifi-address", providerId: f.provider.id, address: "127.0.0.1" },
+        },
+        signal(),
+      ),
+    ).toMatchObject({ ok: false, error: { code: "PLUGIN_E_DEVICE_BUSY" } });
+    const dispose = vi.spyOn(f.provider, "dispose");
+    await expect(f.unregister.retirement!.retire()).rejects.toThrow();
+    expect(dispose).not.toHaveBeenCalled();
+    await f.broker.resources.beginShutdown();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("late confirmed disconnect settles only the retained handle and never restarts recovery", async () => {
+  vi.useFakeTimers();
+  try {
+    const f = await recoveryFixture();
+    const native = paused();
+    const cleanup = paused();
+    const connect = f.provider.connect.bind(f.provider);
+    f.provider.connect = async (...args) => {
+      const result = await connect(...args);
+      native.enter();
+      await native.blocked;
+      return result;
+    };
+    const disconnect = vi.spyOn(f.provider, "disconnect").mockImplementation(async () => {
+      cleanup.enter();
+      await cleanup.blocked;
+      return { value: null, error: null, dispatch: "not-sent", stopConfirmation: "confirmed" };
+    });
+    const work = f.reconnect();
+    await native.entered;
+    const cancelling = f.cancel();
+    native.release();
+    await cleanup.entered;
+    await vi.advanceTimersByTimeAsync(15000);
+    await cancelling;
+    await work;
+    expect(f.snapshot().recovery?.phase).toBe("cancel-failed");
+    cleanup.release();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(await f.cancel()).toMatchObject({
+      ok: true,
+      value: { recovery: { phase: "cancelled" } },
+    });
+    expect(disconnect).toHaveBeenCalledOnce();
+    expect((await f.reconnect()).ok).toBe(false);
+    await f.broker.resources.beginShutdown();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("synchronous observer cancellation joins the installed original operation", async () => {
+  const f = await recoveryFixture();
+  const p = pluginPrincipal(2);
+  let joined: ReturnType<typeof f.cancel> | undefined;
+  let cancellingEvents = 0;
+  const channel = f.broker.attachChannel({
+    owner: p.owner,
+    principal: () => p,
+    send: (event) => {
+      if (
+        event.kind === "devices.connectionRecovery" &&
+        event.data.recovery?.phase === "cancelling"
+      ) {
+        cancellingEvents++;
+        if (cancellingEvents === 1) joined = f.cancel();
+      }
+    },
+  });
+  channel.negotiated("devices", 1);
+  const sub = await f.broker.request(
+    p,
+    "devices/subscribe",
+    { topic: "connectionRecovery" },
+    signal(),
+  );
+  if (!sub.ok) throw new Error("subscribe");
+  channel.activate(sub.value.subscriptionId);
+  expect(await f.cancel()).toMatchObject({ ok: true, value: { recovery: { phase: "cancelled" } } });
+  expect(await joined).toMatchObject({ ok: true, value: { recovery: { phase: "cancelled" } } });
+  expect(cancellingEvents).toBe(1);
+  expect(f.actions.count()).toBe(0);
+  channel.dispose();
+  await f.broker.resources.beginShutdown();
+});
+
+it("fresh recovery observer neither acquires session ownership nor retires the original retry", async () => {
+  const f = await recoveryFixture();
+  const p = pluginPrincipal(2);
+  const channel = f.broker.attachChannel({ owner: p.owner, principal: () => p, send: () => {} });
+  channel.negotiated("devices", 1);
+  const calls = [...f.provider.calls];
+  const policy = vi.spyOn(f.provider, "discover");
+  expect(await f.broker.request(p, "devices/connectionRecovery/read", {}, signal())).toMatchObject({
+    ok: true,
+    value: { recovery: { phase: "waiting" } },
+  });
+  const sub = await f.broker.request(
+    p,
+    "devices/subscribe",
+    { topic: "connectionRecovery" },
+    signal(),
+  );
+  expect(sub.ok).toBe(true);
+  expect(f.provider.calls).toEqual(calls);
+  expect(policy).not.toHaveBeenCalled();
+  channel.dispose();
+  await f.broker.resources.retire(p.owner, "crashed").settled;
+  expect(f.snapshot().recovery?.phase).toBe("waiting");
+  const restored = await f.reconnect();
+  if (!restored.ok) throw new Error("restore");
+  const fresh = pluginPrincipal(3);
+  expect((await f.broker.request(fresh, "devices/connectionRecovery/read", {}, signal())).ok).toBe(
+    true,
+  );
+  expect(
+    await f.broker.request(
+      fresh,
+      "devices/session",
+      { sessionId: restored.value.sessionId },
+      signal(),
+    ),
+  ).toMatchObject({ ok: false, error: { code: "PLUGIN_E_STALE_RESOURCE" } });
+  await f.broker.resources.beginShutdown();
+});
+
+it.each(["recoveryId", "providerId", "providerGeneration", "previousSessionId"] as const)(
+  "cancel requires the exact retained %s before consuming a core claim",
+  async (field) => {
+    const f = await recoveryFixture();
+    const action = f.mint();
+    const target = {
+      ...f.target,
+      [field]:
+        field === "providerGeneration"
+          ? f.target.providerGeneration + 1
+          : field === "providerId"
+            ? "other.provider"
+            : "00000000-0000-4000-8000-000000000099",
+    };
+    const calls = [...f.provider.calls];
+    expect(await f.broker.connectionRecovery.cancel({ target, action })).toMatchObject({
+      ok: false,
+      error: { code: "PLUGIN_E_STALE_RESOURCE", detail: { kind: "resource", resource: "rpc" } },
+    });
+    expect(f.snapshot().recovery?.phase).toBe("waiting");
+    expect(f.provider.calls).toEqual(calls);
+    expect(await f.broker.connectionRecovery.cancel({ target: f.target, action })).toMatchObject({
+      ok: true,
+      value: { recovery: { phase: "cancelled" } },
+    });
+    expect(f.actions.count()).toBe(0);
+    await f.broker.resources.beginShutdown();
+  },
+);
+
+it("forged core token and scope cannot mutate the episode or consume the genuine claim", async () => {
+  const f = await recoveryFixture();
+  const action = f.mint();
+  const calls = [...f.provider.calls];
+  for (const forged of [
+    { ...action, actionToken: "00000000-0000-4000-8000-000000000099" },
+    { ...action, scope: { ...action.scope, hostEpoch: "00000000-0000-4000-8000-000000000099" } },
+    {
+      ...action,
+      scope: { ...action.scope, workbenchInstance: "00000000-0000-4000-8000-000000000099" },
+    },
+  ]) {
+    expect(
+      await f.broker.connectionRecovery.cancel({ target: f.target, action: forged }),
+    ).toMatchObject({
+      ok: false,
+      error: { code: "PLUGIN_E_PERMISSION_DENIED" },
+    });
+  }
+  expect(f.snapshot().recovery?.phase).toBe("waiting");
+  expect(f.provider.calls).toEqual(calls);
+  expect(await f.broker.connectionRecovery.cancel({ target: f.target, action })).toMatchObject({
+    ok: true,
+  });
+  expect(f.actions.count()).toBe(0);
+  await f.broker.resources.beginShutdown();
+});
+
+it("cancel during original loss drain retires only retry work and leaves that drain pending", async () => {
+  const f = await recoveryFixture();
+  const restored = await f.reconnect();
+  if (!restored.ok) throw new Error("restore");
+  const sessionId = restored.value.sessionId;
+  const catalog = await f.broker.request(
+    pluginPrincipal(),
+    "devices/session",
+    { sessionId },
+    signal(),
+  );
+  if (!catalog.ok) throw new Error("catalog");
+  const pause = paused();
+  const read = f.provider.read.bind(f.provider);
+  f.provider.read = async (key, ctx) => {
+    await ctx.exchange("read", async () => {
+      pause.enter();
+      await pause.blocked;
+    });
+    return read(key, ctx);
+  };
+  const reading = f.broker.request(
+    pluginPrincipal(),
+    "devices/read",
+    {
+      sessionId,
+      channelIds: catalog.value.sources.channels.map((c) => c.channelId),
+      freshness: "fresh",
+    },
+    signal(),
+  );
+  await pause.entered;
+  f.provider.lose();
+  const episode = f.snapshot().recovery!;
+  const target: ConnectionRecoveryRef = {
+    recoveryId: episode.recoveryId,
+    providerId: episode.providerId,
+    providerGeneration: episode.providerGeneration,
+    previousSessionId: episode.previousSessionId,
+  };
+  const discover = vi.spyOn(f.provider, "discover");
+  const work = f.broker.reconnectForRecovery({ previousSessionId: sessionId, signal: signal() });
+  expect(f.snapshot().recovery?.phase).toBe("connecting");
+  let drained = false;
+  void reading.then(() => {
+    drained = true;
+  });
+  expect(
+    await f.broker.connectionRecovery.cancel({ target, action: f.mint(target) }),
+  ).toMatchObject({
+    ok: true,
+    value: { recovery: { phase: "cancelled" } },
+  });
+  expect((await work).ok).toBe(false);
+  expect(drained).toBe(false);
+  expect(discover).not.toHaveBeenCalled();
+  expect(f.provider.calls.filter((c) => c === "disconnect")).toHaveLength(0);
+  pause.release();
+  await reading;
+  await f.broker.resources.beginShutdown();
+});
+
+it.each(["timer", "continuation"] as const)(
+  "unavailable authoritative policy at %s retires recovery without timer exceptions or fallback I/O",
+  async (step) => {
+    vi.useFakeTimers();
+    try {
+      let available = true;
+      const f = await recoveryFixture({
+        connectionPolicy: () => {
+          if (!available) throw Error("authoritative preferences unavailable");
+          return recoveryPolicy;
+        },
+      });
+      const connect = vi.spyOn(f.provider, "connect");
+      const discover = vi.spyOn(f.provider, "discover").mockImplementation(async () => {
+        available = false;
+        return { value: [], error: null, dispatch: "not-sent", stopConfirmation: "not-required" };
+      });
+      if (step === "timer") available = false;
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(f.snapshot().recovery).toMatchObject({
+        phase: "cancelled",
+        reason: "policy",
+        attemptsStarted: step === "timer" ? 0 : 1,
+      });
+      expect(discover).toHaveBeenCalledTimes(step === "timer" ? 0 : 1);
+      expect(connect).not.toHaveBeenCalled();
+      available = true;
+      await vi.advanceTimersByTimeAsync(30000);
+      expect((await f.reconnect()).ok).toBe(false);
+      expect(connect).not.toHaveBeenCalled();
+      await f.broker.resources.beginShutdown();
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
+it("unavailable policy notification revokes the waiting episode and a later notification cannot resurrect it", async () => {
+  let available = true,
+    changed = () => {};
+  const f = await recoveryFixture({
+    connectionPolicy: () => {
+      if (!available) throw Error("stale policy read");
+      return recoveryPolicy;
+    },
+    subscribeConnectionPolicy: (listener) => {
+      changed = listener;
+      return () => {};
+    },
+  });
+  const calls = [...f.provider.calls];
+  available = false;
+  expect(changed).not.toThrow();
+  await vi.waitFor(() =>
+    expect(f.snapshot().recovery).toMatchObject({ phase: "cancelled", reason: "policy" }),
+  );
+  available = true;
+  changed();
+  expect((await f.reconnect()).ok).toBe(false);
+  expect(f.provider.calls).toEqual(calls);
+  await f.broker.resources.beginShutdown();
+});
+
+it.each([false, true])(
+  "physical loss publishes disconnected despite an unavailable policy (already quiesced: %s)",
+  async (quiesced) => {
+    let available = true;
+    const f = await recoveryFixture({
+      connectionPolicy: () => {
+        if (!available) throw Error("no current policy");
+        return recoveryPolicy;
+      },
+    });
+    const restored = await f.reconnect();
+    if (!restored.ok) throw Error("restore");
+    const sessionId = restored.value.sessionId;
+    if (quiesced) await f.broker.sessions.quiesce(sessionId, { reason: "suspended" }).settled;
+    const p = pluginPrincipal(2);
+    const delivered: Stage3EventEnvelope[] = [];
+    const channel = f.broker.attachChannel({
+      owner: p.owner,
+      principal: () => p,
+      send: (e) => delivered.push(e),
+    });
+    channel.negotiated("devices", 1);
+    const sub = await f.broker.request(p, "devices/subscribe", { topic: "catalog" }, signal());
+    if (!sub.ok) throw Error("subscribe");
+    channel.activate(sub.value.subscriptionId);
+    const discover = vi.spyOn(f.provider, "discover");
+    const connect = vi.spyOn(f.provider, "connect");
+    available = false;
+    expect(() => f.provider.lose()).not.toThrow();
+    expect(readDeviceRecoverySessions(f.broker)).toMatchObject([
+      { sessionId, state: "disconnected" },
+    ]);
+    expect(
+      delivered.some(
+        (e) =>
+          e.kind === "devices.catalog" &&
+          e.data.sessions.some((s) => s.sessionId === sessionId && s.state === "disconnected"),
+      ),
+    ).toBe(true);
+    await vi.waitFor(() =>
+      expect(f.snapshot().recovery).toMatchObject({
+        previousSessionId: sessionId,
+        phase: "cancelled",
+        reason: "policy",
+        attemptsStarted: 0,
+      }),
+    );
+    available = true;
+    expect(
+      (await f.broker.reconnectForRecovery({ previousSessionId: sessionId, signal: signal() })).ok,
+    ).toBe(false);
+    expect(discover).not.toHaveBeenCalled();
+    expect(connect).not.toHaveBeenCalled();
+    channel.dispose();
+    await f.broker.resources.beginShutdown();
+  },
+);
+
+it.each(["confirmed", "pending"] as const)(
+  "policy-unavailable during native connect retains exact %s cleanup",
+  async (confirmation) => {
+    let available = true,
+      changed = () => {};
+    const f = await recoveryFixture({
+      connectionPolicy: () => {
+        if (!available) throw Error("policy read failed");
+        return recoveryPolicy;
+      },
+      subscribeConnectionPolicy: (listener) => {
+        changed = listener;
+        return () => {};
+      },
+    });
+    const pause = paused();
+    const connect = f.provider.connect.bind(f.provider);
+    let operationId: string | undefined;
+    f.provider.connect = async (...args) => {
+      operationId = args[1].operationId;
+      const result = await connect(...args);
+      pause.enter();
+      await pause.blocked;
+      return result;
+    };
+    const disconnect = vi.spyOn(f.provider, "disconnect").mockResolvedValue({
+      value: null,
+      error: null,
+      dispatch: "unknown",
+      stopConfirmation: confirmation,
+    });
+    const work = f.reconnect();
+    await pause.entered;
+    available = false;
+    expect(changed).not.toThrow();
+    expect(f.snapshot().recovery?.phase).toBe("cancelling");
+    pause.release();
+    expect((await work).ok).toBe(false);
+    await vi.waitFor(() =>
+      expect(f.snapshot().recovery?.phase).toBe(
+        confirmation === "confirmed" ? "cancelled" : "cancel-failed",
+      ),
+    );
+    expect(disconnect).toHaveBeenCalledOnce();
+    expect(disconnect.mock.calls[0]![0]).toBe(f.provider.session);
+    expect(disconnect.mock.calls[0]![1].operationId).toBe(operationId);
+    available = true;
+    changed();
+    expect((await f.reconnect()).ok).toBe(false);
+    if (confirmation === "pending") {
+      expect(
+        await f.broker.request(
+          pluginPrincipal(),
+          "devices/connect",
+          {
+            target: { kind: "wifi-address", providerId: f.provider.id, address: "127.0.0.1" },
+          },
+          signal(),
+        ),
+      ).toMatchObject({ ok: false, error: { code: "PLUGIN_E_DEVICE_BUSY" } });
+      disconnect.mockResolvedValue({
+        value: null,
+        error: null,
+        dispatch: "not-sent",
+        stopConfirmation: "confirmed",
+      });
+      expect(await f.cancel()).toMatchObject({
+        ok: true,
+        value: { recovery: { phase: "cancelled" } },
+      });
+    }
+    await f.broker.resources.beginShutdown();
+  },
+);
+
+it("policy becoming unavailable at the waiting callback cannot reject the timer's reschedule continuation", async () => {
+  vi.useFakeTimers();
+  try {
+    let available = true;
+    const f = await recoveryFixture({
+      connectionPolicy: () => {
+        if (!available) throw Error("policy unavailable before reschedule");
+        return recoveryPolicy;
+      },
+    });
+    const connect = vi
+      .spyOn(f.provider, "connect")
+      .mockRejectedValue(new Error("connect did not acquire a handle"));
+    const off = observeBrokerLifecycle(f.broker, (event) => {
+      if (event.kind === "recovery" && event.state === "waiting") available = false;
+    });
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(connect).toHaveBeenCalledOnce();
+    expect(f.snapshot().recovery).toMatchObject({
+      phase: "cancelled",
+      reason: "policy",
+      attemptsStarted: 1,
+    });
+    available = true;
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(connect).toHaveBeenCalledOnce();
+    off();
+    await f.broker.resources.beginShutdown();
+  } finally {
+    vi.useRealTimers();
   }
 });

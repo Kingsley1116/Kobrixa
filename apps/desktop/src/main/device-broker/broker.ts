@@ -3,20 +3,24 @@ import { isDeepStrictEqual } from "node:util";
 import { randomUUID } from "node:crypto";
 import {
   channelDefinitionSchema,
-  deviceRequestSchemas,
+  deviceRequestSchemasV180 as deviceRequestSchemas,
+  validDeviceResultV180,
+  validateConnectionRecoverySnapshot,
+  type ConnectionRecovery,
+  type ConnectionRecoverySnapshot,
   sourceCatalogSchema,
   telemetryFrameSchema,
   validateDeviceWire,
   RpcError,
   RPC_ERRORS,
-  type DeviceMethod,
-  type DeviceParams,
-  type DeviceResult,
+  type DeviceMethodV180 as DeviceMethod,
+  type DeviceParamsV180 as DeviceParams,
+  type DeviceResultV180 as DeviceResult,
   type DeviceSessionSnapshot,
   type SourceCatalog,
   type DeviceCandidate,
-  type DeviceSubscriptionParams,
-  type DeviceSubscriptionSnapshot,
+  type DeviceSubscriptionParamsV180 as DeviceSubscriptionParams,
+  type DeviceSubscriptionSnapshotV180 as DeviceSubscriptionSnapshot,
   type Permission,
   type ResourceOwner,
   type AuthoritySnapshot,
@@ -194,7 +198,20 @@ type Session = {
   users: Set<string>;
   unregister: () => void;
 };
-type Candidate = { candidate: ProviderCandidate; generation: number; expires: number };
+type ConnectionCustody = {
+  generation: number;
+  closed: boolean;
+  attempted: boolean;
+  close(): Promise<boolean>;
+};
+type Candidate = {
+  candidate: ProviderCandidate;
+  generation: number;
+  expires: number;
+  recoveryCapture?: (custody: ConnectionCustody) => void;
+  recoveryCheck?: () => void;
+  recoveryAdopt?: (snapshot: DeviceSessionSnapshot) => void;
+};
 const merge = async (promises: Promise<DeviceDisposition>[]): Promise<DeviceDisposition> => {
   const all = await Promise.all(promises);
   return {
@@ -380,6 +397,7 @@ export function createBroker(
     closing = false,
     revision = 0;
   const connectionLane = new ExchangeLane(input.now);
+  let retainedConnection: ConnectionCustody | null = null;
   const coreTelemetry = new CoreTelemetryLedger(input.now);
   const changed = (sourcesChanged = false) => {
     for (const row of [...subscriptions.values()])
@@ -387,36 +405,189 @@ export function createBroker(
         row.notify(sourcesChanged);
   };
   const attemptPolicies = new Map<string, ReturnType<Options["connectionPolicy"]>>();
-  const lostUsb = new Map<
-    string,
-    {
-      principal: Principal;
+  type Episode = {
+    principal: Principal;
+    providerId: string;
+    generation: number;
+    digest: string;
+    settled: Promise<DeviceDisposition>;
+    policy: ReturnType<Options["connectionPolicy"]>;
+    attempts: number;
+    timer: ReturnType<typeof setTimeout> | null;
+    pending: boolean;
+    control: AbortController;
+    ref: {
+      recoveryId: string;
       providerId: string;
-      generation: number;
-      digest: string;
-      settled: Promise<DeviceDisposition>;
-      policy: ReturnType<Options["connectionPolicy"]>;
-      attempts: number;
-      timer: ReturnType<typeof setTimeout> | null;
-      pending: boolean;
-    }
-  >();
-
-  const forgetUsb = (id: string, state: "cancelled" | "exhausted" | null = "cancelled") => {
+      providerGeneration: number;
+      previousSessionId: string;
+    };
+    name: string;
+    due: number;
+    done: Promise<void>;
+    custody?: ConnectionCustody;
+    cancelDeadline?: number;
+    cancellation?: Promise<void>;
+  };
+  const lostUsb = new Map<string, Episode>();
+  let latestEpisode: Episode | null = null;
+  let projection: ConnectionRecovery | null = null;
+  let recoveryRevision = 0;
+  type Phase = ConnectionRecovery extends infer T
+    ? T extends ConnectionRecovery
+      ? Omit<
+          T,
+          | "recoveryId"
+          | "providerId"
+          | "providerGeneration"
+          | "previousSessionId"
+          | "name"
+          | "attemptsStarted"
+          | "retryLimit"
+        >
+      : never
+    : never;
+  const recoverySnapshot = (): ConnectionRecoverySnapshot =>
+    validateConnectionRecoverySnapshot({
+      hostEpoch: input.profile.hostEpoch,
+      revision: recoveryRevision,
+      recovery:
+        projection?.phase === "waiting" && latestEpisode
+          ? {
+              ...projection,
+              retryAfterMs: Math.max(
+                0,
+                Math.min(10000, Math.ceil(latestEpisode.due - input.now())),
+              ),
+            }
+          : projection,
+    });
+  const publishRecovery = (row: Episode, phase: Phase) => {
+    if (latestEpisode !== row) return;
+    const next = {
+      ...row.ref,
+      name: row.name,
+      attemptsStarted: row.attempts,
+      retryLimit: row.policy.usbRetryLimit,
+      ...phase,
+    } as ConnectionRecovery;
+    validateConnectionRecoverySnapshot({
+      hostEpoch: input.profile.hostEpoch,
+      revision: recoveryRevision + 1,
+      recovery: next,
+    });
+    projection = next;
+    recoveryRevision++;
+    for (const sub of [...subscriptions.values()])
+      if (sub.params.topic === "connectionRecovery") sub.notify();
+  };
+  const clearRecovery = () => {
+    latestEpisode = null;
+    projection = null;
+    recoveryRevision++;
+    for (const sub of [...subscriptions.values()])
+      if (sub.params.topic === "connectionRecovery") sub.notify();
+  };
+  const revokeEpisode = (row: Episode) => {
+    if (row.timer) clearTimeout(row.timer);
+    row.timer = null;
+    lostUsb.delete(row.ref.previousSessionId);
+    row.cancelDeadline ??= input.now() + 15000;
+    row.control.abort();
+  };
+  const cancelEpisode = (
+    row: Episode,
+    reason: Extract<ConnectionRecovery, { phase: "cancelled" }>["reason"],
+  ): Promise<void> => {
+    if (row.cancellation) return row.cancellation;
+    const retry = projection?.phase === "cancel-failed";
+    // Keep both the original pending attempt and its cleanup context. A timeout
+    // publishes uncertainty, and cannot free the connection lane or mint a grant.
+    // Install the joinable operation before publishing to synchronous observers.
+    row.cancellation = Promise.resolve()
+      .then(async () => {
+        let confirmed = false;
+        try {
+          if (row.pending) await bounded(row.done, Math.max(0, row.cancelDeadline! - input.now()));
+          confirmed =
+            !row.pending &&
+            (!row.custody ||
+              row.custody.closed ||
+              ((!row.custody.attempted || retry) && (await row.custody.close())));
+        } catch {
+          /* The exact retained attempt is still unresolved. */
+        }
+        publishRecovery(
+          row,
+          confirmed
+            ? { phase: "cancelled", reason }
+            : {
+                phase: "cancel-failed",
+                error: {
+                  reason: row.pending ? "cleanup-pending" : "cleanup-failed",
+                  message: row.pending
+                    ? "The original connection attempt is still settling."
+                    : "The original connection cleanup is unconfirmed.",
+                },
+              },
+        );
+      })
+      .finally(() => {
+        delete row.cancellation;
+      });
+    revokeEpisode(row);
+    publishRecovery(row, { phase: "cancelling" });
+    return row.cancellation;
+  };
+  const forgetUsb = (
+    id: string,
+    state: "cancelled" | "exhausted" | null = "cancelled",
+    reason: Extract<ConnectionRecovery, { phase: "cancelled" }>["reason"] = "authority-lost",
+  ) => {
     const row = lostUsb.get(id);
-    if (row?.timer) clearTimeout(row.timer);
+    if (!row) return;
+    if (row.timer) clearTimeout(row.timer);
+    row.timer = null;
     lostUsb.delete(id);
-    if (row && state) recoveryState(id, state);
+    if (state === "cancelled") void cancelEpisode(row, reason);
+    else {
+      row.control.abort();
+      if (state === "exhausted") publishRecovery(row, { phase: "retry-exhausted" });
+    }
+    if (state) recoveryState(id, state);
+  };
+  const readRecoveryPolicy = (row: Episode) => {
+    try {
+      return Object.freeze({ ...input.connectionPolicy() });
+    } catch {
+      // The last admitted policy may describe this episode, but cannot grant
+      // another discovery/connect continuation while authoritative storage is unavailable.
+      forgetUsb(row.ref.previousSessionId, "cancelled", "policy");
+      return null;
+    }
   };
   const usbLive = (row: NonNullable<ReturnType<typeof lostUsb.get>>) => {
-    if (closing || !input.connectionPolicy().usbAutoReconnect) return false;
+    if (closing) return false;
+    const policy = readRecoveryPolicy(row);
+    if (!policy) return false;
+    if (!policy.usbAutoReconnect) {
+      forgetUsb(row.ref.previousSessionId, "cancelled", "policy");
+      return false;
+    }
     try {
       assertPrincipal(row.principal);
       const registration = getProvider(row.providerId);
       if (registration.generation !== row.generation) return false;
       const ref = row.principal.authorityContext?.ref;
       const context = ref ? input.authority.current(row.principal, ref) : null;
-      if (!context || context.state === "invalid") return false;
+      if (
+        !context ||
+        context.state === "invalid" ||
+        context.epoch !== row.principal.authorityContext?.epoch
+      )
+        return false;
+      permission(row.principal, "devices.connect");
+      input.authority.assertContinuation(row.principal, ref!);
       gate(row.principal, "connection", null, "admission");
       return true;
     } catch {
@@ -426,13 +597,15 @@ export function createBroker(
   const scheduleUsb = (id: string) => {
     const row = lostUsb.get(id);
     if (!row || row.timer || row.pending) return;
+    const policy = readRecoveryPolicy(row);
+    if (!policy) return;
+    row.policy = policy;
     if (!row.policy.usbAutoReconnect || !usbLive(row)) {
       const initial = row.attempts === 0;
-      forgetUsb(id, initial ? null : "cancelled");
+      forgetUsb(id, "cancelled", !row.policy.usbAutoReconnect ? "policy" : "authority-lost");
       if (initial) recoveryState(id, "unavailable");
       return;
     }
-    const policy = input.connectionPolicy();
     if (policy.usbRetryLimit !== "unlimited" && row.attempts >= policy.usbRetryLimit) {
       forgetUsb(id, "exhausted");
       return;
@@ -441,6 +614,8 @@ export function createBroker(
       policy.usbRetryInterval === "backoff"
         ? [1000, 2000, 5000][Math.min(row.attempts, 2)]!
         : policy.usbRetryInterval;
+    row.due = input.now() + delay;
+    publishRecovery(row, { phase: "waiting", retryAfterMs: delay });
     if (row.attempts === 0) recoveryState(id, "waiting");
     row.timer = setTimeout(() => {
       row.timer = null;
@@ -448,10 +623,19 @@ export function createBroker(
         forgetUsb(id);
         return;
       }
-      row.attempts++;
       void broker
         .reconnectForRecovery({ previousSessionId: id, signal: new AbortController().signal })
-        .finally(() => scheduleUsb(id));
+        .then(
+          () => scheduleUsb(id),
+          () => {
+            // Unexpected provider errors must not leave a live retry or an
+            // unobserved rejection. The original episode stays unavailable.
+            if (lostUsb.get(id) !== row) return;
+            forgetUsb(id, null);
+            publishRecovery(row, { phase: "manual-required", reason: "cleanup-required" });
+            recoveryState(id, "unavailable");
+          },
+        );
     }, delay);
     row.timer.unref();
   };
@@ -619,11 +803,12 @@ export function createBroker(
     id = randomUUID(),
     validate: () => void = () => {},
     rearmMs?: number,
+    generation = current?.generation ?? 0,
   ) =>
     createContexts({
       id,
       sessionId: current?.snapshot.sessionId ?? null,
-      generation: current?.generation ?? 0,
+      generation,
       operationClass,
       deadline: input.now() + duration,
       ...(rearmMs === undefined ? {} : { rearmMs }),
@@ -906,7 +1091,8 @@ export function createBroker(
     },
     revokeProvider(id, generation) {
       for (const [ref, row] of lostUsb)
-        if (row.providerId === id && row.generation === generation) forgetUsb(ref);
+        if (row.providerId === id && row.generation === generation)
+          forgetUsb(ref, "cancelled", "provider-retired");
       const current = session;
       if (!current || current.provider.id !== id || current.generation !== generation) return [];
       current.quiescence ??= finishSession(current, "disconnected");
@@ -915,7 +1101,8 @@ export function createBroker(
     },
     revokeAll() {
       closing = true;
-      for (const id of lostUsb.keys()) forgetUsb(id);
+      for (const id of lostUsb.keys()) forgetUsb(id, "cancelled", "shutdown");
+      disposeRecoveryObservers();
       coreTelemetry.dispose();
       events.dispose();
       if (!session) return [];
@@ -1183,11 +1370,12 @@ export function createBroker(
     };
   };
   const list = (principal: Principal) => {
-    if (session?.snapshot.state === "connected") session.users.add(ownerKey(principal));
+    if (session?.snapshot.state === "connected" && !session.initialization)
+      session.users.add(ownerKey(principal));
     return {
       revision,
       providers: providers.list().filter((row) => !providerHeld(row.providerId)),
-      sessions: session ? [sessionSnapshot(session)] : [],
+      sessions: session && !session.initialization ? [sessionSnapshot(session)] : [],
     };
   };
   const ensureCapability = (
@@ -1363,6 +1551,7 @@ export function createBroker(
           ? "devices.control"
           : "devices.read",
     );
+    if (method === "devices/connectionRecovery/read") return recoverySnapshot();
     if (method === "devices/list") return list(principal);
     if (method === "devices/discover") {
       const p = parse(method),
@@ -1391,22 +1580,41 @@ export function createBroker(
       return { candidates: result };
     }
     if (method === "devices/connect") {
-      if (connecting || connectionLane.occupied || session?.snapshot.state === "connected")
+      if (
+        connecting ||
+        projection?.phase === "cancelling" ||
+        projection?.phase === "cancel-failed" ||
+        (retainedConnection !== null && !retainedConnection.closed) ||
+        connectionLane.occupied ||
+        session?.snapshot.state === "connected" ||
+        (session &&
+          !session.connectionClosed &&
+          (session.lane.quarantined || session.snapshot.state === "quarantined"))
+      )
         return deviceFailure("PLUGIN_E_DEVICE_BUSY", "connecting");
       // A pre-session timeout blocks admission only until its I/O actually settles.
       connectionLane.quarantined = false;
       connecting = true;
+      let removeAbort = () => {};
+      let custody: ConnectionCustody | undefined;
       try {
         const p = parse(method);
         let providerId: string,
           target: ProviderCandidate["key"] | { wifiAddress: string },
-          generation: number;
+          generation: number,
+          recoveryCapture: ((custody: ConnectionCustody) => void) | undefined,
+          recoveryCheck: (() => void) | undefined,
+          recoveryAdopt: ((snapshot: DeviceSessionSnapshot) => void) | undefined;
         if (p.target.kind === "candidate") {
           const row = candidates.get(ownerKey(principal), p.target.candidateId);
           if (input.now() >= row.expires) return stale("candidate");
           providerId = row.candidate.descriptor.providerId;
           target = row.candidate.key;
           generation = row.generation;
+          recoveryCapture = row.recoveryCapture;
+          recoveryCheck = row.recoveryCheck;
+          recoveryAdopt = row.recoveryAdopt;
+          recoveryCheck?.();
           candidates.remove(p.target.candidateId);
         } else {
           providerId = p.target.providerId;
@@ -1420,6 +1628,8 @@ export function createBroker(
         const policy = Object.freeze({ ...input.connectionPolicy() });
         attemptPolicies.set(providerId, policy);
         gate(principal, "connection", null, "admission");
+        if (!recoveryCheck)
+          for (const id of lostUsb.keys()) forgetUsb(id, "cancelled", "superseded");
         const ctx = contexts(
           principal,
           null,
@@ -1427,20 +1637,99 @@ export function createBroker(
           policy.wifiConnectTimeoutMs + policy.wifiHandshakeTimeoutMs,
           randomUUID(),
           () => {
+            recoveryCheck?.();
             if (getProvider(providerId).generation !== generation) return stale();
           },
+          undefined,
+          generation,
         );
         const onAbort = () => ctx.stop("cancelled", true);
         signal.addEventListener("abort", onAbort, { once: true });
+        removeAbort = () => signal.removeEventListener("abort", onAbort);
         if (signal.aborted) onAbort();
-        let connection: ProviderConnection;
-        try {
-          connection = value(
-            await trackProviderWork(generation, registration.provider.connect(target, ctx.work)),
-          );
-        } finally {
-          signal.removeEventListener("abort", onAbort);
-        }
+        const connection = value(
+          await trackProviderWork(generation, registration.provider.connect(target, ctx.work)),
+        );
+        // Capture the exact returned handle before any current-owner or cancellation
+        // check can throw. Cleanup uses this attempt's context, never a new grant.
+        let acquired: Session | undefined = undefined;
+        let cleanup: Promise<boolean> | undefined;
+        let disconnecting: Promise<ProviderOutcome<null>> | undefined;
+        const held: ConnectionCustody = {
+          generation,
+          closed: false,
+          attempted: false,
+          close() {
+            if (held.closed) return Promise.resolve(true);
+            if (cleanup) return cleanup;
+            held.attempted = true;
+            cleanup = (async () => {
+              let confirmed = false;
+              try {
+                ctx.stop("cancelled", true);
+                ctx.cleanup.assertCleanup("disconnect");
+                const deadline = ctx.cleanup.deadlineMonotonicMs;
+                if (acquired) {
+                  acquired.sampler.dispose();
+                  await bounded(
+                    Promise.all([...acquired.providerPending]),
+                    Math.max(0, deadline - input.now()),
+                  );
+                  await acquired.lane.drain(deadline);
+                }
+                if (!disconnecting) {
+                  disconnecting = trackProviderWork(
+                    generation,
+                    registration.provider.disconnect(connection.key, ctx.cleanup),
+                  );
+                  // A late confirmed receipt settles this exact retained handle even
+                  // after the caller timed out. It never touches a replacement session.
+                  void disconnecting.then(
+                    (result) => {
+                      if (
+                        result.error ||
+                        (result.stopConfirmation !== "confirmed" &&
+                          result.stopConfirmation !== "not-required")
+                      )
+                        return;
+                      held.closed = true;
+                      if (acquired) {
+                        acquired.connectionClosed = true;
+                        acquired.lane.quarantined = false;
+                        acquired.snapshot.state = "disconnected";
+                      }
+                      if (retainedConnection === held) retainedConnection = null;
+                    },
+                    () => {},
+                  );
+                }
+                const result = await bounded(disconnecting, Math.max(0, deadline - input.now()));
+                disconnecting = undefined;
+                confirmed =
+                  !result.error &&
+                  (result.stopConfirmation === "confirmed" ||
+                    result.stopConfirmation === "not-required");
+              } catch {
+                /* Retain the original handle and lane on uncertain cleanup. */
+              }
+              held.closed = confirmed;
+              if (acquired) {
+                acquired.connectionClosed = confirmed;
+                acquired.lane.quarantined = !confirmed;
+                acquired.snapshot.state = confirmed ? "disconnected" : "quarantined";
+              }
+              if (confirmed && retainedConnection === held) retainedConnection = null;
+              else if (!confirmed) connectionLane.quarantined = true;
+              return confirmed;
+            })().finally(() => {
+              cleanup = undefined;
+            });
+            return cleanup;
+          },
+        };
+        custody = held;
+        retainedConnection = custody;
+        recoveryCapture?.(custody);
         ctx.work.assertContinuation("connect");
         providers.claim(providerId, connection.physical);
         getProvider(providerId);
@@ -1480,12 +1769,16 @@ export function createBroker(
           unregister: () => {},
         };
         session = current;
+        acquired = current;
         const initialize = async () => {
           try {
             const outcome = await current.provider.sources(
               connection.key,
-              contexts(principal, current, "passive-read", 10000).work,
+              contexts(principal, current, "passive-read", 10000, randomUUID(), () =>
+                ctx.work.assertContinuation("connect"),
+              ).work,
             );
+            ctx.work.assertContinuation("connect");
             if (
               outcome.error?.reason === "provider-disabled" &&
               outcome.dispatch !== "unknown" &&
@@ -1497,28 +1790,6 @@ export function createBroker(
             snapshot.sourceRevision = current.sources.sourceRevision;
           } catch (error) {
             current.sampler.dispose();
-            const detail = error instanceof BrokerFailure ? error.result.error.detail : null;
-            const withdrawn = detail?.kind === "device" && detail.reason === "provider-disabled";
-            if (withdrawn && !current.lane.quarantined) {
-              const cleanup = contexts(principal, current, "connection", 15000).cleanup;
-              let confirmed = false;
-              try {
-                const closed = await current.provider.disconnect(connection.key, cleanup);
-                confirmed = !closed.error && closed.stopConfirmation !== "unconfirmed";
-              } finally {
-                if (!confirmed) {
-                  current.lane.quarantined = true;
-                  current.snapshot.state = "quarantined";
-                }
-              }
-              if (confirmed) {
-                current.connectionClosed = true;
-                current.snapshot.state = "disconnected";
-              }
-            } else {
-              current.lane.quarantined = true;
-              current.snapshot.state = "quarantined";
-            }
             throw error;
           }
         };
@@ -1539,36 +1810,76 @@ export function createBroker(
               message: "The EV3 connection was lost.",
             });
           else current.quiescence = finishSession(current, "disconnected", true);
-          const lossPolicy = input.connectionPolicy();
+          // Commit physical loss even when the subsequent authoritative policy
+          // read fails (including a previously quiesced session).
+          current.snapshot.state = "disconnected";
+          revision++;
+          changed();
+          let lossPolicy: ReturnType<Options["connectionPolicy"]> | null = null;
+          try {
+            lossPolicy = Object.freeze({ ...input.connectionPolicy() });
+          } catch {
+            // The connect-admission policy is retained only to describe the
+            // cancelled episode below. It never admits retry work.
+          }
+          const row: Episode = {
+            principal,
+            providerId,
+            generation,
+            digest: current.connection.physical.digest ?? "",
+            settled: current.quiescence.settled,
+            policy: lossPolicy ?? policy,
+            attempts: 0,
+            timer: null,
+            pending: false,
+            control: new AbortController(),
+            ref: {
+              recoveryId: randomUUID(),
+              providerId,
+              providerGeneration: generation,
+              previousSessionId: id,
+            },
+            name: current.snapshot.name,
+            due: input.now(),
+            done: Promise.resolve(),
+          };
+          latestEpisode = row;
+          if (!lossPolicy) {
+            void cancelEpisode(row, "policy");
+            recoveryState(id, "cancelled");
+            return;
+          }
           if (
             current.snapshot.transport === "usb" &&
             current.connection.physical.basis === "serial" &&
             current.connection.physical.digest !== null &&
             lossPolicy.usbAutoReconnect
           ) {
-            lostUsb.set(id, {
-              principal,
-              providerId,
-              generation,
-              digest: current.connection.physical.digest,
-              settled: current.quiescence.settled,
-              policy: lossPolicy,
-              attempts: 0,
-              timer: null,
-              pending: false,
-            });
+            lostUsb.set(id, row);
             scheduleUsb(id);
-          } else if (current.snapshot.transport === "usb") {
+          } else {
+            publishRecovery(row, {
+              phase: "manual-required",
+              reason: !lossPolicy.usbAutoReconnect ? "auto-disabled" : "identity-unavailable",
+            });
             recoveryState(id, "unavailable");
           }
-          current.snapshot.state = "disconnected";
-          revision++;
-          changed();
         });
+        // Recovery adoption and its retained terminal publication share this
+        // synchronous turn. A later cancel cannot claim a connecting episode
+        // after the new usable session has already escaped to subscribers.
+        recoveryAdopt?.(snapshot);
+        retainedConnection = null;
+        custody = undefined;
+        if (!recoveryAdopt && latestEpisode) clearRecovery();
         revision++;
         changed();
         return { session: structuredClone(snapshot) };
+      } catch (error) {
+        if (custody && !custody.closed) await custody.close();
+        throw error;
       } finally {
+        removeAbort();
         connecting = false;
         attemptPolicies.clear();
       }
@@ -1613,6 +1924,8 @@ export function createBroker(
         owner = principal.owner;
       const read = (): DeviceSubscriptionSnapshot => {
         switch (params.topic) {
+          case "connectionRecovery":
+            return recoverySnapshot();
           case "catalog":
             return list(principal);
           case "session": {
@@ -1712,6 +2025,8 @@ export function createBroker(
         }
       };
       let notify = (_sourcesChanged = false) => {};
+      if (params.topic === "connectionRecovery")
+        notify = () => publish({ kind: "devices.connectionRecovery", data: recoverySnapshot() });
       if (params.topic === "catalog")
         notify = () => publish({ kind: "devices.catalog", data: list(principal) });
       if (params.topic === "session") {
@@ -2019,25 +2334,112 @@ export function createBroker(
     sessions,
     resources,
     recovery,
+    connectionRecovery: {
+      snapshot: recoverySnapshot,
+      async cancel({ target, action }) {
+        const row = latestEpisode;
+        try {
+          if (
+            !row ||
+            !isDeepStrictEqual(row.ref, target) ||
+            !projection ||
+            !["waiting", "connecting", "cancelling", "cancel-failed"].includes(projection.phase)
+          )
+            return stale("rpc");
+          if (
+            !input.coreActions.claim(action, {
+              kind: "device-connection-recovery-cancel",
+              ...row.ref,
+            })
+          )
+            return actionFailure();
+          try {
+            await cancelEpisode(row, "user");
+            return { ok: true, value: recoverySnapshot() };
+          } finally {
+            input.coreActions.complete(action);
+          }
+        } catch (error) {
+          if (error instanceof BrokerFailure) return error.result;
+          throw error;
+        }
+      },
+    },
     events,
     providerCatalog,
     async reconnectForRecovery({ previousSessionId, signal }) {
       let attemptedConnection = false;
+      let admitted: Episode | undefined;
+      let settled = () => {};
+      let removeDiscoveryAbort = () => {};
       try {
         const previous = lostUsb.get(previousSessionId);
         if (!previous || previous.pending || signal.aborted || !usbLive(previous)) return stale();
+        signal = AbortSignal.any([signal, previous.control.signal]);
+        const policy = readRecoveryPolicy(previous);
+        if (!policy) return stale();
+        previous.policy = policy;
+        if (
+          previous.attempts >= Number.MAX_SAFE_INTEGER ||
+          (previous.policy.usbRetryLimit !== "unlimited" &&
+            previous.attempts >= previous.policy.usbRetryLimit)
+        ) {
+          forgetUsb(previousSessionId, "exhausted");
+          return stale();
+        }
+        admitted = previous;
         previous.pending = true;
+        previous.done = new Promise<void>((resolve) => {
+          settled = resolve;
+        });
+        previous.attempts++;
+        publishRecovery(previous, { phase: "connecting" });
         if (previous.timer) {
           clearTimeout(previous.timer);
           previous.timer = null;
         }
-        await previous.settled;
+        await new Promise<void>((resolve, reject) => {
+          const abort = () => {
+            try {
+              deviceFailure("PLUGIN_E_CANCELLED", "cancelled");
+            } catch (error) {
+              reject(error);
+            }
+          };
+          signal.addEventListener("abort", abort, { once: true });
+          void previous.settled.then(
+            () => {
+              signal.removeEventListener("abort", abort);
+              resolve();
+            },
+            (error: unknown) => {
+              signal.removeEventListener("abort", abort);
+              reject(error);
+            },
+          );
+          if (signal.aborted) abort();
+        });
         if (lostUsb.get(previousSessionId) !== previous || !usbLive(previous)) return stale();
         assertPrincipal(previous.principal);
         gate(previous.principal, "connection", null, "admission");
         const registration = getProvider(previous.providerId);
         if (registration.generation !== previous.generation) return stale();
-        const ctx = contexts(previous.principal, null, "connection", 10000);
+        const recoveryCheck = () => {
+          if (signal.aborted) return deviceFailure("PLUGIN_E_CANCELLED", "cancelled");
+          if (lostUsb.get(previousSessionId) !== previous || !usbLive(previous)) return stale();
+        };
+        const ctx = contexts(
+          previous.principal,
+          null,
+          "connection",
+          10000,
+          randomUUID(),
+          recoveryCheck,
+        );
+        const abortDiscovery = () => ctx.stop("cancelled", true);
+        signal.addEventListener("abort", abortDiscovery, { once: true });
+        removeDiscoveryAbort = () => signal.removeEventListener("abort", abortDiscovery);
+        if (signal.aborted) abortDiscovery();
         const found = value(
           await trackProviderWork(
             registration.generation,
@@ -2047,6 +2449,7 @@ export function createBroker(
         ctx.work.assertContinuation("discover");
         if (signal.aborted || lostUsb.get(previousSessionId) !== previous) return stale();
         const journal = await input.journal.load();
+        recoveryCheck();
         if (
           journal.entries.some(
             (entry) =>
@@ -2055,6 +2458,7 @@ export function createBroker(
           )
         ) {
           forgetUsb(previousSessionId, null);
+          publishRecovery(previous, { phase: "manual-required", reason: "identity-ambiguous" });
           recoveryState(previousSessionId, "unavailable");
           return deviceFailure("PLUGIN_E_DEVICE_OPERATION", "identity-ambiguous");
         }
@@ -2068,15 +2472,28 @@ export function createBroker(
           return deviceFailure("PLUGIN_E_DEVICE_UNAVAILABLE", "disconnected");
         if (matches.length > 1) {
           forgetUsb(previousSessionId, null);
+          publishRecovery(previous, { phase: "manual-required", reason: "identity-ambiguous" });
           recoveryState(previousSessionId, "unavailable");
           return deviceFailure("PLUGIN_E_DEVICE_OPERATION", "identity-ambiguous");
         }
         attemptedConnection = true;
         recoveryState(previousSessionId, "connecting");
+        let adopted = false;
         const candidateId = candidates.add(ownerKey(previous.principal), {
           candidate: matches[0]!,
           generation: previous.generation,
           expires: input.now() + 30000,
+          recoveryCheck,
+          recoveryCapture: (custody) => {
+            previous.custody = custody;
+          },
+          recoveryAdopt: (snapshot) => {
+            recoveryCheck();
+            adopted = true;
+            forgetUsb(previousSessionId, null);
+            publishRecovery(previous, { phase: "restored", sessionId: snapshot.sessionId });
+            recoveryState(previousSessionId, "restored", snapshot);
+          },
         });
         const connected = await broker.request(
           previous.principal,
@@ -2085,17 +2502,23 @@ export function createBroker(
           signal,
         );
         if (!connected.ok) return connected;
-        forgetUsb(previousSessionId, null);
-        recoveryState(previousSessionId, "restored", connected.value.session);
+        if (!adopted) return stale();
         return { ok: true, value: { sessionId: connected.value.session.sessionId } };
       } catch (error) {
         if (error instanceof BrokerFailure) return error.result;
         throw error;
       } finally {
+        removeDiscoveryAbort();
+        if (admitted) admitted.pending = false;
+        settled();
         const previous = lostUsb.get(previousSessionId);
         if (previous) {
-          previous.pending = false;
+          if (previous.custody && !previous.custody.closed) {
+            forgetUsb(previousSessionId, "cancelled");
+          }
+          if (signal.aborted) forgetUsb(previousSessionId);
           if (attemptedConnection && usbLive(previous)) recoveryState(previousSessionId, "waiting");
+          scheduleUsb(previousSessionId);
         }
       }
     },
@@ -2315,6 +2738,8 @@ export function createBroker(
         };
         const parsed = deviceRequestSchemas[method].result.parse(result);
         validateDeviceWire(`${method}.result`, parsed);
+        if (!validDeviceResultV180(method, parsed, params))
+          throw new Error("Invalid device result");
         return parsed as DeviceResult<M>;
       } catch (error) {
         if (error instanceof BrokerFailure) return error.result as DeviceResult<M>;
@@ -2358,6 +2783,10 @@ export function createBroker(
         const wasHeld = providerHeld(provider.id);
         if (allowed) heldProviders.delete(registration.generation);
         else heldProviders.set(registration.generation, provider.id);
+        if (!allowed)
+          for (const [id, row] of lostUsb)
+            if (row.providerId === provider.id && row.generation === registration.generation)
+              forgetUsb(id, "cancelled", "provider-retired");
         if (wasHeld !== providerHeld(provider.id)) {
           revision++;
           changed();
@@ -2418,6 +2847,18 @@ export function createBroker(
             Promise.allSettled([...(providerWork.get(registration.generation) ?? [])]),
             15000,
           );
+          // A settled native connect is not proof that its returned handle was
+          // closed. Withdrawal retains that exact handle across failed cleanup;
+          // disposing/replacing its provider would strand the only cleanup path.
+          if (
+            retainedConnection?.generation === registration.generation &&
+            !retainedConnection.closed
+          )
+            throw new ProviderRetirementBlocked({
+              stopConfirmed: false,
+              journalCommitted: input.journal.snapshot().journalHealth === "ready",
+              faultIds: [],
+            });
           const ctx = contexts(samplerPrincipal, current, "connection", 15000);
           if (current && session === current && !disconnected && !current.connectionClosed) {
             const outcome = await current.provider.disconnect(current.connection.key, ctx.cleanup);
@@ -2714,6 +3155,28 @@ export function createBroker(
         await operation.finish();
       }
     },
+  };
+  const offAuthority = input.authority.subscribe((ref) => {
+    for (const [id, row] of lostUsb)
+      if (row.principal.authorityContext?.ref === ref && !usbLive(row))
+        forgetUsb(id, "cancelled", "authority-lost");
+  });
+  const offPolicy = input.subscribeConnectionPolicy?.(() => {
+    for (const [id, row] of lostUsb) {
+      const policy = readRecoveryPolicy(row);
+      if (!policy) continue;
+      row.policy = policy;
+      if (!row.policy.usbAutoReconnect) forgetUsb(id, "cancelled", "policy");
+      else if (!row.pending) {
+        if (row.timer) clearTimeout(row.timer);
+        row.timer = null;
+        scheduleUsb(id);
+      }
+    }
+  });
+  const disposeRecoveryObservers = () => {
+    offAuthority();
+    offPolicy?.();
   };
   lifecycleListeners.set(broker, lifecycle);
   recoverySessions.set(broker, () => {

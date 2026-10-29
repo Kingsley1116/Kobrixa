@@ -490,7 +490,10 @@ export function createPluginUiBridge(input: {
           : undefined;
       // Core safety routes do not depend on feature form validity or enabledWhen.
       if (node?.type === "action" && node.action.kind === "core") {
-        if (node.action.action === "stopRecording") {
+        if (
+          node.action.action === "stopRecording" ||
+          node.action.action === "cancelConnectionRecovery"
+        ) {
           const result = await interactions.interact({
             kind: "core",
             binding: value.binding,

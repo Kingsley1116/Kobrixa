@@ -1,7 +1,7 @@
 import {
-  eventEnvelopeSchema,
+  eventEnvelopeSchemaV180 as eventEnvelopeSchema,
   validateDeviceWire,
-  type Stage3EventEnvelope,
+  type Stage3EventEnvelopeV180 as Stage3EventEnvelope,
   uiEventEnvelopeSchemaV2,
   type ResourceOwner,
 } from "@kobrixa/plugin-protocol";
@@ -27,11 +27,15 @@ type Slot = {
   drained: Set<() => void>;
   listener: Listener;
   resync: () => Promise<void>;
+  onTerminal?: Listener;
+  cleanup?: () => Promise<unknown>;
+  closing?: Promise<unknown>;
 };
 const size = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
 export class EventInbox {
   #enabled = false;
   #pending = 0;
+  #terminalPending = 0;
   #early: Stage3EventEnvelope[] = [];
   #slots = new Map<string, Slot>();
   #terminalJobs: TerminalJob[] = [];
@@ -69,10 +73,12 @@ export class EventInbox {
   enable(): void {
     this.#enabled = true;
   }
-  beginSubscription(): () => void {
+  beginSubscription(terminal = false): () => void {
     this.#pending++;
+    if (terminal) this.#terminalPending++;
     return () => {
       this.#pending--;
+      if (terminal) this.#terminalPending--;
       if (!this.#pending) {
         this.#early = [];
         this.#earlyTerminal.clear();
@@ -84,7 +90,14 @@ export class EventInbox {
       }
     };
   }
-  open(id: string, listener: Listener, resync: () => Promise<void>, sequence = 0): void {
+  open(
+    id: string,
+    listener: Listener,
+    resync: () => Promise<void>,
+    sequence = 0,
+    onTerminal?: Listener,
+    cleanup?: () => Promise<unknown>,
+  ): void {
     if (this.#slots.size >= 32) throw new Error("Subscription queue full");
     this.#slots.set(id, {
       last: sequence,
@@ -98,12 +111,16 @@ export class EventInbox {
       drained: new Set(),
       listener,
       resync,
+      ...(onTerminal ? { onTerminal } : {}),
+      ...(cleanup ? { cleanup } : {}),
     });
     const terminal = this.#earlyTerminal.get(id);
     if (terminal) {
       const slot = this.#slots.get(id)!;
       slot.terminal = true;
+      this.#cleanupTerminal(slot);
       const job = this.#terminalJobs.find((job) => job.event === terminal);
+      if (job && onTerminal) job.late.push(() => this.#finishTerminal(id, slot, terminal));
       if (job && terminal.subscriptionId === id) {
         job.carrier = slot;
         job.carrierReady?.();
@@ -114,6 +131,19 @@ export class EventInbox {
     for (const event of early)
       if (event.subscriptionId === id) this.accept(event);
       else this.#early.push(event);
+  }
+  #cleanupTerminal(slot: Slot): void {
+    if (!slot.closing && slot.cleanup) {
+      slot.closing = Promise.resolve().then(() => slot.cleanup!());
+      void slot.closing.catch(() => {});
+    }
+  }
+  async #finishTerminal(id: string, slot: Slot, event: ResyncRequiredEvent): Promise<void> {
+    if (slot.running) await new Promise<void>((resolve) => slot.drained.add(resolve));
+    await slot.closing?.catch(() => {});
+    if (this.#slots.get(id) !== slot) return;
+    this.close(id);
+    await slot.onTerminal?.(event);
   }
   reconcile(id: Handle, sequence: Counter): void {
     const slot = this.#slots.get(id);
@@ -145,7 +175,13 @@ export class EventInbox {
       slot = this.#slots.get(event.subscriptionId),
       n = size(event);
     if (JSON.stringify(event.owner) !== JSON.stringify(this.expectedOwner)) return false;
-    if (event.kind === "events.resyncRequired" && this.#terminalHandler) {
+    if (
+      event.kind === "events.resyncRequired" &&
+      (this.#terminalHandler ||
+        this.#terminalPending ||
+        slot?.onTerminal ||
+        event.data.affected.some((id) => this.#slots.get(id)?.onTerminal))
+    ) {
       if (
         (!slot && !this.#pending) ||
         (slot && (slot.terminal || event.sequence <= slot.last)) ||
@@ -172,11 +208,16 @@ export class EventInbox {
       if (slot) slot.last = event.sequence;
       for (const id of event.data.affected) {
         const affectedSlot = this.#slots.get(id);
-        if (affectedSlot) affectedSlot.terminal = true;
+        if (affectedSlot) {
+          affectedSlot.terminal = true;
+          this.#cleanupTerminal(affectedSlot);
+          if (affectedSlot.onTerminal)
+            job.late.push(() => this.#finishTerminal(id, affectedSlot, event));
+        }
       }
       if (this.#pending) for (const id of event.data.affected) this.#earlyTerminal.set(id, event);
       void this.ack(event.subscriptionId, event.sequence).catch(() => {});
-      const ui = this.#terminalHandler(event);
+      const ui = this.#terminalHandler?.(event);
       job.run = async () => {
         const legacy = async () => {
           if (!job.carrier && this.#pending)
@@ -185,7 +226,7 @@ export class EventInbox {
             });
           delete job.carrierReady;
           const slot = job.carrier;
-          if (!slot || this.#slots.get(event.subscriptionId) !== slot) return;
+          if (!slot || slot.onTerminal || this.#slots.get(event.subscriptionId) !== slot) return;
           if (slot.running) await new Promise<void>((resolve) => slot.drained.add(resolve));
           if (this.#slots.get(event.subscriptionId) !== slot) return;
           // Device/settings adapters retain serial callback order and resource queries.
@@ -260,10 +301,12 @@ export class EventInbox {
   async #pump(slot: Slot): Promise<void> {
     try {
       while (slot.queue.length) {
+        if (slot.terminal && slot.onTerminal) return;
         const { event, gap } = slot.queue[0]!;
         if (this.#slots.get(event.subscriptionId) !== slot) return;
         try {
           if (gap || event.kind === "events.resyncRequired") await slot.resync();
+          if (slot.terminal && slot.onTerminal) return;
           if (this.#slots.get(event.subscriptionId) !== slot) return;
           if (event.sequence > slot.watermark) await slot.listener(event);
           if (this.#slots.get(event.subscriptionId) !== slot) return;

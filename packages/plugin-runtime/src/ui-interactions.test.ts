@@ -957,3 +957,83 @@ it("advanced command arguments keep the existing 16 KiB UTF-8 limit before mint/
   expect(h.state.formRevision).toBe(0);
   h.host.dispose();
 });
+
+function recoveryFixture() {
+  const h = fixture();
+  const node = h.resource.nodes.find((n) => n.id === "stop");
+  if (!node || node.type !== "action") throw Error("fixture");
+  node.action = {
+    kind: "core",
+    action: "cancelConnectionRecovery",
+    recovery: { scope: "data", key: "reservation" },
+  };
+  // Registry snapshots are fresh clones; original registered resource identity is stable.
+  h.ports.resolve = (b) =>
+    b.panelInstance === binding.panelInstance
+      ? { ...h.resolved, state: structuredClone(h.state) }
+      : null;
+  h.ports.admit = vi.fn<UiInteractionPorts["admit"]>(() => ({
+    ok: false,
+    error: { code: "PLUGIN_E_RESOURCE_LIMIT", message: "full" },
+  }));
+  return h;
+}
+it("USB Cancel bypasses invalid form/feature enabledWhen/ordinary queue but requires a visible original site", async () => {
+  const h = recoveryFixture();
+  h.state.valid = false;
+  const root = h.resource.nodes[0]!;
+  root.enabledWhen = { op: "eq", left: { scope: "data", key: "presentation" }, right: -1 };
+  const request = { kind: "core" as const, binding, actionId: "stop" };
+  expect((await h.host.interact(request)).ok).toBe(true);
+  expect(h.ports.admit).not.toHaveBeenCalled();
+  expect(h.dispatch).not.toHaveBeenCalled();
+  expect(h.mint).not.toHaveBeenCalled();
+  h.state.visible = false;
+  expect((await h.host.interact(request)).ok).toBe(false);
+  h.state.visible = true;
+  root.visibleWhen = root.enabledWhen;
+  expect((await h.host.interact(request)).ok).toBe(false);
+  delete root.visibleWhen;
+  expect(
+    (
+      await h.host.interact({
+        ...request,
+        binding: { ...binding, processEpoch: binding.panelInstance },
+      })
+    ).ok,
+  ).toBe(false);
+  expect(h.core).toHaveBeenCalledOnce();
+  h.host.dispose();
+});
+it("USB Cancel has its own one-inflight slot and fences a hidden late reply", async () => {
+  const h = recoveryFixture();
+  let finish!: (r: Result<CommandValue>) => void;
+  h.core.mockImplementationOnce(
+    () =>
+      new Promise((r) => {
+        finish = r;
+      }),
+  );
+  const q = { kind: "core" as const, binding, actionId: "stop" };
+  const pending = h.host.interact(q);
+  expect(h.core).toHaveBeenCalledOnce();
+  expect((await h.host.interact(q)).ok).toBe(false);
+  h.resource.nodes.push({
+    id: "other-stop",
+    type: "action",
+    variant: "normal",
+    label: { en: "Stop recording" },
+    action: {
+      kind: "core",
+      action: "stopRecording",
+      reservation: { scope: "data", key: "reservation" },
+    },
+  });
+  expect((await h.host.interact({ ...q, actionId: "other-stop" })).ok).toBe(true);
+  h.state.visible = false;
+  finish({ ok: true, value: { output: {}, fieldErrors: [] } });
+  expect((await pending).ok).toBe(false);
+  h.state.visible = true;
+  expect((await h.host.interact(q)).ok).toBe(true);
+  h.host.dispose();
+});

@@ -109,7 +109,12 @@ export type { ContextCommandContext, ContextCommandHandler } from "./commands.js
 export { UiClient } from "./ui.js";
 import { bindEventChannel } from "./events.js";
 import { resourceOwnerSchema } from "@kobrixa/plugin-protocol";
-import { createDevicesClient, type DevicesClient } from "./devices.js";
+import {
+  createDevicesClient,
+  retireDevicesClient,
+  initializeDevicesClient,
+  type DevicesClient,
+} from "./devices.js";
 export * from "./devices.js";
 export { unwrap } from "@kobrixa/plugin-protocol";
 import {
@@ -198,6 +203,7 @@ export async function runPlugin(
   let retire = () => {};
   const peer = new RpcPeer(channel, {
     onProtocolError: () => {
+      retireDevicesClient(peer);
       retire();
       exit(1);
     },
@@ -296,6 +302,7 @@ export async function runPlugin(
   });
   const devices = createDevicesClient(peer, ready);
   peer.handle("initialize", async ({ pluginId, locale, apiVersion }, request) => {
+    retireDevicesClient(peer);
     candidate = supportsUiV2(apiVersion);
     retire();
     peer.setUiCandidate(candidate);
@@ -346,7 +353,10 @@ export async function runPlugin(
     // Readiness follows successful response publication, without a timer racing
     // the first command or activation continuations overtaking the handshake.
     request.afterReply(
-      () => initialized(apiVersion),
+      () => {
+        initializeDevicesClient(peer, apiVersion);
+        initialized(apiVersion);
+      },
       () => {},
     );
     return {
@@ -362,6 +372,7 @@ export async function runPlugin(
     return null;
   });
   peer.handle("shutdown", async () => {
+    retireDevicesClient(peer);
     retire();
     negotiated = false;
     readyResult = undefined;
@@ -369,6 +380,7 @@ export async function runPlugin(
     return null;
   });
   peer.onNotification("exit", () => {
+    retireDevicesClient(peer);
     retire();
     exit(0);
   });
