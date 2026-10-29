@@ -1,0 +1,52 @@
+{
+  "producer.json": {
+    "bytes": 79614,
+    "sha256": "4c5202d0db0e3fa6ae4230f440d4b2cb130d1e0333089af14802dcb90c80df3a",
+    "gzipSha256": "f0057b39379d0f783d4a01b0c05239d6c0a3d46b22e84488deaf7807b4378f1a"
+  },
+  "receipt.json": {
+    "bytes": 61464,
+    "sha256": "c3968743e77c1797b86ddb3ae3c7dc544068fb3c9ec6b0a40b4bce18a5a2d426",
+    "gzipSha256": "5b770c47049b69a38204a4fb56758812b2f0c537e619fb77303efcc6c85149a3"
+  },
+  "identity.json": {
+    "bytes": 60019,
+    "sha256": "bdaa396371c35fb1c93c39fce57d0b0dcf7b4499c8b5fc4138f589ac48eb8f6a",
+    "gzipSha256": "c7550c3b6b231474d73e94b81f7123a9e35570db6fcd77e5ba4e029b9b70ec10"
+  },
+  "process.json": {
+    "bytes": 145,
+    "sha256": "cb627a4aa7022a6dbfc4471c8dd64a03ff21aa127d8ca98d0b8d9c62c9822eb3",
+    "gzipSha256": "2d995501e9f6ecb40cc69c86d01b71ac7b069ecc4c5c3fc59ef92f3414eec4aa"
+  },
+  "native.log": {
+    "bytes": 394,
+    "sha256": "495a76c3e90affb04638225d4e80697b8370ff3f4e7c608ab725549eadbf127d",
+    "gzipSha256": "2511183c6838f7ff3532ec5bdab66dd4aaf4db58eafb24761e32dc34a7eccbb4"
+  },
+  "oracle-tests.log": {
+    "bytes": 2853,
+    "sha256": "f75ae01f4b9d840ecc01ee420a15e11b3d23b62a8aebceb974f5fa856716dc48",
+    "gzipSha256": "e52395d716ae46cb307aea30b19d6d7f869946d04a338d3e1d3c57667c21a83f"
+  },
+  "review.md": {
+    "bytes": 5372,
+    "sha256": "90df1168a5d39d57d6466b0a8444ab92c07a76317e1298dbcd32d0e0873a61cc",
+    "gzipSha256": "7ad5e89e0701fb7d4d1063eed6e0054e61476ae438df649ed05077bd5c5e2f92"
+  },
+  "review-fix.md": {
+    "bytes": 5395,
+    "sha256": "e459b168d45ac4dee98bce2fe80eb86c2ccfbcdae4ecd5e0e937915e1645711a",
+    "gzipSha256": "afd9f22eeffb1648241c94344970deb7e69dce86513ba70f74780a4176f8e34b"
+  },
+  "native-fixture-fix.md": {
+    "bytes": 3048,
+    "sha256": "51735236f5ffab087e8ffbfa68da7fb8b283c69758ccefe60f7b154d0472c6e2",
+    "gzipSha256": "c95ed65024c76873a54e4e835cac0eba5558ca49854a67fee38db8f27424b23d"
+  },
+  "oracle-contract-fix.md": {
+    "bytes": 3147,
+    "sha256": "56255e013b069d1966c626d286f2d1a2f8ec54264559f0308fb89f1489ce0097",
+    "gzipSha256": "efaba268322d0f113891d90eb83d3a23cc56cf04b002a0026069a125d3600dab"
+  }
+}
