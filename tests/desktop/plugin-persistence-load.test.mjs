@@ -19,3 +19,20 @@ test("verifier negatives: statistics reject sparse, negative and nonnumeric meas
   for (const samples of [Array(30), Array(30).fill(-1), Array(30).fill("1"), Array(31).fill(1)])
     assert.throws(() => statistics(samples));
 });
+
+test("pressure pure selector preserves RF5 and partial evidence cannot join full reports", async () => {
+  const { selectFoundationCases } = await import("./plugin-persistence-run.mjs");
+  const { verifyFoundationReports } = await import("./plugin-persistence-harness.mjs");
+  assert.deepEqual(selectFoundationCases({ caseId: "storage-ui-pressure" }), [
+    "storage-ui-pressure",
+  ]);
+  assert.deepEqual(selectFoundationCases({ caseId: "import-restart" }), ["import-restart"]);
+  assert.throws(
+    () =>
+      verifyFoundationReports(
+        [{ case: "storage-ui-pressure", evidence: { pressure: {} } }],
+        ["storage-ui-pressure"],
+      ),
+    /partial/,
+  );
+});

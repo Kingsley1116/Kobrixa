@@ -214,3 +214,9 @@ test("compatibility requires original trace and derives current publication", ()
   delete fixture.compatibility;
   assert.throws(() => assertFoundationOutcome("compatibility", fixture));
 });
+
+test("partial pressure receipt cannot enter the full historical RSS gate", () => {
+  const evidence = outcomeOracleFixture("storage-ui-pressure");
+  evidence.pressure = { status: "partial-memory-unavailable" };
+  assert.throws(() => assertFoundationOutcome("storage-ui-pressure", evidence), /Partial pressure/);
+});

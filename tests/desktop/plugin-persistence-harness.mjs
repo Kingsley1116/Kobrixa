@@ -1,3 +1,4 @@
+import { assertPressurePartial } from "./plugin-persistence-pressure.ts";
 import { assertImportPhase } from "./plugin-persistence-import.ts";
 import { assertOptionalEvidence, assertOptionalPhase } from "./plugin-persistence-optional-off.ts";
 import { assertRendererLossEvidence } from "./plugin-persistence-renderer-loss.ts";
@@ -628,6 +629,7 @@ export function assertDisconnectEvidence(evidence) {
 export function verifyRunReceipt(r, expected = {}) {
   if (r.case === "import-restart" && r.evidence?.importSlice)
     assertImportPhase(r.evidence.importSlice);
+  else if (r.case === "storage-ui-pressure") assertPressurePartial(r.evidence.pressure);
   else assertFoundationOutcome(r.case, r.evidence, { serialized: true });
   if (r.case === "all-optional-off") {
     assertOptionalEvidence(r.evidence, r.hostEpoch);
@@ -663,7 +665,7 @@ export function verifyRunReceipt(r, expected = {}) {
   }
   if (r.case === "registration-end") assertRegistrationEndEvidence(r.evidence);
   assert.equal(r.level, "real-process");
-  assert.equal(r.status, "passed");
+  assert.equal(r.status, r.case === "storage-ui-pressure" ? "partial-pressure" : "passed");
   for (const field of ["runId", "case", "profileId"])
     assert.ok(typeof r[field] === "string" && r[field].length > 0, field);
   assert.match(r.commit, /^[0-9a-f]{40}$/);
@@ -1067,6 +1069,10 @@ export function assertContentionEvidence(evidence) {
   assert.equal(evidence.checks.dirtyDraftPreserved, true);
 }
 export function verifyFoundationReports(reports, cases) {
+  assert.ok(
+    reports.every((r) => !r.evidence?.pressure),
+    "partial pressure trial is not full foundation acceptance",
+  );
   assert.ok(
     reports.every((r) => !r.evidence?.importSlice),
     "partial import trial is not full foundation acceptance",

@@ -1,3 +1,4 @@
+import type { PluginProcess } from "@kobrixa/plugin-runtime";
 import assert from "node:assert/strict";
 import { isDeepStrictEqual } from "node:util";
 import { createHash } from "node:crypto";
@@ -140,6 +141,62 @@ export function createPressureWorkload(
       throw error;
     }
   };
+  const verifyRecord = async (
+    expected: { record: RecordMeta; seed: string },
+    signal: AbortSignal,
+  ) => {
+    const opened = value(
+      await storage.openRead(
+        {
+          id: expected.record.id,
+          expectedRevision: expected.record.revision,
+          schemaVersion: 1,
+        },
+        signal,
+      ),
+    );
+    readers.add(opened.read);
+    try {
+      assert.deepEqual(opened.record, expected.record);
+      const hash = createHash("sha256");
+      let offset = 0;
+      while (offset < PRESSURE.recordBytes) {
+        signal.throwIfAborted();
+        const requested = Math.min(PRESSURE.chunkBytes, PRESSURE.recordBytes - offset);
+        const chunk = value(
+          await storage.readChunk({ read: opened.read, offset, maxBytes: requested }, signal),
+        );
+        const decodedLength = Buffer.byteLength(chunk.data, "base64");
+        assert.ok(
+          decodedLength > 0 && decodedLength <= requested,
+          "Invalid read progress or length",
+        );
+        const bytes = Buffer.from(chunk.data, "base64");
+        assert.equal(bytes.length, decodedLength);
+        assert.equal(chunk.offset, offset);
+        assert.equal(chunk.nextOffset, offset + bytes.length);
+        assert.equal(chunk.eof, chunk.nextOffset === PRESSURE.recordBytes);
+        assert.deepEqual(
+          bytes,
+          pressureSlice(expected.seed, offset, bytes.length),
+          "Readback differs from independently generated payload",
+        );
+        hash.update(bytes);
+        offset = chunk.nextOffset;
+      }
+      assert.equal(offset, PRESSURE.recordBytes);
+      const digest = hash.digest("hex");
+      assert.equal(digest, expected.record.sha256);
+      return {
+        id: expected.record.id,
+        revision: expected.record.revision,
+        byteLength: offset,
+        sha256: digest,
+      };
+    } finally {
+      await closeRead(opened.read);
+    }
+  };
   let pendingReplacement:
     | {
         staged: Awaited<ReturnType<typeof stage>>;
@@ -221,59 +278,23 @@ export function createPressureWorkload(
       serial(async () => {
         assert.equal(records.length, PRESSURE.perSource);
         assert.ok(verifyIndex < records.length);
-        const expected = records[verifyIndex]!;
-        const opened = value(
-          await storage.openRead(
-            {
-              id: expected.record.id,
-              expectedRevision: expected.record.revision,
-              schemaVersion: 1,
-            },
-            signal,
-          ),
+        const result = await verifyRecord(records[verifyIndex]!, signal);
+        verifyIndex++;
+        return result;
+      }),
+    // Exactly two independent read handles; do not fail-fast and abandon the sibling.
+    burst: (signal: AbortSignal) =>
+      serial(async () => {
+        assert.equal(verifyIndex, PRESSURE.perSource);
+        const settled = await Promise.allSettled(
+          records.slice(0, 2).map((record) => verifyRecord(record, signal)),
         );
-        readers.add(opened.read);
-        try {
-          assert.deepEqual(opened.record, expected.record);
-          const hash = createHash("sha256");
-          let offset = 0;
-          while (offset < PRESSURE.recordBytes) {
-            signal.throwIfAborted();
-            const requested = Math.min(PRESSURE.chunkBytes, PRESSURE.recordBytes - offset);
-            const chunk = value(
-              await storage.readChunk({ read: opened.read, offset, maxBytes: requested }, signal),
-            );
-            const decodedLength = Buffer.byteLength(chunk.data, "base64");
-            assert.ok(
-              decodedLength > 0 && decodedLength <= requested,
-              "Invalid read progress or length",
-            );
-            const bytes = Buffer.from(chunk.data, "base64");
-            assert.equal(bytes.length, decodedLength);
-            assert.equal(chunk.offset, offset);
-            assert.equal(chunk.nextOffset, offset + bytes.length);
-            assert.equal(chunk.eof, chunk.nextOffset === PRESSURE.recordBytes);
-            assert.deepEqual(
-              bytes,
-              pressureSlice(expected.seed, offset, bytes.length),
-              "Readback differs from independently generated payload",
-            );
-            hash.update(bytes);
-            offset = chunk.nextOffset;
-          }
-          assert.equal(offset, PRESSURE.recordBytes);
-          const digest = hash.digest("hex");
-          assert.equal(digest, expected.record.sha256);
-          verifyIndex++;
-          return {
-            id: expected.record.id,
-            revision: expected.record.revision,
-            byteLength: offset,
-            sha256: digest,
-          };
-        } finally {
-          await closeRead(opened.read);
-        }
+        const errors = settled.filter((r) => r.status === "rejected").map((r) => r.reason);
+        if (errors.length) throw new AggregateError(errors, "Parallel read verification failed");
+        return settled.map((r) => {
+          assert.equal(r.status, "fulfilled");
+          return r.value;
+        });
       }),
     stageOne: (signal: AbortSignal) =>
       serial(async () => {
@@ -465,4 +486,360 @@ export async function driveTenMinutes(
   }
   assert.ok(iterations >= PRESSURE.samples, "A stalled operation is not a continuous workload");
   return { startedAt, finishedAt, iterations };
+}
+
+// Heterogeneous observed RPC/diagnostic envelopes; never used to implement an endpoint.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type PressureRow = Record<string, any>;
+export function verifyPressureWorkerTrace(rows: PressureRow[], owners: ResourceOwner[]) {
+  const requests = new Map<string, PressureRow>(),
+    pending = new Map<string, PressureRow>();
+  const executions: WorkerExecution[] = [];
+  let clock: string | undefined,
+    ended = false,
+    samples = 0;
+  for (const row of rows) {
+    if (row.observation) {
+      assert.equal(row.observation.faults, 0, "Sticky queue observer fault");
+      assert.equal(row.observation.dropped, 0, "Incomplete queue trace");
+      assert.equal(row.sinkFaults, 0, "Sticky trace sink fault");
+      assert.equal(row.observation.clock.realm, "worker");
+      if (row.kind === "stats") {
+        assert.ok(row.memory.rss > 0);
+        samples++;
+      }
+      if (row.kind === "end") {
+        assert.equal(ended, false);
+        ended = true;
+        assert.equal(row.observation.restored, true);
+        assert.ok(row.observation.queues.length > 0);
+        for (const q of row.observation.queues) {
+          assert.ok(q.counters);
+          assert.equal(q.counters.pending, 0);
+          assert.equal(q.counters.bytes, 0);
+        }
+      }
+    }
+    if (row.kind === "request") {
+      assert.ok(!requests.has(row.key));
+      requests.set(row.key, row);
+      if (row.owner)
+        assert.ok(
+          isDeepStrictEqual(row.owner, row.first) || isDeepStrictEqual(row.owner, row.first?.owner),
+          "Unproven owner join",
+        );
+    }
+    if (row.kind !== "queue") continue;
+    assert.equal(row.clock.realm, "worker");
+    assert.ok(row.clock.threadId > 0);
+    const domain = JSON.stringify(row.clock);
+    clock ??= domain;
+    assert.equal(domain, clock);
+    for (const event of row.events) {
+      assert.ok(event.counters, "Unreadable retained queue accounting");
+      assert.ok(event.counters.pending <= 32 && event.counters.active <= 4);
+      const request = requests.get(event.requestKey);
+      assert.ok(request, "Queue job lacks original request");
+      const key = `${event.queueId}:${event.jobId}`;
+      if (event.phase === "enter") {
+        assert.ok(!pending.has(key));
+        pending.set(key, event);
+      }
+      if (["fulfilled", "rejected", "throw"].includes(event.phase)) {
+        const start = pending.get(key);
+        assert.ok(start, "Settlement without entry");
+        pending.delete(key);
+        if (owners.some((owner) => isDeepStrictEqual(owner, request.owner))) {
+          assert.equal(event.phase, "fulfilled", "Owned worker operation failed");
+          executions.push({
+            boundary: "worker-execution",
+            clock: domain,
+            threadId: row.clock.threadId,
+            jobId: key,
+            owner: request.owner,
+            startedAt: start.at,
+            finishedAt: event.at,
+          });
+        }
+      }
+    }
+  }
+  assert.ok(ended && samples >= 30, "Missing worker close/stats");
+  assert.equal(pending.size, 0);
+  return { ...verifyFourExecutions(executions, owners), executions, samples };
+}
+
+export function assertPressurePartial(p: PressureRow) {
+  assert.equal(p.status, "partial-memory-unavailable");
+  assert.equal(p.fullPass, false);
+  assert.deepEqual(p.unavailableMemory, ["mainAdditionalRSS32MiB", "workerAdditionalRSS64MiB"]);
+  assert.ok(p.finishedAt - p.startedAt >= PRESSURE.workloadMs);
+  assert.ok(p.steps.length >= 30);
+  assert.equal(p.owners.length, 2);
+  assert.equal(p.seeded.length, 50);
+  assert.equal(p.verified.length, 50);
+  assert.equal(new Set(p.seeded.map((r: PressureRow) => r.id)).size, 50);
+  assert.equal(new Set(p.verified.map((r: PressureRow) => r.id)).size, 50);
+  for (const record of p.seeded) {
+    assert.equal(record.byteLength, PRESSURE.recordBytes);
+    assert.equal(record.sha256, pressureHash(record.label));
+    const read = p.verified.find((r: PressureRow) => r.id === record.id);
+    assert.ok(read);
+    assert.equal(read.sha256, record.sha256);
+    assert.equal(read.byteLength, record.byteLength);
+  }
+  for (const key of ["inventory", "flush", "commit"]) {
+    assert.equal(p.samples[key].length, 30, key);
+    for (const pair of p.samples[key])
+      for (const sample of pair) {
+        assert.equal(sample.commandInterval.realm, "main");
+        assert.ok(sample.commandInterval.finishedAt >= sample.commandInterval.startedAt);
+      }
+  }
+  assert.equal(p.ui.fullCounters.main[0].counters.bindings, 32);
+  assert.equal(p.ui.fullCounters.main[1].counters.owners, 8);
+  assert.ok(p.ui.durationMs >= PRESSURE.workloadMs);
+  assert.ok(
+    p.ui.final.every((row: PressureRow) => Object.values(row.counters).every((v) => v === 0)),
+  );
+  assert.equal(p.transport.faults.length, 0);
+  assert.equal(p.transport.readers, 0);
+  assert.equal(p.transport.pending, 0);
+  assert.ok(p.transport.verifiedReads >= 50);
+  assert.equal(p.transport.exits.length, 2);
+  assert.ok(
+    p.steps.every(
+      (step: PressureRow) =>
+        step.provider.ok === true &&
+        step.staging.length === 2 &&
+        step.staging.every(
+          (source: PressureRow[]) =>
+            source.length === 1 &&
+            source[0]!.state === "sealed" &&
+            source[0]!.receivedBytes === PRESSURE.recordBytes,
+        ) &&
+        step.ui.main[0].counters.bindings === 32 &&
+        step.ui.main[1].counters.owners === 10,
+    ),
+  );
+  assert.equal(p.worker.peak, 4);
+  verifyFourExecutions(p.worker.executions, p.owners);
+  assert.equal(p.mainObserver.faults, 0);
+  assert.equal(p.mainObserver.dropped, 0);
+  assert.ok(p.mainObserver.queues.every((q: PressureRow) => q.counters?.pending === 0));
+}
+
+/** Observe the original process channels, including nested BusinessResult values. */
+export function pressureTransport(write: (row: unknown) => void) {
+  const faults: string[] = [],
+    outputs: PressureRow[] = [],
+    owners: ResourceOwner[] = [],
+    exits: PressureRow[] = [];
+  let pendingCount = 0,
+    readerCount = 0,
+    verifiedReads = 0;
+  const guard = (work: () => void) => {
+    try {
+      work();
+    } catch (e) {
+      if (faults.length < 8) faults.push(String(e));
+    }
+  };
+  return {
+    outputs,
+    owners,
+    output(owner: ResourceOwner, line: string) {
+      if (!line.startsWith("PERSISTENCE_PRESSURE:")) return;
+      guard(() => {
+        const data = JSON.parse(line.slice("PERSISTENCE_PRESSURE:".length));
+        assert.equal(data.pluginId, owner.pluginId);
+        assert.ok(outputs.length < 10000, "Bounded pressure output trace");
+        const row = { ...data, owner: structuredClone(owner), at: performance.now() };
+        outputs.push(row);
+        write({ kind: "consumer-output", ...row });
+      });
+    },
+    attach(owner: ResourceOwner, child: PluginProcess) {
+      owners.push(structuredClone(owner));
+      assert.ok(owners.length <= 2);
+      const pending = new Map<string, PressureRow>();
+      const reads = new Map<
+        string,
+        { offset: number; hash: ReturnType<typeof createHash>; record: RecordMeta; done: boolean }
+      >();
+      const observe = (direction: string, text: string) =>
+        guard(() => {
+          const message = JSON.parse(text),
+            row: PressureRow = { kind: "rpc", owner, direction, at: performance.now(), message };
+          if (direction === "plugin" && message.method?.startsWith("storage/")) {
+            assert.ok(pending.size < 32);
+            pending.set(String(message.id), message);
+            pendingCount++;
+            if (message.params?.data)
+              row.message = {
+                ...message,
+                params: {
+                  ...message.params,
+                  data: undefined,
+                  dataBytes: Buffer.byteLength(message.params.data, "base64"),
+                  dataSha256: createHash("sha256")
+                    .update(Buffer.from(message.params.data, "base64"))
+                    .digest("hex"),
+                },
+              };
+          }
+          if (direction === "host" && pending.has(String(message.id))) {
+            const request = pending.get(String(message.id))!;
+            pending.delete(String(message.id));
+            pendingCount--;
+            row.method = request.method;
+            row.requestId = request.id;
+            assert.equal(message.result?.ok, true, JSON.stringify(message));
+            const result = message.result.value;
+            if (request.method === "storage/openRead") {
+              assert.equal(result.record.byteLength, PRESSURE.recordBytes);
+              assert.equal(result.record.sha256, pressureHash(result.record.label));
+              reads.set(result.read, {
+                offset: 0,
+                hash: createHash("sha256"),
+                record: result.record,
+                done: false,
+              });
+              readerCount++;
+            }
+            if (request.method === "storage/readChunk") {
+              const read = reads.get(request.params.read);
+              assert.ok(read);
+              const size = Buffer.byteLength(result.data, "base64");
+              assert.ok(size > 0 && size <= request.params.maxBytes && size <= PRESSURE.chunkBytes);
+              const bytes = Buffer.from(result.data, "base64");
+              assert.equal(request.params.offset, read.offset);
+              assert.equal(result.offset, read.offset);
+              assert.equal(result.nextOffset, read.offset + size);
+              assert.deepEqual(bytes, pressureSlice(read.record.label, read.offset, size));
+              read.hash.update(bytes);
+              read.offset += size;
+              assert.equal(result.eof, read.offset === PRESSURE.recordBytes);
+              if (result.eof) {
+                assert.equal(read.hash.digest("hex"), read.record.sha256);
+                read.done = true;
+                verifiedReads++;
+              }
+              row.message = {
+                ...message,
+                result: {
+                  ...message.result,
+                  value: {
+                    ...result,
+                    data: undefined,
+                    dataBytes: size,
+                    dataSha256: createHash("sha256").update(bytes).digest("hex"),
+                  },
+                },
+              };
+            }
+            if (request.method === "storage/closeRead") {
+              const read = reads.get(request.params.read);
+              assert.ok(read?.done);
+              reads.delete(request.params.read);
+              readerCount--;
+            }
+          }
+          write(row);
+        });
+      const off = child.onMessage((text) => observe("plugin", text));
+      child.onExit((exit) => {
+        exits.push({ owner, exit, at: performance.now() });
+        off();
+      });
+      return {
+        ...child,
+        send(text: string) {
+          observe("host", text);
+          child.send(text);
+        },
+      };
+    },
+    snapshot: () => ({
+      faults: [...faults],
+      pending: pendingCount,
+      readers: readerCount,
+      verifiedReads,
+      exits: [...exits],
+    }),
+  };
+}
+
+/** Outside verifier replays hashes of observed nested RPC payloads, not consumer claims. */
+export function verifyPressureRpcTrace(rows: PressureRow[], owners: ResourceOwner[]) {
+  const pending = new Map<string, PressureRow>();
+  const reads = new Map<
+    string,
+    { record: RecordMeta; offset: number; hash: ReturnType<typeof createHash> }
+  >();
+  let verifiedReads = 0;
+  const records = new Set<string>();
+  for (const row of rows) {
+    if (row.kind !== "rpc") continue;
+    assert.ok(
+      owners.some((owner) => isDeepStrictEqual(owner, row.owner)),
+      "Foreign transport owner",
+    );
+    const message = row.message,
+      key = `${row.owner.processEpoch}:${message.id}`;
+    if (row.direction === "plugin" && message.method?.startsWith("storage/")) {
+      assert.ok(!pending.has(key));
+      pending.set(key, message);
+      continue;
+    }
+    if (row.direction !== "host" || !pending.has(key)) continue;
+    const request = pending.get(key)!;
+    pending.delete(key);
+    assert.equal(message.result?.ok, true);
+    const result = message.result.value;
+    const readKey = `${row.owner.processEpoch}:${request.params?.read}`;
+    if (request.method === "storage/openRead") {
+      assert.equal(result.record.byteLength, PRESSURE.recordBytes);
+      assert.equal(result.record.id, request.params.id);
+      assert.equal(result.record.revision, request.params.expectedRevision);
+      reads.set(`${row.owner.processEpoch}:${result.read}`, {
+        record: result.record,
+        offset: 0,
+        hash: createHash("sha256"),
+      });
+    }
+    if (request.method === "storage/readChunk") {
+      const read = reads.get(readKey);
+      assert.ok(read);
+      const size = result.dataBytes;
+      assert.ok(
+        Number.isSafeInteger(size) &&
+          size > 0 &&
+          size <= PRESSURE.chunkBytes &&
+          size <= request.params.maxBytes,
+      );
+      assert.equal(request.params.offset, read.offset);
+      assert.equal(result.offset, read.offset);
+      const expected = pressureSlice(read.record.label, read.offset, size);
+      assert.equal(result.dataSha256, createHash("sha256").update(expected).digest("hex"));
+      read.hash.update(expected);
+      read.offset += size;
+      assert.equal(result.nextOffset, read.offset);
+      assert.equal(result.eof, read.offset === PRESSURE.recordBytes);
+    }
+    if (request.method === "storage/closeRead") {
+      const read = reads.get(readKey);
+      assert.ok(read);
+      assert.equal(read.offset, PRESSURE.recordBytes);
+      assert.equal(read.hash.digest("hex"), read.record.sha256);
+      reads.delete(readKey);
+      verifiedReads++;
+      records.add(read.record.id);
+    }
+  }
+  assert.equal(pending.size, 0);
+  assert.equal(reads.size, 0);
+  assert.ok(verifiedReads >= 50);
+  assert.equal(records.size, 50, "Original 50 distinct record payloads required");
+  return { verifiedReads, records: [...records].sort() };
 }

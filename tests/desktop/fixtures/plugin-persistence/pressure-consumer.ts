@@ -1,7 +1,14 @@
 import { definePlugin, runPlugin } from "@kobrixa/plugin-sdk";
 import { createPressureWorkload } from "../../plugin-persistence-pressure.js";
 let workload: ReturnType<typeof createPressureWorkload> | undefined;
-const emit = (value: unknown) => console.error("PERSISTENCE_PRESSURE:" + JSON.stringify(value));
+const emit = (value: unknown) =>
+  console.error(
+    "PERSISTENCE_PRESSURE:" +
+      JSON.stringify({
+        clock: { realm: "plugin", pid: process.pid, timeOrigin: performance.timeOrigin },
+        ...(value as object),
+      }),
+  );
 void runPlugin(
   definePlugin({
     activate(ctx) {
@@ -12,6 +19,7 @@ void runPlugin(
         seed: workload.seedOne,
         inventory: workload.inventory,
         verify: workload.verifyOne,
+        burst: workload.burst,
         stage: workload.stageOne,
         staging: workload.stagingStatus,
         replace: workload.replaceOne,
@@ -22,7 +30,18 @@ void runPlugin(
       for (const [name, action] of Object.entries(actions))
         ctx.commands.register(`${ctx.pluginId}.${name}`, async ({ signal }) => {
           const result = await action(signal);
-          emit({ pluginId: ctx.pluginId, command: name, result, snapshot: workload!.snapshot() });
+          const snapshot = workload!.snapshot();
+          emit({
+            pluginId: ctx.pluginId,
+            command: name,
+            result,
+            snapshot: {
+              recordCount: snapshot.records.length,
+              verified: snapshot.verified,
+              held: snapshot.held,
+              readers: snapshot.readers,
+            },
+          });
         });
     },
     async deactivate() {

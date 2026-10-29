@@ -1,4 +1,9 @@
 import {
+  assertPressurePartial,
+  verifyPressureWorkerTrace,
+  verifyPressureRpcTrace,
+} from "./plugin-persistence-pressure.ts";
+import {
   assertImportSlice,
   assertImportTrials,
   assertImportPause,
@@ -556,7 +561,9 @@ export async function superviseCase(
             ? "retained-exit"
             : config.case === "all-optional-off" && config.optionalPhase === "settings"
               ? "passed-phase"
-              : "passed",
+              : config.case === "storage-ui-pressure"
+                ? "partial-pressure"
+                : "passed",
         exitCode: parentExit.code,
         signal: parentExit.signal,
         exitedAt: parentExit.at,
@@ -712,9 +719,11 @@ async function launchCase(electron, entry, configFile, reportFile, config) {
     },
     config.case === "import-restart"
       ? { timeoutMs: 300000 }
-      : ["sealed-ttl", "compatibility"].includes(config.case)
-        ? { timeoutMs: 120000 }
-        : undefined,
+      : config.case === "storage-ui-pressure"
+        ? { timeoutMs: 1200000 }
+        : ["sealed-ttl", "compatibility"].includes(config.case)
+          ? { timeoutMs: 120000 }
+          : undefined,
   );
 }
 export function selectFoundationCases({ referencesOnly = false, caseId } = {}) {
@@ -733,6 +742,7 @@ export function selectFoundationCases({ referencesOnly = false, caseId } = {}) {
       "all-optional-off",
       "compatibility",
       "import-restart",
+      "storage-ui-pressure",
     ].includes(caseId)
   )
     return [caseId];
@@ -868,6 +878,112 @@ export async function runFoundationEvidence({ referencesOnly = false, caseId, im
         },
       ],
     });
+  let pressure;
+  if (selectedCases.includes("storage-ui-pressure")) {
+    const { materialize } = await import("./declarative-ui-harness.mjs");
+    const uiDirectory = path.join(directory, "pressure-ui");
+    await mkdir(uiDirectory);
+    const uiFolders = await materialize(uiDirectory, { sources: 8, maximum: true });
+    for (const folder of uiFolders)
+      await bundle(
+        path.join(root, "tests/desktop/fixtures/declarative-ui/consumer.ts"),
+        path.join(folder, "main.cjs"),
+      );
+    for (const role of ["pressure-a", "pressure-b"]) {
+      const id = `acceptance.ui-${role}`,
+        leaf = path.join(buildRoot, "plugins", `acceptance-builtin-${role}`);
+      await mkdir(leaf, { recursive: true });
+      await bundle(
+        path.join(root, "tests/desktop/fixtures/plugin-persistence/pressure-consumer.ts"),
+        path.join(leaf, "main.cjs"),
+      );
+      const names = [
+        "seed",
+        "inventory",
+        "verify",
+        "burst",
+        "stage",
+        "staging",
+        "replace",
+        "flush",
+        "quota",
+        "cleanup",
+      ];
+      const manifest = {
+        id,
+        version: "1.0.0",
+        apiVersion: "^1.7.0",
+        runtime: { kind: "node", entry: "main.cjs" },
+        activationEvents: names.map((n) => `onCommand:${id}.${n}`),
+        permissions: ["storage.read", "storage.write"],
+        contributes: { commands: names.map((n) => ({ id: `${id}.${n}`, title: { en: n } })) },
+      };
+      await writeFile(path.join(leaf, "kobrixa-plugin.json"), JSON.stringify(manifest));
+      const files = [];
+      for (const file of ["kobrixa-plugin.json", "main.cjs"]) {
+        const bytes = await readFile(path.join(leaf, file));
+        files.push({ path: file, bytes: bytes.length, sha256: digest(bytes) });
+      }
+      await writeFile(
+        path.join(leaf, "resource-index.json"),
+        JSON.stringify({ version: 1, pluginId: id, files }),
+      );
+    }
+    const require = createRequire(path.join(root, "apps/desktop/package.json"));
+    const vite = await import(pathToFileURL(require.resolve("vite")).href);
+    const tsconfig = JSON.parse(await readFile(path.join(root, "tsconfig.base.json"), "utf8"));
+    const rendererAlias = Object.fromEntries(
+      Object.entries(tsconfig.compilerOptions.paths).map(([name, [source]]) => [
+        name,
+        path.join(root, source),
+      ]),
+    );
+    await vite.build({
+      configLoader: "runner",
+      root: path.join(root, "apps/desktop"),
+      configFile: path.join(root, "apps/desktop/vite.renderer.config.ts"),
+      base: "./",
+      cacheDir: path.join(uiDirectory, "vite-cache"),
+      resolve: { alias: rendererAlias, dedupe: ["react", "react-dom"] },
+      plugins: [
+        {
+          name: "pressure-existing-load-renderer",
+          transformIndexHtml: {
+            order: "pre",
+            handler: (html) =>
+              html.replace(
+                'src="/src/renderer/index.tsx"',
+                `src="/@fs/${path.join(root, "tests/desktop/declarative-ui-load-renderer.tsx")}"`,
+              ),
+          },
+        },
+      ],
+      build: { outDir: path.join(uiDirectory, "renderer"), emptyOutDir: true },
+    });
+    const artifacts = [];
+    for (const folder of [
+      ...uiFolders,
+      path.join(uiDirectory, "renderer"),
+      ...["pressure-a", "pressure-b"].map((role) =>
+        path.join(buildRoot, "plugins", `acceptance-builtin-${role}`),
+      ),
+    ]) {
+      for (const relative of await readdir(folder, { recursive: true })) {
+        const file = path.join(folder, relative),
+          stat = await lstat(file);
+        if (stat.isFile()) artifacts.push({ path: file, sha256: digest(await readFile(file)) });
+      }
+    }
+    pressure = {
+      artifacts,
+      uiDirectory,
+      uiFolders,
+      workerTrace: path.join(directory, "pressure-worker.jsonl"),
+      mainTrace: path.join(directory, "pressure-main.jsonl"),
+      rpcTrace: path.join(directory, "pressure-rpc.jsonl"),
+    };
+  }
+
   const syntheticRoot = path.join(directory, "synthetic");
   await mkdir(syntheticRoot);
   if (selectedCases.includes("import-restart")) {
@@ -908,9 +1024,23 @@ export async function runFoundationEvidence({ referencesOnly = false, caseId, im
     workerEntry = path.join(buildRoot, "worker.cjs");
   await writeFile(
     workerSource,
-    selectedCases.includes("all-optional-off")
-      ? `import {runOptionalOffWorker} from ${JSON.stringify(path.join(root, "tests/desktop/fixtures/plugin-persistence/optional-off-worker.ts"))};\nrunOptionalOffWorker(new Map([['test.synthetic-import',${JSON.stringify(syntheticRoot)}]]));\n`
-      : `import {runSyntheticPersistenceWorker} from ${JSON.stringify(path.join(root, "tests/desktop/fixtures/plugin-persistence/kill-worker.mjs"))};\nrunSyntheticPersistenceWorker(new Map([['test.synthetic-import',${JSON.stringify(syntheticRoot)}]]));\n`,
+    pressure
+      ? `import {parentPort} from 'node:worker_threads';
+import {appendFileSync} from 'node:fs';
+import {WorkQueue} from ${JSON.stringify(path.join(root, "apps/desktop/src/main/plugins/persistence/quota.ts"))};
+import {PersistenceWorkerRequest} from ${JSON.stringify(path.join(root, "apps/desktop/src/main/plugins/persistence/worker.ts"))};
+import {persistenceOwnerSchema} from ${JSON.stringify(path.join(root, "apps/desktop/src/main/plugins/persistence/namespace.ts"))};
+import {attachPressureWorkerTrace} from ${JSON.stringify(path.join(root, "tests/desktop/plugin-persistence-pressure-observer.ts"))};
+import {runSyntheticPersistenceWorker} from ${JSON.stringify(path.join(root, "tests/desktop/fixtures/plugin-persistence/kill-worker.mjs"))};
+attachPressureWorkerTrace({Queue:WorkQueue,port:parentPort,
+parseRequest:raw=>{const p=PersistenceWorkerRequest.safeParse(raw);return p.success?p.data:null},
+parseOwner:raw=>{const p=persistenceOwnerSchema.safeParse(raw);return p.success?p.data:null},
+write:row=>appendFileSync(${JSON.stringify(pressure.workerTrace)},JSON.stringify(row)+'\\n')});
+runSyntheticPersistenceWorker(new Map([['test.synthetic-import',${JSON.stringify(syntheticRoot)}]]));
+`
+      : selectedCases.includes("all-optional-off")
+        ? `import {runOptionalOffWorker} from ${JSON.stringify(path.join(root, "tests/desktop/fixtures/plugin-persistence/optional-off-worker.ts"))};\nrunOptionalOffWorker(new Map([['test.synthetic-import',${JSON.stringify(syntheticRoot)}]]));\n`
+        : `import {runSyntheticPersistenceWorker} from ${JSON.stringify(path.join(root, "tests/desktop/fixtures/plugin-persistence/kill-worker.mjs"))};\nrunSyntheticPersistenceWorker(new Map([['test.synthetic-import',${JSON.stringify(syntheticRoot)}]]));\n`,
   );
   await bundle(workerSource, workerEntry);
   const source = path.join(directory, "entry.ts"),
@@ -947,6 +1077,7 @@ app.exit(code);
       await readFile(workerEntry),
       Buffer.from(renderer.receiptSha256),
       Buffer.from(JSON.stringify(compatibility ?? null)),
+      ...(pressure ? [Buffer.from(JSON.stringify(pressure.artifacts))] : []),
       ...(selectedCases.includes("import-restart")
         ? [
             await readFile(
@@ -980,6 +1111,7 @@ app.exit(code);
     const config = {
       case: id,
       ...(compatibility ? { compatibility } : {}),
+      ...(pressure ? { pressure } : {}),
       ...(id === "import-restart" ? { importTrial, syntheticRoot } : {}),
       profile,
       profileId: randomUUID(),
@@ -1135,6 +1267,49 @@ app.exit(code);
       commit,
     });
     reports.push(receipt);
+  }
+  if (pressure) {
+    assert.equal(reports.length, 1);
+    const p = reports[0].evidence.pressure;
+    for (const file of pressure.artifacts)
+      assert.equal(digest(await readFile(file.path)), file.sha256);
+    assertPressurePartial(p);
+    const bytes = await readFile(p.workerTrace.path);
+    assert.equal(digest(bytes), p.workerTrace.sha256);
+    const observed = verifyPressureWorkerTrace(
+      bytes
+        .toString("utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line)),
+      p.owners,
+    );
+    assert.deepEqual(observed, p.worker);
+    const rpc = verifyPressureRpcTrace(
+      (await readFile(pressure.rpcTrace, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line)),
+      p.owners,
+    );
+    assert.equal(rpc.verifiedReads, p.transport.verifiedReads);
+    assert.deepEqual(rpc.records, p.seeded.map((row) => row.id).sort());
+    for (const artifact of p.artifacts)
+      assert.equal(digest(await readFile(artifact.path)), artifact.sha256);
+    const result = {
+      format: 1,
+      level: "real-process",
+      status: "partial-pressure",
+      fullPass: false,
+      reports,
+      artifact: entry,
+      bundleSha256,
+      artifactSha256,
+      pending: p.pending,
+      unavailableMemory: p.unavailableMemory,
+    };
+    await writeFile(output, JSON.stringify(result, null, 2), { flag: "wx" });
+    return result;
   }
   verifyFoundationReports(reports, selectedCases);
   const result = {

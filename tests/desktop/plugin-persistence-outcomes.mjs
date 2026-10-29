@@ -505,6 +505,7 @@ export function assertFoundationOutcome(id, e, { serialized = false } = {}) {
       });
       return;
     case "storage-ui-pressure":
+      assert.ok(!e.pressure, "Partial pressure evidence cannot satisfy full acceptance");
       same(e, { records: 50, recordBytes: 8 * 1024 * 1024, activeJobs: 4, liveCounters: 0 });
       bounded(e, "peakPendingJobs", 32);
       bounded(e, "peakQueuedHostBytes", 8 * 1024 * 1024);

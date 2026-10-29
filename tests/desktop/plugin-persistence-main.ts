@@ -1,4 +1,12 @@
 import {
+  pressureTransport,
+  verifyPressureWorkerTrace,
+  assertPressurePartial,
+} from "./plugin-persistence-pressure.js";
+import type { PressureRow } from "./plugin-persistence-pressure.js";
+import { observeWorkQueue } from "./plugin-persistence-pressure-observer.js";
+import { WorkQueue } from "../../apps/desktop/src/main/plugins/persistence/quota.js";
+import {
   importObserver,
   produceImportSlice,
   assertImportPhase,
@@ -44,6 +52,7 @@ export type FoundationCase =
 import type { ContentionObservation, ContentionForm } from "./plugin-persistence-contention.js";
 
 export type CaseEvidence = {
+  pressure?: PressureRow;
   importSlice?: CompatibilityWire;
   compatibility?: CompatibilityWire;
   optionalPhase?: OptionalWire;
@@ -910,7 +919,7 @@ export async function produceHealthyRelease(input: LifecycleCaseInput): Promise<
 // Test-local artifact metadata; no executable adapters, host factories or evidence inputs.
 // Controller materializes this JSON and configures userData before calling the factory.
 import { readFile, writeFile } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { readFileSync, appendFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import type * as ElectronModule from "electron";
 import path from "node:path";
@@ -972,6 +981,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
       "all-optional-off",
       "compatibility",
       "import-restart",
+      "storage-ui-pressure",
     ].includes(config.case)
   )
     throw new Error(
@@ -1052,6 +1062,14 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
     await import("../../apps/desktop/src/main/plugins/persistence/import-fixtures.js");
   const imported = config.case === "import-restart" ? importObserver(config.importWire) : undefined;
   const compatibility = config.case === "compatibility" ? compatibilityObserver() : undefined;
+  const pressure =
+    config.case === "storage-ui-pressure"
+      ? pressureTransport((row) =>
+          appendFileSync(config.pressure.rpcTrace, JSON.stringify(row) + "\n"),
+        )
+      : undefined;
+  const pressureQueue = pressure ? observeWorkQueue(WorkQueue) : undefined;
+  let pressureFolder = 0;
   let optionalPolicy: OptionalWire | undefined;
   let window: InstanceType<typeof BrowserWindow> | undefined;
   let fixture: FoundationFixture | undefined;
@@ -1252,7 +1270,12 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         }
 
         const builtins = [...BUILTIN_PLUGIN_SOURCES];
-        for (const role of ["recording", "settings", ...(imported ? ["import"] : [])]) {
+        for (const role of [
+          "recording",
+          "settings",
+          ...(imported ? ["import"] : []),
+          ...(pressure ? ["pressure-a", "pressure-b"] : []),
+        ]) {
           if (optional) {
             builtins.push(optional.source(config.buildRoot, role));
             continue;
@@ -1339,9 +1362,15 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             coreActions,
             now,
             hasPermission: (principal, permission) =>
-              principal.kind === "plugin" &&
-              !!composition &&
-              desktopDeviceAccess(composition.plugins).hasPermission(principal.owner, permission),
+              pressure && principal.kind === "core"
+                ? currentScope(principal) &&
+                  ["devices.read", "devices.connect", "devices.control"].includes(permission)
+                : principal.kind === "plugin" &&
+                  !!composition &&
+                  desktopDeviceAccess(composition.plugins).hasPermission(
+                    principal.owner,
+                    permission,
+                  ),
             requirements: (owner) =>
               composition ? desktopDeviceAccess(composition.plugins).requirements(owner) : null,
             connectionPolicy: () => ({
@@ -1359,6 +1388,12 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                 ...hooks,
                 onOutput(plugin, line) {
                   hooks.onOutput?.(plugin, line);
+                  if (
+                    pressure &&
+                    plugin.channelOwner &&
+                    plugin.id.startsWith("acceptance.ui-pressure-")
+                  )
+                    pressure.output(plugin.channelOwner, line);
                   if (imported && plugin.id === "test.synthetic" && plugin.channelOwner)
                     imported.output(plugin.channelOwner, line);
                   const row = compatibility?.rows.find(
@@ -1379,6 +1414,12 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                     ? compatibility.begin(plugin.channelOwner)
                     : undefined;
                 const child = await launch(plugin);
+                if (
+                  pressure &&
+                  plugin.channelOwner &&
+                  plugin.id.startsWith("acceptance.ui-pressure-")
+                )
+                  return pressure.attach(plugin.channelOwner, child);
                 return imported && plugin.id === "test.synthetic" && plugin.channelOwner
                   ? imported.attach(plugin.channelOwner, child)
                   : row
@@ -1396,7 +1437,10 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             locale: "en",
             dialogs: {
               confirmDeveloperMode: async () => true,
-              chooseFolder: async () => undefined,
+              chooseFolder: async () =>
+                pressure
+                  ? config.pressure.uiFolders[pressureFolder++ % config.pressure.uiFolders.length]
+                  : undefined,
               confirmLink: async () => true,
               confirmUnlink: async () => true,
               choosePython: async () => undefined,
@@ -1646,6 +1690,300 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         assert.equal(new Set(diagnostics).size, 4, "Duplicate main diagnostics");
         const snapshots = () => diagnostics.map((d) => d.snapshot());
         snapshots(); // Unknown instance lookups fail before activating consumers.
+        if (pressure) {
+          const { runUiLoad } = await import("./declarative-ui-load-main.js");
+          const { snapshotDelay } = await import("./declarative-ui-slow-main.js");
+          let ran = false,
+            closing: Promise<void> | undefined,
+            evidence: CaseEvidence | undefined;
+          const observer = pressureQueue!;
+          let sinkFaults = 0;
+          const flush = () => {
+            try {
+              appendFileSync(
+                config.pressure.mainTrace,
+                JSON.stringify({
+                  events: observer.drain(),
+                  observation: observer.snapshot(),
+                  at: performance.now(),
+                  memory: process.memoryUsage(),
+                }) + "\n",
+              );
+            } catch {
+              sinkFaults++;
+            }
+          };
+          const timer = setInterval(flush, 20);
+          timer.unref();
+          const command = async (pluginId: string, command: string): Promise<PressureRow> => {
+            const startedAt = performance.now();
+            const begin = pressure.outputs.length;
+            const result = await live.plugins.execute(`${pluginId}.${command}`);
+            assert.equal(result.ok, true, JSON.stringify(result));
+            const until = performance.now() + 10000;
+            let row;
+            while (
+              !(row = pressure.outputs
+                .slice(begin)
+                .find((r) => r.pluginId === pluginId && r.command === command))
+            ) {
+              assert.ok(performance.now() < until, `Missing ${pluginId}.${command} output`);
+              assert.deepEqual(pressure.snapshot().faults, []);
+              await new Promise((r) => setTimeout(r, 10));
+            }
+            return {
+              ...row,
+              commandInterval: {
+                realm: "main",
+                pid: process.pid,
+                timeOrigin: performance.timeOrigin,
+                startedAt,
+                finishedAt: performance.now(),
+              },
+            };
+          };
+          const ids = ["acceptance.ui-pressure-a", "acceptance.ui-pressure-b"];
+          const both = (name: string) => Promise.all(ids.map((id) => command(id, name)));
+          const close = () =>
+            (closing ??= (async () => {
+              try {
+                await live.dispose();
+                const until = performance.now() + 5000;
+                while (
+                  pressure.snapshot().exits.length < pressure.owners.length &&
+                  performance.now() < until
+                )
+                  await new Promise((r) => setTimeout(r, 10));
+                assert.deepEqual(failures, []);
+                for (const s of snapshots()) assertZeroCounters(s);
+                for (const unsubscribe of off.splice(0)) unsubscribe();
+                for (const name of ipcNames.splice(0)) ipcMain.removeHandler(name);
+                restoreReservation();
+                if (win.webContents.debugger.isAttached()) win.webContents.debugger.detach();
+                win.destroy();
+              } finally {
+                clearInterval(timer);
+                observer.restore();
+                flush();
+              }
+            })());
+          fixture = {
+            composition: {
+              profile: handles.profile,
+              journalProfile,
+              persistenceProfile: handles.persistenceProfile,
+              host: handles.host,
+              stage3: live.stage3,
+              get workerCount() {
+                return persistenceWorkerCount(handles.backend);
+              },
+              get reservationListenerCount() {
+                return listeners;
+              },
+            },
+            environment: {
+              commit: config.commit,
+              artifact: config.artifact,
+              artifactSha256: config.artifactSha256,
+              os: os.release(),
+              architecture: process.arch,
+              cpu: os.cpus()[0]?.model ?? "unknown",
+              ramBytes: os.totalmem(),
+              filesystem: config.filesystem,
+              node: process.versions.node,
+              electron: process.versions.electron ?? "",
+              memoryMethod: "shared-process-rss-and-isolate-statistics; separate-RSS-unavailable",
+              warmCold: "cold-and-warm",
+            },
+            close,
+            async runCase(id) {
+              assert.equal(id, "storage-ui-pressure");
+              assert.equal(ran, false);
+              ran = true;
+              const p: PressureRow = {
+                status: "partial-memory-unavailable",
+                fullPass: false,
+                unavailableMemory: ["mainAdditionalRSS32MiB", "workerAdditionalRSS64MiB"],
+                seeded: [],
+                verified: [],
+                steps: [],
+                samples: { inventory: [], flush: [], commit: [] },
+                memory: [],
+                pending: [
+                  "separate RSS ruling",
+                  "settings draft/page latency",
+                  "main synchronous span threshold",
+                  "unloaded-vs-loaded physical stop dispatch comparison",
+                  "three independent UI measurement repetitions",
+                ],
+              };
+              let sessionId: string | undefined,
+                channelIds: string[] = [];
+              const principal = () => authority.core(win.webContents.id, "monitor");
+              const uiReport = await runUiLoad({
+                window: win,
+                composition: live,
+                runtime: runtimeDiagnostics(handles.runtime),
+                directory: config.pressure.uiDirectory,
+                folders: config.pressure.uiFolders,
+                durationMs: 600000,
+                cycles: 1000,
+                snapshotDelay: snapshotDelay(),
+                workload: {
+                  async prepare() {
+                    for (let i = 0; i < 25; i++)
+                      for (const row of await both("seed")) p.seeded.push(row.result);
+                    await both("inventory");
+                    for (let i = 0; i < 25; i++)
+                      for (const row of await both("verify")) p.verified.push(row.result);
+                    await both("stage");
+                    const inventory = accepted(
+                      await live.foundation.broker.request(
+                        principal(),
+                        "devices/list",
+                        {},
+                        new AbortController().signal,
+                      ),
+                    );
+                    const provider = inventory.providers.find((row) => row.state === "available");
+                    assert.ok(provider);
+                    const discovered = accepted(
+                      await live.foundation.broker.request(
+                        principal(),
+                        "devices/discover",
+                        { providerId: provider.providerId },
+                        new AbortController().signal,
+                      ),
+                    );
+                    assert.ok(discovered.candidates[0]);
+                    sessionId = accepted(
+                      await live.foundation.broker.request(
+                        principal(),
+                        "devices/connect",
+                        {
+                          target: {
+                            kind: "candidate",
+                            candidateId: discovered.candidates[0].candidateId,
+                          },
+                        },
+                        new AbortController().signal,
+                      ),
+                    ).session.sessionId;
+                    const sources = accepted(
+                      await live.foundation.broker.request(
+                        principal(),
+                        "devices/session",
+                        { sessionId },
+                        new AbortController().signal,
+                      ),
+                    );
+                    channelIds = sources.sources.channels
+                      .filter((row) => row.state === "ready")
+                      .slice(0, 1)
+                      .map((row) => row.channelId);
+                    assert.equal(channelIds.length, 1);
+                  },
+                  async start() {
+                    p.startedAt = performance.now();
+                  },
+                  async step(index, uiSample) {
+                    const start = performance.now();
+                    assert.ok(sessionId);
+                    const work = await Promise.allSettled([
+                      live.foundation.broker.request(
+                        principal(),
+                        "devices/read",
+                        { sessionId, channelIds, freshness: "fresh" },
+                        new AbortController().signal,
+                      ),
+                      (async () => {
+                        if (index < 30) await both("burst");
+                        // Replace held stages before public idle/total expiry, without changing deadlines.
+                        const committed = await both("replace");
+                        await both("stage");
+                        const staging = await both("staging"),
+                          inventory = await both("inventory"),
+                          flushed = await both("flush");
+                        return { committed, staging, inventory, flushed };
+                      })(),
+                    ] as const);
+                    assert.equal(work[0].status, "fulfilled");
+                    assert.equal(work[1].status, "fulfilled");
+                    const provider = work[0].value,
+                      { committed, staging, inventory, flushed } = work[1].value;
+                    assert.equal(provider.ok, true, JSON.stringify(provider));
+                    p.steps.push({
+                      index,
+                      ui: uiSample,
+                      startedAt: start,
+                      finishedAt: performance.now(),
+                      staging: staging.map((r) => r.result),
+                      provider,
+                    });
+                    p.memory.push({ at: performance.now(), ...process.memoryUsage() });
+                    if (index < 30) {
+                      p.samples.inventory.push(inventory);
+                      p.samples.flush.push(flushed);
+                      p.samples.commit.push(committed);
+                    }
+                    assert.deepEqual(pressure.snapshot().faults, []);
+                    assert.equal(sinkFaults, 0);
+                  },
+                  async finish() {
+                    p.finishedAt = performance.now();
+                    await both("cleanup");
+                    await both("flush");
+                    if (sessionId)
+                      accepted(
+                        await live.foundation.broker.request(
+                          principal(),
+                          "devices/disconnect",
+                          { sessionId },
+                          new AbortController().signal,
+                        ),
+                      );
+                  },
+                },
+              });
+              p.ui = uiReport;
+              p.sdkTimings = pressure.outputs.filter(
+                (row) => row.operation && row.at >= p.startedAt && row.at <= p.finishedAt,
+              );
+              p.owners = pressure.owners;
+              evidence = { checks: {}, events: [], samples: {}, pressure: p };
+              return evidence;
+            },
+            async finishObservation(result) {
+              assert.equal(result, evidence);
+              const p = result.pressure!;
+              const bytes = await readFile(config.pressure.workerTrace);
+              const rows = bytes
+                .toString("utf8")
+                .trim()
+                .split("\n")
+                .map((line) => JSON.parse(line));
+              p.worker = verifyPressureWorkerTrace(rows, p.owners);
+              p.workerTrace = {
+                path: config.pressure.workerTrace,
+                sha256: createHash("sha256").update(bytes).digest("hex"),
+              };
+              p.transport = pressure.snapshot();
+              p.mainObserver = observer.snapshot();
+              assert.equal(sinkFaults, 0);
+              p.artifacts = [];
+              for (const file of [config.pressure.mainTrace, config.pressure.rpcTrace])
+                p.artifacts.push({
+                  path: file,
+                  sha256: createHash("sha256")
+                    .update(await readFile(file))
+                    .digest("hex"),
+                });
+              assertPressurePartial(p);
+            },
+          };
+          return;
+        }
+
         await win.loadURL(config.rendererUrl);
         win.webContents.debugger.attach("1.3");
         const windowControls = (win: Electron.BrowserWindow, text: string) => {
@@ -2352,6 +2690,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         for (const unsubscribe of off.splice(0)) unsubscribe();
         for (const name of ipcNames.splice(0)) ipcMain.removeHandler(name);
         restoreReservation();
+        pressureQueue?.restore();
         if (!win.isDestroyed()) win.destroy();
         if (second && !second.isDestroyed()) second.destroy();
         if (failures.length)

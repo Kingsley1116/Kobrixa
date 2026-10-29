@@ -24,6 +24,12 @@ export async function runUiLoad(input: {
   durationMs: number;
   cycles: number;
   slow?: boolean;
+  workload?: {
+    prepare(): Promise<void>;
+    start(): Promise<void>;
+    step(index: number, sample: unknown): Promise<void>;
+    finish(): Promise<void>;
+  };
   snapshotDelay: SnapshotDelay;
 }) {
   const { window, composition, directory } = input;
@@ -177,9 +183,11 @@ export async function runUiLoad(input: {
       });
     }
     const best = [...calibration].sort((a, b) => a.uncertainty - b.uncertainty)[0]!;
+    await input.workload?.prepare();
     const warmupAt = wall();
     await pause(5000);
     recording = true;
+    await input.workload?.start();
     const start = await js<number>("window.uiLoad.start()");
     const native: Array<{ kind: string; at: number }> = [];
     const deadline = performance.now() + input.durationMs;
@@ -245,8 +253,14 @@ export async function runUiLoad(input: {
       await pause(100);
       await js("window.uiLoad.show()");
       await pause(300);
+      await input.workload?.step(n - 1, {
+        at: wall(),
+        main: snapshots(),
+        renderer: await js("window.uiLoad.sample()"),
+      });
     }
     const end = wall();
+    await input.workload?.finish();
     recording = false;
     await pause(50);
     await writeFile(

@@ -10,6 +10,9 @@ import {
   collectThirtySamples,
   driveTenMinutes,
   verifyFourExecutions,
+  verifyPressureWorkerTrace,
+  pressureTransport,
+  verifyPressureRpcTrace,
 } from "./plugin-persistence-pressure.ts";
 const signal = () => new AbortController().signal;
 // Unit-only SDK-shaped store. Never a native receipt or claimed transport measurement.
@@ -190,6 +193,30 @@ test("50 full-size durable unit records, full readback, two maximum staging and 
     await w.stageOne(signal());
     assert.equal((await w.stagingStatus(signal()))[0].receivedBytes, 8388608);
   }
+  let active = 0,
+    peak = 0;
+  for (const f of fixtures) {
+    const read = f.storage.readChunk;
+    f.storage.readChunk = async (...args) => {
+      active++;
+      peak = Math.max(peak, active);
+      try {
+        await new Promise((resolve) => setImmediate(resolve));
+        return await read(...args);
+      } finally {
+        active--;
+      }
+    };
+  }
+  const bursts = await Promise.all(workloads.map((w) => w.burst(signal())));
+  assert.equal(peak, 4);
+  assert.equal(active, 0);
+  assert.ok(bursts.every((b) => b.length === 2 && b.every((r) => r.byteLength === 8388608)));
+  fixtures[0].options.corrupt = true;
+  await assert.rejects(workloads[0].burst(signal()), /Parallel read/);
+  assert.equal(fixtures[0].reads.size, 0);
+  assert.equal(active, 0);
+  fixtures[0].options.corrupt = false;
   assert.equal(
     fixtures.reduce((n, f) => n + f.records.size, 0),
     50,
@@ -420,4 +447,171 @@ test("short positive reads cross pattern boundaries and verify full record bytes
   assert.ok(f.options.readCalls > 32);
   assert.equal(f.options.crossedBoundary, true);
   assert.equal(f.reads.size, 0);
+});
+
+function workerTrace() {
+  const clock = { realm: "worker", pid: 10, threadId: 1, timeOrigin: 1000 };
+  const counters = { pending: 0, bytes: 0, active: 0 };
+  const observation = { clock, faults: 0, dropped: 0, restored: true, queues: [{ counters }] };
+  const rows = Array.from({ length: 4 }, (_, i) => ({
+    kind: "request",
+    key: `r${i}`,
+    id: i,
+    operation: "reads.read",
+    owner: owners[i % 2],
+    first: owners[i % 2],
+  }));
+  rows.push({
+    kind: "queue",
+    clock,
+    events: [
+      ...Array.from({ length: 4 }, (_, i) => ({
+        phase: "enter",
+        queueId: 1,
+        jobId: i,
+        requestKey: `r${i}`,
+        at: i + 1,
+        counters: { ...counters, pending: 4, active: 4 },
+      })),
+      ...Array.from({ length: 4 }, (_, i) => ({
+        phase: "fulfilled",
+        queueId: 1,
+        jobId: i,
+        requestKey: `r${i}`,
+        at: 10 + i,
+        counters,
+      })),
+    ],
+  });
+  rows.push(
+    ...Array.from({ length: 30 }, () => ({
+      kind: "stats",
+      observation,
+      memory: { rss: 1024 },
+      sinkFaults: 0,
+    })),
+    { kind: "end", observation, sinkFaults: 0 },
+  );
+  return rows;
+}
+test("worker correlation requires exact original owner, complete entries, sticky health and close", () => {
+  assert.equal(verifyPressureWorkerTrace(workerTrace(), owners).peak, 4);
+  for (const corrupt of [
+    (r) => {
+      r[0].first = { ...r[0].first, processEpoch: "other" };
+    },
+    (r) => {
+      r[4].events[0].requestKey = "missing";
+    },
+    (r) => {
+      r[5].observation.faults = 1;
+    },
+    (r) => {
+      r[5].observation.dropped = 1;
+    },
+    (r) => {
+      r[5].sinkFaults = 1;
+    },
+    (r) => {
+      r.pop();
+    },
+    (r) => {
+      r[4].events[4].phase = "rejected";
+    },
+    (r) => {
+      r[4].events[0].counters = null;
+    },
+  ]) {
+    const rows = structuredClone(workerTrace());
+    corrupt(rows);
+    assert.throws(() => verifyPressureWorkerTrace(rows, owners));
+  }
+});
+test("transport observer preserves original nested business replies and fails sticky on flattening", () => {
+  const raw = [],
+    sent = [];
+  let receive;
+  const child = {
+    onMessage(fn) {
+      receive = fn;
+      return () => {};
+    },
+    onExit() {
+      return () => {};
+    },
+    send(text) {
+      sent.push(text);
+    },
+  };
+  const p = pressureTransport((row) => raw.push(row));
+  const observed = p.attach(owners[0], child);
+  receive(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "storage/list", params: {} }));
+  const reply = JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    result: { ok: true, value: { entries: [] } },
+  });
+  observed.send(reply);
+  assert.equal(sent[0], reply);
+  assert.deepEqual(raw[1].message.result, { ok: true, value: { entries: [] } });
+  assert.equal(p.snapshot().faults.length, 0);
+  receive(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "storage/list", params: {} }));
+  observed.send(JSON.stringify({ jsonrpc: "2.0", id: 2, result: { entries: [] } }));
+  assert.equal(sent.length, 2);
+  assert.equal(p.snapshot().faults.length, 1);
+});
+
+test("outside nested RPC verifier proves all50 distinct complete hashes and rejects payload or owner substitution", () => {
+  const rows = [],
+    seed = "outside-unit-only",
+    sha256 = pressureHash(seed);
+  const chunks = Array.from({ length: 32 }, (_, i) => ({
+    offset: i * 262144,
+    nextOffset: (i + 1) * 262144,
+    eof: i === 31,
+    dataBytes: 262144,
+    dataSha256: createHash("sha256")
+      .update(pressureChunk(seed, i * 262144))
+      .digest("hex"),
+  }));
+  let sequence = 0;
+  const exchange = (owner, method, params, value) => {
+    const id = ++sequence;
+    rows.push(
+      { kind: "rpc", direction: "plugin", owner, message: { jsonrpc: "2.0", id, method, params } },
+      {
+        kind: "rpc",
+        direction: "host",
+        owner,
+        message: { jsonrpc: "2.0", id, result: { ok: true, value } },
+      },
+    );
+  };
+  for (let i = 0; i < 50; i++) {
+    const owner = owners[i % 2],
+      id = `unit-record-${i}`,
+      read = `unit-read-${i}`;
+    exchange(
+      owner,
+      "storage/openRead",
+      { id, expectedRevision: "revision" },
+      { read, record: { id, revision: "revision", label: seed, byteLength: 8388608, sha256 } },
+    );
+    for (const chunk of chunks)
+      exchange(owner, "storage/readChunk", { read, offset: chunk.offset, maxBytes: 262144 }, chunk);
+    exchange(owner, "storage/closeRead", { read }, {});
+  }
+  assert.equal(verifyPressureRpcTrace(rows, owners).records.length, 50);
+  const wrong = structuredClone(rows);
+  wrong[3].message.result.value.dataSha256 = "0".repeat(64);
+  assert.throws(() => verifyPressureRpcTrace(wrong, owners));
+  assert.throws(
+    () =>
+      verifyPressureRpcTrace(
+        [{ ...rows[0], owner: { ...owners[0], processEpoch: "retired" } }],
+        owners,
+      ),
+    /Foreign/,
+  );
+  assert.throws(() => verifyPressureRpcTrace(rows.slice(0, -1), owners));
 });
