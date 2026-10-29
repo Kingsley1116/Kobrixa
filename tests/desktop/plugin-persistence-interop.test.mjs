@@ -1487,3 +1487,93 @@ test("public interop phase1: observer forwards original process and cleanup reta
   );
   assert.deepEqual(retired, [...INTEROP_IDS]);
 });
+
+// Isolated mode metadata is validated against the actual public schemas, not copied expectations.
+import { selectInteropMode, interopManifest, interopPanel } from "./plugin-persistence-run.mjs";
+import {
+  pluginManifestSchema,
+  panelResourceV1Schema,
+  validateUiResource,
+  uiBytes,
+} from "@kobrixa/plugin-protocol";
+test("public interop phase2: isolated selector preserves defaults and rejects mixed modes", () => {
+  assert.equal(selectInteropMode({}), null);
+  assert.deepEqual(selectInteropMode({ interop: true }), ["public-interop"]);
+  for (const extra of [
+    { referencesOnly: true },
+    { caseId: "compatibility" },
+    { importTrial: "publication-six" },
+  ])
+    assert.throws(() => selectInteropMode({ interop: true, ...extra }), /exclusive/);
+});
+test("public interop phase2: generated two-language manifests and panels use exact public command schemas", () => {
+  for (const id of ["acceptance.interop-js", "acceptance.interop-python"]) {
+    const manifest = pluginManifestSchema.parse(interopManifest(id, "1.8.0"));
+    const panel = panelResourceV1Schema.parse(interopPanel(manifest));
+    const validated = validateUiResource(
+      panel,
+      {
+        pluginId: id,
+        commands: manifest.contributes.commands,
+        panels: manifest.contributes.panels,
+      },
+      uiBytes(panel),
+    );
+    assert.equal(validated.ok, true, JSON.stringify(validated));
+    assert.equal(manifest.runtime.kind, id.endsWith("python") ? "python" : "node");
+    assert.equal(manifest.contributes.commands.length, 9);
+    assert.equal(panel.nodes.length, 9);
+    assert.equal(manifest.contributes.settings.path, "settings.json");
+    for (const command of manifest.contributes.commands.filter(
+      (c) => c.invocation === "context-v1",
+    )) {
+      const node = panel.nodes.find((n) => n.id === command.id.split(".").at(-1));
+      assert.equal(node.action.command, command.id);
+      for (const key of Object.keys(command.arguments)) {
+        assert.deepEqual(node.action.arguments[key], { ref: { scope: "form", key } });
+        assert.deepEqual(panel.fields[key].schema, command.arguments[key]);
+        assert.equal(command.arguments[key].maxLength, 128);
+        assert.deepEqual(command.arguments[key], {
+          type: "string",
+          maxLength: 128,
+          nullable: false,
+        });
+      }
+    }
+  }
+  assert.throws(() => interopManifest("builtin:kobrixa.sensor-lab", "1.8.0"));
+  assert.throws(() => interopManifest("acceptance.interop-js", "1.9.0"));
+});
+test("public interop phase2: current raw envelope cannot bypass receipt or legacy version gates", () => {
+  const f = publicInteropUnitTrace();
+  assert.throws(() =>
+    verifyInterop({
+      mode: "public-interop",
+      level: "unit",
+      status: "public-interop-subset",
+      fullStage3Pass: false,
+      reports: [],
+    }),
+  );
+  assert.throws(() =>
+    verifyInterop({
+      mode: "public-interop",
+      level: "real-process",
+      status: "public-interop-subset",
+      fullStage3Pass: false,
+      reports: [
+        {
+          case: "public-interop",
+          hostEpoch: f.consumers[0].owner.hostEpoch,
+          evidence: { publicInterop: f },
+        },
+      ],
+    }),
+  );
+  f.identity.hostVersion = "1.7.0";
+  f.identity.publicApi18Published = false;
+  assert.throws(
+    () => verifyPublicInterop(f.consumers, f.identity),
+    "Actual 1.8 wire cannot be relabeled historical 1.7",
+  );
+});

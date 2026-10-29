@@ -1,3 +1,4 @@
+import { publicInteropObserver, producePublicInterop, verifyPublicInterop } from "./plugin-persistence-public-interop.js";
 import type { Wire } from "./plugin-persistence-import.js";
 import {
   PREFERENCE_CUTS,
@@ -64,11 +65,13 @@ export type FoundationCase =
   | "import-restart"
   | "storage-ui-pressure"
   | "compatibility"
+  | "public-interop"
   | "installed";
 
 import type { ContentionObservation, ContentionForm } from "./plugin-persistence-contention.js";
 
 export type CaseEvidence = {
+  publicInterop?: CompatibilityWire;
   pressure?: PressureRow;
   importSlice?: CompatibilityWire;
   compatibility?: CompatibilityWire;
@@ -959,6 +962,7 @@ import type { BuiltinDeviceProvider } from "../../apps/desktop/src/main/device-b
 let factoryAttempted = false;
 /** Reference panels are not part of the zero-panel pressure baseline. */
 export function foundationBuiltinRoles(caseId: string): readonly string[] {
+  if (caseId === "public-interop") return [];
   if (caseId === "storage-ui-pressure") return ["pressure-a", "pressure-b"];
   return ["recording", "settings", ...(caseId === "import-restart" ? ["import"] : [])];
 }
@@ -1005,6 +1009,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
       "compatibility",
       "import-restart",
       "storage-ui-pressure",
+      "public-interop",
     ].includes(config.case)
   )
     throw new Error(
@@ -1094,6 +1099,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
     async settled() {},
   };
   const importWitness = semanticImport ? observeImportWriter(importWriter) : undefined;
+  const interop = config.case === "public-interop" ? publicInteropObserver() : undefined;
   const compatibility = config.case === "compatibility" ? compatibilityObserver() : undefined;
   const pressure =
     config.case === "storage-ui-pressure"
@@ -1438,6 +1444,8 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                     plugin.channelOwner
                   )
                     imported.output(plugin.channelOwner, line);
+                  const interopRow = interop?.consumers.find(r => r.owner.processEpoch === plugin.channelOwner?.processEpoch);
+                  if (interopRow) interop!.output(interopRow, line);
                   const row = compatibility?.rows.find(
                     (r) => r.owner.processEpoch === plugin.channelOwner?.processEpoch,
                   );
@@ -1455,7 +1463,10 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                   compatibility && plugin.id.startsWith("acceptance.compat-") && plugin.channelOwner
                     ? compatibility.begin(plugin.channelOwner)
                     : undefined;
+                const interopRow = interop && plugin.channelOwner && plugin.id.startsWith("acceptance.interop-")
+                  ? interop.begin(plugin.channelOwner, plugin.id.endsWith("python") ? "stdio" : "message-port") : undefined;
                 const child = await launch(plugin);
+                if (interopRow) return interop!.attach(interopRow, child);
                 if (
                   pressure &&
                   plugin.channelOwner &&
@@ -1476,9 +1487,9 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             userData,
             builtins,
             commandLine: {
-              developmentDirectories: config.compatibility?.sources ?? [],
+              developmentDirectories: config.interop?.sources ?? config.compatibility?.sources ?? [],
               safeMode: false,
-              ...(config.compatibility ? { python: config.compatibility.python } : {}),
+              ...(config.interop ? { python: config.interop.python } : config.compatibility ? { python: config.compatibility.python } : {}),
             },
             locale: "en",
             dialogs: {
@@ -1499,8 +1510,11 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           report,
         };
         composition = await composeDesktopMain(compositionInput, {
-          ...(["action-replay", "renderer-loss", "all-optional-off"].includes(config.case)
-            ? { nativeActions }
+          ...(["action-replay", "renderer-loss", "all-optional-off", "public-interop"].includes(config.case)
+            ? { nativeActions: interop ? {
+                choose: (name: string) => nativeActions.choose(name),
+                copy: (text: string) => nativeActions.copy(text),
+              } : nativeActions }
             : {}),
           ...(imported
             ? {
@@ -1845,6 +1859,45 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         assert.equal(new Set(diagnostics).size, 4, "Duplicate main diagnostics");
         const snapshots = () => diagnostics.map((d) => d.snapshot());
         snapshots(); // Unknown instance lookups fail before activating consumers.
+        if (interop) {
+          let closed: Promise<void> | undefined;
+          let ran = false;
+          fixture = {
+            composition: {
+              profile: handles.profile, journalProfile, persistenceProfile: handles.persistenceProfile,
+              host: handles.host, stage3: live.stage3,
+              get workerCount() { return persistenceWorkerCount(handles.backend); },
+              get reservationListenerCount() { return listeners; },
+            },
+            environment: {
+              commit: config.commit, artifact: config.artifact, artifactSha256: config.artifactSha256,
+              os: os.release(), architecture: process.arch, cpu: os.cpus()[0]?.model ?? "unknown",
+              ramBytes: os.totalmem(), filesystem: config.filesystem, node: process.versions.node,
+              electron: process.versions.electron ?? "", memoryMethod: "not-measured-interop", warmCold: "cold",
+            },
+            close: () => closed ??= (async () => {
+              await live.dispose();
+              for (const snapshot of snapshots()) assertZeroCounters(snapshot);
+              assert.deepEqual(failures, []);
+              for (const unsubscribe of off.splice(0)) unsubscribe();
+              for (const name of ipcNames.splice(0)) ipcMain.removeHandler(name);
+              restoreReservation();
+              win.destroy();
+            })(),
+            async runCase(id) {
+              assert.equal(id, "public-interop"); assert.equal(ran, false); ran = true;
+              const consumers = await producePublicInterop({ observer: interop, plugins: live.plugins,
+                ui, participant: handles.host.participant, native: nativeActions, directory: userData });
+              return { checks: {}, events: [], samples: {}, publicInterop: { ...config.interop, consumers } };
+            },
+            async finishObservation(evidence) {
+              verifyPublicInterop(interop.consumers, config.interop.identity);
+              assert.equal(evidence.publicInterop!.consumers, interop.consumers);
+            },
+          };
+          assertRealComposition(fixture);
+          return;
+        }
         if (pressure) {
           const { runUiLoad } = await import("./declarative-ui-load-main.js");
           const { snapshotDelay } = await import("./declarative-ui-slow-main.js");
@@ -2400,7 +2453,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           }
           assert.equal(input.host.recovery.snapshot().items.length, 0);
         };
-        const producers: Record<FoundationCase, () => Promise<CaseEvidence>> = {
+        const producers: Record<Exclude<FoundationCase, "public-interop">, () => Promise<CaseEvidence>> = {
           retirement: () => produceRetirement(input),
           "healthy-release": () => produceHealthyRelease(input),
           contention: () =>
@@ -2817,7 +2870,8 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             assertRealComposition(fixture!);
             let evidence: CaseEvidence;
             try {
-              evidence = await producers[id]();
+              assert.notEqual(id, "public-interop");
+              evidence = await producers[id as Exclude<FoundationCase, "public-interop">]();
             } catch (error) {
               if (
                 (id === "sealed-ttl" || id === "all-optional-off") &&

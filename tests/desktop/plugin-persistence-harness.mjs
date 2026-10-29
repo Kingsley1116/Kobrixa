@@ -1,3 +1,4 @@
+import { verifyPublicInterop } from "./plugin-persistence-public-interop.ts";
 import { assertPreferencePhase } from "./import-preferences.ts";
 import { SEMANTIC_IMPORT_BOUNDARIES, assertSemanticPhase } from "./import-boundaries.ts";
 import { assertPressurePartial } from "./plugin-persistence-pressure.ts";
@@ -187,6 +188,19 @@ export function verifyMatrix(report) {
   assert.equal(get("B2-N29").sentinelBeforeHash, get("B2-N29").sentinelAfterHash);
 }
 export function verifyInterop(report) {
+  if (report.mode === "public-interop") {
+    assert.equal(report.level, "real-process");
+    assert.equal(report.status, "public-interop-subset");
+    assert.equal(report.fullStage3Pass, false);
+    assert.equal(report.reports?.length, 1);
+    const receipt = report.reports[0];
+    assert.equal(receipt.case, "public-interop");
+    verifyRunReceipt(receipt);
+    return verifyPublicInterop(
+      receipt.evidence.publicInterop.consumers,
+      receipt.evidence.publicInterop.identity,
+    );
+  }
   assert.equal(report.consumers?.length, 2, "two consumers required");
   realReport(report);
   assert.deepEqual(report.consumers.map((entry) => entry.transport).sort(), [
@@ -636,7 +650,11 @@ export function verifyRunReceipt(r, expected = {}) {
       assertSemanticPhase(r.evidence.importSlice);
     else assertImportPhase(r.evidence.importSlice);
   } else if (r.case === "storage-ui-pressure") assertPressurePartial(r.evidence.pressure);
-  else assertFoundationOutcome(r.case, r.evidence, { serialized: true });
+  else if (r.case === "public-interop") {
+    const p = r.evidence.publicInterop;
+    verifyPublicInterop(p.consumers, p.identity);
+    for (const row of p.consumers) assert.equal(row.owner.hostEpoch, r.hostEpoch);
+  } else assertFoundationOutcome(r.case, r.evidence, { serialized: true });
   if (r.case === "all-optional-off") {
     assertOptionalEvidence(r.evidence, r.hostEpoch);
     for (const phase of [r.evidence.optionalOff.seed, r.evidence.optionalOff.settings])

@@ -175,7 +175,7 @@ def install_public_interop():
         await read_all(ctx)
         state["read"] = value(await ctx.storage.open_read(dict(id=records[0]["id"], expectedRevision=records[0]["revision"], schemaVersion=1)))["read"]
         emit("records", dict(records=records, read=state["read"], quota=value(await ctx.storage.quota({}))))
-    text = dict(type="string", minLength=1, maxLength=128, maxBytes=512, nullable=False)
+    text = dict(type="string", maxLength=128, nullable=False)
     @plugin.context_command(identity + ".interop-foreign", dict(id=text, revision=text, read=text))
     async def foreign(ctx):
         args = ctx.invocation["arguments"]
@@ -200,12 +200,12 @@ def install_public_interop():
         return dict(output=dict(done=True), fieldErrors=[])
     @plugin.context_command(identity + ".interop-copy")
     async def copy(ctx):
-        result = value(await copy_fixture(ctx))
+        result = await copy_fixture(ctx)
         emit("copy", dict(invocationId=ctx.invocation["invocationId"], actionRef=ctx.actions.actionRef, result=result))
         return dict(output=dict(done=True), fieldErrors=[])
-    @plugin.context_command(identity + ".interop-replay", dict(actionRef=text))
+    @plugin.context_command(identity + ".interop-replay", {"action-ref": text})
     async def replay(ctx):
-        result = await ctx.ui.copy_text(dict(actionRef=ctx.invocation["arguments"]["actionRef"], text="forbidden replay"))
+        result = await ctx.ui.copy_text(dict(actionRef=ctx.invocation["arguments"]["action-ref"], text="forbidden replay"))
         assert not result["ok"] and result["error"]["code"] == "PLUGIN_E_PERMISSION_DENIED"
         emit("replay-denied", result)
         return dict(output=dict(done=True), fieldErrors=[])

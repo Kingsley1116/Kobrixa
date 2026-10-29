@@ -1,4 +1,9 @@
 import {
+  INTEROP_IDS,
+  readInteropIdentity,
+  interopOutputs,
+} from "./plugin-persistence-public-interop.ts";
+import {
   PREFERENCE_CUTS,
   preferencePhases,
   assertPreferencePause,
@@ -44,6 +49,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import {
+  verifyInterop,
   verifyFoundationReports,
   verifyRunReceipt,
   diagnosticError,
@@ -785,9 +791,195 @@ export function selectImportTrials(selection) {
   );
   return [selection];
 }
-export async function runFoundationEvidence({ referencesOnly = false, caseId, importTrial } = {}) {
+// This isolated mode does not add a foundation acceptance-table row.
+export function selectInteropMode({
+  interop = false,
+  referencesOnly = false,
+  caseId,
+  importTrial,
+} = {}) {
+  if (!interop) return null;
+  assert.ok(!referencesOnly && !caseId && !importTrial, "--interop is exclusive");
+  return ["public-interop"];
+}
+export function interopManifest(id, hostVersion) {
+  assert.ok(INTEROP_IDS.includes(id));
+  approvedHost(hostVersion);
+  const text = { type: "string", maxLength: 128, nullable: false };
+  const signatures = {
+    "interop-foreign": { id: text, revision: text, read: text },
+    "interop-export": {},
+    "interop-copy": {},
+    "interop-replay": { "action-ref": text },
+  };
+  const legacy = [
+    "interop-watch",
+    "interop-release",
+    "interop-records",
+    "interop-verify",
+    "interop-checkpoint",
+  ];
+  const commands = [
+    ...legacy.map((name) => ({ id: `${id}.${name}`, title: { en: name } })),
+    ...Object.entries(signatures).map(([name, args]) => ({
+      id: `${id}.${name}`,
+      title: { en: name },
+      invocation: "context-v1",
+      arguments: args,
+    })),
+  ];
+  return {
+    id,
+    version: "1.0.0",
+    apiVersion: `^${hostVersion}`,
+    runtime: {
+      kind: id.endsWith("python") ? "python" : "node",
+      entry: id.endsWith("python") ? "consumer.py" : "main.cjs",
+    },
+    activationEvents: commands.map((c) => `onCommand:${c.id}`),
+    permissions: [
+      "ui.panels",
+      "ui.notifications",
+      "settings.read",
+      "settings.write",
+      "storage.read",
+      "storage.write",
+      "storage.export",
+      "ui.clipboard",
+    ],
+    contributes: {
+      commands,
+      settings: { version: 1, path: "settings.json" },
+      panels: [
+        {
+          id: `${id}.panel`,
+          title: { en: "Public interop" },
+          location: "right",
+          resource: { version: 1, path: "panel.json" },
+        },
+      ],
+    },
+  };
+}
+export function interopPanel(manifest) {
+  const commands = manifest.contributes.commands.filter((c) => c.invocation === "context-v1");
+  const fields = {};
+  for (const command of commands)
+    for (const [key, schema] of Object.entries(command.arguments))
+      fields[key] = { schema, initial: "unset", required: false };
+  return {
+    kind: "panel",
+    data: {},
+    fields,
+    root: "root",
+    nodes: [
+      {
+        id: "root",
+        type: "group",
+        layout: "stack",
+        children: [
+          ...Object.keys(fields).map((key) => `field-${key}`),
+          ...commands.map((c) => c.id.split(".").at(-1)),
+        ],
+      },
+      ...Object.keys(fields).map((key) => ({
+        id: `field-${key}`,
+        type: "textInput",
+        field: key,
+        label: { en: key },
+      })),
+      ...commands.map((c) => ({
+        id: c.id.split(".").at(-1),
+        type: "action",
+        variant: "primary",
+        label: c.title,
+        action: {
+          kind: "command",
+          command: c.id,
+          arguments: Object.fromEntries(
+            Object.keys(c.arguments).map((key) => [key, { ref: { scope: "form", key } }]),
+          ),
+        },
+      })),
+    ],
+  };
+}
+async function materializePublicInterop(buildRoot, bundle) {
+  const identity = await readInteropIdentity(root),
+    sources = [],
+    artifacts = [],
+    sourceHashes = {};
+  const fixture = path.join(root, "tests/desktop/fixtures/plugin-persistence");
+  const python = [process.env.KOBRIXA_TEST_PYTHON, "python3"].filter(Boolean).find((executable) => {
+    try {
+      execFileSync(executable, ["-c", "import sys; assert sys.version_info >= (3, 10)"], {
+        stdio: "ignore",
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  assert.ok(python, "Real Python 3.10+ required");
+  for (const id of INTEROP_IDS) {
+    const folder = path.join(buildRoot, id);
+    await mkdir(folder);
+    sources.push(folder);
+    const manifest = interopManifest(id, identity.hostVersion);
+    await writeFile(path.join(folder, "kobrixa-plugin.json"), JSON.stringify(manifest));
+    await writeFile(path.join(folder, "panel.json"), JSON.stringify(interopPanel(manifest)));
+    await cp(path.join(fixture, "settings.json"), path.join(folder, "settings.json"));
+    if (id.endsWith("python")) {
+      await cp(path.join(fixture, "consumer.py"), path.join(folder, "consumer.py"));
+      await cp(path.join(root, "sdks/python/kobrixa"), path.join(folder, "kobrixa"), {
+        recursive: true,
+        filter: (file) => !file.split(path.sep).includes("__pycache__") && !file.endsWith(".pyc"),
+      });
+    } else await bundle(path.join(fixture, "consumer.ts"), path.join(folder, "main.cjs"));
+    const inventory = async (dir) => {
+      for (const entry of await readdir(dir, { withFileTypes: true })) {
+        const file = path.join(dir, entry.name);
+        if (entry.isDirectory()) await inventory(file);
+        else {
+          assert.ok(entry.isFile(), "Unexpected fixture artifact");
+          artifacts.push({ path: file, sha256: digest(await readFile(file)) });
+        }
+      }
+    };
+    await inventory(folder);
+  }
+  for (const file of [
+    "consumer.ts",
+    "consumer.py",
+    "settings.json",
+    "sealed-ttl-consumer.ts",
+    "optional-off-consumer.ts",
+  ])
+    sourceHashes[`tests/desktop/fixtures/plugin-persistence/${file}`] = digest(
+      await readFile(path.join(fixture, file)),
+    );
+  for (const file of [
+    "plugin-persistence-main.ts",
+    "plugin-persistence-run.mjs",
+    "plugin-persistence-harness.mjs",
+    "plugin-persistence-public-interop.ts",
+  ])
+    sourceHashes[`tests/desktop/${file}`] = digest(
+      await readFile(path.join(root, "tests/desktop", file)),
+    );
+  return { identity, sources, python, artifacts, sourceHashes };
+}
+
+export async function runFoundationEvidence({
+  referencesOnly = false,
+  caseId,
+  importTrial,
+  interop: interopMode = false,
+} = {}) {
   if (caseId === "import-restart") selectImportTrials(importTrial);
-  const selectedCases = selectFoundationCases({ referencesOnly, caseId });
+  const selectedCases =
+    selectInteropMode({ interop: interopMode, referencesOnly, caseId, importTrial }) ??
+    selectFoundationCases({ referencesOnly, caseId });
   const handoffs = await preflight();
   const renderer = await readFoundationRenderer(handoffs.rendererArtifact);
   const output = process.env.PERSISTENCE_EVIDENCE;
@@ -800,18 +992,19 @@ export async function runFoundationEvidence({ referencesOnly = false, caseId, im
   const buildRoot = path.join(directory, "build");
   await mkdir(buildRoot);
   // Failed artifacts/profiles are retained for diagnosis; no profile deletion while a process is alive.
-  await materializeFoundationFixtures(
-    buildRoot,
-    build,
-    selectedCases.some(
-      (id) =>
-        id === "contention" ||
-        id === "suspend-wake" ||
-        id === "disconnect-retry" ||
-        id === "renderer-loss",
-    ),
-    selectedCases.some((id) => id === "action-replay" || id === "renderer-loss"),
-  );
+  if (!interopMode)
+    await materializeFoundationFixtures(
+      buildRoot,
+      build,
+      selectedCases.some(
+        (id) =>
+          id === "contention" ||
+          id === "suspend-wake" ||
+          id === "disconnect-retry" ||
+          id === "renderer-loss",
+      ),
+      selectedCases.some((id) => id === "action-replay" || id === "renderer-loss"),
+    );
   let compatibility;
   if (selectedCases.includes("compatibility")) {
     const { legacyFixtures } = await import("./declarative-ui-legacy-fixtures.mjs");
@@ -908,6 +1101,7 @@ export async function runFoundationEvidence({ referencesOnly = false, caseId, im
         },
       ],
     });
+  const interop = interopMode ? await materializePublicInterop(buildRoot, bundle) : undefined;
   let pressure;
   if (selectedCases.includes("storage-ui-pressure")) {
     const { materialize } = await import("./declarative-ui-harness.mjs");
@@ -1160,6 +1354,7 @@ app.exit(code);
       ...preferenceArtifacts,
       Buffer.from(renderer.receiptSha256),
       Buffer.from(JSON.stringify(compatibility ?? null)),
+      ...(interop ? [Buffer.from(JSON.stringify(interop))] : []),
       ...(pressure ? [Buffer.from(JSON.stringify(pressure.artifacts))] : []),
       ...(selectedCases.includes("import-restart")
         ? [
@@ -1168,12 +1363,16 @@ app.exit(code);
             ),
           ]
         : []),
-      await readFile(
-        path.join(buildRoot, "plugins/acceptance-builtin-recording/resource-index.json"),
-      ),
-      await readFile(
-        path.join(buildRoot, "plugins/acceptance-builtin-settings/resource-index.json"),
-      ),
+      ...(interop
+        ? []
+        : [
+            await readFile(
+              path.join(buildRoot, "plugins/acceptance-builtin-recording/resource-index.json"),
+            ),
+            await readFile(
+              path.join(buildRoot, "plugins/acceptance-builtin-settings/resource-index.json"),
+            ),
+          ]),
     ]),
   );
   // Never invoke Electron's path getter: it may auto-download an absent binary.
@@ -1194,6 +1393,7 @@ app.exit(code);
     const config = {
       case: id,
       ...(compatibility ? { compatibility } : {}),
+      ...(interop ? { interop } : {}),
       ...(pressure ? { pressure } : {}),
       ...(id === "import-restart" ? { importTrial, syntheticRoot } : {}),
       profile,
@@ -1385,6 +1585,49 @@ app.exit(code);
     });
     reports.push(receipt);
   }
+  if (interop) {
+    assert.equal(reports.length, 1);
+    const report = reports[0],
+      observed = report.evidence.publicInterop;
+    const { consumers, ...configuration } = observed;
+    assert.deepEqual(configuration, interop, "Original interop artifact configuration");
+    assert.deepEqual(
+      await readInteropIdentity(root),
+      interop.identity,
+      "Source/schema changed during run",
+    );
+    for (const [file, hash] of Object.entries(interop.sourceHashes))
+      assert.equal(digest(await readFile(path.join(root, file))), hash);
+    for (const file of interop.artifacts)
+      assert.equal(digest(await readFile(file.path)), file.sha256, file.path);
+    for (const row of consumers) {
+      const boot = interopOutputs(row, "boot")[0];
+      assert.ok(
+        report.observedDescendants.some((p) => p.pid === boot.pid),
+        "Original consumer PID absent from OS observation",
+      );
+      for (const file of row.actions.filter((a) => a.kind === "export-file")) {
+        const bytes = await readFile(file.data.path);
+        assert.equal(digest(bytes), file.data.sha256);
+        assert.equal(bytes.length, file.data.byteLength);
+      }
+    }
+    const result = {
+      format: 1,
+      level: "real-process",
+      mode: "public-interop",
+      status: "public-interop-subset",
+      fullStage3Pass: false,
+      reports,
+      artifact: entry,
+      bundleSha256,
+      artifactSha256,
+      renderer,
+    };
+    verifyInterop(result);
+    await writeFile(output, JSON.stringify(result, null, 2), { flag: "wx" });
+    return result;
+  }
   if (pressure) {
     assert.equal(reports.length, 1);
     const p = reports[0].evidence.pressure;
@@ -1456,6 +1699,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     if (process.argv.includes("--preflight")) await preflight();
     else
       await runFoundationEvidence({
+        interop: process.argv.includes("--interop"),
         referencesOnly: process.argv.includes("--references"),
         caseId: process.argv.find((arg) => arg.startsWith("--case="))?.slice(7),
         importTrial: process.argv.find((arg) => arg.startsWith("--import-trial="))?.slice(15),

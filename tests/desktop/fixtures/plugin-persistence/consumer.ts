@@ -1,7 +1,12 @@
 import type { RecordMeta } from "@kobrixa/plugin-protocol";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { definePlugin, runPlugin, type PluginContext, type PluginDefinition } from "@kobrixa/plugin-sdk";
+import {
+  definePlugin,
+  runPlugin,
+  type PluginContext,
+  type PluginDefinition,
+} from "@kobrixa/plugin-sdk";
 import { installSealedTtlConsumer } from "./sealed-ttl-consumer.js";
 import { installOptionalOffConsumer } from "./optional-off-consumer.js";
 let optionalDrain: ReturnType<typeof installOptionalOffConsumer> | undefined;
@@ -376,9 +381,7 @@ export async function copyFixture(ctx: PluginContext, actionRef = ctx.actions.ac
 }
 
 // Opt-in current SDK interop fixture; ordinary acceptance consumers keep their existing lifecycle.
-function installPublicInterop(
-  ctx: PluginContext,
-): NonNullable<PluginDefinition["drain"]> {
+function installPublicInterop(ctx: PluginContext): NonNullable<PluginDefinition["drain"]> {
   const emit = (phase: string, data: unknown = {}) =>
     console.error(
       "PUBLIC_INTEROP:" +
@@ -538,9 +541,7 @@ function installPublicInterop(
   });
   const text = {
     type: "string" as const,
-    minLength: 1,
     maxLength: 128,
-    maxBytes: 512,
     nullable: false as const,
   };
   ctx.commands.registerContext(
@@ -595,10 +596,10 @@ function installPublicInterop(
     });
   ctx.commands.registerContext(
     `${ctx.pluginId}.interop-replay`,
-    { actionRef: text },
+    { "action-ref": text },
     async (invocation) => {
       const result = await ctx.ui.copyText({
-        actionRef: String(invocation.arguments.actionRef),
+        actionRef: String(invocation.arguments["action-ref"]),
         text: "forbidden replay",
       });
       assert.equal(result.ok, false);

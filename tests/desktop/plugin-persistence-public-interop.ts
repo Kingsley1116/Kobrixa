@@ -629,7 +629,7 @@ export async function runPublicInterop(deps: InteropComposition) {
       await deps.invoke(id, "interop-export", {});
       await deps.invoke(id, "interop-copy", {});
       const copied = one(interopOutputs(row(id), "copy"), "Copy output");
-      await deps.invoke(id, "interop-replay", { actionRef: copied.data.actionRef });
+      await deps.invoke(id, "interop-replay", { "action-ref": copied.data.actionRef });
       await deps.execute(id, "interop-checkpoint");
     }
   } catch (error) {
@@ -649,4 +649,176 @@ export async function runPublicInterop(deps: InteropComposition) {
     throw cleanup;
   }
   if (failure) throw failure;
+}
+
+/** The existing main fixture supplies its actual mounted bridge, ledger and participant. */
+export async function producePublicInterop(input: {
+  observer: ReturnType<typeof publicInteropObserver>;
+  plugins: Wire;
+  ui: Wire;
+  participant: Wire;
+  native: Wire;
+  directory: string;
+}) {
+  const { observer, plugins, ui, participant, native } = input;
+  const rowFor = (id: string) =>
+    one(
+      observer.consumers.filter((r) => r.owner.pluginId === id),
+      "Original interop owner",
+    );
+  const accepted = (r: Wire) => {
+    assert.equal(r.ok, true, JSON.stringify(r));
+    return r.value;
+  };
+  const wait = async (check: () => boolean) => {
+    const end = performance.now() + 10000;
+    while (!check()) {
+      assert.ok(performance.now() < end, "Interop host observation timeout");
+      await new Promise((r) => setTimeout(r, 10));
+    }
+  };
+  const restores: Array<() => void> = [];
+  const panels = new Map<string, Wire>();
+  const enabled = new Set<string>();
+  let active: { row: InteropConsumer; ref?: string } | undefined;
+  for (const method of ["mint", "claim"] as const) {
+    const original = ui.actions[method];
+    ui.actions[method] = function (...args: Wire[]) {
+      const result = Reflect.apply(original, this, args) as ReturnType<typeof original>;
+      const owner = method === "mint" ? args[0] : args[0]!.owner;
+      const row = observer.consumers.find((r) => r.owner.processEpoch === owner.processEpoch);
+      if (row) {
+        const ref = method === "mint" ? result : args[0]!.actionRef;
+        // Rejected replay claims stay in raw RPC; successful one-use claims are action evidence.
+        if (method === "mint" || result.ok)
+          observer.action(row, {
+            kind: method,
+            actionRef: ref,
+            data: { owner, ...(method === "claim" ? { capability: args[1], ok: result.ok } : {}) },
+          });
+        if (method === "mint" && active?.row === row) active.ref = ref;
+      }
+      return result;
+    };
+    restores.push(() => {
+      ui.actions[method] = original;
+    });
+  }
+  const originalCopy = native.copy;
+  native.copy = function (text: string) {
+    const result = originalCopy.call(this, text);
+    assert.ok(active?.ref, "Copy without observed invocation mint");
+    observer.action(active.row, { kind: "clipboard-write", actionRef: active.ref, data: { text } });
+    return result;
+  };
+  restores.push(() => {
+    native.copy = originalCopy;
+  });
+  const originalDrain = participant.drain;
+  participant.drain = async function (offer: Wire, dispatch: unknown) {
+    const report = await originalDrain.call(this, offer, dispatch);
+    const row = observer.consumers.find((r) => r.owner.processEpoch === offer.owner.processEpoch);
+    if (row) observer.drain(row, offer, report);
+    return report;
+  };
+  restores.push(() => {
+    participant.drain = originalDrain;
+  });
+  try {
+    await runPublicInterop({
+      consumers: observer.consumers,
+      async execute(id, suffix) {
+        if (!enabled.has(id)) {
+          const source = one<Wire>(
+            plugins.state().plugins.filter((p: Wire) => p.id === id),
+            "Actual development source",
+          );
+          accepted(await plugins.setEnabled(source.sourceKey, true));
+          enabled.add(id);
+        }
+        accepted(await plugins.execute(`${id}.${suffix}`));
+      },
+      async invoke(id, suffix, args) {
+        const row = rowFor(id);
+        let opened = panels.get(id);
+        if (!opened) {
+          const catalog = accepted(await ui.bridge.catalog({}));
+          const panel = one<Wire>(
+            catalog.entries.filter(
+              (e: Wire) => e.sourceKey === row.owner.sourceKey && e.kind === "panel",
+            ),
+            "Interop panel",
+          );
+          opened = accepted(
+            await ui.bridge.open({
+              sourceKey: panel.sourceKey,
+              id: panel.id,
+              uiResourceGeneration: panel.uiResourceGeneration,
+            }),
+          );
+          assert.ok(opened);
+          accepted(
+            await ui.bridge.visibility({ binding: opened.binding, visible: true, reason: "tab" }),
+          );
+          panels.set(id, opened);
+        }
+        active = { row };
+        native.phase = `${id}.${suffix}`;
+        let settled: { result?: Wire; error?: unknown } | undefined;
+        const result: Promise<{ result?: Wire; error?: unknown }> = Promise.resolve(
+          ui.bridge.invoke({
+            binding: opened.binding,
+            nodeId: suffix,
+            formRevision: ++opened.formRevision,
+            form: { ...opened.form, ...args },
+          }),
+        ).then(
+          (value) => {
+            settled = { result: value };
+            return settled;
+          },
+          (error) => {
+            settled = { error };
+            return settled;
+          },
+        );
+        let exported: string | undefined;
+        if (suffix === "interop-export") {
+          await wait(() => {
+            if (settled) {
+              if (settled.error) throw settled.error;
+              accepted(settled.result!);
+              throw new Error("Export completed without native chooser");
+            }
+            return native.dialogs.some((d: Wire) => d.phase === native.phase && d.end === 0);
+          });
+          exported = path.join(input.directory, `${id}.txt`);
+          native.select(exported);
+        }
+        const completion = await result;
+        if (completion.error) throw completion.error;
+        accepted(completion.result!);
+        if (exported) {
+          assert.ok(active.ref);
+          const bytes = await readFile(exported);
+          observer.action(row, {
+            kind: "export-file",
+            actionRef: active.ref,
+            data: { path: exported, sha256: sha(bytes), byteLength: bytes.length },
+          });
+        }
+        active = undefined;
+      },
+      async retire(id) {
+        const row = rowFor(id);
+        accepted(await plugins.setEnabled(row.owner.sourceKey, false));
+        await wait(() => !!row.exit);
+      },
+    });
+  } finally {
+    if (native.dialogs.some((d: Wire) => d.end === 0)) native.select(null);
+    // No replacement publication or retry; main still disposes the original composition.
+    for (const restore of restores.reverse()) restore();
+  }
+  return observer.consumers;
 }
