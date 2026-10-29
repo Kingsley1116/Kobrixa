@@ -314,6 +314,19 @@ export function verifyLabParity(report) {
   const p = report.checkpoints.parity;
   assert.ok(p, "D7 parity extension required");
   const owner = report.launches[0].owner;
+  for (const row of report.ipc) {
+    if (!Object.hasOwn(row, "result") && !Object.hasOwn(row, "error")) continue;
+    assert.ok(
+      Number.isFinite(row.finishedAt) && row.finishedAt >= row.at,
+      "IPC completion timestamp required",
+    );
+    assert.ok(
+      Number.isSafeInteger(row.sequence) &&
+        Number.isSafeInteger(row.finishedSequence) &&
+        row.finishedSequence > row.sequence,
+      "IPC completion sequence required",
+    );
+  }
   let sequence = -1;
   for (const row of report.wire) {
     assert.deepEqual(row.owner, owner);
@@ -425,6 +438,10 @@ export function verifyLabParity(report) {
     assert.deepEqual(ipc.args[0].binding, row.params.context.binding);
     assert.equal(ipc.args[0].nodeId, node);
     assert.ok(ipc.at <= row.request.at && ipc.finishedAt >= row.response.at);
+    assert.ok(
+      ipc.sequence < row.request.sequence && ipc.finishedSequence > row.response.sequence,
+      "IPC must enclose its actual wire request/reply",
+    );
     trusted(ipc, name, node, dialog);
     return row;
   };
@@ -1112,7 +1129,41 @@ export function verifyLabRestart(r) {
       ].includes(q.message.method),
       "Restart replay/mutation",
     );
-  assert.deepEqual(second.drains, []);
+  for (const drain of second.drains) {
+    assert.deepEqual(Object.keys(drain).sort(), ["at", "finishedAt", "offer", "report"]);
+    assert.deepEqual(Object.keys(drain.offer).sort(), [
+      "acceptedTickets",
+      "checkpoints",
+      "deadlineMonotonicMs",
+      "owner",
+      "reason",
+      "token",
+      "writes",
+    ]);
+    assert.deepEqual(drain.offer.owner, second.launches[0].owner);
+    assert.equal(drain.offer.reason, "shutdown");
+    assert.match(
+      drain.offer.token,
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+    assert.ok(
+      Number.isFinite(drain.offer.deadlineMonotonicMs) && drain.offer.deadlineMonotonicMs > 0,
+    );
+    for (const key of ["checkpoints", "writes", "acceptedTickets"])
+      assert.deepEqual(drain.offer[key], []);
+    assert.deepEqual(drain.report, {
+      state: "saved",
+      blocker: false,
+      pendingSettings: false,
+      records: [],
+      errors: [],
+    });
+    assert.ok(
+      Number.isFinite(drain.at) &&
+        Number.isFinite(drain.finishedAt) &&
+        drain.finishedAt >= drain.at,
+    );
+  }
   return { deleted: deleted.id, retained: saved.id, mainPids: outside.map((x) => x.pid) };
 }
 async function runLabRestartProcess(directory, electron, env, phase) {

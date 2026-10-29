@@ -690,7 +690,16 @@ function parityFixture() {
     r.native.push({ type: "input", isTrusted: true, node: "calibrated", at: at + 10 });
   }
   page("history", [p.second], step("list-after-delete").at + 20, 2);
-  r.wire.sort((a, b) => a.at - b.at).forEach((row, index) => (row.sequence = index + 1));
+  r.wire.sort((a, b) => a.at - b.at);
+  const observations = [
+    ...r.wire,
+    ...r.ipc,
+    ...r.ipc.map((row) => ({ at: row.finishedAt, completion: row })),
+  ].sort((a, b) => a.at - b.at);
+  observations.forEach((row, index) => {
+    if (row.completion) row.completion.finishedSequence = index + 1;
+    else row.sequence = index + 1;
+  });
   for (const s of p.steps) {
     s.before = Math.max(0, ...r.wire.filter((row) => row.at < s.at).map((row) => row.sequence));
     s.after = Math.max(
@@ -1186,3 +1195,175 @@ test("D7 snapshot reads real record .bin, import .json and deleted heads with st
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("D7 actual IPC tap records success and rejection completion in the shared sequence", async () => {
+  const source = await readFile(new URL("./sensor-lab-public-main.ts", import.meta.url), "utf8");
+  const body = source.match(/const result = action\(\.\.\.args\);([\s\S]*?)return result;/);
+  assert.ok(body);
+  const tap = new Function(
+    "action",
+    "args",
+    "row",
+    "wall",
+    "sequence",
+    `const result = action(...args);${body[1]}return result;`,
+  );
+  for (const reject of [false, true]) {
+    const row = {},
+      outcome = { actual: true },
+      error = new Error("actual failure");
+    const result = tap(
+      () => (reject ? Promise.reject(error) : Promise.resolve(outcome)),
+      [],
+      row,
+      () => 50,
+      9,
+    );
+    if (reject) await assert.rejects(result, (e) => e === error);
+    else assert.equal(await result, outcome);
+    assert.equal(row.finishedAt, 50);
+    assert.equal(row.finishedSequence, 10);
+    if (reject) assert.equal(row.error, String(error));
+    else assert.equal(row.result, outcome);
+  }
+});
+for (const [name, mutate] of [
+  [
+    "missing timestamp",
+    (i) => {
+      delete i.finishedAt;
+    },
+  ],
+  [
+    "missing completion sequence",
+    (i) => {
+      delete i.finishedSequence;
+    },
+  ],
+  [
+    "completion before request",
+    (i) => {
+      i.finishedSequence = i.sequence;
+    },
+  ],
+  [
+    "completion before wire response",
+    (i) => {
+      i.finishedSequence = i.sequence + 1;
+    },
+  ],
+])
+  test(`D7 rejects IPC ${name}`, () => {
+    const r = parityFixture();
+    mutate(r.ipc.find((i) => i.result?.value?.invocationId));
+    assert.throws(() => verifyLabParity(r));
+  });
+function restartWithEmptyShutdown() {
+  const r = restartFixture();
+  const owner = r.second.wire[0].owner;
+  r.second.launches[0].owner = owner;
+  const drain = {
+    offer: {
+      owner,
+      reason: "shutdown",
+      token: "12345678-1234-4234-8234-123456789abc",
+      deadlineMonotonicMs: 100,
+      checkpoints: [],
+      writes: [],
+      acceptedTickets: [],
+    },
+    at: 20,
+    finishedAt: 21,
+    report: { state: "saved", blocker: false, pendingSettings: false, records: [], errors: [] },
+  };
+  r.second.drains = [drain, structuredClone(drain)];
+  return r;
+}
+test("D7 restart accepts repeated observed empty successful shutdown drains", () => {
+  assert.equal(verifyLabRestart(restartWithEmptyShutdown()).retained, "saved");
+});
+for (const [name, mutate] of [
+  [
+    "non-shutdown",
+    (d) => {
+      d.offer.reason = "disconnect";
+    },
+  ],
+  [
+    "checkpoint",
+    (d) => {
+      d.offer.checkpoints.push({ recordId: "record" });
+    },
+  ],
+  [
+    "write",
+    (d) => {
+      d.offer.writes.push("write");
+    },
+  ],
+  [
+    "accepted ticket",
+    (d) => {
+      d.offer.acceptedTickets.push("ticket");
+    },
+  ],
+  [
+    "device drain",
+    (d) => {
+      d.offer.deviceDrain = {};
+    },
+  ],
+  [
+    "reservation",
+    (d) => {
+      d.offer.reservation = "reservation";
+    },
+  ],
+  [
+    "record",
+    (d) => {
+      d.report.records.push({ id: "record" });
+    },
+  ],
+  [
+    "pending settings",
+    (d) => {
+      d.report.pendingSettings = true;
+    },
+  ],
+  [
+    "blocker",
+    (d) => {
+      d.report.blocker = true;
+    },
+  ],
+  [
+    "error",
+    (d) => {
+      d.report.errors.push("error");
+    },
+  ],
+  [
+    "unsaved",
+    (d) => {
+      d.report.state = "pending";
+    },
+  ],
+  [
+    "foreign owner",
+    (d) => {
+      d.offer.owner = { sourceKey: "foreign" };
+    },
+  ],
+  [
+    "missing finish",
+    (d) => {
+      delete d.finishedAt;
+    },
+  ],
+])
+  test(`D7 restart rejects shutdown drain ${name}`, () => {
+    const r = restartWithEmptyShutdown();
+    mutate(r.second.drains[0]);
+    assert.throws(() => verifyLabRestart(r));
+  });

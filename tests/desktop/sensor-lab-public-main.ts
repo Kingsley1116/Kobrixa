@@ -380,9 +380,13 @@ export function runNativeLab(): void {
             void Promise.resolve(result).then(
               (result) => {
                 row.result = result;
+                row.finishedAt = wall();
+                row.finishedSequence = ++sequence;
               },
               (error) => {
                 row.error = String(error);
+                row.finishedAt = wall();
+                row.finishedSequence = ++sequence;
               },
             );
             return result;
