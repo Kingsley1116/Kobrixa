@@ -380,7 +380,7 @@ async function launchProduct(config, receipt, check) {
                 executable,
               ]
           : []),
-        "--inspect-brk=127.0.0.1:0",
+        "--inspect=127.0.0.1:0",
         "--remote-debugging-address=127.0.0.1",
         "--remote-debugging-port=0",
         `--user-data-dir=${profile}`,
@@ -436,27 +436,15 @@ async function launchProduct(config, receipt, check) {
     const mainUrl = await alive(() => output.match(/Debugger listening on (ws:\/\/[^\s]+)/)?.[1]);
     main = await connect(mainUrl);
     clients.push(main);
-    await main.send("Debugger.enable");
-    const paused = main.event("Debugger.paused");
-    paused.catch(() => {});
-    await main.send("Runtime.runIfWaitingForDebugger");
-    const pauseState = await paused;
-    // A paused entry cannot drain Runtime.evaluate's promise queue. Evaluate
-    // synchronously on the actual paused frame before resuming product code.
-    const installed = await main.send("Debugger.evaluateOnCallFrame", {
-      callFrameId: pauseState.callFrames[0].callFrameId,
+    const installed = await main.send("Runtime.evaluate", {
       expression: installProbe,
       returnByValue: true,
     });
     if (installed.exceptionDetails) throw Error(JSON.stringify(installed.exceptionDetails));
     assert.equal(installed.result.value, true);
     receipt.originalForkObserved = true;
-    await main.send("Debugger.resume");
-    await main.send("Debugger.disable");
-    receipt.mainDebuggerDisabledAfterProbe = true;
-    main.close();
-    main = undefined;
-    receipt.mainInspectorDetachedDuringStartup = true;
+    receipt.probeBeforeReady = await main.js("!__installedProbe.electron.app.isReady()");
+    assert.equal(receipt.probeBeforeReady, true, "Observe startup before application readiness");
     const browserUrl = await alive(
       () => output.match(/DevTools listening on (ws:\/\/[^\s]+)/)?.[1],
     );
@@ -469,8 +457,6 @@ async function launchProduct(config, receipt, check) {
         (page) => page.type === "page" && page.url.startsWith("file:"),
       );
     });
-    main = await connect(mainUrl);
-    clients.push(main);
     renderer = await connect(target.webSocketDebuggerUrl);
     clients.push(renderer);
     await alive(() =>
