@@ -125,3 +125,8 @@ headless 或 cold safe 無 session 時只顯示未確認與可行復原，不偷
 UI process 的 source graph、bundle metadata/content、公開 RPC trace 三證須無 desktop-private imports、React/Electron API、私有 DTO/IPC、direct fs/network/USB。provider native dependencies 只在 main 安裝布局驗證，不能以 UI bundle 啟動成功代替。
 
 完整 replacement 的 public transport、import/restart、installed 與 parity 證據到位後才撤舊 mount/consumer；逐符號核對仍服務 core 的 device IPC/preload/DTO，不刪整個 namespace。MANUAL 未完成列待驗，不能核銷 umbrella 例外或 Stage 3 gate。
+
+
+### EV3 zero-value input observation clarification (2026-10-30)
+
+An actually observed input port with no current values exposes one component-0 logical observation channel with its actual metadata/state and a null sample. This does not invent a measurement or an absent port. Ready/null is a recordable gap, not a calibration sample; non-ready channels remain nonreservable and cannot dispatch mode query/write. Existing native preflight and host authority still apply. Nonempty component numbering, host-issued identities, stale revisions and the38channel cap are unchanged. See the 3E plan P08 ruling and its provider/consumer tests for implementation evidence; no new public field/version is introduced.

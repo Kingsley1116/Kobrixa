@@ -1148,7 +1148,11 @@ it.each(["type", "mode", "removed", "component", "actuator"] as const)(
   "A-finalfix2 unpublished replacement generations stay stable without historical IDs: %s",
   async (change) => {
     const f = await fixture();
-    let previous = f.first;
+    if (change === "component") {
+      f.observed.inputs[0]!.values.push(43);
+      await f.read();
+    }
+    let previous = change === "component" ? await f.catalog() : f.first;
     for (let round = 0; round < 3; round++) {
       const intermediate = structuredClone(f.observed);
       if (change === "type") intermediate.inputs[0]!.type = 30;
@@ -1156,7 +1160,7 @@ it.each(["type", "mode", "removed", "component", "actuator"] as const)(
       else if (change === "removed") intermediate.inputs = [];
       else if (change === "component") intermediate.inputs[0]!.values = [];
       else intermediate.outputs[0]!.type = 8;
-      const index = change === "actuator" ? 1 : 0;
+      const index = change === "actuator" || change === "component" ? 1 : 0;
       const oldId = previous.sources.channels[index]!.channelId;
       f.monitor.mockResolvedValueOnce(intermediate);
       expect((await f.read([oldId])).ok).toBe(false);
@@ -1313,4 +1317,110 @@ it("retirement joins a connect whose exchange timed out before the native handle
   } finally {
     vi.useRealTimers();
   }
+});
+
+it.each(["empty", "initializing", "unknown", "error"] as const)(
+  "zero-value %s port is observable but cannot record or dispatch modes",
+  async (state) => {
+    const f = await setup();
+    f.observed.inputs[0]!.state = state;
+    f.observed.inputs[0]!.values = [];
+    const connected = await f.discoverConnect();
+    if (!connected.ok) throw Error(connected.error.message);
+    const sessionId = connected.value.session.sessionId;
+    const result = await f.broker.request(f.principal, "devices/session", { sessionId }, f.signal);
+    if (!result.ok) throw Error(result.error.message);
+    const sources = result.value.sources,
+      slot = sources.channels.find((c) => c.portId === "input:0")!;
+    expect(slot).toMatchObject({ component: 0, state });
+    const read = await f.broker.request(
+      f.principal,
+      "devices/read",
+      { sessionId, channelIds: [slot.channelId], freshness: "fresh" },
+      f.signal,
+    );
+    expect(read).toMatchObject({
+      ok: true,
+      value: { frame: { values: [{ channelId: slot.channelId, value: null }] } },
+    });
+    expect(
+      await f.broker.request(
+        f.principal,
+        "devices/recording/reserve",
+        { sessionId, channelIds: [slot.channelId], expectedSourceRevision: sources.sourceRevision },
+        f.signal,
+      ),
+    ).toMatchObject({ ok: false });
+    expect(
+      await f.broker.request(
+        f.principal,
+        "devices/inputModes/query",
+        { sessionId, portId: "input:0", expectedSourceRevision: sources.sourceRevision },
+        f.signal,
+      ),
+    ).toMatchObject({ ok: false });
+    expect(
+      await f.broker.request(
+        f.principal,
+        "devices/inputModes/set",
+        {
+          sessionId,
+          portId: "input:0",
+          expectedSourceRevision: sources.sourceRevision,
+          modeId: "mode:1",
+          contextRef: f.context,
+        },
+        f.signal,
+      ),
+    ).toMatchObject({ ok: false });
+    expect(f.modeQueries).not.toHaveBeenCalled();
+    expect(f.modeWrites).not.toHaveBeenCalled();
+  },
+);
+
+it("ready logical slot records null gaps and actual metadata replacement retires its old handle", async () => {
+  const f = await setup();
+  f.observed.inputs[0]!.values = [];
+  const connected = await f.discoverConnect();
+  if (!connected.ok) throw Error(connected.error.message);
+  const sessionId = connected.value.session.sessionId;
+  const result = await f.broker.request(f.principal, "devices/session", { sessionId }, f.signal);
+  if (!result.ok) throw Error(result.error.message);
+  const sources = result.value.sources,
+    slot = sources.channels.find((c) => c.portId === "input:0")!;
+  const reserved = await f.broker.request(
+    f.principal,
+    "devices/recording/reserve",
+    { sessionId, channelIds: [slot.channelId], expectedSourceRevision: sources.sourceRevision },
+    f.signal,
+  );
+  expect(reserved).toMatchObject({
+    ok: true,
+    value: { firstFrame: { values: [{ channelId: slot.channelId, value: null }] } },
+  });
+  f.observed.inputs[0]!.unit = "new-unit";
+  expect(
+    await f.broker.request(
+      f.principal,
+      "devices/read",
+      { sessionId, channelIds: [slot.channelId], freshness: "fresh" },
+      f.signal,
+    ),
+  ).toMatchObject({ ok: false });
+  const next = await f.broker.request(f.principal, "devices/session", { sessionId }, f.signal);
+  if (!next.ok) throw Error(next.error.message);
+  expect(next.value.sources.sourceRevision).toBeGreaterThan(sources.sourceRevision);
+  expect(next.value.sources.channels[0]!.channelId).not.toBe(slot.channelId);
+  if (reserved.ok)
+    expect(
+      await f.broker.request(
+        f.principal,
+        "devices/recording/query",
+        { reservationId: reserved.value.reservation.reservationId },
+        f.signal,
+      ),
+    ).toMatchObject({
+      ok: true,
+      value: { reservation: { state: "ended", reason: "source-changed" } },
+    });
 });

@@ -480,7 +480,7 @@ export function buildEv3Provider(
         const source = catalog.channels.find(
           (c) => c.portId === request.portId && c.kind === "input",
         );
-        if (!source) throw new Error("source-changed");
+        if (!source || source.state !== "ready") throw new Error("source-changed");
         const value = await bind("read").readInputModes(
           Number(request.portId.split(":")[1]),
           Number(source.typeId.split(":")[1]),
@@ -504,7 +504,7 @@ export function buildEv3Provider(
         const source = catalog.channels.find(
           (c) => c.kind === "input" && c.portId === request.portId,
         );
-        if (!source) throw new Error("source-changed");
+        if (!source || source.state !== "ready") throw new Error("source-changed");
         const before = await bind("preflight").readMonitor(ctx.cancellation);
         ctx.assertContinuation("mode-write");
         if (!before || before.program.status !== "stopped")

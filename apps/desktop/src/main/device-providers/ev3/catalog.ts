@@ -52,7 +52,10 @@ export class Ev3Catalog {
       actuators: Array<Omit<SourceCatalog["actuators"][number], "actuatorId">> = [];
     const add = (item: Omit<SourceCatalog["channels"][number], "channelId">) => channels.push(item);
     for (const p of reading.inputs)
-      for (let component = 0; component < p.values.length; component++)
+      // An observed port has a first logical observation slot even when the
+      // firmware reports no current values. Its actual state is preserved and
+      // frame() emits null; no measured value or missing port is invented.
+      for (let component = 0; component < Math.max(1, p.values.length); component++)
         add({
           kind: "input",
           portId: `input:${p.port}`,

@@ -172,3 +172,35 @@ Actual desktop composition tests cover pristine combined migration, policy unava
 The independent actual-worker composition review reproduced an ordinary contributed-form update creating a target revision before the original migration. That correctly blocked pristine import, but stranded host readiness. The private `PersistenceSourcePort.settingsWriteAllowed(sourceKey)` callback now gates ordinary update/reset/migrate centrally through the shared settings service, including bound forms and public requests. Metadata, read/watch and the original import publication remain usable; unrelated sources keep their existing behavior. Owner/permission/resource/CAS checks remain required.
 
 A second controller regression reproduced withdrawal in the microtask between the async continuation and actual publish. The synchronous mutation fence now also runs next to consequential reserve/append/publish, without another await. Tests demonstrate both initial denial without reserve and abort rather than publication after withdrawal. Related settings suites: **128 passing tests**; the actual desktop composition file: **210 passing tests**, with types/lint passing. These software checks do not constitute the pending product-mount, native or installed acceptance.
+
+
+### E4–E6 product integration ownership amendment (2026-10-30)
+
+The controller owns the existing delivered-build table in `apps/desktop/packaging.ts` and its direct `apps/desktop/src/main/packaging.test.ts`, alongside WI builtin assembly. H-V may edit `apps/desktop/src/renderer/settings/settings-state.ts` and its direct `settings-state.test.ts` to attach the reviewed per-window capture helper. These are explicit additions to WK/WV; the shared Forge table remains the sole build registration mechanism. H-D owns index.ts and device/device.ts plus its direct test for the authoritative core reader. WF stays with the feature writer.
+
+Assembly and migration attachment are a coordinated cutover: a device settings contribution must not reach ordinary writes without the main migration gate. Intermediate feature-branch commits are not accepted product migration. Legacy UI implementations/fixtures remain until replacement transport, import restart, and installed evidence; inactive or redirected old controls must never write frozen settings.
+
+Recovery SDK/protocol/broker fixes committed `3190749`; independent review found no remaining actionable findings, 986 JS/protocol +143 Python and455 broker/host tests pass. Exact four JS/two Python retirement regressions were independently rerun. The migration write fence committed `2034502`, including a post-await synchronous admission check (128 settings tests). Actual composition committed `73142dd` (210 controller tests), independently reviewed. Local feature integration `b7eb8ba` consumes D `2ad68c2`; 99 atomic-store/original-import worker tests pass after merge. No hardware, installed-product migration, legacy removal, or Stage3 closeout is claimed.
+
+
+### E5 retained core session adoption amendment (2026-10-30)
+
+Product cutover review identified an actual missing adapter: public plugin connection bypasses DeviceService.connectWith, while ExecutionController currently accepts connected state only from its own promise. H-D/H-V owns the bounded correction in `apps/desktop/src/main/device-broker/{broker.ts,broker.test.ts,legacy-device.ts,legacy-device.test.ts}`, `apps/desktop/src/renderer/execution/{execution.ts,execution.test.ts}`, and `apps/desktop/src/shared/api.ts` only for a necessary typed host event. `main/device/{device.ts,device.test.ts}` may be adjusted only if this adapter requires it. Snapshot observation is read-only and must not create authority or native work; existing core deploy/files/monitor descriptor lookup must see the same broker session. Pending-run may continue only while its original intent/workspace/authority is current; cancelled intent, recovery, old sessions, and a duplicate promise callback must not run it.
+
+Controller additionally owns `apps/desktop/src/renderer/device/device-panel.test.ts` for retained pending-run cancellation and neutral capture-notice DOM coverage. The old implementations remain for comparison; neither this amendment nor the partial tests authorize legacy removal. Recovery notification compatibility was restored in `9027984` with18legacy/87broker tests and an independent bounded review. Renderer cutover currently has66focused passes, full renderer import typecheck/lint pass; real EV3 entry bundle/resource validation joins assembler evidence (47passes/1existing skip). These are not native installed acceptance.
+
+
+### P08 nullable observation slot ruling (2026-10-30)
+
+Adopt the reviewed existing-channel representation rather than a new wire shape: an actually observed EV3 input with zero values publishes exactly one component-0 logical observation slot, preserving its actual port/type/mode/name/state. Component0 identifies an observation slot, not an assertion that a numeric sample exists. Its sample is null, never zero; a port absent from the provider reading remains absent. Nonempty component numbering and the38channel cap remain unchanged. Same-metadata null→numeric slot0 may retain identity; metadata changes/disappearance follow the existing broker revision/stale rules.
+
+Ready+null may be recorded as an explicit gap under the existing nullable recording contract; it is not a calibration/preview measurement. Non-ready ports remain nonreservable, and query/set mode may not dispatch for non-ready metadata. Native mode preflight/type/switchability and authority remain required. This is a bounded semantic clarification for the existing unpublished Stage3 contract, not a new field or version.
+
+Controller write set: `main/device-providers/ev3/{catalog.ts,catalog.test.ts,provider.ts,broker-integration.test.ts}` under desktop src, plus this plan, 3E design and 3A design semantic note. No protocol schema/SDK change. Feature WF owner owns its consumer tests separately; existing Lab null handling will be exercised as regression, not represented as new hardware proof.
+
+
+### E6 native-public producer ownership (2026-10-30)
+
+H-K/controller may add exactly `tests/desktop/device-ui-public-{run.mjs,main.ts,renderer.tsx,test.mjs}` for the actual production device feature entry, generic renderer/preload/host composition, real process transport, and an independently checked receipt. Existing public/installed helpers may be imported read-only; no parallel launcher, source fallback or pretend passing receipt is permitted. The native producer uses a synthetic provider, so its evidence cannot establish physical EV3 or packaged source-free acceptance. Python stdio and installed producers remain separate required E6 steps. An owner must stop writing and hand off precise paths before execution/review.
+
+The bilingual manual procedure is `tests/hardware/device-ui.md`; every H01–H14 result currently remains NOT RUN. Historical v1 hardware acceptance does not close Stage3 migration acceptance.
