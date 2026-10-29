@@ -324,6 +324,36 @@ export function importObserver(file: string) {
     },
   };
 }
+/** Observe the coordinator's own admitted owner; historical tickets are not read authority. */
+export async function observeImportJournal<T>(
+  backend: PersistenceBackend,
+  prior: Wire,
+  hostEpoch: string,
+  run: () => Promise<T>,
+) {
+  const original = backend.imports.load;
+  let observed:
+    | { journal: NonNullable<Awaited<ReturnType<typeof original>>>; owner: ResourceOwner }
+    | undefined;
+  backend.imports.load = async (owner, planId) => {
+    const journal = await original.call(backend.imports, owner, planId);
+    if (!observed && planId === prior.planId && owner.sourceKey === prior.owner.sourceKey) {
+      assert.equal(owner.hostEpoch, hostEpoch);
+      assert.equal(owner.pluginId, prior.owner.pluginId);
+      assert.ok(journal);
+      observed = { journal: structuredClone(journal), owner: structuredClone(owner) };
+    }
+    return journal;
+  };
+  try {
+    const value = await run();
+    assert.ok(observed, "Missing coordinator journal read under current admitted owner");
+    return { value, ...observed };
+  } finally {
+    backend.imports.load = original;
+  }
+}
+
 export async function produceImportSlice(input: {
   config: Wire;
   live: DesktopMainComposition;
@@ -392,22 +422,21 @@ export async function produceImportSlice(input: {
     reconciliation.disposition,
     cut === "before-publish" && config.importPhase === "reopen1" ? "not-committed" : "committed",
   );
-  const journalAtReopen = await backend.imports.load(prior.owner, prior.planId);
-  assert.ok(journalAtReopen);
-  if (config.importPhase === "reopen1") {
-    assert.equal(journalAtReopen.complete, cut === "after-marker");
-    const item = journalAtReopen.items.find((i) => i.key === prior.key)!;
-    assert.equal(
-      item.state,
-      ["after-receipt", "before-marker", "after-marker"].includes(cut) ? "committed" : "pending",
-    );
-  } else assert.equal(journalAtReopen.complete, true);
-  let progress: Awaited<ReturnType<typeof imports.run>> | undefined;
-  for (let attempt = 0; attempt < 10; attempt++) {
-    progress = await imports.run(syntheticImportDescriptor, new AbortController().signal);
-    if (progress.state === "complete") break;
-    assert.equal(progress.state, "blocked", JSON.stringify(progress));
-  }
+  const observedJournal = await observeImportJournal(
+    backend,
+    prior,
+    handles.profile.hostEpoch,
+    async () => {
+      let result: Awaited<ReturnType<typeof imports.run>> | undefined;
+      for (let attempt = 0; attempt < 10; attempt++) {
+        result = await imports.run(syntheticImportDescriptor, new AbortController().signal);
+        if (result.state === "complete") break;
+        assert.equal(result.state, "blocked", JSON.stringify(result));
+      }
+      return result;
+    },
+  );
+  const { value: progress, journal: journalAtReopen, owner: journalOwner } = observedJournal;
   assert.equal(progress?.state, "complete");
   for (let n = 0; n < (config.importPhase === "deleted" ? 49 : 50); n++) {
     const result = await live.plugins.execute("test.synthetic.inspect");
@@ -429,6 +458,7 @@ export async function produceImportSlice(input: {
       reconciliation,
       reconciliationTicket: anchor,
       journalAtReopen,
+      journalOwner,
       journalKey: prior.key,
       progress,
     },
@@ -470,6 +500,8 @@ export function assertImportPhase(o: Wire) {
   assert.equal(o.progress.state, "complete");
   if (o.cut !== undefined) {
     assert.equal(o.cut, cut);
+    assert.equal(o.journalOwner.hostEpoch, o.hostEpoch);
+    assert.equal(o.journalOwner.sourceKey, "builtin:test.synthetic");
     assert.equal(o.journalAtReopen.plan.items.length, 50);
     assert.equal(o.journalAtReopen.items.length, 50);
     assert.equal(o.journalAtReopen.complete, o.phase !== "reopen1" || cut === "after-marker");

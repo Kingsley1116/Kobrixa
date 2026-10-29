@@ -781,6 +781,7 @@ for (const cut of IMPORT_PUBLICATION_TRIALS)
     const o = sliceOracle();
     o.slice = o.cut = cut;
     o.journalKey = "first";
+    o.journalOwner = { sourceKey: "builtin:test.synthetic", hostEpoch: o.hostEpoch };
     const committed = ["after-receipt", "before-marker", "after-marker"].includes(cut);
     o.journalAtReopen = {
       plan: { items: Array.from({ length: 50 }, (_, i) => ({ key: i ? String(i) : "first" })) },
@@ -809,3 +810,45 @@ for (const cut of IMPORT_PUBLICATION_TRIALS)
       assertImportPhase(next);
     }
   });
+
+import { observeImportJournal } from "./plugin-persistence-import.ts";
+test("slice reopened journal uses the observed coordinator owner, never the historical ticket owner", async () => {
+  const old = {
+    sourceKey: "builtin:test.synthetic",
+    pluginId: "test.synthetic",
+    hostEpoch: randomUUID(),
+    processEpoch: randomUUID(),
+    generation: 1,
+  };
+  const current = { ...old, hostEpoch: randomUUID(), processEpoch: randomUUID(), generation: 3 };
+  const prior = { owner: old, planId: "import/test", ticket: { id: "historical", owner: old } };
+  const immutable = structuredClone(prior),
+    calls = [];
+  let saved = { plan: { id: prior.planId }, items: [{ state: "pending" }], complete: false };
+  const load = async (owner, id) => {
+    calls.push({ owner: structuredClone(owner), id });
+    if (owner.hostEpoch !== current.hostEpoch) throw Error("stale");
+    return structuredClone(saved);
+  };
+  const backend = { imports: { load } };
+  await assert.rejects(load(prior.owner, prior.planId), /stale/);
+  calls.length = 0;
+  const result = await observeImportJournal(backend, prior, current.hostEpoch, async () => {
+    await backend.imports.load(current, prior.planId);
+    saved = { ...saved, complete: true, items: [{ state: "committed" }] };
+    await backend.imports.load(current, prior.planId);
+    return "complete";
+  });
+  assert.deepEqual(result.owner, current);
+  assert.equal(result.journal.complete, false);
+  assert.equal(result.journal.items[0].state, "pending");
+  assert.equal(result.value, "complete");
+  assert.ok(calls.every((c) => c.owner.hostEpoch === current.hostEpoch));
+  assert.deepEqual(prior, immutable);
+  assert.equal(backend.imports.load, load);
+  await assert.rejects(
+    observeImportJournal(backend, prior, current.hostEpoch, async () => {}),
+    /Missing coordinator/,
+  );
+  assert.equal(backend.imports.load, load);
+});
