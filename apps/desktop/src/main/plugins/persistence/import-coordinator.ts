@@ -275,7 +275,9 @@ export function createLegacyImportCoordinator(input: {
         )
           throw new Error("stale");
       };
-      async function settingsAdmission(owner: PersistenceOwner) {
+      async function settingsAdmission(
+        owner: PersistenceOwner,
+      ): Promise<(ImportSettingsAuthority & { revision: string | null }) | null> {
         check();
         const committed = await backend.evidence.settingsDigest(owner);
         check();
@@ -298,6 +300,9 @@ export function createLegacyImportCoordinator(input: {
         check();
         if (
           authority.schemaVersion !== descriptor.targetSettingsSchemaVersion ||
+          (authority.admissionRevision !== undefined &&
+            (!Number.isSafeInteger(authority.admissionRevision) ||
+              authority.admissionRevision < 1)) ||
           !/^[0-9a-f]{64}$/.test(authority.validationDigest)
         )
           throw new Error("schema-mismatch");
@@ -419,6 +424,9 @@ export function createLegacyImportCoordinator(input: {
                     validationDigest: authority.validationDigest,
                   },
                 }
+              : {}),
+            ...(authority?.admissionRevision !== undefined
+              ? { admissionRevision: authority.admissionRevision }
               : {}),
           });
         }

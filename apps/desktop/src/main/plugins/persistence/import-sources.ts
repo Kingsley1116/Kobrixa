@@ -75,6 +75,8 @@ export interface LegacySourceResolver {
     owner: PersistenceOwner;
     evidence: LegacyPreferencesEvidenceRef;
     settings?: ImportSettingsAuthority;
+    /** Monotonic validated host namespace revision for same-generation re-admission. */
+    admissionRevision?: number;
   }): Promise<void>;
   register(input: {
     descriptorId: string;

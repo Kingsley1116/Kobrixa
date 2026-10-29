@@ -661,3 +661,44 @@ it("same-worker generation change retains an uncertain original pin until its or
   expect(saved.items[0]?.publicationTicket).toEqual(original);
   expect(saved.items[0]?.receipt?.commitId).toBe(original!.id);
 });
+
+it("host metadata re-admission is monotonic even when execution generation is unchanged", async () => {
+  const f = await fixture();
+  const snapshot = await f.capture();
+  await f.backend.sources.register({
+    descriptorId: descriptor.id,
+    mapperId: descriptor.id,
+    sourceKind: descriptor.sourceKind,
+  });
+  const base = {
+    descriptorId: descriptor.id,
+    owner: f.owner,
+    evidence: {
+      nonce: snapshot.nonce,
+      digest: hash(snapshotBytes(snapshot, DEVICE_RENDERER_KEYS)),
+    },
+    settings: deviceImportSettingsAuthority,
+  };
+  await f.backend.sources.resolvePreferences({ ...base, admissionRevision: 1 });
+  // Raising the metadata revision without changing owner must also advance the floor.
+  await f.backend.sources.resolvePreferences({ ...base, admissionRevision: 2 });
+  await expect(
+    f.backend.sources.resolvePreferences({ ...base, admissionRevision: 1 }),
+  ).rejects.toThrow();
+  const next = { ...base, owner: { ...base.owner, processEpoch: randomUUID() } };
+  await expect(
+    f.backend.sources.resolvePreferences({ ...next, admissionRevision: 2 }),
+  ).rejects.toThrow();
+  await f.backend.sources.resolvePreferences({ ...next, admissionRevision: 3 });
+  for (const request of [
+    base,
+    { ...base, admissionRevision: 1 },
+    { ...base, admissionRevision: 3 },
+    { ...next, admissionRevision: 2 },
+    { ...next, admissionRevision: 4, owner: { ...next.owner, hostEpoch: randomUUID() } },
+  ])
+    await expect(f.backend.sources.resolvePreferences(request)).rejects.toThrow();
+  await expect(
+    f.backend.sources.resolvePreferences({ ...next, admissionRevision: 3 }),
+  ).resolves.toBeUndefined();
+});

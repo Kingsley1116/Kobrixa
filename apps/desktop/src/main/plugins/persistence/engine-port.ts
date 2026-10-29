@@ -77,7 +77,11 @@ export type DevicePreferencesEvidence = Readonly<{
   device: { state: "absent" } | { state: "present"; base64: string; sha256: Sha256 };
   renderer: { nonce: Handle; digest: Sha256; base64: string };
 }>;
-export type ImportSettingsAuthority = Readonly<{schemaVersion: Version; validationDigest: Sha256}>;
+export type ImportSettingsAuthority = Readonly<{
+  schemaVersion: Version; validationDigest: Sha256;
+  /** Private host metadata admission; never part of a settings receipt or public RPC. */
+  admissionRevision?: Counter;
+}>;
 export type ImportPlannedItem = Readonly<{
   key:string; sourceFormat:Version; sourceSha256:Sha256; mappedSha256:Sha256; byteLength:number;
   ticket:PublicationTicket; tag:ImportTag;

@@ -191,7 +191,12 @@ export function createDevicePreferencesPort(input: {
       retired = true;
       dirty = false;
       publish(unavailable("Settings source retired."));
-    } else void read();
+    } else {
+      // A new durable receipt has invalidated this cache. Keep its evidence for
+      // display, but fence new optional I/O until the authoritative refresh ends.
+      publish(unavailable("Settings refresh pending."));
+      void read();
+    }
   });
   return {
     read,

@@ -252,6 +252,9 @@ it("a commit during a pending snapshot invalidates it; slow/throw observers do n
   });
   await entered.promise;
   expect((await f.update()).ok).toBe(true);
+  // The receipt has changed. The old cache cannot authorize new optional I/O
+  // while its replacement read is still awaiting the original snapshot.
+  expect(f.port.getSnapshot().state).toBe("unavailable");
   gate.resolve();
   await vi.waitFor(() =>
     expect(f.port.getSnapshot()).toMatchObject({

@@ -64,7 +64,7 @@ const args={
   "output.begin":z.tuple([handle,owner,handle,count.max(8388608),digest,monotonic]),"output.append":z.tuple([handle,count,bytes]),
   "output.commit":z.tuple([handle]),"output.reconcile":z.tuple([handle]),"output.abort":z.tuple([handle]),
   "destinations.register":z.tuple([z.strictObject({action:handle,scope,nativePath:z.string().min(1),deadlineMonotonicMs:monotonic})]),"destinations.release":z.tuple([handle]),
-  "sources.resolvePreferences":z.tuple([z.strictObject({descriptorId:text,owner,evidence:z.strictObject({nonce:z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),digest}),settings:z.strictObject({schemaVersion:z.number().int().min(1).max(2147483647),validationDigest:digest}).optional()})]),
+  "sources.resolvePreferences":z.tuple([z.strictObject({descriptorId:text,owner,evidence:z.strictObject({nonce:z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),digest}),settings:z.strictObject({schemaVersion:z.number().int().min(1).max(2147483647),validationDigest:digest}).optional(),admissionRevision:count.min(1).optional()})]),
   "sources.register":z.tuple([z.strictObject({descriptorId:text,mapperId:text,sourceKind:z.enum(["sensor-lab","device-settings","renderer-preferences"])})]),
   "sources.map":z.tuple([text,text]),"sources.appendMapped":z.tuple([z.strictObject({mapped:handle,ticket,offset:count,maxBytes:count.min(1).max(262144)})]),
   "sources.releaseMapped":z.tuple([handle]),"sources.inventory":z.tuple([text]),"sources.read":z.tuple([text,text,count,count.min(1).max(262144)]),
@@ -355,7 +355,7 @@ import { devicePreferencesEvidenceBytes, sameImportValue, sameImportAttempt } fr
 import type { DevicePreferencesEvidence, ImportSettingsAuthority, LegacyPreferencesEvidenceRef } from "./engine-port.js";
 type SourceBinding = {kind:"file";descriptor:LegacyImportDescriptor;fs:NodePersistenceFs} |
   {kind:"renderer";descriptor:LegacyImportDescriptor;fs?:NodePersistenceFs;combined?:DevicePreferencesEvidence;combinedCharged?:boolean;resolved:null|{
-    owner:PersistenceOwner;evidence:LegacyPreferencesEvidenceRef;bytes:Uint8Array;charge:string;settings?:ImportSettingsAuthority}};
+    owner:PersistenceOwner;evidence:LegacyPreferencesEvidenceRef;bytes:Uint8Array;charge:string;settings?:ImportSettingsAuthority;admissionRevision?:number}};
 export class WorkerSources implements LegacySourceResolver {
   private readonly registered=new Map<string,SourceBinding>();
   private readonly mapped=new Map<string,{bytes:Uint8Array;sourceSha256:string;mappedSha256:string;metadata:LegacyMappedItem;offset:number;ticket:string|null}>();
@@ -394,7 +394,8 @@ export class WorkerSources implements LegacySourceResolver {
         input.owner.hostEpoch!==this.store.fs.profile.hostEpoch)throw new Error("stale");
     const previous=binding.resolved;
     if(binding.descriptor.combinedSource && !sameImportValue(input.settings,deviceImportSettingsAuthority))throw new Error("schema-mismatch");
-    if(!binding.descriptor.combinedSource && input.settings)throw new Error("invalid-mapper");
+    if(!binding.descriptor.combinedSource && (input.settings || input.admissionRevision!==undefined))throw new Error("invalid-mapper");
+    if(previous?.admissionRevision!==undefined && (input.admissionRevision===undefined || input.admissionRevision<previous.admissionRevision))throw new Error("stale");
     const plan=await this.store.loadImport(input.owner,importIdFor(binding.descriptor.id,binding.descriptor.targetSourceKey));
     if(binding.descriptor.combinedSource && plan && !plan.plan.devicePreferencesEvidence)throw new Error("missing-combined-evidence");
     if(plan && !plan.complete && !sameImportValue(plan.plan.preferencesEvidence,input.evidence))throw new Error("input-changed");
@@ -403,7 +404,9 @@ export class WorkerSources implements LegacySourceResolver {
       if(!sameImportValue(previous.owner,input.owner)) {
         if(!binding.descriptor.combinedSource)throw new Error("input-changed");
         if(previous.owner.sourceKey!==input.owner.sourceKey || previous.owner.pluginId!==input.owner.pluginId ||
-          previous.owner.hostEpoch!==input.owner.hostEpoch || input.owner.generation<=previous.owner.generation)throw new Error("stale");
+          previous.owner.hostEpoch!==input.owner.hostEpoch || input.owner.generation<previous.owner.generation ||
+          (input.owner.generation===previous.owner.generation && !(input.admissionRevision!==undefined &&
+            (previous.admissionRevision===undefined || input.admissionRevision>previous.admissionRevision))))throw new Error("stale");
       }
     }
     const encoded=await this.store.auxiliary(input.owner,"import","nonce/"+input.evidence.nonce);
@@ -420,7 +423,7 @@ export class WorkerSources implements LegacySourceResolver {
         ...(plan?.items.flatMap(item=>item.publicationTicket?[item.publicationTicket.owner]:[]) ?? [])];
       if(originalOwners.some(original=>original.sourceKey!==input.owner.sourceKey || original.pluginId!==input.owner.pluginId ||
         (original.hostEpoch===input.owner.hostEpoch && (input.owner.generation<original.generation ||
-          (input.owner.generation===original.generation && input.owner.processEpoch!==original.processEpoch)))))throw new Error("stale");
+          (input.owner.generation===original.generation && input.owner.processEpoch!==original.processEpoch && input.admissionRevision===undefined)))))throw new Error("stale");
     }
     const bytes=snapshotBytes(document.raw,document.allowlist);
     if(createHash("sha256").update(bytes).digest("hex")!==input.evidence.digest)throw new Error("evidence-binding");
@@ -433,8 +436,8 @@ export class WorkerSources implements LegacySourceResolver {
     if(retained) {
       if(!Buffer.from(retained.bytes).equals(bytes) || (plan?.plan.devicePreferencesEvidence &&
         !sameImportValue(binding.combined,plan.plan.devicePreferencesEvidence)))throw new Error("input-changed");
-      if(binding.descriptor.combinedSource && !sameImportValue(retained.owner,input.owner))
-        binding.resolved={...retained,owner:structuredClone(input.owner)};
+      if(binding.descriptor.combinedSource && (!sameImportValue(retained.owner,input.owner) || retained.admissionRevision!==input.admissionRevision))
+        binding.resolved={...retained,owner:structuredClone(input.owner),...(input.admissionRevision!==undefined?{admissionRevision:input.admissionRevision}:{})};
       return;
     }
     const bindings=[...this.registered.values()].flatMap(s=>s.kind==="renderer" && s.resolved?[s.resolved]:[]);
@@ -443,12 +446,12 @@ export class WorkerSources implements LegacySourceResolver {
       throw new Error("quota");
     const charge=randomUUID();this.store.quota.holdTemporary(input.owner.sourceKey,charge,bytes.length);
     binding.resolved={owner:structuredClone(input.owner),evidence:structuredClone(input.evidence),bytes,charge,
-      ...(input.settings?{settings:structuredClone(input.settings)}:{})};
+      ...(input.settings?{settings:structuredClone(input.settings)}:{}),...(input.admissionRevision!==undefined?{admissionRevision:input.admissionRevision}:{})};
     if(plan?.plan.devicePreferencesEvidence)binding.combined=structuredClone(plan.plan.devicePreferencesEvidence);
   }
   private async preferences(binding:Extract<SourceBinding,{kind:"renderer"}>):Promise<Uint8Array> {
     if(!binding.resolved)throw new Error("missing-evidence");
-    await this.resolvePreferences({descriptorId:binding.descriptor.id,owner:binding.resolved.owner,evidence:binding.resolved.evidence,...(binding.resolved.settings?{settings:binding.resolved.settings}:{})});
+    await this.resolvePreferences({descriptorId:binding.descriptor.id,owner:binding.resolved.owner,evidence:binding.resolved.evidence,...(binding.resolved.settings?{settings:binding.resolved.settings}:{}),...(binding.resolved.admissionRevision!==undefined?{admissionRevision:binding.resolved.admissionRevision}:{})});
     if(!binding.descriptor.combinedSource)return binding.resolved.bytes;
     const fs=binding.fs!;
     // Verify every ancestor and the parent before allowing *leaf-only* ENOENT.
