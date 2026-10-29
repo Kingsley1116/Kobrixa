@@ -116,17 +116,17 @@ source-free installed：離線、無 checkout/外部 Node、實際產品 entry�
 | Criterion | 已有證據 | 尚待完成／保留例外 |
 | --- | --- | --- |
 | S3-01：版本／雙 SDK | [E 整合與完整 desktop 回歸](../evidence/2026-10-30-3e-integration/README.md)；已實作 API 1.8 | 最終版本／schema／SDK conformance 彙整，不能用 desktop 回歸代替 |
-| S3-02：公開雙 transport | [D Python stdio](../evidence/2026-10-26-3d-python-stdio/README.md)、[D 公開 Lab](../evidence/2026-10-26-3d-public-lab/README.md) | E JS／Python native 修正重跑中；取消、timeout、故障矩陣仍須各自證明 |
-| S3-03：公開-only feature | [C native／產品封裝](../evidence/2026-10-24-3c-native-installed/README.md) | C/D/E legacy exit 的 source／bundle／trace 最終三重 audit |
-| S3-04：motor 垂直路徑 | [C 77 native cases](../evidence/2026-10-24-3c-native-installed/README.md) | 最終整合重建；硬體 M 不由 fake provider 代簽 |
+| S3-02：公開雙 transport | [D Python stdio](../evidence/2026-10-26-3d-python-stdio/README.md)、[D 公開 Lab](../evidence/2026-10-26-3d-public-lab/README.md)、[E JS](../evidence/2026-10-30-3e-public-device/README.md)、[E Python](../evidence/2026-10-30-3e-python-stdio/README.md) | 剩餘取消、timeout、故障矩陣須各自證明；跨版本 SDK 相容性正在補齊 |
+| S3-03：公開-only feature | [C 移除後 native](../evidence/2026-10-30-3c-retirement/README.md)、[C 原始完整產品](../evidence/2026-10-30-3c-installed-retirement/README.md) | D legacy exit 進行中；D/E 最終 source／bundle／trace 核對 |
+| S3-04：motor 垂直路徑 | [C 移除後 77 native cases](../evidence/2026-10-30-3c-retirement/README.md) | D/E 最終整合重建；硬體 M 不由 fake provider 代簽 |
 | S3-05：共用 broker | [foundation retirement／release／disconnect](../evidence/2026-10-24-stage3-foundation-integration/README.md)、[E core session 整合](../evidence/2026-10-30-3e-integration/README.md) | 真實設備仲裁及剩餘 fault rows；保留 core adapters |
 | S3-06：authority | [48 native motion races](../evidence/2026-10-23-3b1-native-motion/README.md)、[disabled-source core authority](../evidence/2026-10-26-stage3-disabled-core/README.md) | 合作 UI 持權轉移／offline 人工驗證；collaboration UI 保留例外 |
 | S3-07：有界 UI／events | [B1 最大負載](../evidence/2026-10-23-3b1-ui-load/README.md)、[SDK backpressure](../evidence/2026-10-23-3b1-sdk-backpressure/README.md) | D v2 圖表／資料集最大負載及最終 artifact 延遲／RSS；B1 數據不代簽 v2 |
-| S3-08：Lab | [公開 Lab native](../evidence/2026-10-26-3d-public-lab/README.md)、[Linux installed Lab](../evidence/2026-10-26-3d-installed-linux/README.md) | D7 完整 parity、D8 legacy exit、D9b 重建及人工驗證 |
-| S3-09：settings／storage | [sealed TTL](../evidence/2026-10-26-3b2-sealed-ttl/README.md)、[E 九欄 migration 整合](../evidence/2026-10-30-3e-integration/README.md) | B2 N01–29/P170 彙整、E native migration restart；原檔保留 |
+| S3-08：Lab | [公開 Lab native](../evidence/2026-10-26-3d-public-lab/README.md)、[Linux installed Lab](../evidence/2026-10-26-3d-installed-linux/README.md)、[D7 操作及真實重啟](../evidence/2026-10-30-3d-parity-restart/README.md) | D8 legacy exit、D9b 重建、剩餘 lifecycle/fault 與人工驗證 |
+| S3-09：settings／storage | [sealed TTL](../evidence/2026-10-26-3b2-sealed-ttl/README.md)、[E 九欄移轉及真實重啟](../evidence/2026-10-30-3e-restart/README.md)、[D 移轉重啟](../evidence/2026-10-30-3d-parity-restart/README.md) | B2 N01–29/P170 彙整、50×8 MiB 匯入與負載；原檔保留 |
 | S3-10：lifecycle／開關 | [all optional off 冷啟動](../evidence/2026-10-26-3b2-all-optional-off/README.md)、[renderer loss／explicit restart](../evidence/2026-10-26-3b2-renderer-loss/README.md) | §4.7 全列索引、second-instance／cold-safe 最終整合與一般使用者 UI |
 | S3-11：stop／save／quit | [suspend/wake coordinator](../evidence/2026-10-24-3b2-suspend/README.md)、[action replay 整合](../evidence/2026-10-26-stage3-action-integration/README.md) | 真 OS suspend、產品 quit/update／save-failure 完整矩陣；timeout 不當完成 |
-| S3-12：source-free installed | [C Linux 產品](../evidence/2026-10-24-3c-linux-installed/README.md)、[D Linux payload](../evidence/2026-10-26-3d-installed-linux/README.md) | E installed；C/D 最終移除 legacy 後重建。D receipt 是 acceptance host，不能寫成完整 app |
+| S3-12：source-free installed | [C 移除後完整原始產品](../evidence/2026-10-30-3c-installed-retirement/README.md)、[D Linux payload](../evidence/2026-10-26-3d-installed-linux/README.md)、[E 原始 payload](../evidence/2026-10-30-3e-installed/README.md) | D 最終移除 legacy 後重建及 second-instance；D/E payload receipts 是 acceptance host，不等同完整 app |
 | S3-13：motor 硬體 | C/3A 自動注入只作輔助 | USB／Wi-Fi motion／stop／kill／拔線實體觀察待驗 |
 | S3-14：Lab／monitor 硬體 | D/E fake provider 與軟體回歸 | 四通道、長錄、CSV、remote-files、合作及真設備互斥待驗 |
 | S3-15：平台／可及性 | 已有 Linux arm64 receipts；[Mac installed 隔離阻塞](../evidence/2026-10-26-3d-installed-mac-blocked/README.md) | 實交 OS/arch、雙語／明暗／320px／125%／鍵盤／讀屏；未測不能外推 |
