@@ -1,3 +1,4 @@
+import { persistenceTestNodePaths } from "./persistence-source-loader.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -8,6 +9,7 @@ import {
 } from "./plugin-persistence-disconnect.ts";
 import { build } from "esbuild";
 const compiled = await build({
+  nodePaths: persistenceTestNodePaths(),
   entryPoints: ["apps/desktop/src/main/plugins/core-recovery.ts"],
   bundle: true,
   write: false,
@@ -538,6 +540,7 @@ for (const [name, mutate] of [
 // Execute the original fixture callback with SDK registration intercepted. These
 // are callback contract tests, not a live SDK/record-service or native receipt.
 const fixtureBundle = await build({
+  nodePaths: persistenceTestNodePaths(),
   stdin: {
     contents: `import "./tests/desktop/fixtures/plugin-persistence/consumer.ts";
       export { captured as default } from "@kobrixa/plugin-sdk";`,

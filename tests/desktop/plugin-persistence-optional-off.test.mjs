@@ -637,7 +637,9 @@ test("optional startup policy excludes reference preloading and activation", asy
     main,
     /if \(optional\)\s*{\s*builtins.push\(optional.source\(config.buildRoot, role\)\);\s*continue;/,
   );
-  assert.ok(main.includes('for (const role of optional ? [] : ["recording", "settings"])'));
+  assert.ok(
+    main.includes('for (const role of optional || compatibility ? [] : ["recording", "settings"])'),
+  );
   assert.ok(
     main.indexOf("optionalPolicy =") < main.indexOf("composition = await composeDesktopMain"),
   );

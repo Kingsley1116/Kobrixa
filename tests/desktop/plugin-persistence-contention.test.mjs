@@ -1,3 +1,4 @@
+import { persistenceTestNodePaths } from "./persistence-source-loader.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
@@ -477,6 +478,7 @@ test("production seam: distinct native scopes remain live on the same backend", 
   const { build } = await import("esbuild");
   const { resolve } = await import("node:path");
   const compiled = await build({
+    nodePaths: persistenceTestNodePaths(),
     entryPoints: [resolve("apps/desktop/src/main/plugins/persistence/settings-service.ts")],
     bundle: true,
     write: false,
@@ -596,6 +598,7 @@ test("production broker requires each owner to list the connected session before
   const { build } = await import("esbuild");
   const { resolve } = await import("node:path");
   const compiled = await build({
+    nodePaths: persistenceTestNodePaths(),
     stdin: {
       contents: `export { createBroker } from './apps/desktop/src/main/device-broker/broker.ts';
       export { operationHarness, pluginPrincipal, ID } from './apps/desktop/src/main/device-broker/fake-provider.ts';`,

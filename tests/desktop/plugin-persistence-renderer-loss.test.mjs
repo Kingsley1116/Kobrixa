@@ -336,7 +336,7 @@ test("renderer-loss producer modules import inertly and wiring uses actual share
   const source = await readFile(new URL("./plugin-persistence-main.ts", import.meta.url), "utf8");
   assert.match(source, /const retirement = retireActionRenderer\(false\)/);
   assert.match(source, /win.webContents.forcefullyCrashRenderer\(\)/);
-  assert.match(source, /const launch = createDesktopLauncher\(hooks\)/);
+  assert.match(source, /const launch = createDesktopLauncher\(\{\s*\.\.\.hooks,/);
   assert.match(source, /crash: crashRenderer/);
   assert.match(source, /destroyRenderer: \(\) => crashRenderer\(\)/);
 });

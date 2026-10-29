@@ -107,6 +107,34 @@ For the faster headless version of the 1,700 ms regression, run `KOBRIXA_MAIN_SI
 
 ## Persistence outcome checks
 
+Persistence source-only Node tests use the committed
+`tests/desktop/persistence-source-loader.mjs` bootstrap; no `/tmp` loader or shared
+package build is required. The persistence oracle/disconnect scripts and declarative
+UI oracle script supply it automatically. To run a single source test directly:
+
+```sh
+node --experimental-transform-types --import ./tests/desktop/persistence-source-loader.mjs --test tests/desktop/import-preferences.test.mjs
+```
+
+Run the controller-owned native producer with `pnpm test:persistence:run --preflight`
+or `pnpm test:persistence:run --case=import-restart --import-trial=preferences-four`
+after supplying its existing handoff/evidence prerequisites. The latter runs native
+processes; pure oracle tests do not. This package command replaces bare
+`node tests/desktop/plugin-persistence-run.mjs` in source-only checkouts.
+
+The loader derives the source root from its own repository location. Normal installed
+checkouts need no environment overrides. Split worktrees may set `RF5_SOURCE_ROOT`
+and `RF5_DEPS_ROOT` to absolute source/dependency roots (for example E sources and D's
+already installed dependencies). Only known repository package aliases and missing
+relative `.js` imports with an existing in-repository `.ts` counterpart are redirected;
+existing JavaScript and dependency internals remain untouched. The explicit dependency
+fallback is limited to `zod`, `typescript`, `esbuild`, `@eslint-community/regexpp` and `semver`. Exact missing `dist/index.js`
+entrypoints for the three known package aliases use their source entrypoints; arbitrary
+`dist` paths do not. The existing inline-esbuild unit tests use the loader’s explicit
+`persistenceTestNodePaths()` helper for their independent resolver, honoring the same
+dependency-root override without a shared build. This is a Node test/CLI bootstrap;
+Electron production entries continue through the existing bundler.
+
 `pnpm test:persistence:oracles` checks the shared outcome rules for all fifteen
 foundation cases. It also runs in `test`, `test:desktop` and `test:ci`. The Electron
 producer applies these rules before serialization; the outside controller applies

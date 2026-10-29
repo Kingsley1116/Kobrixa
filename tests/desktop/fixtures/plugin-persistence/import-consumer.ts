@@ -10,9 +10,11 @@ void runPlugin(
   definePlugin({
     activate(ctx) {
       console.error(`IMPORT_BOOT:${JSON.stringify({ pid: process.pid, pluginId: ctx.pluginId })}`);
+      const kind = ctx.pluginId === "test.preferences" ? "test.preferences" : "test.synthetic";
+      assert.ok(["test.synthetic", "test.preferences"].includes(ctx.pluginId));
       let next = 0;
-      ctx.commands.register("test.synthetic.inspect", async () => {
-        const page = value(await ctx.storage.list({ kind: "test.synthetic", limit: 64 }));
+      ctx.commands.register(`${kind}.inspect`, async () => {
+        const page = value(await ctx.storage.list({ kind, limit: 64 }));
         assert.equal(page.nextCursor, undefined);
         const record = page.entries.slice().sort((a, b) => a.id.localeCompare(b.id))[next++];
         assert.ok(record);
@@ -44,8 +46,8 @@ void runPlugin(
           assert.equal(hash.digest("hex"), record.sha256);
         }
       });
-      ctx.commands.register("test.synthetic.delete-first", async () => {
-        const page = value(await ctx.storage.list({ kind: "test.synthetic", limit: 64 }));
+      ctx.commands.register(`${kind}.delete-first`, async () => {
+        const page = value(await ctx.storage.list({ kind, limit: 64 }));
         const record = page.entries.slice().sort((a, b) => a.id.localeCompare(b.id))[0];
         assert.ok(record);
         value(await ctx.storage.delete({ id: record.id, expectedRevision: record.revision }));

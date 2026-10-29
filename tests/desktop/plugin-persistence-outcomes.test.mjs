@@ -44,10 +44,21 @@ test("ordinary test commands retain the pure oracle gate independently of native
     "sealed-ttl",
   ].map((name) => `tests/desktop/plugin-persistence-${name}.test.mjs`);
   const oracleFiles = scripts["test:persistence:oracles"].split(" ");
-  assert.deepEqual(oracleFiles.slice(0, 2), ["node", "--test"]);
+  assert.deepEqual(oracleFiles.slice(0, 5), [
+    "node",
+    "--experimental-transform-types",
+    "--import",
+    "./tests/desktop/persistence-source-loader.mjs",
+    "--test",
+  ]);
   assert.deepEqual(
-    oracleFiles.slice(2).sort(),
-    requiredPersistence.sort(),
+    oracleFiles.slice(5).sort(),
+    [
+      ...requiredPersistence,
+      "tests/desktop/import-boundaries.test.mjs",
+      "tests/desktop/import-preferences.test.mjs",
+      "tests/desktop/persistence-source-loader.test.mjs",
+    ].sort(),
     "Exact pure B2 suite; no native/evidence runner or duplicate",
   );
   const feature = scripts["test:feature-oracles"];

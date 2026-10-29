@@ -1,4 +1,10 @@
 import {
+  PREFERENCE_CUTS,
+  preferencePhases,
+  assertPreferencePause,
+  assertPreferenceSequence,
+} from "./import-preferences.ts";
+import {
   SEMANTIC_IMPORT_BOUNDARIES,
   assertSemanticPause,
   assertSemanticSequence,
@@ -483,9 +489,14 @@ export async function superviseCase(
           for (const key of ["profileId", "commit", "artifactSha256", "bundleSha256"])
             assert.equal(paused.candidate[key], config[key]);
           assert.equal(paused.candidate.pid, child.pid);
-          const o = paused.candidate.evidence.importSlice;
+          const o = PREFERENCE_CUTS.includes(config.importTrial)
+            ? paused.candidate.evidence.importPreferences
+            : paused.candidate.evidence.importSlice;
           assert.equal(o.phase, "kill");
-          if (SEMANTIC_IMPORT_BOUNDARIES.includes(config.importTrial)) {
+          if (PREFERENCE_CUTS.includes(config.importTrial)) {
+            assert.equal(o.cut, config.importTrial);
+            assertPreferencePause(o);
+          } else if (SEMANTIC_IMPORT_BOUNDARIES.includes(config.importTrial)) {
             assert.equal(o.boundary, config.importTrial);
             assertSemanticPause(o);
           } else assertImportPause(o, config.importTrial ?? IMPORT_SLICE);
@@ -761,10 +772,16 @@ export function selectFoundationCases({ referencesOnly = false, caseId } = {}) {
 }
 export function selectImportTrials(selection) {
   if (selection === IMPORT_SIX) return [...IMPORT_PUBLICATION_TRIALS];
+  if (selection === "preferences-four") return [...PREFERENCE_CUTS];
   if (selection === "semantic-eight") return [...SEMANTIC_IMPORT_BOUNDARIES];
   assert.ok(
-    [IMPORT_SLICE, ...IMPORT_PUBLICATION_TRIALS, ...SEMANTIC_IMPORT_BOUNDARIES].includes(selection),
-    "RF5 incomplete: use explicit --import-trial=publication-six, semantic-eight, or one named trial",
+    [
+      IMPORT_SLICE,
+      ...IMPORT_PUBLICATION_TRIALS,
+      ...SEMANTIC_IMPORT_BOUNDARIES,
+      ...PREFERENCE_CUTS,
+    ].includes(selection),
+    "RF5 incomplete: use explicit --import-trial=publication-six, semantic-eight, preferences-four, or one named trial",
   );
   return [selection];
 }
@@ -1033,6 +1050,58 @@ export async function runFoundationEvidence({ referencesOnly = false, caseId, im
     );
   }
 
+  const preferenceTrial =
+    selectedCases.includes("import-restart") &&
+    selectImportTrials(importTrial).some((cut) => PREFERENCE_CUTS.includes(cut));
+  let preferenceRenderer;
+  const preferenceArtifacts = [];
+  if (preferenceTrial) {
+    const target = path.join(buildRoot, "plugins/acceptance-builtin-preferences");
+    await mkdir(target, { recursive: true });
+    await cp(
+      path.join(buildRoot, "plugins/acceptance-builtin-import/main.cjs"),
+      path.join(target, "main.cjs"),
+    );
+    const manifest = JSON.parse(
+      await readFile(
+        path.join(root, "tests/desktop/fixtures/plugin-persistence/import-kobrixa-plugin.json"),
+        "utf8",
+      ),
+    );
+    await writeFile(
+      path.join(target, "kobrixa-plugin.json"),
+      JSON.stringify(manifest).replaceAll("test.synthetic", "test.preferences"),
+    );
+    const files = [];
+    for (const name of ["kobrixa-plugin.json", "main.cjs"]) {
+      const bytes = await readFile(path.join(target, name));
+      files.push({ path: name, bytes: bytes.length, sha256: digest(bytes) });
+    }
+    await writeFile(
+      path.join(target, "resource-index.json"),
+      JSON.stringify({ version: 1, pluginId: "test.preferences", files }),
+    );
+    const rendererEntry = path.join(buildRoot, "import-preferences.js");
+    await build({
+      entryPoints: [path.join(root, "tests/desktop/import-preferences-renderer.ts")],
+      outfile: rendererEntry,
+      bundle: true,
+      platform: "browser",
+      format: "iife",
+    });
+    preferenceRenderer = path.join(buildRoot, "import-preferences.html");
+    await writeFile(
+      preferenceRenderer,
+      '<!doctype html><meta charset="utf-8"><title>RF5 preference capture</title><script src="./import-preferences.js"></script>',
+    );
+    for (const file of [
+      path.join(target, "resource-index.json"),
+      rendererEntry,
+      preferenceRenderer,
+    ])
+      preferenceArtifacts.push(await readFile(file));
+  }
+
   const workerSource = path.join(directory, "worker.ts"),
     workerEntry = path.join(buildRoot, "worker.cjs");
   await writeFile(
@@ -1088,6 +1157,7 @@ app.exit(code);
     Buffer.concat([
       await readFile(entry),
       await readFile(workerEntry),
+      ...preferenceArtifacts,
       Buffer.from(renderer.receiptSha256),
       Buffer.from(JSON.stringify(compatibility ?? null)),
       ...(pressure ? [Buffer.from(JSON.stringify(pressure.artifacts))] : []),
@@ -1136,6 +1206,7 @@ app.exit(code);
       bundleSha256,
       buildRoot,
       workerEntry,
+      ...(preferenceRenderer ? { preferenceRenderer } : {}),
       rendererUrl: handoffs.rendererUrl,
       preload: handoffs.preload,
       filesystem: handoffs.filesystem,
@@ -1148,7 +1219,9 @@ app.exit(code);
         const phases = [];
         const prefix = `import-${trial}`;
         const killedReceipt = path.join(directory, `${prefix}-kill.receipt.json`);
-        for (const importPhase of ["kill", "reopen1", "reopen2", "reopen3", "deleted"]) {
+        for (const importPhase of PREFERENCE_CUTS.includes(trial)
+          ? preferencePhases(trial)
+          : ["kill", "reopen1", "reopen2", "reopen3", "deleted"]) {
           const phase = {
             ...config,
             importPhase,
@@ -1157,6 +1230,10 @@ app.exit(code);
             profileId: trialProfileId,
             runId: randomUUID(),
             killedReceipt,
+            ...(trial === "before-raw" &&
+            ["reopen1", "reopen2", "reopen3", "deleted"].includes(importPhase)
+              ? { captureReceipt: path.join(directory, `${prefix}-capture.receipt.json`) }
+              : {}),
             importWire: path.join(directory, `${prefix}-${importPhase}.wire.jsonl`),
             report: path.join(directory, `${prefix}-${importPhase}.candidate.json`),
           };
@@ -1170,18 +1247,23 @@ app.exit(code);
           );
           phases.push(receipt);
         }
-        if (SEMANTIC_IMPORT_BOUNDARIES.includes(trial)) await assertSemanticSequence(phases);
+        if (PREFERENCE_CUTS.includes(trial)) assertPreferenceSequence(phases);
+        else if (SEMANTIC_IMPORT_BOUNDARIES.includes(trial)) await assertSemanticSequence(phases);
         else assertImportSlice(phases);
         assert.deepEqual(
           await originalFiles(syntheticRoot),
-          phases[0].evidence.importSlice.originals,
+          (PREFERENCE_CUTS.includes(trial)
+            ? phases[0].evidence.importPreferences
+            : phases[0].evidence.importSlice
+          ).originals,
         );
         trials.push({ trial, reports: phases });
       }
       const semantic = selectImportTrials(importTrial).every((t) =>
         SEMANTIC_IMPORT_BOUNDARIES.includes(t),
       );
-      if (semantic) {
+      const preferences = selectImportTrials(importTrial).every((t) => PREFERENCE_CUTS.includes(t));
+      if (semantic || preferences) {
         assert.deepEqual(
           trials.map((t) => t.trial),
           selectImportTrials(importTrial),
@@ -1191,7 +1273,11 @@ app.exit(code);
       const partial = {
         format: 1,
         level: "real-process",
-        status: semantic ? "partial-import-semantic-trials" : "partial-import-trial",
+        status: preferences
+          ? "partial-import-preference-trials"
+          : semantic
+            ? "partial-import-semantic-trials"
+            : "partial-import-trial",
         rf5Complete: false,
         trial: importTrial,
         trials,
@@ -1208,8 +1294,10 @@ app.exit(code);
                 "trusted-host skip is not UI confirmation proof",
               ]
             : []),
-          "pre-raw absence and fresh-window capture",
-          "settings stale-nonce proof",
+          ...(preferences && selectImportTrials(importTrial).includes("before-raw")
+            ? []
+            : ["pre-raw absence and fresh-window capture"]),
+          "product device-settings stale-nonce proof (separate from synthetic preference nonce)",
           "full foundation import-restart case",
         ],
       };

@@ -503,7 +503,7 @@ test("semantic selector is explicit and keeps the six publication modes unchange
   assert.deepEqual(selectImportTrials("semantic-eight"), [...SEMANTIC_IMPORT_BOUNDARIES]);
   assert.equal(selectImportTrials("publication-six").length, 6);
   for (const name of SEMANTIC_IMPORT_BOUNDARIES) assert.deepEqual(selectImportTrials(name), [name]);
-  for (const name of [undefined, "before-raw", "after-consumption", "all"])
+  for (const name of [undefined, "before-raw-invalid", "after-consumption-invalid", "all"])
     assert.throws(() => selectImportTrials(name), /RF5 incomplete/);
 });
 test("semantic supervisor accepts a pre-plan pause with no record attempt and still requires external SIGKILL", async () => {

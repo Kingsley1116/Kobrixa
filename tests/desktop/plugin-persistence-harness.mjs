@@ -1,3 +1,4 @@
+import { assertPreferencePhase } from "./import-preferences.ts";
 import { SEMANTIC_IMPORT_BOUNDARIES, assertSemanticPhase } from "./import-boundaries.ts";
 import { assertPressurePartial } from "./plugin-persistence-pressure.ts";
 import { assertImportPhase } from "./plugin-persistence-import.ts";
@@ -628,7 +629,9 @@ export function assertDisconnectEvidence(evidence) {
   });
 }
 export function verifyRunReceipt(r, expected = {}) {
-  if (r.case === "import-restart" && r.evidence?.importSlice) {
+  if (r.case === "import-restart" && r.evidence?.importPreferences)
+    assertPreferencePhase(r.evidence.importPreferences);
+  else if (r.case === "import-restart" && r.evidence?.importSlice) {
     if (SEMANTIC_IMPORT_BOUNDARIES.includes(r.evidence.importSlice.slice))
       assertSemanticPhase(r.evidence.importSlice);
     else assertImportPhase(r.evidence.importSlice);
@@ -1077,7 +1080,7 @@ export function verifyFoundationReports(reports, cases) {
     "partial pressure trial is not full foundation acceptance",
   );
   assert.ok(
-    reports.every((r) => !r.evidence?.importSlice),
+    reports.every((r) => !r.evidence?.importSlice && !r.evidence?.importPreferences),
     "partial import trial is not full foundation acceptance",
   );
   assert.deepEqual(

@@ -1,3 +1,9 @@
+import type { Wire } from "./plugin-persistence-import.js";
+import {
+  PREFERENCE_CUTS,
+  producePreferenceImport,
+  assertPreferencePhase,
+} from "./import-preferences.js";
 import {
   SEMANTIC_IMPORT_BOUNDARIES,
   observeImportWriter,
@@ -253,7 +259,7 @@ function assertRealComposition(fixture: FoundationFixture): void {
 }
 // runFoundationEvidence belongs to the outside controller, not this Electron producer.
 
-import { randomBytes, createHash } from "node:crypto";
+import { randomBytes, createHash, randomUUID } from "node:crypto";
 import type { PluginProcess, ProcessExit } from "@kobrixa/plugin-runtime";
 import type { ResourceOwner, DrainRequest, RecordMeta } from "@kobrixa/plugin-protocol";
 import type { Principal, DrainOffer } from "@kobrixa/plugin-runtime";
@@ -1073,9 +1079,11 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             .UserPersistenceActions.prototype,
         )
       : undefined;
-  const { syntheticImportDescriptor } =
+  const { syntheticImportDescriptor, syntheticPreferencesImportDescriptor } =
     await import("../../apps/desktop/src/main/plugins/persistence/import-fixtures.js");
   const imported = config.case === "import-restart" ? importObserver(config.importWire) : undefined;
+  const preferenceImport =
+    !!imported && (PREFERENCE_CUTS as readonly string[]).includes(config.importTrial);
   const semanticImport =
     !!imported && (SEMANTIC_IMPORT_BOUNDARIES as readonly string[]).includes(config.importTrial);
   const importWriter = {
@@ -1293,12 +1301,20 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         }
 
         const builtins = [...BUILTIN_PLUGIN_SOURCES];
-        for (const role of foundationBuiltinRoles(config.case)) {
+        for (const role of [
+          ...foundationBuiltinRoles(config.case),
+          ...(preferenceImport ? ["preferences"] : []),
+        ]) {
           if (optional) {
             builtins.push(optional.source(config.buildRoot, role));
             continue;
           }
-          const pluginId = role === "import" ? "test.synthetic" : `acceptance.ui-${role}`,
+          const pluginId =
+              role === "import"
+                ? "test.synthetic"
+                : role === "preferences"
+                  ? "test.preferences"
+                  : `acceptance.ui-${role}`,
             sourceKey = `builtin:${pluginId}`,
             slug = `acceptance-builtin-${role}`;
           // Explicit test-only sources use the real payload validator and launcher.
@@ -1412,7 +1428,13 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                     plugin.id.startsWith("acceptance.ui-pressure-")
                   )
                     pressure.output(plugin.channelOwner, line);
-                  if (imported && plugin.id === "test.synthetic" && plugin.channelOwner)
+                  if (
+                    imported &&
+                    ["test.synthetic", ...(preferenceImport ? ["test.preferences"] : [])].includes(
+                      plugin.id,
+                    ) &&
+                    plugin.channelOwner
+                  )
                     imported.output(plugin.channelOwner, line);
                   const row = compatibility?.rows.find(
                     (r) => r.owner.processEpoch === plugin.channelOwner?.processEpoch,
@@ -1438,7 +1460,11 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                   plugin.id.startsWith("acceptance.ui-pressure-")
                 )
                   return pressure.attach(plugin.channelOwner, child);
-                return imported && plugin.id === "test.synthetic" && plugin.channelOwner
+                return imported &&
+                  ["test.synthetic", ...(preferenceImport ? ["test.preferences"] : [])].includes(
+                    plugin.id,
+                  ) &&
+                  plugin.channelOwner
                   ? imported.attach(plugin.channelOwner, child)
                   : row
                     ? compatibility!.attach(row, child)
@@ -1477,8 +1503,22 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           ...(imported
             ? {
                 legacy: {
-                  descriptors: [syntheticImportDescriptor],
-                  writers: [importWitness?.writer ?? importWriter],
+                  descriptors: [
+                    syntheticImportDescriptor,
+                    ...(preferenceImport ? [syntheticPreferencesImportDescriptor] : []),
+                  ],
+                  writers: [
+                    importWitness?.writer ?? importWriter,
+                    ...(preferenceImport
+                      ? [
+                          {
+                            sourceKey: syntheticPreferencesImportDescriptor.targetSourceKey,
+                            freezeAdmission() {},
+                            async settled() {},
+                          },
+                        ]
+                      : []),
+                  ],
                 },
               }
             : {}),
@@ -1508,6 +1548,67 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           assert.equal(handles.profile, profile);
           // No document is loaded on restart: the real host/worker and public plugin
           // channel operate without a renderer capture or private fixture handlers.
+          const capturePhase = preferenceImport && ["kill", "capture"].includes(config.importPhase);
+          const preferenceIpc: Wire[] = [];
+          let retirePreferences = () => {};
+          if (capturePhase) {
+            const facets = live.plugins.persistence170!;
+            const captureRecovery = new CoreRecovery({
+              scope,
+              now,
+              actions: coreActions,
+              entries: () => [],
+              openDetail() {
+                throw Error("No capture recovery action");
+              },
+            });
+            retirePreferences = registerPersistenceWindow170({
+              facets,
+              coreRecovery: captureRecovery,
+              renderer: () => win.webContents,
+              handle(channel, action) {
+                ipcNames.push(channel);
+                ipcMain.handle(channel, async (event, ...args) => {
+                  const requestId = randomUUID();
+                  const identity = {
+                    requestId,
+                    channel,
+                    args: structuredClone(args),
+                    scope: structuredClone(scope()),
+                    senderId: event.sender.id,
+                    frame: `${event.senderFrame?.processId}:${event.senderFrame?.routingId}`,
+                  };
+                  preferenceIpc.push({ ...identity, stage: "request", at: Date.now() });
+                  assert.ok(preferenceIpc.length <= 64);
+                  try {
+                    const result = await Reflect.apply(action, undefined, [event, ...args]);
+                    preferenceIpc.push({
+                      ...identity,
+                      stage: "reply",
+                      at: Date.now(),
+                      result: structuredClone(result),
+                    });
+                    return result;
+                  } catch (error) {
+                    preferenceIpc.push({
+                      ...identity,
+                      stage: "error",
+                      at: Date.now(),
+                      error: String(error),
+                    });
+                    throw error;
+                  }
+                });
+              },
+            });
+            await win.loadFile(config.preferenceRenderer);
+            assert.equal(
+              await win.webContents.executeJavaScript("typeof window.importPreferences?.capture"),
+              "function",
+            );
+            if (config.importPhase === "kill")
+              await win.webContents.executeJavaScript("window.importPreferences.seed()");
+          }
           let closed: Promise<void> | undefined;
           fixture = {
             composition: {
@@ -1539,6 +1640,40 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             },
             async runCase(id) {
               assert.equal(id, "import-restart");
+              if (preferenceImport) {
+                const prior =
+                  config.importPhase === "kill"
+                    ? undefined
+                    : JSON.parse(await readFile(config.killedReceipt, "utf8")).evidence
+                        .importPreferences;
+                const captured = config.captureReceipt
+                  ? JSON.parse(
+                      await readFile(config.captureReceipt, "utf8"),
+                    ).evidence.importPreferences.preferences.documents.find(
+                      (r: Wire) => r.document.raw,
+                    )?.document
+                  : undefined;
+                const evidence = await producePreferenceImport({
+                  config,
+                  live,
+                  observer: imported,
+                  ...(prior ? { prior } : {}),
+                  ...(captured ? { captured } : {}),
+                  ...(capturePhase
+                    ? {
+                        driver: {
+                          ipc: preferenceIpc,
+                          capture: (old?: Wire) =>
+                            win.webContents.executeJavaScript(
+                              `window.importPreferences.capture(${JSON.stringify(old) ?? "undefined"})`,
+                            ),
+                        },
+                      }
+                    : {}),
+                });
+                assertPreferencePhase(evidence.importPreferences);
+                return evidence;
+              }
               const evidence = semanticImport
                 ? await produceSemanticImport({
                     config,
@@ -1553,6 +1688,8 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             },
             close() {
               return (closed ??= (async () => {
+                retirePreferences();
+                for (const name of ipcNames.splice(0)) ipcMain.removeHandler(name);
                 await live.dispose();
                 restoreReservation();
                 assert.equal(persistenceWorkerCount(handles.backend), 0);
