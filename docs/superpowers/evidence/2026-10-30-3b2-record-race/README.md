@@ -1,0 +1,5 @@
+# N04/N13 real public record race and snapshot sequence
+
+One joint real-worker case passed; full worker file60 tests passed, scoped types/lint passed. The original run preceded commit5f94e72 and retains its null candidate field. The controller verified the tested test-source and six product-source hashes exactly against that commit; source-binding.json records this without rewriting the original receipt or claiming a separate rerun.
+
+Actual public operations race against a held sealed replacement, reject two competing writes/deletes without extra reservation, publish once and return an identical repeated receipt, reject stale revision mutations, delete another record, preserve its original list page and read pin, and then reopen the same profile in a fresh worker/hostEpoch. Exact old/new bytes, hashes, quotas, cleanup, core snapshots and stale old handles are retained. This is not a nondeterministic simultaneous-first-admission test, elapsed-expiry test, Electron/installed acceptance or process-kill trial. The profile lock remains a test stub. Full N01–N29/Stage3 remains open.
