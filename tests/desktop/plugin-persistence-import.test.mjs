@@ -93,8 +93,16 @@ function sliceOracle(phase = "reopen1") {
     })),
   }));
   const records = Array.from({ length: phase === "deleted" ? 49 : 50 }, (_, n) => ({
-    id: `record-${n}`,
-    revision: `revision-${n}`,
+    id: `00000000-0000-4000-8000-${String(n + 1).padStart(12, "0")}`,
+    revision: `r_${String(n + 1).padStart(32, "0")}`,
+    kind: "test.synthetic",
+    schemaVersion: 1,
+    label: "Synthetic import",
+    mediaType: "application/octet-stream",
+    createdAt: 1,
+    updatedAt: 1,
+    checkpoint: "none",
+    interrupted: false,
     byteLength: 8388608,
     sha256: digest,
   }));
@@ -108,7 +116,12 @@ function sliceOracle(phase = "reopen1") {
   let seq = 0;
   const rpc = (method, params, result, chunk) => {
     const id = ++seq;
-    wire.push({ sequence: ++seq, direction: "plugin", owner, message: { id, method, params } });
+    wire.push({
+      sequence: ++seq,
+      direction: "plugin",
+      owner,
+      message: { jsonrpc: "2.0", id, method, params },
+    });
     wire.push({
       sequence: ++seq,
       direction: "host",
@@ -116,7 +129,7 @@ function sliceOracle(phase = "reopen1") {
       method,
       params,
       requestId: id,
-      message: { id, result },
+      message: { jsonrpc: "2.0", id, result: { ok: true, value: result } },
       ...(chunk ? { chunk } : {}),
     });
   };
@@ -125,13 +138,13 @@ function sliceOracle(phase = "reopen1") {
     rpc(
       "storage/openRead",
       { id: r.id, expectedRevision: r.revision, schemaVersion: 1 },
-      { read: r.id, record: r },
+      { read: r.id, record: r, expiresAt: 120000 },
     );
     for (let i = 0; i < 32; i++)
       rpc(
         "storage/readChunk",
         { read: r.id, offset: i * 262144, maxBytes: 262144 },
-        { eof: i === 31 },
+        { offset: i * 262144, nextOffset: (i + 1) * 262144, eof: i === 31 },
         {
           recordId: r.id,
           offset: i * 262144,
@@ -141,13 +154,20 @@ function sliceOracle(phase = "reopen1") {
           ...(i === 31 ? { recordSha256: digest } : {}),
         },
       );
-    rpc("storage/closeRead", { read: r.id }, { closed: true });
+    rpc("storage/closeRead", { read: r.id }, {});
   }
   if (phase === "reopen3")
     rpc(
       "storage/delete",
       { id: records[0].id, expectedRevision: records[0].revision },
-      { deleted: true },
+      {
+        deleted: true,
+        receipt: {
+          commitId: randomUUID(),
+          revision: `r_${"1".repeat(32)}`,
+          durability: "file-and-directory-sync",
+        },
+      },
     );
   return {
     slice: IMPORT_SLICE,
@@ -171,7 +191,7 @@ const sliceNegatives = {
   "wrong request": (o) => (o.wire.find((r) => r.chunk).requestId = "other"),
   "foreign owner": (o) =>
     (o.wire.find((r) => r.chunk).owner = { ...o.wire[0].owner, hostEpoch: randomUUID() }),
-  "payload retained": (o) => (o.wire.find((r) => r.chunk).message.result.data = "payload"),
+  "payload retained": (o) => (o.wire.find((r) => r.chunk).message.result.value.data = "payload"),
   "source count substitution": (o) => o.originals.pop(),
   "false full closure": (o) => (o.rf5Complete = true),
   "unknown reconciliation": (o) => (o.reconciliation.disposition = "unknown"),
@@ -225,7 +245,13 @@ test("slice observer hashes actual response bytes and discards payload from memo
         params: { id: "record", expectedRevision: "r", schemaVersion: 1 },
       }),
     );
-    wrapped.send(JSON.stringify({ id: 1, result: { read: "read", record: { id: "record" } } }));
+    wrapped.send(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        result: { ok: true, value: { read: "read", record: { id: "record" }, expiresAt: 120000 } },
+      }),
+    );
     receive(
       JSON.stringify({
         id: 2,
@@ -234,13 +260,22 @@ test("slice observer hashes actual response bytes and discards payload from memo
       }),
     );
     const bytes = Buffer.from("actual public response bytes"),
-      message = JSON.stringify({ id: 2, result: { data: bytes.toString("base64"), eof: true } });
+      message = JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        result: {
+          ok: true,
+          value: { offset: 0, data: bytes.toString("base64"), nextOffset: bytes.length, eof: true },
+        },
+      });
     wrapped.send(message);
     assert.equal(sent.at(-1), message);
     const row = observer.rows.at(-1);
     assert.equal(row.chunk.sha256, createHash("sha256").update(bytes).digest("hex"));
     assert.equal(row.chunk.recordSha256, row.chunk.sha256);
-    assert.equal(row.message.result.data, undefined);
+    assert.equal(row.message.result.ok, true);
+    assert.equal(row.message.result.value.nextOffset, bytes.length);
+    assert.equal(row.message.result.value.data, undefined);
     assert.equal((await readFile(file, "utf8")).includes(bytes.toString("base64")), false);
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -341,7 +376,7 @@ test("slice selector requires explicit partial trial before preflight/build", as
 
 test("slice storage terminal page uses omitted optional cursor; continuation/null are rejected", () => {
   const o = sliceOracle();
-  const page = o.wire.find((r) => r.method === "storage/list").message.result;
+  const page = o.wire.find((r) => r.method === "storage/list").message.result.value;
   assert.equal(Object.hasOwn(page, "nextCursor"), false);
   assertImportPhase(o);
   page.nextCursor = "next-page";
@@ -421,6 +456,70 @@ test("slice paused report publication exposes only complete JSON to a concurrent
     assert.deepEqual(JSON.parse(await readFile(file, "utf8")), report);
     for (const observed of observations) assert.deepEqual(observed, report);
     await assert.rejects(readFile(`${file}.tmp`), { code: "ENOENT" });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("slice observer preserves and forwards ok:false without decoding value; oracle rejects it", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "import-business-failure-"));
+  try {
+    let receive;
+    const sent = [];
+    const child = {
+      onMessage(fn) {
+        receive = fn;
+        return () => {};
+      },
+      onExit() {
+        return () => {};
+      },
+      send(text) {
+        sent.push(text);
+      },
+    };
+    const observer = importObserver(path.join(directory, "wire.jsonl"));
+    const owner = {
+      sourceKey: "builtin:test.synthetic",
+      pluginId: "test.synthetic",
+      generation: 1,
+      hostEpoch: randomUUID(),
+      processEpoch: randomUUID(),
+    };
+    const wrapped = observer.attach(owner, child);
+    for (const [index, method] of [
+      "storage/openRead",
+      "storage/readChunk",
+      "storage/closeRead",
+    ].entries()) {
+      const id = index + 1;
+      receive(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id,
+          method,
+          params: { read: "absent", offset: 0, maxBytes: 262144 },
+        }),
+      );
+      const response = {
+        jsonrpc: "2.0",
+        id,
+        result: { ok: false, error: { code: "PLUGIN_E_STORAGE_IO", message: "read failed" } },
+      };
+      const text = JSON.stringify(response);
+      wrapped.send(text);
+      assert.equal(sent.at(-1), text);
+      assert.deepEqual(observer.rows.at(-1).message, response);
+      assert.equal(observer.rows.at(-1).chunk, undefined);
+    }
+    const o = sliceOracle();
+    o.wire.find((r) => r.method === "storage/openRead").message.result =
+      observer.rows[1].message.result;
+    assert.throws(() => assertImportPhase(o), /business response failed/);
+    const flattened = sliceOracle();
+    const reply = flattened.wire.find((r) => r.method === "storage/list");
+    reply.message.result = reply.message.result.value;
+    assert.throws(() => assertImportPhase(flattened), /business response failed/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

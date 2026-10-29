@@ -72,17 +72,22 @@ export function importObserver(file: string) {
           row.requestId = request.id;
           row.method = request.method;
           row.params = request.params;
-          if (m.result && request.method === "storage/openRead")
-            reads.set(m.result.read, {
+          // Preserve JSON-RPC's business envelope. Failed business results remain
+          // on the wire and are forwarded unchanged; only successful values decode.
+          const value = m.result?.ok === true ? m.result.value : undefined;
+          if (value && request.method === "storage/openRead")
+            reads.set(value.read, {
               hash: createHash("sha256"),
               offset: 0,
-              id: m.result.record.id,
+              id: value.record.id,
             });
-          if (m.result && request.method === "storage/readChunk") {
-            const bytes = Buffer.from(m.result.data, "base64"),
+          if (value && request.method === "storage/readChunk") {
+            const bytes = Buffer.from(value.data, "base64"),
               r = reads.get(request.params.read);
             assert.ok(r);
             assert.equal(request.params.offset, r.offset);
+            assert.equal(value.offset, r.offset);
+            assert.equal(value.nextOffset, r.offset + bytes.length);
             r.hash.update(bytes);
             r.offset += bytes.length;
             row.chunk = {
@@ -90,12 +95,12 @@ export function importObserver(file: string) {
               bytes: bytes.length,
               sha256: createHash("sha256").update(bytes).digest("hex"),
               recordId: r.id,
-              eof: m.result.eof,
+              eof: value.eof,
             };
-            if (m.result.eof) row.chunk.recordSha256 = r.hash.digest("hex");
-            row.message = { ...m, result: { ...m.result, data: undefined } };
+            if (value.eof) row.chunk.recordSha256 = r.hash.digest("hex");
+            row.message = { ...m, result: { ...m.result, value: { ...value, data: undefined } } };
           }
-          if (m.result && request.method === "storage/closeRead") reads.delete(request.params.read);
+          if (value && request.method === "storage/closeRead") reads.delete(request.params.read);
         }
         assert.ok(rows.length < 10000, "bounded per-phase trace");
         appendFileSync(file, JSON.stringify(row) + "\n");
@@ -244,6 +249,8 @@ export function assertImportPhase(o: Wire) {
   const replies = o.wire.filter((r: Wire) => r.direction === "host" && r.method);
   for (const row of replies) {
     assert.equal(row.message.error, undefined);
+    assert.equal(row.message.result?.ok, true, "storage business response failed");
+    assert.ok(row.message.result.value && typeof row.message.result.value === "object");
     assert.equal(row.owner.sourceKey, "builtin:test.synthetic");
     assert.equal(row.owner.hostEpoch, o.hostEpoch);
     const request = o.wire.find(
@@ -261,8 +268,8 @@ export function assertImportPhase(o: Wire) {
 
   const list = replies.find((r: Wire) => r.method === "storage/list");
   assert.ok(list?.message.result);
-  const records = list.message.result.entries;
-  assert.equal(list.message.result.nextCursor, undefined);
+  const records = list.message.result.value.entries;
+  assert.equal(list.message.result.value.nextCursor, undefined);
   assert.equal(records.length, o.phase === "deleted" ? 49 : 50);
   assert.equal(new Set(records.map((r: Wire) => r.id)).size, records.length);
   for (const record of records) {
@@ -270,27 +277,31 @@ export function assertImportPhase(o: Wire) {
     const source = o.originals.find((r: Wire) => r.sha256 === record.sha256);
     assert.ok(source);
     const opened = replies.filter(
-      (r: Wire) => r.method === "storage/openRead" && r.message.result.record.id === record.id,
+      (r: Wire) =>
+        r.method === "storage/openRead" && r.message.result.value.record.id === record.id,
     );
     assert.equal(opened.length, 1);
     assert.equal(opened[0].params.expectedRevision, record.revision);
-    assert.deepEqual(opened[0].message.result.record, record);
+    assert.deepEqual(opened[0].message.result.value.record, record);
     const closed = replies.filter(
       (r: Wire) =>
-        r.method === "storage/closeRead" && r.params.read === opened[0].message.result.read,
+        r.method === "storage/closeRead" && r.params.read === opened[0].message.result.value.read,
     );
     assert.equal(closed.length, 1);
     const chunks = replies.filter((r: Wire) => r.chunk?.recordId === record.id);
     assert.equal(chunks.length, 32);
     chunks.forEach((r: Wire, index: number) => {
-      assert.equal(r.params.read, opened[0].message.result.read);
+      assert.equal(r.params.read, opened[0].message.result.value.read);
       assert.ok(opened[0].sequence < r.sequence && r.sequence < closed[0].sequence);
       assert.equal(r.chunk.sha256, source.chunks[index].sha256);
       assert.equal(r.chunk.offset, index * 262144);
       assert.equal(r.chunk.bytes, 262144);
       assert.equal(r.chunk.eof, index === 31);
       assert.equal(r.requestId, r.message.id);
-      assert.equal(r.message.result.data, undefined);
+      assert.equal(r.message.result.value.data, undefined);
+      assert.equal(r.message.result.value.offset, r.chunk.offset);
+      assert.equal(r.message.result.value.nextOffset, r.chunk.offset + r.chunk.bytes);
+      assert.equal(r.message.result.value.eof, r.chunk.eof);
       const request = o.wire.find(
         (q: Wire) =>
           q.direction === "plugin" &&
@@ -307,7 +318,7 @@ export function assertImportPhase(o: Wire) {
   if (o.phase === "reopen3") {
     const deleted = replies.filter((r: Wire) => r.method === "storage/delete");
     assert.equal(deleted.length, 1);
-    assert.equal(deleted[0].message.result.deleted, true);
+    assert.equal(deleted[0].message.result.value.deleted, true);
     const target = records.find((r: Wire) => r.id === deleted[0].params.id);
     assert.ok(target);
     assert.equal(target.revision, deleted[0].params.expectedRevision);
@@ -350,7 +361,7 @@ export function assertImportSlice(receipts: Wire[]) {
     const replies = o.wire.filter((r: Wire) => r.direction === "host" && r.method);
     const records = replies
       .find((r: Wire) => r.method === "storage/list")
-      .message.result.entries.slice()
+      .message.result.value.entries.slice()
       .sort((a: Wire, b: Wire) => a.id.localeCompare(b.id));
     if (!expected) expected = records;
     assert.ok(expected);
