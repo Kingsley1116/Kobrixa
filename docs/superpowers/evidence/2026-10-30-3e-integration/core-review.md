@@ -1,0 +1,13 @@
+# E5 independent controller review
+
+No actionable findings in the stopped nine-file adoption/power handoff. The controller did not implement this change. Source review covered broker host-only read/observe projection, current-core getSession admission, LegacyDevice descriptor/public-event ordering, renderer-ready replay, ExecutionController intent/workspace/attachment/authority fences, and original-ID power receipt handling.
+
+Observation is read-only and provisional initialization is hidden. Public connection state reaches core descriptors synchronously; real current core authority is required before using the session. Existing permission, provider/gate and continuation checks remain. Renderer snapshots and recovery only adopt state; only a fresh public connected transition can resume an existing intent, with cancellation checks across awaits. Existing own-connect promise remains its own adopter. onBeforeClose/renderer-ready IPC occurs after the execution attach effect and replays state, not intent. Suspend stores original IDs; coordinator resume waits on the original suspend work/legacy drain and does not renew its deadline.
+
+Transport initialization failure preservation is justified: the author reproduced it against the 9027984 broker. An admission withdrawal must not mask provider uncertainty, and native-handle closure does not discharge earlier transport uncertainty. Prior quarantine is retained through both close completion paths. Existing provider-withdrawal tests were not weakened.
+
+Controller independent gate: /private/tmp/e5-integrated-vitest.config.mjs, all E product-source aliases, 1 worker, **852 PASS / 36 files**, exit0 (/private/tmp/e5-integrated.log). Includes all broker tests, EV3 provider tests, actual desktop controller composition, recovery, DeviceService, ExecutionController and feature lifecycle. Independent full main and renderer import typechecks also exit0 with empty logs e5-integrated-main-types.log and e5-integrated-renderer-types.log.
+
+The permanent cross-layer fixture uses the actual broker/adapters/execution controller and an empty verified deploy artifact list. It proves program-launch admission and exact-once intent behavior, not native uploads. The original diagnostic probe hardcoded some pre-fix state, so it was inspected rather than described as an unchanged green regression. The new permanent cases cover the corrected behavior. No Electron power event, installed-product or hardware acceptance is claimed.
+
+Separate controller-owned renderer/assembler cutover is under independent agent review; this report does not self-approve those files.

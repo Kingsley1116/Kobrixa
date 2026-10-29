@@ -204,3 +204,13 @@ Controller write set: `main/device-providers/ev3/{catalog.ts,catalog.test.ts,pro
 H-K/controller may add exactly `tests/desktop/device-ui-public-{run.mjs,main.ts,renderer.tsx,test.mjs}` for the actual production device feature entry, generic renderer/preload/host composition, real process transport, and an independently checked receipt. Existing public/installed helpers may be imported read-only; no parallel launcher, source fallback or pretend passing receipt is permitted. The native producer uses a synthetic provider, so its evidence cannot establish physical EV3 or packaged source-free acceptance. Python stdio and installed producers remain separate required E6 steps. An owner must stop writing and hand off precise paths before execution/review.
 
 The bilingual manual procedure is `tests/hardware/device-ui.md`; every H01–H14 result currently remains NOT RUN. Historical v1 hardware acceptance does not close Stage3 migration acceptance.
+
+
+### E6 Python producer and current integration receipt (2026-10-30)
+
+The second bounded acceptance writer owns exactly `tests/desktop/device-ui-stdio-{run.mjs,main.ts,test.mjs}` and `tests/desktop/fixtures/device-ui-public/{consumer.py,kobrixa-plugin.json}`. This is a clearly named synthetic Python consumer, not the production EV3 feature or a builtin impersonation. It must use actual Python SDK stdio, host routing and persistence with its own contributed settings/UI namespace. It may generate declared fixture resources in the temporary artifact. Its provider remains synthetic and results cannot establish hardware or source-free production acceptance. Existing Lab stdio/public helpers are read-only references.
+
+P08 committed `5b29c47`, independently reviewed without actionable findings; public feature `03e6d49` has40independently rerun tests with real MessageChannel. Coordinated product adoption/migration/assembler committed `dfae915` after independent scoped source reviews, controller852tests/36files, full main/renderer import typechecks, and47assembler/packaging passes with1existing skip. These receipts supersede earlier statements that these mounts are not yet switched, but do not close E4fullparity, E6native/installed, E7legacyexit, E8manual or Stage3.
+
+
+Checkpoint source/hash/review/test evidence for `dfae915` is archived under [`docs/superpowers/evidence/2026-10-30-3e-integration`](../evidence/2026-10-30-3e-integration/README.md). This exact evidence directory is controller-owned documentation. It records all852integrated tests passing (superseding the earlier75/76P08 interim result),40feature tests,47assembly passes/1existing skip and main/renderer typechecks. Native, installed, hardware, full parity and final closeout remain unclaimed.

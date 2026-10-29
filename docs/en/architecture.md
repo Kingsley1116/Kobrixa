@@ -338,3 +338,11 @@ Enabled signing fails closed. Applications are verified before archiving and aft
 - The main process validates the IPC sender and payload before every privileged filesystem, compiler, or device operation.
 
 These boundaries follow Electron's [security recommendations](https://www.electronjs.org/docs/latest/tutorial/security).
+
+## Stage 3 development integration
+
+The API 1.8 development branch joins builtin process UI, host-owned device arbitration, and typed settings/record storage. Motor test, Sensor Lab and EV3 device use separate optional sources in Plugin tools; native EV3 I/O stays in main. Provider availability is distinct from the UI process lifetime. A public connection is projected read-only to retained core deployment/files adapters; it does not grant a second session or authority.
+
+Device startup freezes the original preference writers before collecting a per-window immutable capture. Main admits the original combined import and supplies committed settings to the provider. Ordinary settings writes remain gated until original migration is resolved. Opening a panel, replaying a snapshot or restoring a process cannot replay a user command. Suspension joins the original stop/save receipt before wake can admit new work.
+
+Implementation and acceptance are tracked separately in the [3E plan](../superpowers/plans/2026-10-24-plugin-system-3e-device-ui.md). Some legacy UI remains pending replacement evidence; this section does not claim final Stage 3 acceptance or completion of stage-2 manual checks.

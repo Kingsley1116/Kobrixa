@@ -29,7 +29,7 @@ Basic Plus 編譯、桌面編輯器、USB／Wi-Fi transport、遠端檔案管理
 
 - 插件系統第一階段（開發預覽）：協定、JS／TS 與 Python SDK、命令與通知 API、設定面板，以及註冊為內建插件的 Basic Plus 前端。第三方插件僅限開發模式載入。詳見[插件設計](../superpowers/specs/2026-10-14-plugin-system-design.md)。
 - 插件系統第二階段（已實作，驗收待完成）：內建編譯前端／後端選擇、通用 `artifacts[]`、診斷來源與說明、內建語言服務及 API 1.4.0 靜態語言。詳見[架構與契約](architecture.md)及[靜態語言插件](plugin-static-languages.md)。外部編譯器與語言服務 RPC 仍屬後續工作。
-- 插件系統第三階段（未來規劃）：公開面板／設定／設備 API 與內建功能遷移，包含透過公開 API 完成馬達測試。
+- 插件系統 Stage 3（實作與驗收進行中）：API 1.5–1.8 設備 broker、宣告式面板／資料檢視、settings／storage 與內建功能公開 API 遷移。EV3 面板已在功能分支整合；native／installed 遷移、legacy 撤除及人工 closeout 仍未完成。見[3E 實作紀錄](../superpowers/plans/2026-10-24-plugin-system-3e-device-ui.md)與[硬體／介面驗收](../../tests/hardware/device-ui.md)。
 - 插件系統第四階段（未來規劃）：正式插件封裝、受管理的執行環境、產生式 Python 型別綁定、相依解析與版本回退，通過驗收後才向一般使用者開放第三方插件。
 - 擴充 `.bp` 相容案例與 EV3 API 覆蓋。
 - 改進補全、格式化、效能、無障礙、本地化與復原體驗。

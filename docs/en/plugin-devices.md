@@ -1,14 +1,14 @@
-# Device plugins (API 1.5.0)
+# Device plugins (API 1.8.0)
 
 Device consumers request `devices.read`, `devices.connect` and/or `devices.control` in their manifest. A permission grants eligibility, not a permanent lease. Negotiate after initialize, inspect provider/capability availability, and check every business result. An unavailable provider must remain unavailable until the user enables it.
 
 Only the host allowlist can register `kobrixa.device-ev3`. A development plugin declaring `contributes.deviceProviders` is invalid even if the value is an empty array or null. `devices.provide` is not a permission. Plugins execute trusted local code; this API is a safety and compatibility boundary, not a hostile-code sandbox.
 
-Use `context.devices` in JavaScript and `ctx.devices` in Python. Method names are the same except `inputModes` becomes `input_modes`. Wire object keys remain camelCase. Both SDKs return `{ok:true,value}` or `{ok:false,error:{code,message,detail?}}`; transport failures remain separate. See the two executable consumers in `tests/desktop/fixtures/device-broker/` for the same complete scenario.
+Use `context.devices` in JavaScript and `ctx.devices` in Python. Python uses `input_modes` and `connection_recovery` for the JavaScript `inputModes` and `connectionRecovery` groups. Wire object keys remain camelCase. Both SDKs return `{ok:true,value}` or `{ok:false,error:{code,message,detail?}}`; transport failures remain separate. See the two executable consumers in `tests/desktop/fixtures/device-broker/` for the same complete scenario.
 
 The read path is negotiate → list → session → read/subscribe. `devices/context` returns only a host-bound context reference and its restricted snapshot. No default binding means unbound, not local authority. `devices.connect` accepts a host candidate or a canonical IP literal, never a hostname, credentials or native transport path. Read, browse, download and stopping one's own operation remain available without holder status, subject to source/session permissions.
 
-Motion requires a host-issued visible panel scope, current authority and `devices.control`; jog additionally requires a real gesture. A consumer must not synthesize a scope, heartbeat or gesture. API 1.5 transport fixtures receive references from the trusted test host. General declarative UI binding arrives in 1.6. A missing UI scope is an explicit unavailable result.
+Motion requires a host-issued visible panel scope, current authority and `devices.control`; jog additionally requires a real gesture. A consumer must not synthesize a scope, heartbeat or gesture. API 1.5 transport fixtures receive references from the trusted test host. The host binds declarative UI from API 1.6 onward; API 1.8 adds version-2 data views. A missing UI scope is an explicit unavailable result.
 
 Prepare performs no device I/O. Start consumes its reference once within 5 seconds. Preserve the operation ID before start; a timeout or lost reply does not justify another start. Query the original ID and request stop. Forced stop preserves brake even when the original motion requested coast. A stop acknowledgement records intent; only subsequent readback confirms stopping. Unconfirmed stop remains visible in core recovery after the feature disappears.
 
@@ -23,3 +23,15 @@ Remote file confirmation expires after 120 seconds idle. Only an explicit user c
 The durable journal records uncertainty before risky motion/program dispatch. Full, corrupt or unwritable journals prevent new risk. Reconnecting to the same IP is not physical identity proof. Core recovery remains accessible with every optional feature disabled and in safe mode.
 
 Automated synthetic-provider tests, actual Electron/Python transport tests, installed artifacts and physical USB/Wi-Fi evidence are distinct acceptance rows. This foundation does not certify motor UI migration (3C), Lab storage/charts migration (3D), stage-2 V01–V04 or final Stage 3 closeout (3E).
+
+## Connection observation and the builtin UI
+
+The builtin EV3 panel uses the same public SDK as a consumer. Its shipped Node entry and declarative panel/settings resources belong to the existing `kobrixa.device-ev3` source; opening it does not register a second provider. Native transport remains a host-only builtin provider. Build/deploy/version checks, pending Run cancellation and remote files remain core responsibilities. Public connection state is observed by those core adapters without another native connection.
+
+Use `devices.connectionRecovery.read({})` in JS or `devices.connection_recovery.read({})` in Python, and the `connectionRecovery` subscription topic, for bounded recovery observations. These require negotiated API support. They do not grant a reconnect or cancellation RPC. Cancellation is the trusted declarative `cancelConnectionRecovery` core action; recovery and snapshot replay never resume an old Run or motion. Retire subscriptions when their owner ends and reject late callbacks.
+
+An actually observed input with no current values retains one component-0 observation slot and its actual state. A missing input stays absent. Null is an unavailable sample, never zero: a ready/null channel can record a gap but cannot provide a calibration measurement. Non-ready inputs cannot reserve recording or dispatch mode query/write. Metadata changes invalidate the existing source revision/handle in the normal way.
+
+Connection preferences use the contributed settings resource and revision CAS. The original six main preferences and three renderer preferences migrate together once; unavailable or pending migration cannot supply default policy for new I/O. Changing transport saves independently of connection success. Forgetting an address clears it in the same settings revision. A renderer capture notice is not proof of authoritative migration readiness.
+
+These are Stage 3 development contracts. Complete native/installed migration and the [hardware/UI checklist](../../tests/hardware/device-ui.md) remain separate acceptance gates.
