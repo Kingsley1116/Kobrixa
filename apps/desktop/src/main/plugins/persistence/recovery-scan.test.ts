@@ -80,3 +80,106 @@ it("classifies a recovered import metadata candidate before cleaning staging",as
     expect(await store.reconcileImport(ticket)).toEqual({disposition:"committed",receipt:head.receipt});await store.dispose();
   }finally{await rm(root,{recursive:true,force:true});}
 });
+
+import { cp, writeFile } from "node:fs/promises";
+import { importIdFor } from "./import-sources.js";
+import type { PublicationTicket } from "./engine-port.js";
+async function preHeadImport() {
+  const root=await mkdtemp(path.join(tmpdir(),"pre-head-import-"));
+  const snapshot=path.join(root,"snapshot");
+  let copying=false;
+  const owner={sourceKey:"builtin:test.synthetic",pluginId:"test.synthetic",generation:1,hostEpoch:randomUUID(),processEpoch:randomUUID()};
+  const fs=await createNodePersistenceFs(root,{hostEpoch:owner.hostEpoch,assertHeld(){}},{now:()=>0,fault:async(point,edge)=>{
+    if(copying && point==="before-publish" && edge==="before") {
+      await cp(path.join(root,"plugins"),path.join(snapshot,"plugins"),{recursive:true});
+      throw Error("simulated-process-loss-after-filesystem-snapshot");
+    }
+  }});
+  const store=new AtomicStore(fs);await store.initialize();
+  const bytes=Buffer.alloc(8388608,42),sha=createHash("sha256").update(bytes).digest("hex"),id=randomUUID();
+  const planned:PublicationTicket={id:randomUUID(),owner,deadlineMonotonicMs:10000,target:{kind:"record",id,expectedRevision:null},metadata:{kind:"record",deleted:false,record:{id,revision:"r_"+randomUUID().replaceAll("-",""),kind:"test.synthetic",schemaVersion:1,label:"import",mediaType:"application/octet-stream",byteLength:bytes.length,sha256:sha,createdAt:1,updatedAt:1,checkpoint:"none",interrupted:false}}};
+  const descriptorId="test.synthetic.files",planId=importIdFor(descriptorId,owner.sourceKey),tag={importId:planId,itemKey:"first",sourceSha256:sha};
+  await store.planImport(owner,{formatVersion:1,id:planId,descriptorId,mappingVersion:1,targetSourceKey:owner.sourceKey,preferencesEvidence:null,items:[{key:"first",sourceFormat:1,sourceSha256:sha,mappedSha256:sha,byteLength:bytes.length,ticket:planned,tag}]});
+  const attempt=await store.admitImport(owner,planId,"first");
+  await store.reserve(attempt,bytes.length);await store.tagImport(attempt,tag);
+  for(let offset=0;offset<bytes.length;offset+=262144)await store.append(attempt,offset,bytes.subarray(offset,offset+262144));
+  await store.seal(attempt,bytes.length,sha);copying=true;
+  await expect(store.publish(attempt)).rejects.toThrow("simulated-process-loss");
+  await store.dispose();
+  const nextOwner={...owner,hostEpoch:randomUUID(),processEpoch:randomUUID()};
+  const nextFs=await createNodePersistenceFs(snapshot,{hostEpoch:nextOwner.hostEpoch,assertHeld(){}},{now:()=>0});
+  const ns=await Namespace.open(nextFs,owner.sourceKey),loc=await ns.location(attempt.target);
+  return {root,snapshot,nextFs,ns,loc,planned,attempt,nextOwner,planId,tag,bytes};
+}
+it("pre-head import restart preserves unpublished evidence, reconciles not committed and admits only a fresh attempt",async()=>{
+ const f=await preHeadImport();try {
+  // Repeated scans also cover the older failed recovery which removed staging intent.
+  for(let n=0;n<3;n++) {
+    const scan=await scanNamespace(f.ns,f.nextOwner.hostEpoch);
+    expect(scan.problems).toEqual([]);expect(scan.totals.committed).toBe(0);
+    expect(scan.totals.temporary).toBe(f.bytes.length);
+    expect(await f.ns.head(f.loc)).toBeNull();
+  }
+  const evidence=f.ns.path("quarantine",`${f.attempt.id}.prepublish.bin`);
+  expect(createHash("sha256").update(await f.nextFs.bytes(evidence,8388608)).digest("hex")).toBe(f.tag.sourceSha256);
+  const store=new AtomicStore(f.nextFs);await store.initialize();
+  expect(await store.reconcileImport(f.attempt)).toEqual({disposition:"not-committed"});
+  expect((await store.list(f.nextOwner,{limit:64})).entries).toEqual([]);
+  await expect(store.reserve(f.attempt,f.bytes.length)).rejects.toThrow("stale");
+  const fresh=await store.admitImport(f.nextOwner,f.planId,"first");
+  expect(fresh.id).not.toBe(f.attempt.id);expect(fresh.target).toEqual(f.attempt.target);
+  await store.reserve(fresh,f.bytes.length);await store.tagImport(fresh,f.tag);
+  for(let offset=0;offset<f.bytes.length;offset+=262144)await store.append(fresh,offset,f.bytes.subarray(offset,offset+262144));
+  await store.seal(fresh,f.bytes.length,f.tag.sourceSha256);
+  const committed=await store.publish(fresh);expect(committed.disposition).toBe("committed");
+  await store.recordImport(f.nextOwner,f.planId,{key:"first",state:"committed",receipt:committed.receipt!,skipReason:null,publicationTicket:fresh});
+  await store.completeImport(f.nextOwner,f.planId);await store.dispose();
+  const reopened=new AtomicStore(f.nextFs);await reopened.initialize();
+  expect((await reopened.list(f.nextOwner,{limit:64})).entries).toHaveLength(1);
+  expect(await reopened.reconcileImport(f.planned)).toEqual(committed);await reopened.dispose();
+ }finally{await rm(f.root,{recursive:true,force:true});}
+});
+for(const alteration of ["missing-candidate","wrong-object-hash","foreign-attempt","terminal-journal","extra-object","extra-candidate","corrupt-payload","unknown-version"] as const)it(`pre-head import recovery blocks ${alteration} without publishing`,async()=>{
+ const f=await preHeadImport();try {
+  const candidate=f.ns.path(...f.loc.parts,`head.${f.attempt.id}.tmp`);
+  const raw=JSON.parse(Buffer.from(await f.nextFs.bytes(candidate,8192)).toString());
+  if(alteration==="corrupt-payload")await writeFile(f.nextFs.name(f.ns.object(f.loc,raw)),Buffer.alloc(f.bytes.length,13));
+  if(alteration==="missing-candidate")await f.nextFs.unlink(candidate);
+  if(alteration==="extra-candidate")await f.ns.writeNew(f.ns.path(...f.loc.parts,`head.${randomUUID()}.tmp`),raw);
+  if(alteration==="extra-object")await f.ns.writeNew(f.ns.path(...f.loc.parts,"objects","r_"+"a".repeat(32)+".bin"),{extra:true});
+  if(alteration==="terminal-journal")await f.ns.writeNew(f.loc.head,raw); // then remove it after terminal evidence is durable
+  if(alteration==="terminal-journal") {
+    const s=new AtomicStore(f.nextFs);await s.initialize();
+    await s.recordImport(f.nextOwner,f.planId,{key:"first",state:"committed",receipt:raw.receipt,skipReason:null,publicationTicket:f.attempt});await s.dispose();
+    await f.nextFs.unlink(f.loc.head);
+  }
+  if(["wrong-object-hash","foreign-attempt","unknown-version"].includes(alteration)) {
+    if(alteration==="wrong-object-hash") {raw.sha256="0".repeat(64);raw.metadata.record.sha256=raw.sha256;}
+    if(alteration==="foreign-attempt")raw.receipt.commitId=randomUUID();
+    if(alteration==="unknown-version")raw.formatVersion=99;
+    await f.nextFs.unlink(candidate);await f.ns.writeNew(candidate,raw);
+  }
+  await expect(new AtomicStore(f.nextFs).initialize()).rejects.toThrow("recovery-blocked");
+  expect(await f.ns.head(f.loc)).toBeNull();
+ }finally{await rm(f.root,{recursive:true,force:true});}
+});
+for(const edge of [".prepublish.bin",".prepublish-head"])it(`pre-head import quarantine interruption after ${edge} retains bytes and no head`,async()=>{
+ const f=await preHeadImport();try {
+  const replace=f.nextFs.atomicReplace.bind(f.nextFs);
+  let injected=false;
+  f.nextFs.atomicReplace=async(from,to)=>{
+    await replace(from,to);
+    if(!injected && f.nextFs.name(to).endsWith(edge)){injected=true;throw Error("quarantine-interrupted");}
+  };
+  await expect(scanNamespace(f.ns,f.nextOwner.hostEpoch)).rejects.toThrow("quarantine-interrupted");
+  f.nextFs.atomicReplace=replace;
+  const scan=await scanNamespace(f.ns,f.nextOwner.hostEpoch);
+  expect(scan.problems).toEqual([]);expect(scan.totals.temporary).toBe(f.bytes.length);
+  expect(await f.ns.head(f.loc)).toBeNull();
+  const retained=await f.nextFs.bytes(f.ns.path("quarantine",`${f.attempt.id}.prepublish.bin`),8388608);
+  expect(createHash("sha256").update(retained).digest("hex")).toBe(f.tag.sourceSha256);
+  const store=new AtomicStore(f.nextFs);await store.initialize();
+  expect(await store.reconcileImport(f.attempt)).toEqual({disposition:"not-committed"});
+  await store.dispose();
+ }finally{await rm(f.root,{recursive:true,force:true});}
+});

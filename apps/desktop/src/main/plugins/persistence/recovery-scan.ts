@@ -2,7 +2,7 @@ import { z } from "zod";
 import { receiptSchema } from "../../../../../../packages/plugin-protocol/src/persistence-validation.js";
 import { randomUUID } from "node:crypto";
 import type { StorePath } from "./filesystem.js";
-import { type Namespace, parseHead, liveRecord, publicationTicketSchema, sameImportValue, type DiskHead } from "./namespace.js";
+import { type Namespace, parseHead, liveRecord, publicationTicketSchema, sameImportValue, type DiskHead, importDocumentSchema } from "./namespace.js";
 import { parseNonceDocument, parseBarrierDocument } from "./import-sources.js";
 export type NamespaceScan = { heads: DiskHead[]; problems: string[]; totals: { committed: number; records: number; metadata: number; temporary: number } };
 const contentError = (e: unknown): boolean => e instanceof Error && (e.message === "corrupt" || e instanceof SyntaxError || e instanceof TypeError);
@@ -22,6 +22,47 @@ async function persistResolution(ns:Namespace,id:string,value:z.infer<typeof res
   await ns.fs.atomicReplace(temp,ns.path("staging",id,"resolved.json"));
   await ns.fs.syncDirectory(ns.path("staging",id));
 }
+// A first imported record can have its immutable object and temporary head on disk
+// before the head rename. Only the durable pending journal can authorize classifying
+// that exact candidate as uncommitted; never promote it or infer an empty default.
+// The journal also survives older recovery scans that already removed staging intent.
+async function quarantinePendingImportCandidate(ns:Namespace,loc:Awaited<ReturnType<Namespace["location"]>>):Promise<boolean> {
+  const fs=ns.fs;
+  if(loc.parts[0]!=="records" || await fs.exists(loc.head) || await fs.exists(loc.previous))return false;
+  const candidates=(await fs.entries(loc.directory,4096)).filter(e=>!e.directory && /^head\.[0-9a-f-]{36}\.tmp$/.test(e.name));
+  if(candidates.length!==1)return false;
+  const candidate=parseHead(await fs.bytes(ns.path(...loc.parts,candidates[0]!.name),8192));
+  if(candidate.target.kind!=="record" || candidate.target.expectedRevision!==null ||
+      candidate.target.id!==loc.parts[1] || candidate.metadata.kind!=="record" || candidate.metadata.deleted ||
+      !candidate.importTag || candidates[0]!.name!==`head.${candidate.receipt.commitId}.tmp`)return false;
+  const objects=await fs.entries(loc.objects,4096);
+  if(objects.length!==1 || objects[0]!.directory || objects[0]!.name!==candidate.object)return false;
+  const journalLoc=await ns.location({kind:"import",key:candidate.importTag.importId});
+  const journalHead=await ns.head(journalLoc);
+  if(!journalHead || journalHead.target.kind!=="import" || journalHead.target.key!==candidate.importTag.importId)return false;
+  await ns.verify(journalLoc,journalHead);
+  const journal=importDocumentSchema.parse(JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(
+    await fs.bytes(ns.object(journalLoc,journalHead),2097152))));
+  if(journal.complete || journal.plan.id!==candidate.importTag.importId || journal.plan.targetSourceKey!==ns.sourceKey)return false;
+  const index=journal.plan.items.findIndex(i=>i.key===candidate.importTag!.itemKey);
+  if(index<0)return false;
+  const item=journal.plan.items[index]!,evidence=journal.items[index]!,attempt=evidence.publicationTicket;
+  if(evidence.state!=="pending" || evidence.receipt!==null || !attempt || attempt.owner.sourceKey!==ns.sourceKey ||
+      attempt.id!==candidate.receipt.commitId || !sameImportValue(attempt.target,candidate.target) ||
+      !sameImportValue(attempt.metadata,candidate.metadata) || !sameImportValue(item.tag,candidate.importTag) ||
+      item.byteLength!==candidate.byteLength || item.mappedSha256!==candidate.sha256)return false;
+  await ns.verify(loc,candidate);
+  // Preserve all bytes while freeing the fixed planned revision for a fresh attempt.
+  // A crash between the moves leaves no published head and cannot replay payload.
+  const objectEvidence=ns.path("quarantine",`${candidate.receipt.commitId}.prepublish.bin`);
+  const headEvidence=ns.path("quarantine",`${candidate.receipt.commitId}.prepublish-head`);
+  if(await fs.exists(objectEvidence) || await fs.exists(headEvidence))throw new Error("corrupt");
+  await fs.atomicReplace(ns.object(loc,candidate),objectEvidence);
+  await fs.syncDirectory(ns.path("quarantine"));await fs.syncDirectory(loc.objects);
+  await fs.atomicReplace(ns.path(...loc.parts,candidates[0]!.name),headEvidence);
+  await fs.syncDirectory(ns.path("quarantine"));await fs.syncDirectory(loc.directory);
+  return true;
+}
 export async function scanNamespace(ns: Namespace, hostEpoch: string): Promise<NamespaceScan> {
   const fs = ns.fs; fs.profile.assertHeld();
   const result: NamespaceScan = { heads: [], problems: [], totals: { committed: 0, records: 0, metadata: 0, temporary: 0 } };
@@ -39,7 +80,8 @@ export async function scanNamespace(ns: Namespace, hostEpoch: string): Promise<N
       head = previous; result.problems.push("rollback-interrupted");
     }
     if (!head) {
-      if (await fs.exists(loc.objects) && (await fs.entries(loc.objects, 4096)).length) result.problems.push("corrupt");
+      if (await fs.exists(loc.objects) && (await fs.entries(loc.objects, 4096)).length &&
+          !await quarantinePendingImportCandidate(ns,loc)) result.problems.push("corrupt");
       continue;
     }
     if(head.metadata.kind!=="record") {
@@ -113,7 +155,7 @@ export async function scanNamespace(ns: Namespace, hostEpoch: string): Promise<N
   for (const file of await ns.inventory()) {
     const name = fs.name(file.path);
     if (payloads.has(name)) continue;
-    if (retained.has(name) || /(?:^|\/)objects\/r_[0-9a-f]{32}\.bin$/.test(file.relative) || file.relative.endsWith("/payload.tmp")) result.totals.temporary += file.bytes;
+    if (/^quarantine\/[0-9a-f-]{36}\.prepublish\.bin$/.test(file.relative) || retained.has(name) || /(?:^|\/)objects\/r_[0-9a-f]{32}\.bin$/.test(file.relative) || file.relative.endsWith("/payload.tmp")) result.totals.temporary += file.bytes;
     else result.totals.metadata += file.bytes;
   }
   if (result.totals.committed > 536870912 || result.totals.records > 256 || result.totals.temporary > 33554432 || result.totals.metadata > 4194304) result.problems.push("quota");
