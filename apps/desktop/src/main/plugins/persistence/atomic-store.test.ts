@@ -653,3 +653,11 @@ it.each(['receiving','committed','unknown'] as const)('an old admission tombston
     expect(env.store.quota.snapshot(owner.sourceKey).reservedBytes).toBe(0);
   }finally{await env.close();}
 });
+it("does not retain unaddressable empty or single-page list snapshots",async()=>{
+  const env=await setup();
+  try{
+    for(let i=0;i<20;i++)expect(await env.store.list(owner,{limit:64})).toEqual({entries:[]});
+    const bytes=Buffer.from("one"),t=ticket(bytes);await stage(env.store,t,bytes);await env.store.publish(t);
+    for(let i=0;i<20;i++){const result=await env.store.list(owner,{limit:64});expect(result.entries).toHaveLength(1);expect(result.nextCursor).toBeUndefined();}
+  }finally{await env.close();}
+});

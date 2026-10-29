@@ -112,3 +112,44 @@ it("lists a bounded page of the declared kind and rejects foreign schemas", asyn
   f.meta.schemaVersion = 9;
   await expect(f.library.list("sensor-lab.recording")).rejects.toThrow();
 });
+
+it.each([false, true])(
+  "projects interrupted checkpoint using original frame/start (empty=%s)",
+  async (empty) => {
+    const raw = recording();
+    if (empty) {
+      raw.frames = [];
+      raw.frameCount = 0;
+      raw.durationMs = 0;
+    }
+    const f = fixture(raw);
+    f.meta.interrupted = true;
+    f.meta.checkpoint = "open";
+    const bytes = Buffer.from(f.bytes);
+    const meta = structuredClone(f.meta);
+    const projected = await f.library.read(f.meta);
+    expect(projected).toEqual({
+      ...raw,
+      reason: "interrupted",
+      endedAt: raw.frames.at(-1)?.sampledAt ?? raw.startedAt,
+    });
+    expect(Object.isFrozen(projected)).toBe(true);
+    expect(f.bytes.equals(bytes)).toBe(true);
+    expect(f.meta).toEqual(meta);
+    expect(JSON.parse(f.bytes.toString())).not.toHaveProperty("endedAt");
+  },
+);
+it("retains declared terminal outcome even if metadata says interrupted, and trusts verified open metadata", async () => {
+  const raw = { ...recording(), endedAt: 25, reason: "manual" as const };
+  const terminal = fixture(raw);
+  terminal.meta.interrupted = true;
+  expect(await terminal.library.read(terminal.meta)).toEqual(raw);
+  const f = fixture();
+  const listed = structuredClone(f.meta); // Recovery bit can change without changing payload bytes/revision.
+  f.meta.interrupted = true;
+  expect(await f.library.read(listed)).toMatchObject({ reason: "interrupted", endedAt: 10 });
+  const intact = fixture();
+  expect(await intact.library.read({ ...intact.meta, interrupted: true })).not.toHaveProperty(
+    "reason",
+  );
+});

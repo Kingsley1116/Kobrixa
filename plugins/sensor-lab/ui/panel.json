@@ -1607,8 +1607,8 @@
       "id": "code",
       "type": "code",
       "label": {
-        "en": "Basic Plus calibration example",
-        "zh-TW": "Basic Plus 校正範例"
+        "en": "Draft reading preview and Basic Plus example",
+        "zh-TW": "校正草稿讀值預覽與 Basic Plus 範例"
       },
       "dataset": "code",
       "copy": {

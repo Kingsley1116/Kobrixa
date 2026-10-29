@@ -110,7 +110,6 @@ it("uses isolated leaf cleanup, CJS, inline dynamic imports and no workspace ext
     emptyOutDir: true,
     sourcemap: true,
     rollupOptions: {
-      external: [],
       output: {
         format: "cjs",
         entryFileNames: "main.cjs",
@@ -118,6 +117,13 @@ it("uses isolated leaf cleanup, CJS, inline dynamic imports and no workspace ext
       },
     },
   });
+  const external = config.build?.rollupOptions?.external;
+  expect(typeof external).toBe("function");
+  if (typeof external !== "function") throw new Error("Expected Node builtin predicate");
+  expect(external("node:crypto", undefined, false)).toBe(true);
+  expect(external("crypto", undefined, false)).toBe(true);
+  expect(external("@kobrixa/plugin-sdk", undefined, false)).toBe(false);
+  expect(external("zod", undefined, false)).toBe(false);
   expect(config.build?.outDir).not.toBe("/trusted/build");
 });
 

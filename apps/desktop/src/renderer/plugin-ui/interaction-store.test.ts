@@ -119,7 +119,7 @@ function setup(synchronized = false, derived = false) {
     visible: true,
     data: { presentation: 1, ...(derived ? { computedForm: 0 } : {}) },
   };
-  f.bridge.snapshot.mockResolvedValue({ ok: true, value: initial });
+  f.bridge.snapshot.mockResolvedValue({ ok: true, value: structuredClone(initial) });
   const syncForm = vi.fn<NonNullable<PluginUiBridge["syncForm"]>>(async (q) => {
     initial.formRevision = q.baseFormRevision + 1;
     initial.form = { ...q.form };
@@ -508,3 +508,37 @@ it("disables command controls and fences cursors until a synchronized draft has 
     f.data.retire();
   }
 });
+
+it.each(["derived", "unsent"] as const)(
+  "keeps dialog Close available while %s form work is pending",
+  async (phase) => {
+    const f = setup(true, true);
+    f.interact.mockImplementation(async (request) => ({
+      ok: true,
+      value: {
+        kind: "view",
+        view:
+          request.kind === "viewState"
+            ? { generation: 1, dialogId: "inspect", inspectView: "full" }
+            : { generation: 2, dialogId: null, inspectView: null },
+      },
+    }));
+    try {
+      await f.store.refresh();
+      expect(f.store.getSnapshot().view?.dialogId).toBe("inspect");
+      f.state.edit("draft", "changed");
+      if (phase === "derived") await f.state.flushForm();
+      expect(f.state.derivedCurrent()).toBe(false);
+      await f.store.act({ kind: "dialogClose", nodeId: "inspect" });
+      expect(f.interact.mock.calls.some(([r]) => r.kind === "dialogClose")).toBe(true);
+      expect(f.store.getSnapshot().view?.dialogId).toBeNull();
+      expect(
+        f.interact.mock.calls.some(([r]) => r.kind === "cursor" || r.kind === "codeCopy"),
+      ).toBe(false);
+    } finally {
+      f.store.dispose();
+      f.state.retire();
+      f.data.retire();
+    }
+  },
+);

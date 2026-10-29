@@ -1189,7 +1189,7 @@ it.each([false, true])(
         expect(
           safe
             .state()
-            .plugins.filter((row) => !row.required)
+            .plugins.filter((row) => !row.required && row.id !== "kobrixa.sensor-lab")
             .map((row) => row.status),
         ).toEqual(["disabled", "disabled"]);
         expect(
@@ -1335,3 +1335,75 @@ it("host payload failure strips stale shipped permissions and contributions and 
     await rm(h.root, { recursive: true, force: true });
   }
 });
+
+it.each([false, true])(
+  "assembles a validated shipped Lab payload independently, packaged=%s",
+  async (packaged) => {
+    const h = await motorPayload(packaged);
+    const leaf = path.join(path.dirname(h.leaf), "sensor-lab");
+    try {
+      await mkdir(leaf, { recursive: true });
+      await writeFile(path.join(leaf, "main.cjs"), "'use strict';\n");
+      await emitResourceIndex(
+        new URL("plugins/sensor-lab", repository).pathname,
+        leaf,
+        "kobrixa.sensor-lab",
+      );
+      const sources = await assembleBuiltinPluginSources(h.input);
+      const source = sources.find(
+        (candidate) =>
+          candidate.kind === "builtin" &&
+          (candidate.manifest as { id?: string }).id === "kobrixa.sensor-lab",
+      )!;
+      if (source.kind !== "builtin") throw new Error("Expected shipped Lab");
+      expect(source.policy).toBe("optional");
+      expect(source.launch).toMatchObject({
+        packageRoot: leaf,
+        sourceKey: "builtin:kobrixa.sensor-lab",
+      });
+      expect(pluginManifestSchema.parse(source.manifest).activationEvents).toEqual([
+        "onPanel:kobrixa.sensor-lab.panel",
+      ]);
+      expect(Object.keys(source.resources).sort()).toEqual(["ui/panel.json", "ui/status.json"]);
+      for (const name of Object.keys(source.resources))
+        expect(source.resources[name]).toBe(await readRepository(`plugins/sensor-lab/${name}`));
+      const launcher = vi.fn();
+      const manager = await PluginManager.create({
+        sources,
+        launcher,
+        safeMode: true,
+        locale: "en",
+        store: {
+          load: async () => ({ disabled: new Set(), legacyDisabledIds: new Set() }),
+          save: async () => {},
+        },
+      });
+      try {
+        expect(
+          manager.state().plugins.find((row) => row.id === "kobrixa.sensor-lab"),
+        ).toMatchObject({ status: "disabled", running: false, required: false });
+        expect(launcher).not.toHaveBeenCalled();
+      } finally {
+        await manager.shutdown();
+      }
+      await writeFile(path.join(leaf, "main.cjs"), "tampered");
+      const corrupt = await assembleBuiltinPluginSources(h.input);
+      expect(
+        corrupt.find(
+          (candidate) =>
+            candidate.kind === "builtin" &&
+            (candidate.manifest as { id?: string }).id === "kobrixa.sensor-lab",
+        ),
+      ).toMatchObject({ payloadUnavailable: true });
+      expect(
+        corrupt.find(
+          (candidate) =>
+            candidate.kind === "builtin" &&
+            (candidate.manifest as { id?: string }).id === "kobrixa.motor-test",
+        ),
+      ).toMatchObject({ launch: { pluginId: "kobrixa.motor-test" } });
+    } finally {
+      await rm(h.root, { recursive: true, force: true });
+    }
+  },
+);

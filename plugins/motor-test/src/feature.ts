@@ -12,7 +12,7 @@ import type {
   MotionSpec,
   SourceCatalog,
   UiBinding,
-  UiEventEnvelope,
+  UiEventEnvelopeV2 as UiEventEnvelope,
   UiScalar,
 } from "@kobrixa/plugin-protocol";
 import {
@@ -81,7 +81,7 @@ class MotorFeature {
   private readonly abort = new AbortController();
   private readonly instances = new Map<string, Instance>();
   private readonly subscriptions = new Set<DeviceSubscription>();
-  private globalUi?: string;
+  private globalUi: string | undefined;
   private selected: Selected | undefined;
   private generation = 0;
   private active: Attempt | undefined;
@@ -99,6 +99,8 @@ class MotorFeature {
   private sessionSubscription: DeviceSubscription | undefined;
   private sessionWatch: string | undefined;
   private uiResyncPending = false;
+  private uiRecovery = 0;
+  private detachResync: (() => void) | undefined;
   private readonly sequences = new Map<string, number>();
 
   constructor(private readonly context: PluginContext) {
@@ -649,6 +651,32 @@ class MotorFeature {
   ready() {
     if (!this.live || this.readyStarted) return;
     this.readyStarted = true;
+    this.detachResync = this.context.ui.onResyncRequired(async (notice) => {
+      const recovery = ++this.uiRecovery;
+      this.uiCatalogVersion++;
+      // Terminal UI streams cannot be resumed with a snapshot. Revoke the
+      // original gesture and rebuild observation without replaying device work.
+      this.invalidate();
+      for (const instance of [...this.instances.values()]) this.retire(instance);
+      const previous = this.globalUi;
+      this.globalUi = undefined;
+      // Begin cleanup before yielding: deactivate must not lose the captured
+      // global handle while waiting for another terminal stream to close.
+      const [cleanup, closed] = await Promise.all([
+        notice.cleanup,
+        previous ? this.context.ui.unsubscribe(previous) : undefined,
+      ]);
+      if (!this.live || recovery !== this.uiRecovery) return;
+      if (cleanup.some((result) => !result.ok)) {
+        this.failure();
+        return;
+      }
+      if (closed && !closed.ok) {
+        this.failure(closed.error);
+        return;
+      }
+      await this.subscribeUi();
+    });
     // Launch bounded SDK reads/subscriptions, then release the host ready callback.
     // Their replies must not consume the remaining activation budget or await hardware.
     this.background(
@@ -709,6 +737,7 @@ class MotorFeature {
   }
   private async subscribeUi() {
     const version = this.uiCatalogVersion;
+    const recovery = this.uiRecovery;
     const result = await this.context.ui.subscribe(
       { topics: ["instances", "environment"] },
       (event) => this.uiEvent(event),
@@ -718,7 +747,7 @@ class MotorFeature {
       this.failure(result.error);
       return;
     }
-    if (!this.live) {
+    if (!this.live || recovery !== this.uiRecovery) {
       void this.context.ui.unsubscribe(result.value.subscriptionId).catch(() => {});
       return;
     }
@@ -1026,6 +1055,8 @@ class MotorFeature {
     if (!this.live) return;
     if (this.active && !this.active.settled) this.cancel(this.active, true);
     this.live = false;
+    this.uiRecovery++;
+    this.detachResync?.();
     this.abort.abort();
     this.generation++;
     if (this.active) this.finish(this.active);

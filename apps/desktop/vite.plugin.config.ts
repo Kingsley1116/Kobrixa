@@ -1,5 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isBuiltin } from "node:module";
 import type { UserConfig } from "vite";
 import { emitResourceIndex } from "./plugin-resource-index.js";
 
@@ -18,6 +19,9 @@ export function builtinPluginConfig(input: {
   );
   let resolvedOutput = output;
   return {
+    // These CJS leaves run in utilityProcess, even though Vite names the build
+    // environment "client". Preserve the host's per-launch resource owner.
+    environments: { client: { keepProcessEnv: true } },
     // Feature/test roots are not installed workspace packages. Resolve only the
     // public SDK/protocol at build time and bundle them into the shipped leaf.
     resolve: {
@@ -43,7 +47,9 @@ export function builtinPluginConfig(input: {
       target: "node24",
       rollupOptions: {
         input: path.join(input.sourceRoot, "src/main.ts"),
-        external: [],
+        // Node builtins belong to the utility-process runtime. All package and
+        // workspace imports still bundle into the standalone shipped leaf.
+        external: (id) => isBuiltin(id),
         output: { format: "cjs", entryFileNames: "main.cjs", inlineDynamicImports: true },
       },
     },
