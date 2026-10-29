@@ -7,13 +7,14 @@ import { spawn, execFileSync } from "node:child_process";
 import { createServer } from "node:net";
 import { tmpdir, networkInterfaces } from "node:os";
 import { rawResourcePlugin } from "./raw-resource-plugin.mjs";
-import { verifyLeaf, digest } from "./sensor-lab-installed-artifacts.mjs";
+import { verifyLeaf, digest, copyInstalledLeaf } from "./sensor-lab-installed-artifacts.mjs";
 import { verifyLabReceipt } from "./sensor-lab-public-run.mjs";
 import { processTable, descendants } from "./builtin-installed-client.mjs";
+import { createProcessMonitor, finishProcessObservation } from "./device-ui-stdio-run.mjs";
 const root = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const pluginId = "kobrixa.sensor-lab";
-export async function auditPayload(artifact) {
-  const require = createRequire(import.meta.url);
+export async function auditPayload(artifact, dependencies = process.env.KOBRIXA_E6_DEPS ?? root) {
+  const require = createRequire(path.join(dependencies, "package.json"));
   const { build } = createRequire(require.resolve("vitest/package.json"))("esbuild");
   // Audit, do not rewrite, the artifact's SDK dependency closure.
   return build({
@@ -114,11 +115,7 @@ export async function buildInstalled(directory, artifact) {
   // ONLY copy the supplied product build leaf. Never bundle feature source here.
   const leaf = path.join(directory, "plugins/sensor-lab");
   const files = index.files;
-  for (const name of [...files.map((f) => f.path), "resource-index.json"]) {
-    await mkdir(path.dirname(path.join(leaf, name)), { recursive: true });
-    await cp(path.join(artifact, name), path.join(leaf, name));
-  }
-  assert.deepEqual(await verifyLeaf(leaf), index);
+  await copyInstalledLeaf(artifact, leaf, pluginId);
   await vite.build({
     configLoader: "runner",
     cacheDir: path.join(directory, "vite-cache"),
@@ -179,6 +176,20 @@ export async function buildInstalled(directory, artifact) {
     artifactHashes,
     sourceHashes,
   };
+  return finishInstalledBuild(directory, artifact, identity);
+}
+export async function finishInstalledBuild(directory, artifact, identity, dependencies = root) {
+  const desktopRequire = createRequire(path.join(dependencies, "apps/desktop/package.json"));
+  for (const name of [
+    "sensor-lab-installed-run.mjs",
+    "sensor-lab-installed-artifacts.mjs",
+    "builtin-installed-client.mjs",
+    "builtin-installed-landlock.py",
+    "device-ui-stdio-run.mjs",
+  ]) {
+    const file = path.join(root, "tests/desktop", name);
+    identity.sourceHashes[path.relative(root, file)] = digest(await readFile(file));
+  }
   const electron = desktopRequire("electron");
   assert.ok(["darwin", "linux"].includes(process.platform));
   const runtimeDirectory = process.platform === "darwin" ? "Electron.app" : "electron-runtime";
@@ -216,7 +227,8 @@ export async function buildInstalled(directory, artifact) {
           "..",
         ),
       ),
-      path.dirname(await realpath(path.join(root, "node_modules"))),
+      path.dirname(await realpath(path.join(dependencies, "node_modules"))),
+      await realpath(dependencies),
     ]),
   ];
   identity.probes = await Promise.all(
@@ -428,7 +440,18 @@ export function verifyInstalledReceipt(report) {
   return { ...data, exportSha256: digest(bytes), copiedText: copied.params.text, newOwner: second };
 }
 
-async function run(directory) {
+export const labInstalledOptions = Object.freeze({
+  pluginId,
+  slug: "sensor-lab",
+  switchPrefix: "lab",
+  missingResource: "ui/panel.json",
+  verify: verifyInstalledReceipt,
+});
+export async function runInstalled(directory, options = labInstalledOptions) {
+  const { pluginId, slug, switchPrefix, missingResource, verify } = options;
+  assert.ok(["sensor-lab", "device-ev3"].includes(slug));
+  assert.equal(pluginId, "kobrixa." + slug);
+  const leafPath = `plugins/${slug}`;
   assert.ok(["darwin", "linux"].includes(process.platform), "No unisolated fallback");
   const externalAddresses = Object.values(networkInterfaces())
     .flat()
@@ -462,8 +485,12 @@ async function run(directory) {
     identity.runtime.files,
   );
   assert.deepEqual(
-    await verifyLeaf(path.join(directory, "plugins/sensor-lab")),
+    await verifyLeaf(path.join(directory, leafPath), pluginId),
     identity.productArtifact.index,
+  );
+  assert.equal(
+    digest(await readFile(path.join(directory, leafPath, "resource-index.json"))),
+    identity.productArtifact.indexSha256,
   );
   const receipts = [];
   for (const scenario of ["healthy", "absent", "missing-resource", "tampered"]) {
@@ -474,11 +501,10 @@ async function run(directory) {
     await mkdir(path.join(runRoot, "profile"));
     const privateTmp = path.join(runRoot, "t");
     await mkdir(privateTmp);
-    if (scenario === "absent") await rm(path.join(runRoot, "plugins/sensor-lab/main.cjs"));
-    if (scenario === "missing-resource")
-      await rm(path.join(runRoot, "plugins/sensor-lab/ui/panel.json"));
+    if (scenario === "absent") await rm(path.join(runRoot, leafPath, "main.cjs"));
+    if (scenario === "missing-resource") await rm(path.join(runRoot, leafPath, missingResource));
     if (scenario === "tampered")
-      await writeFile(path.join(runRoot, "plugins/sensor-lab/ui/panel.json"), "{}\n");
+      await writeFile(path.join(runRoot, leafPath, "ui/panel.json"), "{}\n");
     const isolation = path.join(runRoot, "isolation.sb");
     // Chromium's macOS singleton uses confstr(_CS_DARWIN_USER_TEMP_DIR),
     // independently of TMPDIR. Permit only its local instance-lock socket.
@@ -513,32 +539,42 @@ async function run(directory) {
               path.join(directory, identity.runtime.executable),
             ]),
         path.join(runRoot, "main.cjs"),
-        `--lab-root=${runRoot}`,
-        `--lab-scenario=${scenario}`,
+        `--${switchPrefix}-root=${runRoot}`,
+        `--${switchPrefix}-scenario=${scenario}`,
+        ...(slug === "device-ev3" ? ["--device-installed"] : []),
       ],
       { cwd: runRoot, env, stdio: ["ignore", "pipe", "pipe"] },
     );
     const known = new Set();
     let stdout = "",
       stderr = "",
-      timeout = false;
+      timeout = false,
+      outputOverflow = false;
     child.stdout.on("data", (b) => {
+      if (Buffer.byteLength(stdout) + Buffer.byteLength(stderr) + b.length > 8 * 1024 * 1024) {
+        outputOverflow = true;
+        child.kill("SIGKILL");
+        return;
+      }
       stdout += b;
     });
     child.stderr.on("data", (b) => {
+      if (Buffer.byteLength(stdout) + Buffer.byteLength(stderr) + b.length > 8 * 1024 * 1024) {
+        outputOverflow = true;
+        child.kill("SIGKILL");
+        return;
+      }
       stderr += b;
     });
-    let monitoring = Promise.resolve();
     const monitorErrors = [];
-    const monitor = setInterval(() => {
-      monitoring = monitoring.then(async () => {
-        try {
-          descendants(await processTable(), child.pid, known);
-        } catch (error) {
-          monitorErrors.push(String(error));
-        }
-      });
-    }, 50);
+    const monitor = createProcessMonitor({
+      poll: processTable,
+      observe: (rows) => {
+        descendants(rows, child.pid, known);
+      },
+      onError: (error) => monitorErrors.push(String(error)),
+    });
+    monitor.tick();
     const timer = setTimeout(() => {
       timeout = true;
       child.kill("SIGKILL");
@@ -549,34 +585,39 @@ async function run(directory) {
         child.once("error", reject);
         child.once("exit", (code, signal) => resolve({ code, signal }));
       });
+    } catch (error) {
+      result = { error: String(error) };
     } finally {
       clearTimeout(timer);
-      clearInterval(monitor);
+      await monitor.stop();
       await new Promise((resolve) => server.close(resolve));
       await writeFile(path.join(runRoot, "native.log"), stdout + "\n" + stderr);
     }
-    await monitoring;
-    const survivors = descendants(await processTable(), child.pid, known);
+    const survivors = await finishProcessObservation({
+      poll: processTable,
+      parent: child.pid,
+      known,
+      onError: (error) => monitorErrors.push(String(error)),
+    });
     await writeFile(
       path.join(runRoot, "process.json"),
-      JSON.stringify({ result, timeout, known: [...known], survivors }, null, 2),
+      JSON.stringify(
+        { result, timeout, known: [...known], survivors, monitorErrors, outputOverflow },
+        null,
+        2,
+      ),
     );
-    if (survivors.length)
-      for (const pid of survivors) {
-        try {
-          process.kill(pid.pid, "SIGKILL");
-        } catch {
-          /* Try the next known-readable probe / already-exited cleanup target. */
-        }
-      }
     assert.deepEqual(monitorErrors, []);
     assert.equal(timeout, false);
+    assert.equal(outputOverflow, false);
     assert.equal(result.code, 0);
     assert.equal(result.signal, null);
     assert.deepEqual(survivors, []);
     const report = JSON.parse(await readFile(path.join(runRoot, "producer.json"), "utf8"));
+    assert.equal(report.scenario, scenario);
+    assert.deepEqual(report.checkpoints.isolation.probes, identity.probes);
     for (const launch of report.launches) {
-      assert.equal(launch.entry, path.join(runRoot, "plugins/sensor-lab/main.cjs"));
+      assert.equal(launch.entry, path.join(runRoot, leafPath, "main.cjs"));
       assert.equal(
         launch.sha256,
         identity.productArtifact.index.files.find((f) => f.path === "main.cjs").sha256,
@@ -584,7 +625,7 @@ async function run(directory) {
     }
     receipts.push({
       scenario,
-      verified: verifyInstalledReceipt(report),
+      verified: verify(report),
       producerSha256: digest(await readFile(path.join(runRoot, "producer.json"))),
     });
   }
@@ -617,7 +658,7 @@ async function main(args) {
     );
   } else {
     assert.equal(args[0], "--run-built");
-    await run(await realpath(args[1]));
+    await runInstalled(await realpath(args[1]));
   }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href)

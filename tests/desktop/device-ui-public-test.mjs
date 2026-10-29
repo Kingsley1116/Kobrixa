@@ -478,3 +478,28 @@ for (const [name, corrupt] of [
     corrupt(report);
     assert.throws(() => verifyDeviceReceipt(report));
   });
+
+function installedPidFixture() {
+  const r = fixture();
+  r.logs = [];
+  Object.assign(r.launches[0], {
+    pid: 2,
+    parentPid: 1,
+    processObservation: { pid: 2, ppid: 1, serviceName: "Kobrixa plugin kobrixa.device-ev3" },
+  });
+  r.exits[0].exit = { code: 0 };
+  return r;
+}
+test("installed receipt accepts OS-observed utility PID without instrumented leaf", () =>
+  assert.equal(verifyDeviceReceipt(installedPidFixture(), { installed: true }).processId, 2));
+for (const [name, mutate] of [
+  ["foreign parent", (r) => (r.launches[0].processObservation.ppid = 99)],
+  ["wrong service", (r) => (r.launches[0].processObservation.serviceName = "other")],
+  ["invented pid", (r) => (r.launches[0].pid = 3)],
+  ["nonzero exit", (r) => (r.exits[0].exit.code = 1)],
+])
+  test("installed PID rejects " + name, () => {
+    const r = installedPidFixture();
+    mutate(r);
+    assert.throws(() => verifyDeviceReceipt(r, { installed: true }));
+  });

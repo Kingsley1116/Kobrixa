@@ -16,6 +16,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn, execFileSync } from "node:child_process";
 import { rawResourcePlugin } from "./raw-resource-plugin.mjs";
 
+import { copyInstalledLeaf } from "./sensor-lab-installed-artifacts.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const dependencies = process.env.KOBRIXA_E6_DEPS ?? root;
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -35,7 +36,7 @@ const ok = (result) => {
 
 // Structural/correlation oracle, not a cryptographic attestation against a malicious producer.
 // Every required action must have its original successful RPC reply and correct owner.
-export function verifyDeviceReceipt(report) {
+export function verifyDeviceReceipt(report, { installed = false } = {}) {
   assert.equal(report.schema, 1);
   assert.equal(report.stage, "complete");
   assert.deepEqual(report.failures, []);
@@ -48,10 +49,25 @@ export function verifyDeviceReceipt(report) {
   for (const key of ["hostEpoch", "processEpoch"]) assert.match(owner[key], /^[0-9a-f-]{36}$/);
   assert.ok(Number.isInteger(owner.generation));
   assert.deepEqual(report.exits[0].owner, owner);
-  const pid = report.logs.map((line) => /DEVICE_PID:(\d+)/.exec(line)).find(Boolean);
-  assert.ok(pid, "Actual utility process PID output missing");
-  assert.notEqual(Number(pid[1]), report.mainPid);
-  assert.ok(Number(pid[1]) > 0);
+  let processId;
+  if (installed) {
+    const launch = report.launches[0],
+      observed = launch.processObservation;
+    assert.ok(Number.isSafeInteger(launch.pid) && launch.pid > 0);
+    assert.equal(launch.parentPid, report.mainPid);
+    assert.equal(observed.pid, launch.pid);
+    assert.equal(observed.ppid, report.mainPid);
+    assert.equal(observed.serviceName, "Kobrixa plugin " + pluginId);
+    assert.equal(report.exits[0].exit.code, 0);
+    assert.ok(!report.exits[0].exit.reason);
+    processId = launch.pid;
+  } else {
+    const pid = report.logs.map((line) => /DEVICE_PID:(\d+)/.exec(line)).find(Boolean);
+    assert.ok(pid, "Actual utility process PID output missing");
+    processId = Number(pid[1]);
+  }
+  assert.notEqual(processId, report.mainPid);
+  assert.ok(processId > 0);
   let sequence = 0;
   for (const row of report.wire) {
     assert.ok(row.sequence > sequence);
@@ -337,10 +353,10 @@ export function verifyDeviceReceipt(report) {
   assert.equal(report.cleanup.workers, 0);
   for (const values of [report.cleanup.bridge, report.cleanup.worker])
     for (const value of Object.values(values)) assert.equal(value, 0);
-  return { owner, processId: Number(pid[1]), synthetic: true, nativeSteps: commands.length };
+  return { owner, processId, synthetic: true, nativeSteps: commands.length };
 }
 
-export async function buildDevice(directory) {
+export async function buildDevice(directory, { productionLeaf } = {}) {
   const require = createRequire(path.join(dependencies, "package.json"));
   const { build } = createRequire(require.resolve("vitest/package.json"))("esbuild");
   const desktopRequire = createRequire(path.join(dependencies, "apps/desktop/package.json"));
@@ -348,11 +364,12 @@ export async function buildDevice(directory) {
   await mkdir(path.join(directory, "profile"), { recursive: true });
   await mkdir(path.join(directory, "plugins/device-ev3/ui"), { recursive: true });
   await mkdir(path.join(directory, "plugins/device-ev3/settings"), { recursive: true });
-  await symlink(
-    await realpath(path.join(dependencies, "apps/desktop/node_modules")),
-    path.join(directory, "node_modules"),
-    "dir",
-  );
+  if (!productionLeaf)
+    await symlink(
+      await realpath(path.join(dependencies, "apps/desktop/node_modules")),
+      path.join(directory, "node_modules"),
+      "dir",
+    );
   const config = JSON.parse(await readFile(path.join(root, "tsconfig.base.json"), "utf8"));
   const alias = Object.fromEntries(
     Object.entries(config.compilerOptions.paths).map(([name, [file]]) => [
@@ -419,29 +436,35 @@ export async function buildDevice(directory) {
     "preload.cjs",
     `import ${JSON.stringify(path.join(root, "apps/desktop/src/preload/index.ts"))};`,
   );
-  await bundle(
-    "plugins/device-ev3/main.cjs",
-    `console.error("DEVICE_PID:"+process.pid); import ${JSON.stringify(path.join(root, "plugins/device-ev3/src/main.ts"))};`,
-  );
   const leaf = path.join(directory, "plugins/device-ev3");
-  for (const name of ["kobrixa-plugin.json", "ui/panel.json", "settings/preferences.json"]) {
-    inputs.add(path.join(root, "plugins/device-ev3", name));
-    await cp(path.join(root, "plugins/device-ev3", name), path.join(leaf, name));
+  let files;
+  if (productionLeaf) {
+    files = (await copyInstalledLeaf(productionLeaf, leaf, pluginId)).files;
+    inputs.add(path.join(root, "tests/desktop/sensor-lab-installed-artifacts.mjs"));
+  } else {
+    await bundle(
+      "plugins/device-ev3/main.cjs",
+      `console.error("DEVICE_PID:"+process.pid); import ${JSON.stringify(path.join(root, "plugins/device-ev3/src/main.ts"))};`,
+    );
+    for (const name of ["kobrixa-plugin.json", "ui/panel.json", "settings/preferences.json"]) {
+      inputs.add(path.join(root, "plugins/device-ev3", name));
+      await cp(path.join(root, "plugins/device-ev3", name), path.join(leaf, name));
+    }
+    files = [];
+    for (const name of [
+      "kobrixa-plugin.json",
+      "main.cjs",
+      "ui/panel.json",
+      "settings/preferences.json",
+    ].sort()) {
+      const bytes = await readFile(path.join(leaf, name));
+      files.push({ path: name, bytes: bytes.length, sha256: digest(bytes) });
+    }
+    await writeFile(
+      path.join(leaf, "resource-index.json"),
+      JSON.stringify({ version: 1, pluginId, files }),
+    );
   }
-  const files = [];
-  for (const name of [
-    "kobrixa-plugin.json",
-    "main.cjs",
-    "ui/panel.json",
-    "settings/preferences.json",
-  ].sort()) {
-    const bytes = await readFile(path.join(leaf, name));
-    files.push({ path: name, bytes: bytes.length, sha256: digest(bytes) });
-  }
-  await writeFile(
-    path.join(leaf, "resource-index.json"),
-    JSON.stringify({ version: 1, pluginId, files }),
-  );
   await vite.build({
     configLoader: "runner",
     cacheDir: path.join(directory, "vite-cache"),
@@ -530,8 +553,9 @@ export async function buildDevice(directory) {
   for (const file of [...inputs].sort())
     sourceHashes[path.relative(root, file)] = digest(await readFile(file));
   for (const required of [
-    "plugins/device-ev3/src/main.ts",
-    "plugins/device-ev3/src/controller.ts",
+    ...(!productionLeaf
+      ? ["plugins/device-ev3/src/main.ts", "plugins/device-ev3/src/controller.ts"]
+      : []),
     "apps/desktop/src/main/plugins/controller.ts",
     "apps/desktop/src/main/plugins/launchers.ts",
     "apps/desktop/src/main/plugins/persistence/worker.ts",

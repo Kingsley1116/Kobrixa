@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { realpath, writeFile, readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { connect } from "node:net";
+import { execFile } from "node:child_process";
+import { processTable } from "./builtin-installed-client.mjs";
 import { app, BrowserWindow, ipcMain } from "electron";
 import type { PluginLauncher } from "@kobrixa/plugin-runtime";
-import type { ResourceOwner } from "@kobrixa/plugin-protocol";
+import { pluginManifestSchema, type ResourceOwner } from "@kobrixa/plugin-protocol";
 import {
   composeDesktopMain,
   createWindowRetirementHandler,
@@ -23,7 +26,10 @@ import { createJournal } from "../../apps/desktop/src/main/device-broker/journal
 import { createJournalFilesystem } from "../../apps/desktop/src/main/device-broker/journal-filesystem.js";
 import { startPrimary } from "../../apps/desktop/src/main/plugins/profile-writer-lock.js";
 import { createDesktopLauncher } from "../../apps/desktop/src/main/plugins/launchers.js";
-import { BUILTIN_PLUGIN_SOURCES } from "../../apps/desktop/src/main/plugins/builtin.js";
+import {
+  BUILTIN_PLUGIN_SOURCES,
+  assembleBuiltinPluginSources,
+} from "../../apps/desktop/src/main/plugins/builtin.js";
 import {
   resolveBuiltinLaunch,
   validateBuiltinLeaf,
@@ -79,6 +85,10 @@ export function runNativeDevice(): void {
   assert.equal(app.isReady(), false, "Primary lock must precede Electron readiness");
   const root = app.commandLine.getSwitchValue("device-root");
   const output = path.join(root, "producer.json");
+  const installed = app.commandLine.hasSwitch("device-installed");
+  const scenario = installed ? app.commandLine.getSwitchValue("device-scenario") : "healthy";
+  assert.ok(["healthy", "absent", "missing-resource", "tampered"].includes(scenario));
+  let providerCreations = 0;
   assert.ok(path.isAbsolute(root));
   app.setPath("userData", path.join(root, "profile"));
   const wire: Wire[] = [],
@@ -114,9 +124,37 @@ export function runNativeDevice(): void {
       assert.ok(plugin.channelOwner);
       owner = structuredClone(plugin.channelOwner);
       const originalOwner = owner;
-      launches.push({ owner: originalOwner, at: wall() });
-      const process = await launch(plugin);
-      process.onExit((exit) => exits.push({ owner: originalOwner, at: wall(), exit }));
+      const row: ObjectValue = { owner: originalOwner, at: wall() };
+      launches.push(row);
+      const child = await launch(plugin);
+      // Observe the original Electron utility process, never alter the leaf or launcher.
+      try {
+        if (installed) {
+          row.entry = plugin.entry;
+          row.sha256 = createHash("sha256")
+            .update(await readFile(plugin.entry))
+            .digest("hex");
+          const metric = await until(() => {
+            const rows = app
+              .getAppMetrics()
+              .filter((p) => p.serviceName === `Kobrixa plugin ${plugin.id}`);
+            assert.ok(rows.length <= 1, "Ambiguous utility process");
+            return rows[0];
+          }, "original utility process metric");
+          const os = (await processTable()).find(
+            (p) => p.pid === metric.pid && p.ppid === process.pid,
+          );
+          assert.ok(os, "Missing actual utility OS child");
+          row.pid = os.pid;
+          row.parentPid = os.ppid;
+          row.processObservation = { ...os, serviceName: metric.serviceName };
+        }
+      } catch (error) {
+        child.kill();
+        throw error;
+      }
+      const processHandle = child;
+      processHandle.onExit((exit) => exits.push({ owner: originalOwner, at: wall(), exit }));
       const record = (direction: Wire["direction"], text: string) =>
         wire.push({
           direction,
@@ -126,16 +164,16 @@ export function runNativeDevice(): void {
           message: object(JSON.parse(text)),
         });
       return {
-        ...process,
+        ...processHandle,
         onMessage(listener) {
-          return process.onMessage((text) => {
+          return processHandle.onMessage((text) => {
             record("plugin-host", text);
             listener(text);
           });
         },
         send(text) {
           record("host-plugin", text);
-          process.send(text);
+          processHandle.send(text);
         },
       };
     };
@@ -160,29 +198,89 @@ export function runNativeDevice(): void {
     app,
     async (profile) => {
       try {
-        const launch = await resolveBuiltinLaunch({
+        if (installed) {
+          const probes: string[] = JSON.parse(process.env.LAB_SOURCE_PROBES ?? "[]");
+          assert.ok(probes.length >= 2);
+          for (const file of probes)
+            await assert.rejects(readFile(file), (e: NodeJS.ErrnoException) =>
+              ["EPERM", "EACCES"].includes(e.code ?? ""),
+            );
+          await new Promise<void>((resolve, reject) => {
+            const socket = connect({
+              host: "127.0.0.1",
+              port: Number(process.env.LAB_NETWORK_PROBE),
+            });
+            socket.once("connect", () => {
+              socket.destroy();
+              reject(Error("Network denial unproven"));
+            });
+            socket.once("error", (e: NodeJS.ErrnoException) =>
+              ["EPERM", "EACCES"].includes(e.code ?? "") ? resolve() : reject(e),
+            );
+            socket.setTimeout(2000, () => {
+              socket.destroy();
+              reject(Error("Network probe timeout"));
+            });
+          });
+          await new Promise<void>((resolve, reject) =>
+            execFile("node", ["--version"], { timeout: 2000 }, (e) => {
+              if (e && "code" in e && e.code === "ENOENT") resolve();
+              else reject(Error("PATH Node present"));
+            }),
+          );
+          checkpoints.isolation = {
+            sourceDenied: true,
+            networkDenied: true,
+            noPathNode: true,
+            probes,
+          };
+        }
+        const launch = {
           sourceKey: "builtin:kobrixa.device-ev3",
           pluginId: "kobrixa.device-ev3",
-          slug: "device-ev3",
-          packaged: false,
-          appPath: root,
-          buildRoot: root,
-        });
-        const leaf = await validateBuiltinLeaf(launch.packageRoot, launch.pluginId);
-        const builtins = [
-          ...BUILTIN_PLUGIN_SOURCES.filter(
-            (source) =>
-              source.kind !== "builtin" ||
-              (source.manifest as { id: string }).id !== launch.pluginId,
-          ),
-          {
-            kind: "builtin" as const,
-            policy: "optional" as const,
-            manifest: leaf.manifest,
-            resources: leaf.resources,
-            launch,
-          },
-        ];
+          packageRoot: path.join(root, "plugins/device-ev3"),
+        };
+        let builtins;
+        if (installed)
+          builtins = await assembleBuiltinPluginSources({
+            packaged: false,
+            appPath: root,
+            buildRoot: root,
+          });
+        else {
+          const resolved = await resolveBuiltinLaunch({
+            ...launch,
+            slug: "device-ev3",
+            packaged: false,
+            appPath: root,
+            buildRoot: root,
+          });
+          const validated = await validateBuiltinLeaf(resolved.packageRoot, launch.pluginId);
+          builtins = [
+            ...BUILTIN_PLUGIN_SOURCES.filter(
+              (source) =>
+                source.kind !== "builtin" ||
+                (source.manifest as { id: string }).id !== launch.pluginId,
+            ),
+            {
+              kind: "builtin" as const,
+              policy: "optional" as const,
+              manifest: validated.manifest,
+              resources: validated.resources,
+              launch: resolved,
+            },
+          ];
+        }
+        const selected = builtins.filter(
+          (source) =>
+            source.kind === "builtin" && (source.manifest as { id: string }).id === launch.pluginId,
+        );
+        assert.equal(selected.length, 1, "Exactly one provider/process source");
+        const source = selected[0];
+        assert.ok(source && source.kind === "builtin");
+        const leaf = {
+          manifest: scenario === "healthy" ? pluginManifestSchema.parse(source.manifest) : null,
+        };
         // Fresh barrier: never call the old catch/default file loader.
         const legacy = new DevicePreferencesStore();
         legacy.freezeAdmission();
@@ -199,6 +297,25 @@ export function runNativeDevice(): void {
             nodeIntegration: false,
           },
         });
+        if (installed) {
+          const preferences = (
+            win.webContents as unknown as {
+              getLastWebPreferences(): {
+                sandbox?: boolean;
+                contextIsolation?: boolean;
+                nodeIntegration?: boolean;
+              };
+            }
+          ).getLastWebPreferences();
+          assert.equal(preferences.sandbox, true);
+          assert.equal(preferences.contextIsolation, true);
+          assert.equal(preferences.nodeIntegration, false);
+          assert.ok(
+            !app.commandLine.hasSwitch("no-sandbox") &&
+              !app.commandLine.hasSwitch("disable-setuid-sandbox"),
+          );
+          checkpoints.chromiumSandbox = true;
+        }
         const window = win,
           sender = window.webContents.id;
         // Like product currentCoreScope: identity may exist before document authority.
@@ -232,6 +349,7 @@ export function runNativeDevice(): void {
                 ...options,
                 providerFactory: (catalog) =>
                   (() => {
+                    providerCreations++;
                     const fake = createFakeDeviceProvider({
                       catalog: {
                         ...catalog,
@@ -269,9 +387,9 @@ export function runNativeDevice(): void {
                   ? currentScope(p) &&
                     ["devices.read", "devices.connect", "devices.control"].includes(permission)
                   : p.owner.sourceKey === launch.sourceKey &&
-                    !!leaf.manifest.permissions?.includes(permission),
+                    !!leaf.manifest?.permissions?.includes(permission),
               requirements: (p) =>
-                p.sourceKey === launch.sourceKey ? (leaf.manifest.requires?.devices ?? []) : null,
+                p.sourceKey === launch.sourceKey ? (leaf.manifest?.requires?.devices ?? []) : null,
               connectionPolicy: () => {
                 throw new Error("Authoritative device gate unavailable");
               },
@@ -313,6 +431,28 @@ export function runNativeDevice(): void {
         const live = composition,
           ui = desktopUi(live),
           handles = desktopFoundationTestHandles(live);
+        if (installed && scenario !== "healthy") {
+          const row = live.plugins.state().plugins.find((p) => p.sourceKey === launch.sourceKey);
+          assert.equal(row?.status, "invalid");
+          assert.ok(row?.problems.some((p) => p.code === "PLUGIN_E_ENTRY"));
+          const catalog = await ui.bridge.catalog({});
+          assert.ok(catalog.ok);
+          assert.ok(!catalog.value.entries.some((e) => e.pluginId === launch.pluginId));
+          const activation = await live.plugins.execute("kobrixa.device-ev3.refresh");
+          assert.equal(activation.ok, false);
+          assert.equal(launches.length, 0);
+          assert.equal(providerCreations, 0);
+          checkpoints.negative = { row, catalog, activation, at: wall() };
+          await live.dispose();
+          cleanup = {
+            bridge: diagnosticsFor(ui.bridge).snapshot(),
+            worker: workerDiagnostics(handles.backend).snapshot(),
+            workers: persistenceWorkerCount(handles.backend),
+          };
+          stage = "complete";
+          return;
+        }
+
         assert.equal(handles.recovery, "ready");
         assert.equal(handles.profile, handles.persistenceProfile);
         const trusted = (event: { sender: { id: number }; senderFrame: unknown }) =>
@@ -697,6 +837,9 @@ export function runNativeDevice(): void {
           JSON.stringify(
             {
               schema: 1,
+              installed,
+              scenario,
+              providerCreations,
               stage,
               mainPid: process.pid,
               versions: process.versions,

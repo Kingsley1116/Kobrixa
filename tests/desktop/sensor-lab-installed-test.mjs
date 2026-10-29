@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
-import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { verifyInstalledReceipt, auditPayload } from "./sensor-lab-installed-run.mjs";
-import { verifyLeaf, digest } from "./sensor-lab-installed-artifacts.mjs";
+import {
+  verifyInstalledReceipt,
+  auditPayload,
+  labInstalledOptions,
+} from "./sensor-lab-installed-run.mjs";
+import { verifyLeaf, digest, copyInstalledLeaf } from "./sensor-lab-installed-artifacts.mjs";
 // Synthetic oracle UNIT data only; never emitted by the native producer.
 function oracleFixture() {
   const owner = {
@@ -494,4 +498,52 @@ test("audit allows only standalone Node builtin imports", async (t) => {
   await writeFile(path.join(directory, "main.cjs"), 'require("node:crypto");');
   const result = await auditPayload(directory);
   assert.equal(Object.keys(result.metafile.inputs).length, 1);
+});
+
+test("declared settings v1 participates in exact indexed leaf", async (t) => {
+  const { directory, files } = await artifact(t);
+  const manifest = JSON.parse(await readFile(path.join(directory, "kobrixa-plugin.json"), "utf8"));
+  manifest.contributes.settings = { path: "settings/preferences.json", version: 1 };
+  await mkdir(path.join(directory, "settings"));
+  await writeFile(path.join(directory, "settings/preferences.json"), "{}");
+  await writeFile(path.join(directory, "kobrixa-plugin.json"), JSON.stringify(manifest));
+  for (const name of ["kobrixa-plugin.json", "settings/preferences.json"]) {
+    const b = await readFile(path.join(directory, name));
+    const row = { path: name, bytes: b.length, sha256: digest(b) };
+    const old = files.findIndex((f) => f.path === name);
+    if (old < 0) files.push(row);
+    else files[old] = row;
+  }
+  files.sort((a, b) => a.path.localeCompare(b.path));
+  await writeFile(
+    path.join(directory, "resource-index.json"),
+    JSON.stringify({ version: 1, pluginId: "kobrixa.sensor-lab", files }),
+  );
+  assert.equal((await verifyLeaf(directory)).files.length, 5);
+  await rm(path.join(directory, "settings/preferences.json"));
+  await assert.rejects(verifyLeaf(directory));
+});
+
+test("shared defaults still select original Lab scenarios", () => {
+  assert.equal(labInstalledOptions.slug, "sensor-lab");
+  assert.equal(labInstalledOptions.pluginId, "kobrixa.sensor-lab");
+  assert.equal(labInstalledOptions.switchPrefix, "lab");
+  assert.equal(labInstalledOptions.missingResource, "ui/panel.json");
+  assert.equal(labInstalledOptions.verify, verifyInstalledReceipt);
+});
+test("copy preserves every indexed byte and refuses replay or tampering", async (t) => {
+  const { directory, files } = await artifact(t);
+  const output = await realpath(await mkdtemp(path.join(tmpdir(), "installed-copy-unit-")));
+  t.after(() => rm(output, { recursive: true, force: true }));
+  await copyInstalledLeaf(directory, output, "kobrixa.sensor-lab");
+  for (const name of [...files.map((f) => f.path), "resource-index.json"])
+    assert.deepEqual(
+      await readFile(path.join(output, name)),
+      await readFile(path.join(directory, name)),
+    );
+  await assert.rejects(copyInstalledLeaf(directory, output, "kobrixa.sensor-lab"));
+  await writeFile(path.join(directory, "main.cjs"), "tampered");
+  await assert.rejects(
+    copyInstalledLeaf(directory, path.join(output, "next"), "kobrixa.sensor-lab"),
+  );
 });

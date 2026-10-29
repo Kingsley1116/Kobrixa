@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { lstat, open, realpath } from "node:fs/promises";
+import { lstat, open, realpath, mkdir, cp } from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
 export const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -81,6 +81,25 @@ export async function verifyLeaf(directory, pluginId = "kobrixa.sensor-lab") {
     assert.equal(item.resource.version, 2);
     return item.resource.path;
   });
+  if (manifest.contributes.settings) {
+    assert.equal(manifest.contributes.settings.version, 1);
+    resources.push(manifest.contributes.settings.path);
+  }
   assert.deepEqual(paths, [...new Set(["main.cjs", "kobrixa-plugin.json", ...resources])].sort());
+  return index;
+}
+
+// Copy only verified packaging output; never compile or synthesize an index here.
+export async function copyInstalledLeaf(artifact, destination, pluginId) {
+  const index = await verifyLeaf(artifact, pluginId);
+  await mkdir(destination, { recursive: true });
+  for (const name of [...index.files.map((f) => f.path), "resource-index.json"]) {
+    await mkdir(path.dirname(path.join(destination, name)), { recursive: true });
+    await cp(path.join(artifact, name), path.join(destination, name), {
+      errorOnExist: true,
+      force: false,
+    });
+  }
+  assert.deepEqual(await verifyLeaf(destination, pluginId), index);
   return index;
 }
