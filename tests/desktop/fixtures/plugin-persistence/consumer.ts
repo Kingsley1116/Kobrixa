@@ -1,6 +1,7 @@
+import type { RecordMeta } from "@kobrixa/plugin-protocol";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { definePlugin, runPlugin, type PluginContext } from "@kobrixa/plugin-sdk";
+import { definePlugin, runPlugin, type PluginContext, type PluginDefinition } from "@kobrixa/plugin-sdk";
 import { installSealedTtlConsumer } from "./sealed-ttl-consumer.js";
 import { installOptionalOffConsumer } from "./optional-off-consumer.js";
 let optionalDrain: ReturnType<typeof installOptionalOffConsumer> | undefined;
@@ -11,9 +12,14 @@ const value = <T>(result: { ok: true; value: T } | { ok: false; error: unknown }
   return result.value;
 };
 let actionCheckpointOnly = false;
+let interopDrain: ReturnType<typeof installPublicInterop> | undefined;
 void runPlugin(
   definePlugin({
     activate(ctx) {
+      if (ctx.pluginId === "acceptance.interop-js") {
+        interopDrain = installPublicInterop(ctx);
+        return;
+      }
       if (ctx.pluginId === "acceptance.ui-recording") {
         ttlDrain = installSealedTtlConsumer(ctx);
         optionalDrain = installOptionalOffConsumer(ctx);
@@ -255,6 +261,7 @@ void runPlugin(
       });
     },
     async drain(context) {
+      if (interopDrain) return interopDrain(context);
       const { request, storage } = context;
       const optional = await optionalDrain?.(context);
       if (optional) return optional;
@@ -330,8 +337,7 @@ void runPlugin(
 
 // Called only with the SDK's actual invocation-bound context after a fresh user action.
 // The controller must supply real action/route traces before counting either operation.
-export async function exportFixture(ctx: PluginContext) {
-  const actionRef = ctx.actions.actionRef;
+export async function exportFixture(ctx: PluginContext, actionRef = ctx.actions.actionRef) {
   assert.ok(actionRef, "Export requires a fresh host action");
   const bytes = Buffer.from("Synthetic persistence export\n");
   const job = value(
@@ -364,8 +370,264 @@ export async function exportFixture(ctx: PluginContext) {
   );
   return value(await ctx.actions.exportCommit({ export: job.export }));
 }
-export async function copyFixture(ctx: PluginContext) {
-  const actionRef = ctx.actions.actionRef;
+export async function copyFixture(ctx: PluginContext, actionRef = ctx.actions.actionRef) {
   assert.ok(actionRef, "Copy requires its own fresh action");
   return value(await ctx.ui.copyText({ actionRef, text: "Synthetic persistence fixture" }));
+}
+
+// Opt-in current SDK interop fixture; ordinary acceptance consumers keep their existing lifecycle.
+function installPublicInterop(
+  ctx: PluginContext,
+): NonNullable<PluginDefinition["drain"]> {
+  const emit = (phase: string, data: unknown = {}) =>
+    console.error(
+      "PUBLIC_INTEROP:" +
+        JSON.stringify({
+          phase,
+          pluginId: ctx.pluginId,
+          pid: process.pid,
+          data,
+        }),
+    );
+  const records: RecordMeta[] = [];
+  let retainedRead: string | undefined;
+  let subscription: string | undefined;
+  let release: (() => void) | undefined;
+  let callbackDone: Promise<void> | undefined;
+  const bytes = (index: number) => Buffer.alloc(262181, 97 + index);
+  const publish = async (
+    storage: PluginContext["storage"],
+    index: number,
+    extra: Partial<Parameters<PluginContext["storage"]["beginWrite"]>[0]> = {},
+  ) => {
+    const payload = bytes(index);
+    const write = value(
+      await storage.beginWrite({
+        target: { mode: "create" },
+        kind: "test.interop",
+        schemaVersion: 1,
+        label: `Interop ${index}`,
+        mediaType: "application/octet-stream",
+        byteLength: payload.length,
+        sha256: createHash("sha256").update(payload).digest("hex"),
+        ...extra,
+      }),
+    );
+    for (let offset = 0; offset < payload.length; offset += 262144) {
+      const chunk = {
+        write: write.write,
+        offset,
+        data: payload.subarray(offset, offset + 262144).toString("base64"),
+      };
+      value(await storage.writeChunk(chunk));
+      if (!offset) value(await storage.writeChunk(chunk));
+    }
+    value(await storage.sealWrite({ write: write.write }));
+    const commit = {
+      write: write.write,
+      ...(extra.drainToken ? { drainToken: extra.drainToken } : {}),
+    };
+    const saved = value(await storage.commitWrite(commit));
+    assert.deepEqual(value(await storage.commitWrite(commit)).receipt, saved.receipt);
+    return { write: write.write, record: saved.record };
+  };
+  const readAll = async () => {
+    for (const [index, record] of records.entries()) {
+      const read = value(
+        await ctx.storage.openRead({
+          id: record.id,
+          expectedRevision: record.revision,
+          schemaVersion: 1,
+        }),
+      );
+      try {
+        const hash = createHash("sha256");
+        let offset = 0;
+        while (offset < record.byteLength) {
+          const requested = Math.min(262144, record.byteLength - offset);
+          const chunk = value(
+            await ctx.storage.readChunk({ read: read.read, offset, maxBytes: requested }),
+          );
+          const data = Buffer.from(chunk.data, "base64");
+          assert.ok(data.length > 0 && data.length <= requested);
+          assert.equal(chunk.nextOffset, offset + data.length);
+          offset = chunk.nextOffset;
+          assert.equal(chunk.eof, offset === record.byteLength);
+          hash.update(data);
+        }
+        assert.equal(hash.digest("hex"), createHash("sha256").update(bytes(index)).digest("hex"));
+      } finally {
+        value(await ctx.storage.closeRead({ read: read.read }));
+      }
+    }
+  };
+  ctx.commands.register(`${ctx.pluginId}.interop-watch`, async () => {
+    const initial = value(await ctx.settings.read({ schemaVersion: 1 }));
+    subscription = value(
+      await ctx.settings.watch({ schemaVersion: 1 }, undefined, async (notice) => {
+        if (notice.type !== "event") return;
+        emit("callback-enter", notice.event);
+        callbackDone = new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error("Interop callback release timeout")),
+            10000,
+          );
+          release = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+        });
+        await callbackDone;
+        emit("callback-complete", notice.event);
+      }),
+    ).subscriptionId;
+    const update = value(
+      await ctx.settings.update({
+        schemaVersion: 1,
+        expectedRevision: initial.revision,
+        changes: [
+          {
+            key: "fixture.enabled",
+            value: !initial.values.find((entry) => entry.key === "fixture.enabled")!.value,
+          },
+        ],
+      }),
+    );
+    const conflict = await ctx.settings.update({
+      schemaVersion: 1,
+      expectedRevision: initial.revision,
+      changes: [{ key: "fixture.enabled", value: false }],
+    });
+    assert.equal(conflict.ok, false);
+    if (!conflict.ok) assert.equal(conflict.error.code, "PLUGIN_E_SETTINGS_CONFLICT");
+    assert.equal(
+      value(await ctx.settings.read({ schemaVersion: 1 })).revision,
+      update.snapshot.revision,
+    );
+    emit("watch-ready", { subscription });
+  });
+  ctx.commands.register(`${ctx.pluginId}.interop-release`, async () => {
+    assert.ok(release && callbackDone);
+    emit("callback-release");
+    release();
+    await callbackDone;
+  });
+  ctx.commands.register(`${ctx.pluginId}.interop-records`, async () => {
+    assert.equal(records.length, 0);
+    for (let index = 0; index < 2; index++)
+      records.push((await publish(ctx.storage, index)).record);
+    const listed: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = value(
+        await ctx.storage.list({ kind: "test.interop", limit: 1, ...(cursor ? { cursor } : {}) }),
+      );
+      listed.push(...page.entries.map((r) => r.id));
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+    assert.deepEqual(listed.sort(), records.map((r) => r.id).sort());
+    await readAll();
+    retainedRead = value(
+      await ctx.storage.openRead({
+        id: records[0]!.id,
+        expectedRevision: records[0]!.revision,
+        schemaVersion: 1,
+      }),
+    ).read;
+    emit("records", { records, read: retainedRead, quota: value(await ctx.storage.quota({})) });
+  });
+  const text = {
+    type: "string" as const,
+    minLength: 1,
+    maxLength: 128,
+    maxBytes: 512,
+    nullable: false as const,
+  };
+  ctx.commands.registerContext(
+    `${ctx.pluginId}.interop-foreign`,
+    { id: text, revision: text, read: text },
+    async (invocation) => {
+      const foreign = invocation.arguments;
+      for (const result of [
+        await ctx.storage.openRead({
+          id: String(foreign.id),
+          expectedRevision: String(foreign.revision),
+          schemaVersion: 1,
+        }),
+        await ctx.storage.readChunk({ read: String(foreign.read), offset: 0, maxBytes: 1 }),
+      ]) {
+        assert.equal(result.ok, false);
+        if (!result.ok)
+          assert.ok(
+            ["PLUGIN_E_PERMISSION_DENIED", "PLUGIN_E_STALE_RESOURCE"].includes(result.error.code),
+          );
+      }
+      emit("foreign-denied", foreign);
+      return { output: { done: true }, fieldErrors: [] };
+    },
+  );
+  ctx.commands.register(`${ctx.pluginId}.interop-verify`, async () => {
+    await readAll();
+    emit("verified", { records, quota: value(await ctx.storage.quota({})) });
+    assert.ok(retainedRead && subscription);
+    value(await ctx.storage.closeRead({ read: retainedRead }));
+    retainedRead = undefined;
+    assert.equal(value(await ctx.settings.unwatch({ subscriptionId: subscription })).removed, true);
+    assert.equal(
+      value(await ctx.settings.unwatch({ subscriptionId: subscription })).removed,
+      false,
+    );
+    value(await ctx.storage.flush({}));
+  });
+  for (const action of ["export", "copy"] as const)
+    ctx.commands.registerContext(`${ctx.pluginId}.interop-${action}`, {}, async (invocation) => {
+      const result =
+        action === "export"
+          ? await exportFixture(ctx, invocation.context.actionRef)
+          : await copyFixture(ctx, invocation.context.actionRef);
+      assert.ok(!("cancelled" in result), "Interop export must complete");
+      emit(action, {
+        invocationId: invocation.invocationId,
+        actionRef: invocation.context.actionRef,
+        result,
+      });
+      return { output: { done: true }, fieldErrors: [] };
+    });
+  ctx.commands.registerContext(
+    `${ctx.pluginId}.interop-replay`,
+    { actionRef: text },
+    async (invocation) => {
+      const result = await ctx.ui.copyText({
+        actionRef: String(invocation.arguments.actionRef),
+        text: "forbidden replay",
+      });
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.error.code, "PLUGIN_E_PERMISSION_DENIED");
+      emit("replay-denied", result);
+      return { output: { done: true }, fieldErrors: [] };
+    },
+  );
+  ctx.commands.register(`${ctx.pluginId}.interop-checkpoint`, async () => {
+    const record = records[0]!;
+    emit(
+      "checkpoint",
+      value(
+        await ctx.storage.registerCheckpoint({ id: record.id, expectedRevision: record.revision }),
+      ),
+    );
+  });
+  emit("boot");
+  return async ({ request, storage }) => {
+    assert.equal(request.checkpoints.length, 1);
+    emit("drain-enter", request);
+    const item = request.checkpoints[0]!;
+    const saved = await publish(storage, 0, {
+      target: { mode: "replace", id: item.record.id, expectedRevision: item.record.revision },
+      checkpoint: { handle: item.checkpoint, phase: "final" },
+      drainToken: request.token,
+    });
+    value(await storage.flush({}));
+    emit("drain-submitted", { token: request.token, write: saved.write });
+    return { ok: true, value: { status: "submitted", writes: [saved.write] } };
+  };
 }

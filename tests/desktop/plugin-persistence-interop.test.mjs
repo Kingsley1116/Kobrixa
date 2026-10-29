@@ -1021,11 +1021,469 @@ test("registration-end source provenance retains original ports and SDK callback
   assert.ok(consumer.includes("drainToken: request.token"));
 });
 
-
 test("pressure builtin roles exclude reference panels while other fixture cases retain them", async () => {
   const { foundationBuiltinRoles } = await import("./plugin-persistence-main.ts");
   assert.deepEqual(foundationBuiltinRoles("storage-ui-pressure"), ["pressure-a", "pressure-b"]);
   assert.deepEqual(foundationBuiltinRoles("import-restart"), ["recording", "settings", "import"]);
-  for (const id of ["all-optional-off", "compatibility", "action-replay", "renderer-loss", "sealed-ttl"])
+  for (const id of [
+    "all-optional-off",
+    "compatibility",
+    "action-replay",
+    "renderer-loss",
+    "sealed-ttl",
+  ])
     assert.deepEqual(foundationBuiltinRoles(id), ["recording", "settings"]);
+});
+
+// These synthetic traces exercise only the outside oracle; they are never native receipts.
+import {
+  INTEROP_IDS,
+  COMPATIBILITY_REFERENCE,
+  readInteropIdentity,
+  verifyPublicInterop,
+  publicInteropObserver,
+  interopPairs,
+  runPublicInterop,
+} from "./plugin-persistence-public-interop.ts";
+
+const interopHash = (data) => createHash("sha256").update(data).digest("hex");
+function publicInteropUnitTrace() {
+  let sequence = 0,
+    nextId = 0;
+  const ok = (value) => ({ ok: true, value });
+  const denied = (code) => ({ ok: false, error: { code } });
+  const consumers = INTEROP_IDS.map((pluginId, i) => ({
+    owner: {
+      pluginId,
+      sourceKey: `dev:source-${i}`,
+      generation: 0,
+      hostEpoch: "host",
+      processEpoch: `process-${i}`,
+    },
+    transport: i ? "stdio" : "message-port",
+    launch: ++sequence,
+    wire: [],
+    output: [],
+    actions: [],
+  }));
+  const output = (r, phase, data = {}) =>
+    r.output.push({
+      sequence: ++sequence,
+      line:
+        "PUBLIC_INTEROP:" +
+        JSON.stringify({
+          phase,
+          pluginId: r.owner.pluginId,
+          pid: consumers.indexOf(r) + 100,
+          data,
+        }),
+    });
+  const start = (r, method, params, direction = "plugin") => {
+    const id = ++nextId;
+    r.wire.push({
+      sequence: ++sequence,
+      direction,
+      message: { jsonrpc: "2.0", id, method, params },
+    });
+    return (result) =>
+      r.wire.push({
+        sequence: ++sequence,
+        direction: direction === "host" ? "plugin" : "host",
+        message: { jsonrpc: "2.0", id, result },
+      });
+  };
+  const rpc = (r, m, p, result, d) => start(r, m, p, d)(result);
+  const action = (r, kind, ref, data) =>
+    r.actions.push({ sequence: ++sequence, kind, actionRef: ref, data });
+  const records = consumers.map((_, owner) =>
+    [0, 1].map((i) => ({
+      id: `${owner}-record-${i}`,
+      revision: `${owner}-revision-${i}`,
+      byteLength: 262181,
+      sha256: interopHash(Buffer.alloc(262181, 97 + i)),
+      checkpoint: "none",
+    })),
+  );
+  const quota = { committedBytes: 524362, reservedBytes: 0, recordCount: 2 };
+  const readRecord = (r, record, index, label) => {
+    const handle = `${r.owner.pluginId}-read-${label}-${index}`;
+    rpc(
+      r,
+      "storage/openRead",
+      { id: record.id, expectedRevision: record.revision, schemaVersion: 1 },
+      ok({ read: handle, record }),
+    );
+    // Positive short reads, including a chunk-boundary crossing.
+    let offset = 0;
+    for (const count of [200000, 62170, 11]) {
+      const bytes = Buffer.alloc(count, 97 + index);
+      rpc(
+        r,
+        "storage/readChunk",
+        { read: handle, offset, maxBytes: Math.min(262144, 262181 - offset) },
+        ok({
+          data: bytes.toString("base64"),
+          nextOffset: offset + count,
+          eof: offset + count === 262181,
+        }),
+      );
+      offset += count;
+    }
+    rpc(r, "storage/closeRead", { read: handle }, ok({}));
+  };
+  for (const [i, r] of consumers.entries()) {
+    output(r, "boot");
+    rpc(
+      r,
+      "initialize",
+      { pluginId: r.owner.pluginId, apiVersion: "1.8.0" },
+      { apiVersion: "1.8.0", sdk: { name: i ? "kobrixa-plugin-sdk" : "@kobrixa/plugin-sdk" } },
+      "host",
+    );
+    rpc(r, "settings/read", {}, ok({ revision: null }));
+    rpc(r, "settings/watch", { schemaVersion: 1 }, ok({ subscriptionId: `sub-${i}`, sequence: 0 }));
+    rpc(
+      r,
+      "settings/update",
+      { expectedRevision: null },
+      ok({ snapshot: { revision: "settings-new" } }),
+    );
+    const event = {
+      kind: "settings.changed",
+      subscriptionId: `sub-${i}`,
+      sequence: 1,
+      data: { revision: "settings-new" },
+    };
+    r.wire.push({
+      sequence: ++sequence,
+      direction: "host",
+      message: { jsonrpc: "2.0", method: "events/deliver", params: event },
+    });
+    output(r, "callback-enter", event);
+    rpc(r, "events/ack", { subscriptionId: `sub-${i}`, sequence: 1 }, ok({ acknowledged: 1 }));
+    output(r, "callback-release");
+    output(r, "callback-complete", event);
+    rpc(r, "settings/update", { expectedRevision: null }, denied("PLUGIN_E_SETTINGS_CONFLICT"));
+    rpc(r, "settings/read", {}, ok({ revision: "settings-new" }));
+    for (const [index, record] of records[i].entries()) {
+      const handle = `write-${i}-${index}`,
+        bytes = Buffer.alloc(262181, 97 + index);
+      rpc(
+        r,
+        "storage/beginWrite",
+        { target: { mode: "create" } },
+        ok({ id: record.id, write: handle }),
+      );
+      for (const offset of [0, 0, 262144])
+        rpc(
+          r,
+          "storage/writeChunk",
+          {
+            write: handle,
+            offset,
+            data: bytes.subarray(offset, offset + 262144).toString("base64"),
+          },
+          ok({ receivedBytes: Math.min(offset + 262144, bytes.length) }),
+        );
+      rpc(r, "storage/sealWrite", { write: handle }, ok({}));
+      for (let copy = 0; copy < 2; copy++)
+        rpc(
+          r,
+          "storage/commitWrite",
+          { write: handle },
+          ok({ record, receipt: { revision: record.revision, commitId: handle } }),
+        );
+      readRecord(r, record, index, "before");
+    }
+    rpc(r, "storage/list", { limit: 1 }, ok({ entries: [records[i][0]], nextCursor: "page2" }));
+    rpc(r, "storage/list", { limit: 1, cursor: "page2" }, ok({ entries: [records[i][1]] }));
+    rpc(r, "storage/openRead", { id: records[i][0].id }, ok({ read: `held-${i}` }));
+    output(r, "records", { records: records[i], read: `held-${i}`, quota });
+  }
+  for (const [i, r] of consumers.entries()) {
+    const foreign = 1 - i;
+    rpc(r, "storage/openRead", { id: records[foreign][0].id }, denied("PLUGIN_E_STALE_RESOURCE"));
+    rpc(
+      r,
+      "storage/readChunk",
+      { read: `held-${foreign}`, offset: 0, maxBytes: 1 },
+      denied("PLUGIN_E_STALE_RESOURCE"),
+    );
+    for (const [index, record] of records[i].entries()) readRecord(r, record, index, "after");
+    output(r, "verified", { records: records[i], quota });
+    rpc(r, "storage/closeRead", { read: `held-${i}` }, ok({}));
+    for (const removed of [true, false])
+      rpc(r, "events/unsubscribe", { subscriptionId: `sub-${i}` }, ok({ removed }));
+    rpc(r, "storage/flush", {}, ok({ barrier: "settled" }));
+    for (const kind of ["export", "copy"]) {
+      const ref = `${i}-${kind}`,
+        invocationId = `${ref}-invoke`;
+      action(r, "mint", ref, { owner: r.owner });
+      const finish = start(
+        r,
+        "command/invoke",
+        {
+          command: `${r.owner.pluginId}.interop-${kind}`,
+          invocationId,
+          context: { actionRef: ref },
+        },
+        "host",
+      );
+      const claimed = () =>
+        action(r, "claim", ref, {
+          owner: r.owner,
+          ok: true,
+          capability: kind === "export" ? "storage.export" : "ui.clipboard",
+        });
+      if (kind === "copy") {
+        const done = start(r, "ui/copyText", {
+          actionRef: ref,
+          text: "Synthetic persistence fixture",
+        });
+        claimed();
+        action(r, "clipboard-write", ref, { text: "Synthetic persistence fixture" });
+        done(ok({ copied: true }));
+      } else {
+        const done = start(r, "storage/exportBegin", { actionRef: ref });
+        claimed();
+        done(ok({ export: "job" }));
+        rpc(
+          r,
+          "storage/exportChunk",
+          {
+            export: "job",
+            offset: 0,
+            data: Buffer.from("Synthetic persistence export\n").toString("base64"),
+          },
+          ok({}),
+        );
+        rpc(r, "storage/exportCommit", { export: "job" }, ok({}));
+        action(r, "export-file", ref, {
+          byteLength: 29,
+          sha256: interopHash("Synthetic persistence export\n"),
+        });
+      }
+      output(r, kind, { invocationId, actionRef: ref });
+      finish(ok({ output: { done: true }, fieldErrors: [] }));
+    }
+    rpc(
+      r,
+      "ui/copyText",
+      { actionRef: `${i}-copy`, text: "forbidden replay" },
+      denied("PLUGIN_E_PERMISSION_DENIED"),
+    );
+    const token = `token-${i}`,
+      checkpoint = `checkpoint-${i}`,
+      target = records[i][0];
+    rpc(
+      r,
+      "storage/registerCheckpoint",
+      { id: target.id, expectedRevision: target.revision },
+      ok({ checkpoint }),
+    );
+    const finishDrain = start(
+      r,
+      "storage/drain",
+      { token, checkpoints: [{ checkpoint, record: target }] },
+      "host",
+    );
+    const write = `final-${i}`;
+    rpc(
+      r,
+      "storage/beginWrite",
+      {
+        target: { mode: "replace", id: target.id },
+        checkpoint: { handle: checkpoint, phase: "final" },
+        drainToken: token,
+      },
+      ok({ write }),
+    );
+    rpc(
+      r,
+      "storage/commitWrite",
+      { write, drainToken: token },
+      ok({ record: { ...target, checkpoint: "final" } }),
+    );
+    rpc(r, "storage/flush", {}, ok({ barrier: "final" }));
+    finishDrain(ok({ status: "submitted", writes: [write] }));
+    r.drain = {
+      sequence: ++sequence,
+      offer: { token, owner: r.owner },
+      report: {
+        state: "saved",
+        blocker: false,
+        pendingSettings: false,
+        errors: [],
+        records: [{ id: target.id, final: true }],
+      },
+    };
+    r.exit = { sequence: ++sequence, code: 0 };
+  }
+  return {
+    consumers,
+    identity: {
+      hostVersion: "1.8.0",
+      publicApi18Published: true,
+      compatibility: COMPATIBILITY_REFERENCE,
+    },
+  };
+}
+
+test("public interop phase1: paired raw operations accept short reads and omitted final cursor", () => {
+  const f = publicInteropUnitTrace();
+  assert.equal(verifyPublicInterop(f.consumers, f.identity).fullStage3Pass, false);
+});
+const interopCorruptions = {
+  "flattened business envelope": (f) => {
+    const p = interopPairs(f.consumers[0], "storage/list")[0];
+    p.response.message.result = p.result.value;
+  },
+  "missing callback": (f) => {
+    f.consumers[0].output = f.consumers[0].output.filter(
+      (r) => !r.line.includes('"callback-enter"'),
+    );
+  },
+  "wrong subscription ACK": (f) => {
+    interopPairs(f.consumers[0], "events/ack")[0].params.subscriptionId = "foreign";
+  },
+  "ACK after callback release": (f) => {
+    const r = f.consumers[0];
+    interopPairs(r, "events/ack")[0].response.sequence = r.exit.sequence - 1;
+  },
+  "CAS false positive": (f) => {
+    interopPairs(f.consumers[0], "settings/update")[1].result.error.code = "PLUGIN_E_STORAGE_IO";
+  },
+  "missing continuation page": (f) => {
+    const r = f.consumers[0],
+      p = interopPairs(r, "storage/list")[1];
+    r.wire = r.wire.filter((w) => w !== p.request && w !== p.response);
+  },
+  "corrupt full read hash": (f) => {
+    interopPairs(f.consumers[0], "storage/readChunk")[0].result.value.data = Buffer.alloc(
+      200000,
+      99,
+    ).toString("base64");
+  },
+  "foreign owner admitted": (f) => {
+    const p = interopPairs(f.consumers[0], "storage/openRead").find((p) => !p.result.ok);
+    p.response.message.result = { ok: true, value: { read: "bad" } };
+  },
+  "invented ledger mint": (f) => {
+    f.consumers[0].actions = f.consumers[0].actions.filter((r) => r.kind !== "mint");
+  },
+  "foreign ledger owner": (f) => {
+    f.consumers[0].actions[0].data.owner = f.consumers[1].owner;
+  },
+  "replayed action reuse": (f) => {
+    interopPairs(f.consumers[0], "command/invoke", "host")[1].params.context.actionRef = "0-export";
+  },
+  "export bytes corrupted": (f) => {
+    f.consumers[0].actions.find((r) => r.kind === "export-file").data.sha256 = "0".repeat(64);
+  },
+  "clipboard extra write": (f) => {
+    f.consumers[0].actions.push(
+      structuredClone(f.consumers[0].actions.find((r) => r.kind === "clipboard-write")),
+    );
+  },
+  "callback claims saved": (f) => {
+    interopPairs(f.consumers[0], "storage/drain", "host")[0].result.value.status = "saved";
+  },
+  "host not saved": (f) => {
+    f.consumers[0].drain.report.state = "checkpoint-only";
+  },
+  "foreign drain token": (f) => {
+    f.consumers[0].drain.offer.token = "foreign";
+  },
+  "missing response": (f) => {
+    f.consumers[0].wire.splice(1, 1);
+  },
+  "future host": (f) => {
+    f.identity.hostVersion = "1.9.0";
+  },
+  "negotiation mismatch": (f) => {
+    interopPairs(f.consumers[0], "initialize", "host")[0].result.apiVersion = "1.7.0";
+  },
+  "false 1.8 publication": (f) => {
+    f.identity.publicApi18Published = false;
+  },
+  "failed process": (f) => {
+    f.consumers[0].exit.code = 1;
+  },
+};
+for (const [name, corrupt] of Object.entries(interopCorruptions))
+  test(`public interop phase1: reject ${name}`, () => {
+    const f = publicInteropUnitTrace();
+    corrupt(f);
+    assert.throws(() => verifyPublicInterop(f.consumers, f.identity));
+  });
+test("public interop phase1: archived twenty-run reference is checked against actual current source bytes", async () => {
+  const identity = await readInteropIdentity(new URL("../../", import.meta.url).pathname);
+  assert.equal(identity.compatibility.commit, COMPATIBILITY_REFERENCE.commit);
+  assert.equal(identity.compatibility.sha256, COMPATIBILITY_REFERENCE.sha256);
+  assert.ok(Object.keys(identity.runtimeHashes).length > 10);
+  assert.equal(identity.publicApi18Published, identity.hostVersion === "1.8.0");
+  assert.equal(
+    identity.compatibility.applicability,
+    identity.compatibility.changed.length ? "historical-only" : "same-runtime",
+  );
+});
+test("public interop phase1: observer forwards original process and cleanup retains failure", async () => {
+  const o = publicInteropObserver(),
+    owner = {
+      pluginId: INTEROP_IDS[0],
+      sourceKey: "dev:x",
+      generation: 0,
+      hostEpoch: "h",
+      processEpoch: "p",
+    };
+  const row = o.begin(owner, "message-port");
+  let receive,
+    exit,
+    removed = 0;
+  const sent = [];
+  const child = {
+    send: (text) => sent.push(text),
+    kill() {},
+    forceKill() {},
+    onMessage(fn) {
+      receive = fn;
+      return () => removed++;
+    },
+    onExit(fn) {
+      exit = fn;
+      return () => {};
+    },
+  };
+  const wrapped = o.attach(row, child);
+  wrapped.send('{"id":1,"method":"initialize"}');
+  receive('{"id":1,"result":{}}');
+  exit({ code: 0 });
+  assert.equal(sent.length, 1);
+  assert.equal(removed, 1);
+  assert.equal(row.wire.length, 2);
+  assert.equal(wrapped.kill, child.kill);
+  const cause = new Error("real command failure"),
+    cleanup = new Error("retirement incomplete"),
+    retired = [];
+  await assert.rejects(
+    runPublicInterop({
+      consumers: [{ ...row }, { ...row, owner: { ...owner, pluginId: INTEROP_IDS[1] } }],
+      execute: async () => {
+        throw cause;
+      },
+      invoke: async () => {
+        throw Error("must not invoke");
+      },
+      retire: async (id) => {
+        retired.push(id);
+        if (id === INTEROP_IDS[0]) throw cleanup;
+      },
+    }),
+    (error) => {
+      assert.equal(error.cause, error.errors[0]);
+      assert.equal(error.errors[0], cause);
+      return true;
+    },
+  );
+  assert.deepEqual(retired, [...INTEROP_IDS]);
 });
