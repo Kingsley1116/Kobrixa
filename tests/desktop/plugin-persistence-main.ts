@@ -940,6 +940,12 @@ import type { FakeProviderControl } from "../../apps/desktop/src/main/device-bro
 import type { BuiltinDeviceProvider } from "../../apps/desktop/src/main/device-broker/provider.js";
 
 let factoryAttempted = false;
+/** Reference panels are not part of the zero-panel pressure baseline. */
+export function foundationBuiltinRoles(caseId: string): readonly string[] {
+  if (caseId === "storage-ui-pressure") return ["pressure-a", "pressure-b"];
+  return ["recording", "settings", ...(caseId === "import-restart" ? ["import"] : [])];
+}
+
 export async function createFoundationFixture(): Promise<FoundationFixture> {
   if (factoryAttempted)
     throw new Error("One foundation fixture per Electron process; second factory forbidden");
@@ -1270,12 +1276,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         }
 
         const builtins = [...BUILTIN_PLUGIN_SOURCES];
-        for (const role of [
-          "recording",
-          "settings",
-          ...(imported ? ["import"] : []),
-          ...(pressure ? ["pressure-a", "pressure-b"] : []),
-        ]) {
+        for (const role of foundationBuiltinRoles(config.case)) {
           if (optional) {
             builtins.push(optional.source(config.buildRoot, role));
             continue;

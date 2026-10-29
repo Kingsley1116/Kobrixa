@@ -2,7 +2,7 @@ import { createRoot } from "react-dom/client";
 import { PluginToolsPane } from "../../apps/desktop/src/renderer/plugin-ui/panel-host.js";
 import { PluginStatusHost } from "../../apps/desktop/src/renderer/plugin-ui/status-host.js";
 import {
-  pluginUiWindow,
+  createPluginUiWindow,
   settingsStore,
 } from "../../apps/desktop/src/renderer/settings/settings-state.js";
 import { diagnosticsFor as hostDiagnostics } from "../../apps/desktop/src/renderer/plugin-ui/host-ports.js";
@@ -43,7 +43,37 @@ const labels: UiLabels = {
   },
 };
 settingsStore.set("rightPanel", "plugins");
-const owner = pluginUiWindow();
+// This standalone foundation UI-load fixture has no device-migration host.
+// Use the actual UI/recovery bridges without the optional migration adapter.
+const windowOwner = createPluginUiWindow({
+  bridge: window.kobrixa.plugins.ui,
+  recovery: window.kobrixa.plugins.recovery,
+  settings: settingsStore,
+  storage: {
+    getItem: (key) => window.localStorage.getItem(key),
+    setItem: (key, value) => window.localStorage.setItem(key, value),
+  },
+});
+const environment = (reason: "document" | "window") =>
+  windowOwner.session.environment(!document.hidden, document.hasFocus(), reason);
+const visibility = () => environment("document");
+const focus = () => environment("window");
+let disposed = false;
+const disposeWindow = () => {
+  if (disposed) return;
+  disposed = true;
+  windowOwner.dispose();
+  document.removeEventListener("visibilitychange", visibility);
+  window.removeEventListener("focus", focus);
+  window.removeEventListener("blur", focus);
+  window.removeEventListener("pagehide", disposeWindow);
+};
+const owner = { ...windowOwner, dispose: disposeWindow };
+document.addEventListener("visibilitychange", visibility);
+window.addEventListener("focus", focus);
+window.addEventListener("blur", focus);
+window.addEventListener("pagehide", disposeWindow, { once: true });
+environment("document");
 const root = createRoot(document.getElementById("root")!);
 root.render(
   <>

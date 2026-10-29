@@ -1020,3 +1020,12 @@ test("registration-end source provenance retains original ports and SDK callback
   assert.ok(consumer.includes('phase: "final"'));
   assert.ok(consumer.includes("drainToken: request.token"));
 });
+
+
+test("pressure builtin roles exclude reference panels while other fixture cases retain them", async () => {
+  const { foundationBuiltinRoles } = await import("./plugin-persistence-main.ts");
+  assert.deepEqual(foundationBuiltinRoles("storage-ui-pressure"), ["pressure-a", "pressure-b"]);
+  assert.deepEqual(foundationBuiltinRoles("import-restart"), ["recording", "settings", "import"]);
+  for (const id of ["all-optional-off", "compatibility", "action-replay", "renderer-loss", "sealed-ttl"])
+    assert.deepEqual(foundationBuiltinRoles(id), ["recording", "settings"]);
+});
