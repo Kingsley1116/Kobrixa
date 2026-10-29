@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import {
   cp,
@@ -529,6 +529,16 @@ async function launchProduct(config, receipt, check) {
           }
         }
       }
+      if (config.singleInstance && ended) {
+        const startedAt = Date.now();
+        await pause(5000);
+        remaining = await sample();
+        receipt.fiveSecondCleanup = {
+          startedAt,
+          endedAt: Date.now(),
+          remainingPids: remaining.map((row) => row.pid),
+        };
+      }
       await until(
         async () => {
           remaining = await sample();
@@ -589,6 +599,315 @@ async function launchProduct(config, receipt, check) {
         cleanupErrors.map((error) => new Error(error.message)),
         "Installed cleanup failed",
       );
+    }
+  }
+  if (failure) throw failure;
+}
+
+// Partial B2 gate: no secondary pre-lock/provider or active-recording claim.
+export const SINGLE_INSTANCE_UNRUN = Object.freeze([
+  "secondaryWorkers",
+  "secondaryProviders",
+  "secondaryPlugins",
+  "primaryRecordingInterrupted",
+]);
+export function assertSingleInstanceReceipt(report) {
+  assert.equal(report.kind, "installed-single-instance-partial");
+  assert.equal(report.status, "partial");
+  assert.equal(report.syntheticHost, false);
+  assert.equal(report.isolated, true);
+  assert.equal(report.error, undefined);
+  assert.equal(report.finalizationError, undefined);
+  assert.deepEqual(report.unrun, SINGLE_INSTANCE_UNRUN);
+  for (const key of [
+    "originalPayloadIntact",
+    "originalAppAsarIntact",
+    "copiedAppAsarIntact",
+    "originalExecutableIntact",
+    "noPathNode",
+    "noNodePath",
+    "arbitraryCwd",
+  ])
+    assert.equal(report[key], true, key);
+  for (const key of ["appAsarSha256", "originalExecutableSha256", "payloadIndexSha256"])
+    assert.match(report.artifact[key], /^[a-f0-9]{64}$/);
+  assert.equal(report.runs.length, 1);
+  const run = report.runs[0],
+    observation = run.singleInstance,
+    secondary = observation.secondary;
+  assert.equal(run.name, "single-instance");
+  assert.equal(run.error, undefined);
+  assert.equal(run.cleanupErrors, undefined);
+  assert.equal(run.forcedCleanup, false);
+  assert.equal(run.gracefulQuit, true);
+  assert.equal(run.exit.code, 0);
+  assert.equal(run.probeRestored, true);
+  assert.deepEqual(run.remainingPids, []);
+  assert.ok(run.fiveSecondCleanup.endedAt - run.fiveSecondCleanup.startedAt >= 5000);
+  assert.deepEqual(run.fiveSecondCleanup.remainingPids, []);
+  assert.equal(observation.listenersRemoved, true);
+  assert.equal(observation.before.focused, true);
+  assert.equal(observation.defocused.focused, false);
+  assert.equal(observation.after.focused, true);
+  assert.equal(observation.before.pid, run.pid);
+  assert.equal(observation.after.pid, run.pid);
+  assert.equal(observation.before.windowId, observation.after.windowId);
+  assert.equal(observation.before.profile, run.profile);
+  assert.equal(observation.after.profile, run.profile);
+  assert.equal(secondary.requestedProfile, run.profile);
+  assert.ok(Number.isSafeInteger(secondary.pid) && secondary.pid > 0 && secondary.pid !== run.pid);
+  assert.ok(secondary.argv.includes(`--user-data-dir=${run.profile}`));
+  assert.match(secondary.marker, /^--b2-secondary=[a-f0-9-]{36}$/);
+  assert.ok(secondary.argv.includes(secondary.marker));
+  assert.equal(secondary.error, undefined);
+  assert.match(secondary.logSha256, /^[a-f0-9]{64}$/);
+  assert.equal(secondary.exit.code, 0);
+  assert.equal(secondary.exit.signal, null);
+  assert.equal(secondary.forcedCleanup, false);
+  assert.equal(secondary.cleanupErrors, undefined);
+  assert.deepEqual(secondary.remainingPids, []);
+  assert.ok(secondary.cleanupObservedAt - secondary.exit.at >= 5000);
+  const events = observation.events;
+  const second = events.filter((event) => event.kind === "second-instance");
+  assert.equal(second.length, 1);
+  assert.ok(second[0].argv.includes(secondary.marker));
+  assert.ok(second[0].argv.includes(`--user-data-dir=${run.profile}`));
+  assert.equal(second[0].cwd, run.identity.cwd);
+  assert.ok(second[0].at >= observation.defocused.at);
+  assert.ok(
+    events.some(
+      (event) =>
+        event.kind === "focus" &&
+        event.windowId === observation.before.windowId &&
+        event.at >= observation.defocused.at,
+    ),
+  );
+  assert.ok(observation.after.at >= second[0].at);
+  assert.deepEqual(observation.before.forks, observation.after.forks);
+  assert.ok(
+    observation.before.forks.some(
+      (fork) =>
+        fork.serviceName === "Kobrixa plugin kobrixa.motor-test" && fork.pid > 0 && !fork.exited,
+    ),
+  );
+  assert.deepEqual(observation.before.binding, observation.after.binding);
+  assert.deepEqual(observation.before.workerStarts, observation.after.workerStarts);
+  const workers = observation.before.workerStarts.filter(
+    (row) =>
+      typeof row.arguments?.[0] === "string" && row.arguments[0].includes("persistence-worker"),
+  );
+  assert.equal(workers.length, 1);
+  assert.equal(
+    run.workerTimeline.filter((row) => row.worker === workers[0].worker && row.event === "exit")
+      .length,
+    1,
+  );
+  assert.equal(run.identity.packaged, true);
+  assert.equal(run.identity.userData, run.profile);
+  assert.equal(run.probeBeforeReady, true);
+  assert.ok(run.observedPids.includes(run.pid));
+  assert.ok(secondary.observedPids.includes(secondary.pid));
+  assert.ok(
+    run.forks.some(
+      (fork) =>
+        fork.pid ===
+          observation.before.forks.find(
+            (f) => f.serviceName === "Kobrixa plugin kobrixa.motor-test",
+          ).pid && fork.exited,
+    ),
+  );
+  for (const state of [observation.before.state, observation.after.state]) {
+    requiredCompilers(state);
+    assert.equal(state.plugins.find((plugin) => plugin.id === motorId)?.running, true);
+  }
+  for (const phase of ["before", "after"]) {
+    assert.equal(observation.hashes[phase].asar, report.artifact.appAsarSha256);
+    assert.match(observation.hashes[phase].executable, /^[a-f0-9]{64}$/);
+  }
+  assert.deepEqual(observation.hashes.before, observation.hashes.after);
+  for (const code of Object.values(run.isolation)) assert.ok(["EPERM", "EACCES"].includes(code));
+  assert.ok(Object.keys(run.isolation).length >= 3);
+}
+
+async function observeSingleInstance(client, config, run, binding) {
+  const { main, renderer, state, forks } = client;
+  const observation = (run.singleInstance = { secondary: { forcedCleanup: false }, hashes: {} });
+  const snapshot = async () => ({
+    ...(await main.js(
+      `(() => { const p=__singleInstanceProbe; return {pid:process.pid, profile:p.app.getPath('userData'), windowId:p.window.id, focused:p.window.isFocused(), at:performance.now(), workerStarts:__installedProbe.workers.timeline.filter(row=>row.event==='construct')}; })()`,
+    )),
+    state: await state(),
+    forks: await forks(),
+    binding: (
+      await renderer.js(
+        `window.kobrixa.plugins.ui.snapshot({binding:${JSON.stringify(binding)}}).then(r=>{if(!r.ok) throw Error(JSON.stringify(r)); return r.value;})`,
+      )
+    ).binding,
+  });
+  const hashes = async () => ({
+    asar: sha256(await readFile(config.archive)),
+    executable: sha256(await readFile(config.executable)),
+  });
+  let child,
+    exit,
+    closed,
+    ended = false,
+    failure;
+  const known = new Set();
+  let output = "";
+  const secondary = observation.secondary;
+  await main.js(`(() => {
+    const {app,BrowserWindow}=__installedProbe.electron, window=BrowserWindow.getAllWindows()[0];
+    if(!window) throw Error('Missing original window');
+    const events=[];
+    const second=(_event,argv,cwd)=>events.push({kind:'second-instance',argv,cwd,at:performance.now()});
+    const focus=()=>events.push({kind:'focus',windowId:window.id,at:performance.now()});
+    app.on('second-instance',second);window.on('focus',focus);
+    globalThis.__singleInstanceProbe={app,window,events,remove(){app.removeListener('second-instance',second);window.removeListener('focus',focus);return !app.listeners('second-instance').includes(second)&&!window.listeners('focus').includes(focus);}};
+    return true;
+  })()`);
+  try {
+    observation.before = await snapshot();
+    observation.hashes.before = await hashes();
+    assert.equal(observation.before.focused, true, "Original primary must initially be focused");
+    await main.js("__singleInstanceProbe.window.blur(); true");
+    await until(
+      () => main.js("!__singleInstanceProbe.window.isFocused()"),
+      "actual primary defocus",
+    );
+    observation.defocused = await main.js(
+      `({focused:__singleInstanceProbe.window.isFocused(),at:performance.now()})`,
+    );
+    assert.equal(observation.defocused.focused, false);
+    secondary.marker = `--b2-secondary=${randomUUID()}`;
+    secondary.requestedProfile = config.profile;
+    secondary.argv = [`--user-data-dir=${config.profile}`, secondary.marker];
+    const args = config.isolated
+      ? process.platform === "darwin"
+        ? ["-f", config.isolationProfile, config.executable, ...secondary.argv]
+        : [
+            fileURLToPath(new URL("./builtin-installed-landlock.py", import.meta.url)),
+            ...config.deniedRoots,
+            "--",
+            config.executable,
+            ...secondary.argv,
+          ]
+      : secondary.argv;
+    child = spawn(
+      config.isolated
+        ? process.platform === "darwin"
+          ? "/usr/bin/sandbox-exec"
+          : "/usr/bin/python3"
+        : config.executable,
+      args,
+      { cwd: config.cwd, env: config.env, detached: true, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    secondary.pid = child.pid;
+    secondary.startedAt = Date.now();
+    child.stdout.on("data", (chunk) => {
+      output += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      output += chunk;
+    });
+    let launchError;
+    exit = new Promise((resolve, reject) => {
+      child.once("error", (error) => {
+        launchError = error;
+        reject(error);
+      });
+      child.once("exit", (code, signal) => {
+        ended = true;
+        secondary.exit = { code, signal, at: Date.now() };
+        resolve();
+      });
+    });
+    exit.catch(() => {});
+    closed = new Promise((resolve) => child.once("close", resolve));
+    await until(
+      async () => {
+        if (launchError) throw launchError;
+        descendants(await processTable(), child.pid, known);
+        return ended;
+      },
+      "secondary normal exit",
+      15000,
+    );
+    await exit;
+    assert.equal(secondary.exit.code, 0);
+    assert.equal(secondary.exit.signal, null);
+    await until(
+      async () =>
+        main.js(
+          `__singleInstanceProbe.events.some(e=>e.kind==='second-instance'&&e.argv.includes(${JSON.stringify(secondary.marker)}))&&__singleInstanceProbe.window.isFocused()`,
+        ),
+      "original second-instance and focus",
+    );
+    observation.events = await main.js("__singleInstanceProbe.events");
+    observation.after = await snapshot();
+    observation.hashes.after = await hashes();
+  } catch (error) {
+    failure = error;
+    secondary.error = errorRecord(error);
+  } finally {
+    try {
+      observation.listenersRemoved = await main.js(
+        "(() => {const removed=__singleInstanceProbe.remove();delete globalThis.__singleInstanceProbe;return removed;})()",
+      );
+    } catch (error) {
+      failure ??= error;
+    }
+    const errors = [];
+    if (child?.pid) {
+      if (!ended) {
+        secondary.forcedCleanup = true;
+        signalProcess(-child.pid, "SIGTERM", errors);
+      }
+      try {
+        await until(() => ended, "secondary reap", 3000);
+        await pause(Math.max(0, secondary.exit.at + 5000 - Date.now()));
+        let remaining = descendants(await processTable(), child.pid, known);
+        if (remaining.length) {
+          secondary.forcedCleanup = true;
+          signalProcess(-child.pid, "SIGKILL", errors);
+          for (const row of remaining) signalProcess(row.pid, "SIGKILL", errors);
+          await until(
+            async () => {
+              remaining = descendants(await processTable(), child.pid, known);
+              return !remaining.length;
+            },
+            "secondary descendants cleanup",
+            5000,
+          );
+        }
+        secondary.remainingPids = remaining.map((row) => row.pid);
+        secondary.cleanupObservedAt = Date.now();
+      } catch (error) {
+        errors.push(error);
+        secondary.forcedCleanup = true;
+        signalProcess(-child.pid, "SIGKILL", errors);
+        for (const row of descendants(await processTable(), child.pid, known))
+          signalProcess(row.pid, "SIGKILL", errors);
+      }
+      if (closed)
+        try {
+          await Promise.race([
+            closed,
+            pause(3000).then(() => {
+              throw Error("Secondary streams did not close");
+            }),
+          ]);
+        } catch (error) {
+          errors.push(error);
+        }
+    }
+    secondary.observedPids = [...known];
+    secondary.log = path.join(config.directory, "single-instance-secondary.log");
+    await writeFile(secondary.log, output);
+    secondary.logSha256 = sha256(output);
+    if (errors.length) {
+      secondary.cleanupErrors = errors.map(errorRecord);
+      failure ??= new AggregateError(errors, "Secondary cleanup failed");
     }
   }
   if (failure) throw failure;
@@ -684,6 +1003,8 @@ async function freshProfile(directory, name) {
 
 export async function main() {
   const isolated = process.argv.includes("--isolated");
+  const singleInstance = process.argv.includes("--single-instance");
+  assert.ok(!singleInstance || isolated, "Single-instance partial evidence requires --isolated");
   assert.ok(
     ["darwin", "linux"].includes(process.platform),
     "OS process-tree evidence currently supports macOS/Linux only; Windows remains unrun",
@@ -707,7 +1028,8 @@ export async function main() {
   console.log(`Real product evidence workspace (always retained): ${directory}`);
   const output = path.join(directory, "installed.json");
   const report = {
-    kind: "installed-builtin-product",
+    kind: singleInstance ? "installed-single-instance-partial" : "installed-builtin-product",
+    ...(singleInstance ? { unrun: [...SINGLE_INSTANCE_UNRUN] } : {}),
     syntheticHost: false,
     status: "running",
     runs: [],
@@ -888,6 +1210,7 @@ export async function main() {
             isolated,
             probes,
             deniedRoots,
+            singleInstance,
           },
           receipt,
           (client) => check(client, receipt),
@@ -942,74 +1265,100 @@ export async function main() {
       assert.equal((await client.forks()).filter((item) => item.entry === entry).length, 0);
       receipt.lazyState = state;
     };
-    const profile = await freshProfile(directory, "healthy-profile");
-    await execute("healthy", profile, async (client, receipt) => {
-      await lazy(client, receipt);
-      const first = await openMotor(client, manifest, receipt);
-      const initial = (await client.forks()).filter((item) => item.entry === entry);
-      assert.equal(initial.length, 1);
-      await enabled(client, false);
-      await until(
-        async () => (await client.forks()).find((item) => item.entry === entry)?.exited,
-        "disable utility exit",
+    if (singleInstance) {
+      await execute(
+        "single-instance",
+        await freshProfile(directory, "single-instance-profile"),
+        async (client, receipt) => {
+          await lazy(client, receipt);
+          const snapshot = await openMotor(client, manifest, receipt);
+          await observeSingleInstance(
+            client,
+            {
+              directory,
+              executable,
+              archive,
+              cwd,
+              env,
+              profile: receipt.profile,
+              isolationProfile,
+              isolated,
+              deniedRoots,
+            },
+            receipt,
+            snapshot.binding,
+          );
+        },
       );
-      await enabled(client, true);
-      assert.equal(
-        (await client.state()).plugins.find((item) => item.id === motorId).running,
-        false,
-      );
-      const second = await openMotor(client, manifest, receipt);
-      const processes = (await client.forks()).filter((item) => item.entry === entry);
-      assert.equal(processes.length, 2);
-      assert.notEqual(processes[0].pid, processes[1].pid);
-      assert.notEqual(first.binding.processEpoch, second.binding.processEpoch);
-      receipt.freshProcessIdentity = true;
-      await enabled(client, false); // Persist disabled across the following real restart.
-      await until(
-        async () =>
-          (await client.forks())
-            .filter((item) => item.entry === entry)
-            .every((item) => item.exited),
-        "second disable exit",
-      );
-    });
-    await execute("restart", profile, async (client, receipt) => {
-      const state = await client.state();
-      requiredCompilers(state);
-      const motor = state.plugins.find((item) => item.id === motorId);
-      assert.equal(motor.status, "disabled");
-      assert.equal(motor.disabledBy, "user");
-      assert.equal(motor.running, false);
-      assert.equal((await client.forks()).filter((item) => item.entry === entry).length, 0);
-      receipt.persistedDisable = state;
-      await enabled(client, true);
-      await lazy(client, receipt);
-      await openMotor(client, manifest, receipt); // Quit with an active real utility process.
-      assert.equal((await client.forks()).filter((item) => item.entry === entry).length, 1);
-    });
-    // Only this copied resource is mutated. The archive/main/preload/renderer and
-    // original release leaf are never rewritten, rebuilt, or replaced.
-    const resource = path.join(leaf, "panel.json"),
-      originalResource = await readFile(resource);
-    try {
-      for (const name of ["missing", "tampered"]) {
-        if (name === "missing") await rm(resource);
-        else await writeFile(resource, Buffer.concat([originalResource, Buffer.from("\n ")]));
-        await execute(
-          name,
-          await freshProfile(directory, `${name}-profile`),
-          async (client, receipt) => {
-            const state = await client.state();
-            requiredCompilers(state);
-            const motor = state.plugins.find((item) => item.id === motorId);
-            assert.equal(motor.status, "invalid");
-            assert.equal(motor.running, false);
-            assert.ok(
-              motor.problems.some((problem) => problem.code === "PLUGIN_E_ENTRY"),
-              JSON.stringify(motor),
-            );
-            assert.equal((await client.forks()).filter((item) => item.entry === entry).length, 0);
-            const catalog = await client.renderer.js(`(async () => {
+    } else {
+      const profile = await freshProfile(directory, "healthy-profile");
+      await execute("healthy", profile, async (client, receipt) => {
+        await lazy(client, receipt);
+        const first = await openMotor(client, manifest, receipt);
+        const initial = (await client.forks()).filter((item) => item.entry === entry);
+        assert.equal(initial.length, 1);
+        await enabled(client, false);
+        await until(
+          async () => (await client.forks()).find((item) => item.entry === entry)?.exited,
+          "disable utility exit",
+        );
+        await enabled(client, true);
+        assert.equal(
+          (await client.state()).plugins.find((item) => item.id === motorId).running,
+          false,
+        );
+        const second = await openMotor(client, manifest, receipt);
+        const processes = (await client.forks()).filter((item) => item.entry === entry);
+        assert.equal(processes.length, 2);
+        assert.notEqual(processes[0].pid, processes[1].pid);
+        assert.notEqual(first.binding.processEpoch, second.binding.processEpoch);
+        receipt.freshProcessIdentity = true;
+        await enabled(client, false); // Persist disabled across the following real restart.
+        await until(
+          async () =>
+            (await client.forks())
+              .filter((item) => item.entry === entry)
+              .every((item) => item.exited),
+          "second disable exit",
+        );
+      });
+      await execute("restart", profile, async (client, receipt) => {
+        const state = await client.state();
+        requiredCompilers(state);
+        const motor = state.plugins.find((item) => item.id === motorId);
+        assert.equal(motor.status, "disabled");
+        assert.equal(motor.disabledBy, "user");
+        assert.equal(motor.running, false);
+        assert.equal((await client.forks()).filter((item) => item.entry === entry).length, 0);
+        receipt.persistedDisable = state;
+        await enabled(client, true);
+        await lazy(client, receipt);
+        await openMotor(client, manifest, receipt); // Quit with an active real utility process.
+        assert.equal((await client.forks()).filter((item) => item.entry === entry).length, 1);
+      });
+      // Only this copied resource is mutated. The archive/main/preload/renderer and
+      // original release leaf are never rewritten, rebuilt, or replaced.
+      const resource = path.join(leaf, "panel.json"),
+        originalResource = await readFile(resource);
+      try {
+        for (const name of ["missing", "tampered"]) {
+          if (name === "missing") await rm(resource);
+          else await writeFile(resource, Buffer.concat([originalResource, Buffer.from("\n ")]));
+          await execute(
+            name,
+            await freshProfile(directory, `${name}-profile`),
+            async (client, receipt) => {
+              const state = await client.state();
+              requiredCompilers(state);
+              const motor = state.plugins.find((item) => item.id === motorId);
+              assert.equal(motor.status, "invalid");
+              assert.equal(motor.running, false);
+              assert.ok(
+                motor.problems.some((problem) => problem.code === "PLUGIN_E_ENTRY"),
+                JSON.stringify(motor),
+              );
+              assert.equal((await client.forks()).filter((item) => item.entry === entry).length, 0);
+              const catalog = await client.renderer.js(`(async () => {
             const entries = []; let cursor;
             for (let page = 0; page < 32; page++) {
               const result = await window.kobrixa.plugins.ui.catalog(cursor ? {cursor} : {});
@@ -1020,33 +1369,38 @@ export async function main() {
             }
             throw Error('Catalog page bound exceeded');
           })()`);
-            assert.equal(catalog.ok, true, JSON.stringify(catalog));
-            assert.ok(!catalog.value.entries.some((item) => item.pluginId === motorId));
-            Object.assign(receipt, {
-              phase: "resolve-before-launch",
-              launched: false,
-              rejected: true,
-              state,
-              catalog,
-              mutatedResource: resource,
-            });
-          },
-        );
+              assert.equal(catalog.ok, true, JSON.stringify(catalog));
+              assert.ok(!catalog.value.entries.some((item) => item.pluginId === motorId));
+              Object.assign(receipt, {
+                phase: "resolve-before-launch",
+                launched: false,
+                rejected: true,
+                state,
+                catalog,
+                mutatedResource: resource,
+              });
+            },
+          );
+        }
+      } finally {
+        await writeFile(resource, originalResource);
       }
-    } finally {
-      await writeFile(resource, originalResource);
     }
     await verifyLeaf(leaf, motorId);
     const sourceLeaf = path.join(`${sourceArchive}.unpacked`, ".vite/build/plugins/motor-test");
     assert.deepEqual(await verifyLeaf(sourceLeaf, motorId), index);
     report.originalPayloadIntact = true;
-    report.sourceRootDenial = isolated ? "verified-in-all-four-product-processes" : "unrun";
+    report.sourceRootDenial = isolated
+      ? singleInstance
+        ? "verified-in-primary; secondary-launch-inherits-isolation-unobserved"
+        : "verified-in-all-four-product-processes"
+      : "unrun";
     report.noPathNode = env.PATH === emptyPath;
     report.noNodePath = !env.NODE_PATH;
     report.arbitraryCwd = cwd !== root;
     assert.equal(sha256(await readFile(archive)), originalArchive);
     assert.equal(sha256(await readFile(sourceArchive)), originalArchive);
-    report.status = "passed";
+    report.status = singleInstance ? "partial" : "passed";
   } catch (error) {
     report.status = "failed";
     report.error = errorRecord(error);
@@ -1083,10 +1437,31 @@ export async function main() {
   }
   if (failure) throw failure;
   try {
+    if (singleInstance) {
+      assertSingleInstanceReceipt(report);
+      const secondary = report.runs[0].singleInstance.secondary;
+      assert.equal(sha256(await readFile(secondary.log)), secondary.logSha256);
+    }
     const result = await command(
       process.execPath,
-      ["--test", path.join(root, "tests/desktop/builtin-process-packaging.test.mjs")],
-      { cwd: directory, env: { ...process.env, KOBRIXA_BUILTIN_REPORT: output } },
+      [
+        "--test",
+        path.join(
+          root,
+          singleInstance
+            ? "tests/desktop/plugin-persistence-installed.test.mjs"
+            : "tests/desktop/builtin-process-packaging.test.mjs",
+        ),
+      ],
+      {
+        cwd: directory,
+        env: {
+          ...process.env,
+          ...(singleInstance
+            ? { KOBRIXA_SINGLE_INSTANCE_REPORT: output }
+            : { KOBRIXA_BUILTIN_REPORT: output }),
+        },
+      },
     );
     report.receiptValidation = { exitCode: 0, stdout: result.stdout, stderr: result.stderr };
     await save();

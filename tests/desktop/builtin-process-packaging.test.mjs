@@ -276,6 +276,8 @@ test("U14: rendered evidence requires every healthy and restarted panel observat
 test("U14: synthetic or partial receipts cannot pass product acceptance", () => {
   for (const report of [
     {},
+    { kind: "installed-single-instance-partial", status: "partial", syntheticHost: false },
+    { kind: "installed-single-instance-partial", status: "passed", syntheticHost: false },
     { kind: "installed-builtin", syntheticHost: true },
     { kind: "installed-builtin-product", status: "failed", syntheticHost: false },
     { kind: "installed-builtin-product", status: "passed", syntheticHost: true },
