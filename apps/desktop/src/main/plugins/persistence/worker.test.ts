@@ -1,5 +1,5 @@
 import { createHash,randomUUID } from "node:crypto";
-import type { SettingsResourceV1 } from "@kobrixa/plugin-protocol";
+import type { SettingsResourceV1, SettingsSnapshot, RecordMeta } from "@kobrixa/plugin-protocol";
 import { mkdtemp,rm,mkdir,realpath,writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -47,7 +47,7 @@ beforeAll(async()=>{
       lib:{entry:fixtureEntry,formats:["cjs"],fileName:()=>"persistence-worker.cjs"},rollupOptions:{external:[/^node:/]},minify:false}});
   entry=path.join(directory,"bundle","persistence-worker.cjs");
 },60000);
-afterAll(async()=>{await rm(directory,{recursive:true,force:true});});
+afterAll(async()=>{if(!process.env.B2_NEGATIVE_EVIDENCE_DIR)await rm(directory,{recursive:true,force:true});});
 async function launch(userData:string){
   await mkdir(userData,{recursive:true});const profile={hostEpoch:randomUUID(),assertHeld(){}};
   const root=await openStoreRoot({userData,profile});let control:PersistenceFaultControl|undefined;
@@ -69,7 +69,7 @@ it('preserves checksum, missing-record and read-quota failures through the real 
   const principal={kind:"plugin" as const,owner,authorityContext:null},signal=new AbortController().signal;
   try {
     const missing=await service.request(principal,'storage/stat',{id:randomUUID()},signal);
-    expect(missing).toMatchObject({ok:false,error:{code:'PLUGIN_E_STORAGE_IO',detail:{kind:'persistence',reason:'not-found'}}});
+    expect(missing).toMatchObject({ok:false,error:{code:'PLUGIN_E_STALE_RESOURCE',detail:{kind:'resource',reason:'stale',resource:'storage-read'}}});
     const bytes=Buffer.from('payload'),begin=await service.request(principal,'storage/beginWrite',{
       target:{mode:'create'},kind:'test',schemaVersion:1,label:'Bad checksum',mediaType:'application/octet-stream',
       byteLength:bytes.length,sha256:hash(Buffer.from('different'))},signal);
@@ -711,3 +711,188 @@ it("does not turn a never-admitted retired-owner delete into unknown publication
       .toMatchObject({ok:false,error:{code:"PLUGIN_E_STALE_RESOURCE"}});
   }finally{await service.close();await env.backend.dispose();}
 });
+
+// B2 N01/N02/N06: serialized public RPC -> actual host -> worker thread/filesystem.
+// Not an Electron/primary-lock/installed-plugin test; launch() retains its lock stub.
+import { createMemoryChannelPair, RpcPeer, RPC_ERRORS } from "@kobrixa/plugin-protocol";
+import { bindPersistenceRoutes170 } from "../controller.js";
+import { EventLedger } from "../../device-broker/registry.js";
+import { settingsRequests } from "./settings-service.js";
+import { readdir, lstat, readFile, appendFile } from "node:fs/promises";
+
+type NegativeReply = { id: number; result?: { ok: boolean; value?: unknown; error?: { code: string } }; error?: { code: number; message: string } };
+const negativeResource: SettingsResourceV1 = {schemaVersion:1,title:{en:"Negative fixture"},fields:[
+  {key:"count",type:"integer",label:{en:"Count"},default:1,minimum:0,maximum:10},
+  {key:"text",type:"string",label:{en:"Text"},default:"",minLength:0,maxLength:4000,maxBytes:4096},
+]};
+async function negativeTree(root:string, prefix=""):Promise<unknown[]> {
+  const rows:unknown[]=[];
+  for(const name of (await readdir(path.join(root,prefix))).sort()) {
+    const relative=path.join(prefix,name),absolute=path.join(root,relative),stat=await lstat(absolute);
+    if(stat.isSymbolicLink()) throw new Error(`Unexpected symlink: ${relative}`);
+    rows.push(stat.isDirectory()?{path:relative,kind:"directory"}:{path:relative,kind:"file",size:stat.size,sha256:hash(await readFile(absolute))});
+    if(stat.isDirectory())rows.push(...await negativeTree(root,relative));
+  }
+  return rows;
+}
+async function negativeHost(userData:string, journal:(row:unknown)=>void) {
+  const env=await launch(userData),a=ownerFor(env.profile.hostEpoch),b={...ownerFor(env.profile.hostEpoch),sourceKey:"builtin:test.other",pluginId:"test.other"};
+  const owners=[a,b],denied=new Set<string>(),calls:string[]=[],pins=new Set<string>(),sent:unknown[]=[];
+  let resourceReads=0;
+  // Forwarding observers never replace a backend result or omit an actual operation.
+  for(const group of ["engine","reads"] as const) {
+    const port=env.backend[group];
+    for(const key of Object.keys(port)) {
+      const methods=port as unknown as Record<string,(...args:unknown[])=>unknown>;
+      const original=methods[key];
+      if(typeof original!=="function")continue;
+      methods[key]=function(...args:unknown[]) {
+        calls.push(`${group}.${key}`);
+        const result=original.apply(port,args);
+        const observe=(value:unknown)=>{
+          if(group==="reads"&&key==="open"){expect(typeof value).toBe("string");pins.add(value as string);}
+          if(group==="reads"&&key==="close")pins.delete(args[1] as string);
+          journal({operation:`${group}.${key}`,result:value instanceof Uint8Array?{bytes:value.length,sha256:hash(value)}:value});
+          return value;
+        };
+        return result instanceof Promise?result.then(observe):observe(result);
+      };
+    }
+  }
+  const events=new EventLedger(()=>performance.now(),event=>{sent.push(event);journal({event});},()=>{throw new Error("Unexpected watch revocation");});
+  const fail=()=>{throw new Error("Unexpected collaborator");};
+  const resolved=(owner:typeof a)=>({owner:{sourceKey:owner.sourceKey,pluginId:owner.pluginId,uiResourceGeneration:1},resource:negativeResource,validationDigest:"b".repeat(64)});
+  const host=await createPersistenceHost({profile:env.profile,now:()=>performance.now(),hasPermission:(_p,p)=>!denied.has(p),
+    composition:{backend:env.backend,sources:{current:o=>owners.some(x=>JSON.stringify(x)===JSON.stringify(o)),
+      settings:async input=>{resourceReads++;const o=owners.find(x=>x.sourceKey===input.sourceKey);return o?resolved(o):null;},coreOwner:()=>a},events,
+      dispatchDrain:async()=>({ok:true,value:{status:"checkpoint-only",writes:[]}}),
+      imports:{run:fail,acceptPreferences:fail,issuePreferences:fail,retirePreferences:fail,acceptPreferencesEvidence:fail}},
+    reservations:{validate:()=>null,onEnded:fail},actions:{claim:fail},actionAdapter:{chooseDestination:async()=>null,copyText:async()=>{}},
+    coreActions:{claim:()=>false,isClaimed:()=>false,complete:()=>{}}});
+  for(const owner of owners)settingsRequests(env.backend).admit(owner,"a".repeat(64),resolved(owner));
+  const channels=owners.map(owner=>{
+    const [server,client]=createMemoryChannelPair(),peer=new RpcPeer(server);
+    const detach=bindPersistenceRoutes170({context:{peer,owner,principal:()=>({kind:"plugin",owner,authorityContext:null}),requirements:[]},host,
+      attachment:{owner,negotiated(){},activate:id=>events.activate(owner,id),abandon:id=>{events.unsubscribe(owner,id);},dispose(){}},apiVersion:()=>"1.7.0",admitted:()=>true});
+    let sequence=0;
+    const waiting=new Map<number,{resolve:(reply:NegativeReply)=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>}>();
+    const off=client.onMessage(text=>{journal({direction:"reply",sourceKey:owner.sourceKey,text,sha256:hash(Buffer.from(text))});const reply=JSON.parse(text) as NegativeReply;
+      const pending=waiting.get(reply.id);if(pending){clearTimeout(pending.timer);waiting.delete(reply.id);pending.resolve(reply);}});
+    return {request(method:string,params:unknown,rawParams?:string){const id=++sequence;
+      const text=`{"jsonrpc":"2.0","id":${id},"method":${JSON.stringify(method)},"params":${rawParams??JSON.stringify(params)}}`;
+      journal({direction:"request",sourceKey:owner.sourceKey,id,text,sha256:hash(Buffer.from(text))});
+      return new Promise<NegativeReply>((resolve,reject)=>{const timer=setTimeout(()=>{waiting.delete(id);reject(new Error(`RPC timeout: ${method}`));},10000);waiting.set(id,{resolve,reject,timer});client.send(text);});},
+      close(){detach();off();peer.close();for(const p of waiting.values()){clearTimeout(p.timer);p.reject(new Error("Fixture closed"));}waiting.clear();}};
+  });
+  return {env,host,a,b,owners,denied,calls,pins,sent,events,channels,resourceReads:()=>resourceReads,
+    async snapshot(){const barrier=env.backend.evidence.capture({kind:"namespace",owner:a},performance.now()+10000);
+      const tickets=env.backend.evidence.tickets(barrier);return {tree:await negativeTree(userData),quota:await Promise.all(owners.map(o=>env.backend.evidence.quota(o))),tickets,
+        barrier:await env.backend.evidence.flush(barrier),core:host.recovery.snapshot(),pins:[...pins],events:events.diagnostics(),hostEpoch:env.profile.hostEpoch,owners,workerCount:persistenceWorkerCount(env.backend)};},
+    async close(){for(const c of channels)c.close();await host.dispose();events.dispose();expect(pins.size).toBe(0);expect(persistenceWorkerCount(env.backend)).toBe(0);}};
+}
+type NegativeValue = {snapshot:SettingsSnapshot;record:RecordMeta;entries:RecordMeta[];write:string;read:string;subscriptionId:string;nextCursor?:string;receivedBytes:number};
+function negativeValue(reply:NegativeReply):NegativeValue {expect(reply.error).toBeUndefined();expect(reply.result?.ok).toBe(true);if(!reply.result?.ok)throw new Error(JSON.stringify(reply));return reply.result.value as NegativeValue;}
+function negativeDenied(reply:NegativeReply, code?:string) {if(code)expect(reply.result).toMatchObject({ok:false,error:{code}});else expect(reply.error?.code===RPC_ERRORS.invalidParams||reply.result?.ok===false).toBe(true);}
+const negativeCases=[
+  "N01-storage-permission","N01-settings-permission","N01-foreign-record","N01-foreign-handles","N01-owner-fields",
+  "N02-unknown","N02-duplicate","N02-coercion","N02-nonfinite","N02-byte-limit","N02-total-byte-limit",
+  "N06-oversize","N06-base64","N06-offset","N06-retry","N06-checksum",
+] as const;
+it.each(negativeCases)("B2-%s public rejection preserves real durable state across fresh epoch",async name=>{
+  const userData=path.join(directory,randomUUID()),rows:unknown[]=[],journal=(row:unknown)=>rows.push(row);
+  const evidenceRoot=process.env.B2_NEGATIVE_EVIDENCE_DIR;
+  if(evidenceRoot&&!path.isAbsolute(evidenceRoot))throw new Error("B2_NEGATIVE_EVIDENCE_DIR must be absolute");
+  let f:Awaited<ReturnType<typeof negativeHost>>|undefined,success=false;
+  try {
+    f=await negativeHost(userData,journal);const first=f,request=first.channels[0]!.request,other=first.channels[1]!.request;
+    const seeds=await Promise.all(first.owners.map(async(owner,index)=>{const t=make(owner,Buffer.from(`original-${index}`));await stage(first.env.backend,t,Buffer.from(`original-${index}`));await first.env.backend.engine.publish(t);if(t.metadata.kind!=="record")throw new Error("record");return t.metadata.record;}));
+    const settings=negativeValue(await request("settings/update",{schemaVersion:1,expectedRevision:null,changes:[{key:"count",value:7}]})).snapshot;
+    negativeValue(await other("settings/update",{schemaVersion:1,expectedRevision:null,changes:[{key:"count",value:8}]}));
+    const watch=negativeValue(await request("settings/watch",{schemaVersion:1}));
+    // Actual control event proves the ledger/attachment is live before negative injections.
+    const control=negativeValue(await request("settings/update",{schemaVersion:1,expectedRevision:settings.revision,changes:[{key:"text",value:"baseline"}]})).snapshot;
+    expect(first.sent).toHaveLength(1);const event=first.sent[0] as {sequence:number};first.events.ack(first.a,watch.subscriptionId,event.sequence);
+    const body=Buffer.alloc(262144,0x61),writeInput={target:{mode:"create"},kind:"test",schemaVersion:1,label:"negative",mediaType:"application/octet-stream",byteLength:body.length,sha256:hash(body)};
+    let write:string|undefined,read:string|undefined,cursor:string|undefined;
+    let extra:typeof seeds[number]|undefined;
+    if(name==="N01-foreign-handles") {const t=make(first.a,Buffer.from("second-page"));await stage(first.env.backend,t,Buffer.from("second-page"));await first.env.backend.engine.publish(t);if(t.metadata.kind!=="record")throw new Error("record");extra=t.metadata.record;cursor=negativeValue(await request("storage/list",{limit:1})).nextCursor;expect(typeof cursor).toBe("string");}
+    if(name.startsWith("N06")||name==="N01-foreign-handles")write=negativeValue(await request("storage/beginWrite",{...writeInput,...(name==="N06-checksum"?{sha256:hash(Buffer.from("wrong"))}:{})})).write;
+    if(name==="N01-foreign-handles")read=negativeValue(await request("storage/openRead",{id:seeds[0]!.id,expectedRevision:seeds[0]!.revision,schemaVersion:1})).read;
+    if(["N06-offset","N06-retry","N06-checksum"].includes(name))negativeValue(await request("storage/writeChunk",{write,offset:0,data:body.toString("base64")}));
+    const before=await first.snapshot(),callCount=first.calls.length,resourceReads=first.resourceReads(),eventCount=first.sent.length;
+    journal({phase:"before",snapshot:before});
+    if(name==="N01-storage-permission"||name==="N01-settings-permission") {
+      first.denied.add(name==="N01-storage-permission"?"storage.write":"settings.write");
+      negativeDenied(await request(name==="N01-storage-permission"?"storage/beginWrite":"settings/update",name==="N01-storage-permission"?writeInput:{schemaVersion:1,expectedRevision:control.revision,changes:[{key:"count",value:9}]}),"PLUGIN_E_PERMISSION_DENIED");
+      expect(first.calls.length).toBe(callCount);expect(first.resourceReads()).toBe(resourceReads);first.denied.clear();
+    } else if(name==="N01-foreign-record") {
+      const foreign=await request("storage/stat",{id:seeds[1]!.id}),missing=await request("storage/stat",{id:randomUUID()});
+      negativeDenied(foreign,"PLUGIN_E_STALE_RESOURCE");expect(foreign.result).toEqual(missing.result);
+    } else if(name==="N01-foreign-handles") {
+      negativeDenied(await other("storage/readChunk",{read,offset:0,maxBytes:1}),"PLUGIN_E_STALE_RESOURCE");
+      negativeDenied(await other("storage/abortWrite",{write}),"PLUGIN_E_STALE_RESOURCE");
+      negativeDenied(await other("storage/list",{limit:1,cursor}),"PLUGIN_E_STALE_RESOURCE");
+      expect(first.calls.length).toBe(callCount);
+    } else if(name==="N01-owner-fields") {
+      for(const field of ["owner","sourceKey","pluginId","path"])expect((await request("storage/stat",{id:seeds[0]!.id,[field]:field==="owner"?first.b:first.b.sourceKey})).error?.code).toBe(RPC_ERRORS.invalidParams);
+      expect(first.calls.length).toBe(callCount);
+    } else if(name.startsWith("N02")) {
+      const changes:Array<{key:string;value:string|number}>=name==="N02-unknown"?[{key:"unknown",value:1}]:name==="N02-duplicate"?[{key:"count",value:2},{key:"count",value:3}]:name==="N02-coercion"?[{key:"count",value:"2"}]:[{key:"text",value:"é".repeat(2048)+"a"}];
+      if(name==="N02-total-byte-limit") {
+        changes.splice(0,changes.length,...Array.from({length:17},(_,i)=>({key:`text${i}`,value:i<16?"a".repeat(4000):""})));
+        changes[16]!.value="a".repeat(65537-Buffer.byteLength(JSON.stringify(changes)));
+        expect(Buffer.byteLength(JSON.stringify(changes))).toBe(65537);
+      }
+      const params={schemaVersion:1,expectedRevision:control.revision,changes};
+      const raw=name==="N02-nonfinite"?`{"schemaVersion":1,"expectedRevision":${JSON.stringify(control.revision)},"changes":[{"key":"count","value":1e999}]}`:undefined;
+      const rejected=await request("settings/update",params,raw);
+      if(name==="N02-unknown"||name==="N02-coercion")negativeDenied(rejected,"PLUGIN_E_SETTINGS_SCHEMA");
+      else expect(rejected.error?.code).toBe(RPC_ERRORS.invalidParams);
+      expect(first.calls.slice(callCount)).not.toContain("engine.reserve");
+    } else if(name==="N06-oversize"||name==="N06-base64") {
+      for(const data of name==="N06-oversize"?[Buffer.alloc(262145).toString("base64")]:["!===","YQ=","YR=="])expect((await request("storage/writeChunk",{write,offset:0,data})).error?.code).toBe(RPC_ERRORS.invalidParams);
+      expect(first.calls.length).toBe(callCount);
+    } else if(name==="N06-offset") {
+      for(const offset of [1,body.length+1])negativeDenied(await request("storage/writeChunk",{write,offset,data:"Yg=="}),"PLUGIN_E_STORAGE_CONFLICT");
+      expect(first.calls.length).toBe(callCount);
+    } else if(name==="N06-retry") {
+      expect(negativeValue(await request("storage/writeChunk",{write,offset:0,data:body.toString("base64")})).receivedBytes).toBe(body.length);
+      negativeDenied(await request("storage/writeChunk",{write,offset:0,data:Buffer.alloc(body.length,0x62).toString("base64")}),"PLUGIN_E_STORAGE_CONFLICT");
+      expect(first.calls.length).toBe(callCount);
+    } else {
+      negativeDenied(await request("storage/sealWrite",{write}),"PLUGIN_E_STORAGE_CONFLICT");
+      negativeDenied(await request("storage/commitWrite",{write}));
+    }
+    const after=await first.snapshot();journal({phase:"after",snapshot:after});
+    expect(first.sent.length).toBe(eventCount);expect(after.core).toEqual(before.core);
+    if(name!=="N06-checksum"){expect(after.tree).toEqual(before.tree);expect(after.quota).toEqual(before.quota);}
+    expect(negativeValue(await request("settings/read",{schemaVersion:1}))).toEqual(control);
+    for(const [index,c] of first.channels.entries())expect(negativeValue(await c.request("storage/stat",{id:seeds[index]!.id})).record).toEqual(seeds[index]);
+    if(read)negativeValue(await request("storage/closeRead",{read}));
+    if(write)negativeValue(await request("storage/abortWrite",{write}));
+    if(cursor)negativeValue(await request("storage/list",{limit:1,cursor}));
+    first.events.unsubscribe(first.a,watch.subscriptionId);
+    const cleaned=await first.snapshot();journal({phase:"cleaned",snapshot:cleaned});expect(cleaned.pins).toEqual([]);expect(cleaned.events.subscriptions).toBe(0);
+    for(const [index,q] of cleaned.quota.entries())expect(q).toMatchObject({ok:true,value:{recordCount:index===0&&extra?2:1,reservedCreates:0,reservedBytes:0,pinnedBytes:0,temporaryBytes:0}});
+    await first.close();f=undefined;
+    const next=await negativeHost(userData,journal);f=next;expect(next.env.profile.hostEpoch).not.toBe(first.env.profile.hostEpoch);
+    for(const [index,c] of next.channels.entries())expect(negativeValue(await c.request("storage/stat",{id:seeds[index]!.id})).record).toEqual(seeds[index]);
+    expect(negativeValue(await next.channels[0]!.request("settings/read",{schemaVersion:1}))).toEqual(control);
+    if(write)negativeDenied(await next.channels[0]!.request("storage/writeStatus",{write}),"PLUGIN_E_STALE_RESOURCE");
+    if(read)negativeDenied(await next.channels[0]!.request("storage/readChunk",{read,offset:0,maxBytes:1}),"PLUGIN_E_STALE_RESOURCE");
+    if(cursor)negativeDenied(await next.channels[0]!.request("storage/list",{limit:1,cursor}),"PLUGIN_E_STALE_RESOURCE");
+    for(const [index,c] of next.channels.entries()){const actual=negativeValue(await c.request("storage/list",{limit:64})).entries.map((r:{id:string})=>r.id).sort();expect(actual).toEqual([seeds[index]!.id,...(index===0&&extra?[extra.id]:[])].sort());}
+    const reopened=await next.snapshot();journal({phase:"reopened",snapshot:reopened});expect(reopened.quota).toEqual(cleaned.quota);// An admitted/aborted attempt remains an honest shutdown obligation; it is
+    // not a live write/pin and must never be projected as publishable data.
+    if(write){expect(reopened.core.items).toHaveLength(1);expect(reopened.core.items[0]).toMatchObject({sourceKey:first.a.sourceKey,pluginId:first.a.pluginId,state:"checkpoint-only",payload:"none",recordId:null,committedRevision:null});expect(reopened.core.items[0]!.actions.map(a=>a.kind)).toEqual(["discard"]);}
+    else expect(reopened.core.items).toEqual([]);
+    await next.close();f=undefined;success=true;
+  } finally {
+    try {if(f)await f.close();} finally {
+      if(evidenceRoot){await mkdir(evidenceRoot,{recursive:true});const output=path.join(evidenceRoot,`${name}-${path.basename(userData)}.jsonl`);
+        await appendFile(output,rows.map(row=>JSON.stringify(row)).join("\n")+"\n");
+        await writeFile(output+".receipt.json",JSON.stringify({case:name,success,userData,workerBundle:{path:entry,sha256:hash(await readFile(entry))},sourceSha256:hash(await readFile(fileURLToPath(import.meta.url))),productSources:await Promise.all(["./host-port.ts","./record-service.ts","./settings-service.ts","./worker.ts","./atomic-store.ts","./filesystem.ts"].map(async relative=>({relative,sha256:hash(await readFile(fileURLToPath(new URL(relative,import.meta.url))))}))),candidate:process.env.B2_CANDIDATE_COMMIT??null,
+          limits:["worker thread count/epochs observed; no private thread-ID diagnostic","not Electron utility process","test profile lock stub","observed public handles/backend pins, not private-map census","no SIGKILL","candidate supplied by controller; not inferred"],transcriptSha256:hash(await readFile(output))},null,2));}
+    }
+  }
+},60000);
