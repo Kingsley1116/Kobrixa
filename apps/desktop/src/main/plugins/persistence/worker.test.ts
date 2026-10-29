@@ -790,7 +790,7 @@ async function negativeHost(userData:string, journal:(row:unknown)=>void) {
         barrier:await env.backend.evidence.flush(barrier),core:host.recovery.snapshot(),pins:[...pins],events:events.diagnostics(),hostEpoch:env.profile.hostEpoch,owners,workerCount:persistenceWorkerCount(env.backend)};},
     async close(){for(const c of channels)c.close();await host.dispose();events.dispose();expect(pins.size).toBe(0);expect(persistenceWorkerCount(env.backend)).toBe(0);}};
 }
-type NegativeValue = {snapshot:SettingsSnapshot;record:RecordMeta;entries:RecordMeta[];write:string;read:string;subscriptionId:string;nextCursor?:string;receivedBytes:number};
+type NegativeValue = {snapshot:SettingsSnapshot;record:RecordMeta;entries:RecordMeta[];write:string;read:string;subscriptionId:string;nextCursor?:string;receivedBytes:number;receipt:{revision:string;commitId:string;durability:string};deleted:boolean;data:string;offset:number;nextOffset:number;eof:boolean};
 function negativeValue(reply:NegativeReply):NegativeValue {expect(reply.error).toBeUndefined();expect(reply.result?.ok).toBe(true);if(!reply.result?.ok)throw new Error(JSON.stringify(reply));return reply.result.value as NegativeValue;}
 function negativeDenied(reply:NegativeReply, code?:string) {if(code)expect(reply.result).toMatchObject({ok:false,error:{code}});else expect(reply.error?.code===RPC_ERRORS.invalidParams||reply.result?.ok===false).toBe(true);}
 const negativeCases=[
@@ -889,10 +889,110 @@ it.each(negativeCases)("B2-%s public rejection preserves real durable state acro
     await next.close();f=undefined;success=true;
   } finally {
     try {if(f)await f.close();} finally {
+      await retainNegativeEvidence(name,userData,rows,success);
+    }
+  }
+},60000);
+
+async function retainNegativeEvidence(name:string,userData:string,rows:unknown[],success:boolean) {
+  const evidenceRoot=process.env.B2_NEGATIVE_EVIDENCE_DIR;
       if(evidenceRoot){await mkdir(evidenceRoot,{recursive:true});const output=path.join(evidenceRoot,`${name}-${path.basename(userData)}.jsonl`);
         await appendFile(output,rows.map(row=>JSON.stringify(row)).join("\n")+"\n");
         await writeFile(output+".receipt.json",JSON.stringify({case:name,success,userData,workerBundle:{path:entry,sha256:hash(await readFile(entry))},sourceSha256:hash(await readFile(fileURLToPath(import.meta.url))),productSources:await Promise.all(["./host-port.ts","./record-service.ts","./settings-service.ts","./worker.ts","./atomic-store.ts","./filesystem.ts"].map(async relative=>({relative,sha256:hash(await readFile(fileURLToPath(new URL(relative,import.meta.url))))}))),candidate:process.env.B2_CANDIDATE_COMMIT??null,
           limits:["worker thread count/epochs observed; no private thread-ID diagnostic","not Electron utility process","test profile lock stub","observed public handles/backend pins, not private-map census","no SIGKILL","candidate supplied by controller; not inferred"],transcriptSha256:hash(await readFile(output))},null,2));}
+}
+
+it("B2-N04-N13 replacement/delete conflict preserves pinned revisions and immutable pages across a fresh epoch", async () => {
+  const name="N04-N13-record-race", userData=path.join(directory,randomUUID()), rows:unknown[]=[];
+  const journal=(row:unknown)=>rows.push(row), evidenceRoot=process.env.B2_NEGATIVE_EVIDENCE_DIR;
+  if(evidenceRoot&&!path.isAbsolute(evidenceRoot))throw new Error("B2_NEGATIVE_EVIDENCE_DIR must be absolute");
+  let f:Awaited<ReturnType<typeof negativeHost>>|undefined,success=false;
+  try {
+    f=await negativeHost(userData,journal);const first=f,request=first.channels[0]!.request;
+    const input=(bytes:Buffer,target:unknown={mode:"create"})=>({target,kind:"test",schemaVersion:1,label:"N04/N13",mediaType:"application/octet-stream",byteLength:bytes.length,sha256:hash(bytes)});
+    const commit=async(bytes:Buffer)=>{
+      const begun=negativeValue(await request("storage/beginWrite",input(bytes)));
+      negativeValue(await request("storage/writeChunk",{write:begun.write,offset:0,data:bytes.toString("base64")}));
+      negativeValue(await request("storage/sealWrite",{write:begun.write}));
+      const result=negativeValue(await request("storage/commitWrite",{write:begun.write}));
+      expect(result.receipt.revision).toBe(result.record.revision);
+      expect(result.record.sha256).toBe(hash(bytes));return result;
+    };
+    const seedBytes=[Buffer.from([0,255,11,12,13,14,15,16,17,18,19]),Buffer.from("delete-while-pinned\0old-bytes")];
+    const seeds=[await commit(seedBytes[0]!),await commit(seedBytes[1]!)];
+    const bytesById=new Map(seeds.map((s,i)=>[s.record.id,seedBytes[i]!]));
+    const baseline=negativeValue(await request("storage/list",{limit:64})).entries;
+    expect(baseline).toHaveLength(2);
+    const page1=negativeValue(await request("storage/list",{limit:1}));
+    expect(page1.entries).toEqual(baseline.slice(0,1));expect(typeof page1.nextCursor).toBe("string");
+    const original=baseline[0]!,deleted=baseline[1]!,originalBytes=bytesById.get(original.id)!,deletedBytes=bytesById.get(deleted.id)!;
+    const oldRead=negativeValue(await request("storage/openRead",{id:original.id,expectedRevision:original.revision,schemaVersion:1})).read;
+    const deletedRead=negativeValue(await request("storage/openRead",{id:deleted.id,expectedRevision:deleted.revision,schemaVersion:1})).read;
+    const prefix=negativeValue(await request("storage/readChunk",{read:oldRead,offset:0,maxBytes:3}));
+    expect(Buffer.from(prefix.data,"base64")).toEqual(originalBytes.subarray(0,3));expect(prefix.nextOffset).toBe(3);
+    const replacementBytes=Buffer.from([99,0,254,42,43,44,45,46,47,48,49,50]);
+    const replacementInput=input(replacementBytes,{mode:"replace",id:original.id,expectedRevision:original.revision});
+    const winner=negativeValue(await request("storage/beginWrite",replacementInput));
+    negativeValue(await request("storage/writeChunk",{write:winner.write,offset:0,data:replacementBytes.toString("base64")}));
+    negativeValue(await request("storage/sealWrite",{write:winner.write}));
+    const before=await first.snapshot();journal({phase:"before-competing-requests",snapshot:before,baseline,seeds});
+    // Two real public requests contend against an admitted, sealed replacement.
+    // Its commit is deliberately withheld, so both must lose the target gate.
+    const calls=first.calls.length;
+    const competing=await Promise.all([request("storage/beginWrite",replacementInput),request("storage/delete",{id:original.id,expectedRevision:original.revision})]);
+    for(const reply of competing)expect(reply.result).toMatchObject({ok:false,error:{code:"PLUGIN_E_STORAGE_CONFLICT",detail:{reason:"write-in-progress"}}});
+    expect(first.calls.slice(calls)).not.toContain("engine.reserve");
+    const after=await first.snapshot();journal({phase:"after-competing-requests",snapshot:after,outcomes:competing});
+    expect(after.tree).toEqual(before.tree);expect(after.quota).toEqual(before.quota);expect(after.pins).toEqual(before.pins);expect(after.core).toEqual(before.core);
+    const won=negativeValue(await request("storage/commitWrite",{write:winner.write}));
+    expect(won.record.id).toBe(original.id);expect(won.record.revision).not.toBe(original.revision);expect(won.receipt.revision).toBe(won.record.revision);
+    expect(won.record.sha256).toBe(hash(replacementBytes));
+    expect(negativeValue(await request("storage/commitWrite",{write:winner.write}))).toEqual(won);
+    for(const method of ["storage/beginWrite","storage/delete"]){
+      const prior=await first.snapshot();journal({phase:`before-stale-${method}`,snapshot:prior});
+      const reply=await request(method,method==="storage/beginWrite"?replacementInput:{id:original.id,expectedRevision:original.revision});
+      expect(reply.result).toMatchObject({ok:false,error:{code:"PLUGIN_E_STORAGE_CONFLICT",detail:{reason:"revision-mismatch"}}});
+      const next=await first.snapshot();journal({phase:`after-stale-${method}`,snapshot:next,outcome:reply});expect(next.tree).toEqual(prior.tree);expect(next.quota).toEqual(prior.quota);expect(next.core).toEqual(prior.core);
     }
+    const removed=negativeValue(await request("storage/delete",{id:deleted.id,expectedRevision:deleted.revision}));expect(removed.deleted).toBe(true);
+    expect(negativeValue(await request("storage/delete",{id:deleted.id,expectedRevision:deleted.revision}))).toEqual(removed);
+    negativeDenied(await request("storage/stat",{id:deleted.id}),"PLUGIN_E_STALE_RESOURCE");
+    const page2=negativeValue(await request("storage/list",{limit:1,cursor:page1.nextCursor}));
+    expect(page2.entries).toEqual(baseline.slice(1));expect(page2.nextCursor).toBeUndefined();
+    expect([...page1.entries,...page2.entries]).toEqual(baseline);
+    expect(negativeValue(await request("storage/list",{limit:1,cursor:page1.nextCursor}))).toEqual(page2);
+    expect(negativeValue(await request("storage/list",{limit:64})).entries).toEqual([won.record]);
+    const suffix=negativeValue(await request("storage/readChunk",{read:oldRead,offset:3,maxBytes:262144}));
+    expect(suffix.offset).toBe(3);expect(suffix.nextOffset).toBe(originalBytes.length);expect(suffix.eof).toBe(true);
+    expect(Buffer.concat([Buffer.from(prefix.data,"base64"),Buffer.from(suffix.data,"base64")])).toEqual(originalBytes);
+    const deletedChunk=negativeValue(await request("storage/readChunk",{read:deletedRead,offset:0,maxBytes:262144}));
+    expect(Buffer.from(deletedChunk.data,"base64")).toEqual(deletedBytes);expect(deletedChunk.eof).toBe(true);
+    const newRead=negativeValue(await request("storage/openRead",{id:won.record.id,expectedRevision:won.record.revision,schemaVersion:1})).read;
+    const currentChunk=negativeValue(await request("storage/readChunk",{read:newRead,offset:0,maxBytes:262144}));
+    expect(Buffer.from(currentChunk.data,"base64")).toEqual(replacementBytes);expect(currentChunk.eof).toBe(true);
+    const pinned=await first.snapshot();journal({phase:"committed-and-deleted-with-pins",snapshot:pinned,won,removed,page1,page2,oldRead,deletedRead,newRead});
+    expect(pinned.pins).toHaveLength(3);expect(pinned.quota[0]).toMatchObject({ok:true,value:{recordCount:1,reservedCreates:0,reservedBytes:0}});
+    for(const read of [oldRead,deletedRead,newRead])negativeValue(await request("storage/closeRead",{read}));
+    negativeDenied(await request("storage/readChunk",{read:oldRead,offset:0,maxBytes:1}),"PLUGIN_E_STALE_RESOURCE");
+    const cleaned=await first.snapshot();journal({phase:"cleaned",snapshot:cleaned});expect(cleaned.pins).toEqual([]);expect(cleaned.core.items).toEqual([]);
+    expect(cleaned.quota[0]).toMatchObject({ok:true,value:{recordCount:1,committedBytes:replacementBytes.length,reservedCreates:0,reservedBytes:0,pinnedBytes:0,temporaryBytes:0}});
+    await first.close();f=undefined;
+    f=await negativeHost(userData,journal);const next=f,again=next.channels[0]!.request;
+    expect(next.env.profile.hostEpoch).not.toBe(first.env.profile.hostEpoch);
+    expect(negativeValue(await again("storage/list",{limit:64})).entries).toEqual([won.record]);
+    expect(negativeValue(await again("storage/stat",{id:original.id})).record).toEqual(won.record);
+    negativeDenied(await again("storage/stat",{id:deleted.id}),"PLUGIN_E_STALE_RESOURCE");
+    for(const read of [oldRead,deletedRead,newRead])negativeDenied(await again("storage/readChunk",{read,offset:0,maxBytes:1}),"PLUGIN_E_STALE_RESOURCE");
+    negativeDenied(await again("storage/list",{limit:1,cursor:page1.nextCursor}),"PLUGIN_E_STALE_RESOURCE");
+    negativeDenied(await again("storage/writeStatus",{write:winner.write}),"PLUGIN_E_STALE_RESOURCE");
+    const reopenedRead=negativeValue(await again("storage/openRead",{id:won.record.id,expectedRevision:won.record.revision,schemaVersion:1})).read;
+    const reopenedChunk=negativeValue(await again("storage/readChunk",{read:reopenedRead,offset:0,maxBytes:262144}));
+    expect(Buffer.from(reopenedChunk.data,"base64")).toEqual(replacementBytes);expect(hash(Buffer.from(reopenedChunk.data,"base64"))).toBe(won.record.sha256);expect(reopenedChunk.eof).toBe(true);
+    negativeValue(await again("storage/closeRead",{read:reopenedRead}));
+    const reopened=await next.snapshot();journal({phase:"reopened",snapshot:reopened,winningReceipt:won.receipt,deleteReceipt:removed.receipt});
+    expect(reopened.quota).toEqual(cleaned.quota);expect(reopened.core.items).toEqual([]);expect(reopened.pins).toEqual([]);
+    await next.close();f=undefined;success=true;
+  } finally {
+    try{if(f)await f.close();}finally{await retainNegativeEvidence(name,userData,rows,success);}
   }
 },60000);
