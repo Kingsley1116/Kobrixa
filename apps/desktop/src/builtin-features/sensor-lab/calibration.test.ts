@@ -19,7 +19,7 @@ import {
 import {
   calibrationCode as legacyCalibrationCode,
   calibrate as legacyCalibrate,
-} from "../../shared/sensor-calibration.js";
+} from "./legacy-oracle.js";
 
 const source: SensorChannel = {
   id: "test",
@@ -296,7 +296,7 @@ const differentialCases = [
 
 const differentialSource = Object.freeze({ ...source, port: 3, mode: 2, channel: 2 });
 
-describe.each(["en", "zh-TW"] as const)("actual legacy/new codegen parity (%s)", (locale) => {
+describe.each(["en", "zh-TW"] as const)("frozen f822f3c/new codegen parity (%s)", (locale) => {
   async function compare(
     channel: SensorChannel,
     c: SensorCalibration,

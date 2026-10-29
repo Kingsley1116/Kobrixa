@@ -1,7 +1,7 @@
 import type { SensorRecording } from "../../shared/sensor-lab.js";
 
 // D0 baseline f822f3c; design 2026-10-24 §3 rows are identified by their labels,
-// not by a new public contract. Synthetic inputs exercise the real legacy exports.
+// not by a new public contract. Synthetic inputs exercise the frozen f822f3c pure exports in legacy-oracle.ts.
 // No runtime, UIv2, public EV3 vocabulary, or migration-write proof is claimed.
 export const recordingFixture = {
   id: "D0-3-store-profiles-history-snapshots",
