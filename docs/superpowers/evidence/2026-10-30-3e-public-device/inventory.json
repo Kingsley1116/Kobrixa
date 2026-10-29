@@ -1,0 +1,52 @@
+{
+  "producer.json": {
+    "bytes": 761888,
+    "sha256": "b36ca71b98a682e4eaa8e643f83dfd2ef2757bf5cab7147946bb47df419bf195",
+    "gzipSha256": "dcbcfad66aeec068fdce5e86b2455af122d162b1e4ae8bb7e270c7583de056d0"
+  },
+  "receipt.json": {
+    "bytes": 73434,
+    "sha256": "23583d18ad5f6562a01949020dc6ad2912640a222864e06a4f696487848a669d",
+    "gzipSha256": "3dc8323bd484e605217ee52fd679a65dea0395de94d2c9f0b3eb7c7f8e44808d"
+  },
+  "artifact-identity.json": {
+    "bytes": 71915,
+    "sha256": "1dea5c5e37bc390d0cb671c1e6488b5a0e195290b8157910199dd051ca93db9f",
+    "gzipSha256": "87161344c66b7b96b91f48dce9c8bd992a3facebb8e6b06de645e0deb7b423b7"
+  },
+  "native.log": {
+    "bytes": 45,
+    "sha256": "c229026000d2da27774ba33c2bce271535f830d6058350f89d4f049af090dd01",
+    "gzipSha256": "401b7dda998c3f07d927090ceb1844510f958fa02c7a9d187148a29a001bb0cb"
+  },
+  "oracle-tests.log": {
+    "bytes": 2021,
+    "sha256": "c74c296cb7ebf2e1a0419bc1b0300ee795ff2f954b1432d1d3cb9cc801f71f84",
+    "gzipSha256": "02466b11802bdc677cb7e85c4966478e6be34fa2a9195451848ec8b216b64bf4"
+  },
+  "review.md": {
+    "bytes": 6703,
+    "sha256": "def88e02e6b106b4b1b3685afa6c67d0fded42121a37816558f41c42ff3f1f27",
+    "gzipSha256": "1db6536bded448bc8e3b741528b6edd440b523b89e59dcecef14396e17d6054e"
+  },
+  "review-fix.md": {
+    "bytes": 3668,
+    "sha256": "741ef8d4f7065d176cef6c617df33f822e14023b3a0722152365ac0453f5f8ad",
+    "gzipSha256": "c13da668fa58b973250eb985ed6efe2e29fd89e05c3e5cdabdfb6dd728b841c1"
+  },
+  "disposal-fix.md": {
+    "bytes": 4155,
+    "sha256": "790d51fb73c54d94df49db88ee0dd95af68e6d74aa1562c34eebf3f9de3d56d5",
+    "gzipSha256": "160e2bb7c27ea3a90c08bc7444271a85fff50dc9b345ffd933a53c8fcf150cb0"
+  },
+  "product-fix.md": {
+    "bytes": 3736,
+    "sha256": "872d5f34fe4e9001baa9488d6eed02fc64b5f989a8076f330fedd4cb279a9763",
+    "gzipSha256": "e776ea4c14391fae4a40d406ced9dab4ae00c44ac9132578c9617a46c8274b7e"
+  },
+  "product-tests.log": {
+    "bytes": 201,
+    "sha256": "e07dc1920903ab31ff57a6c394aafccec88440c57b8f83943319ed8c03cb8a0f",
+    "gzipSha256": "4d9c679712c822841d26f3fa2b3c81389cfd21bba9413a5daecee7eacf3a015e"
+  }
+}

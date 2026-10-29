@@ -214,3 +214,7 @@ P08 committed `5b29c47`, independently reviewed without actionable findings; pub
 
 
 Checkpoint source/hash/review/test evidence for `dfae915` is archived under [`docs/superpowers/evidence/2026-10-30-3e-integration`](../evidence/2026-10-30-3e-integration/README.md). This exact evidence directory is controller-owned documentation. It records all852integrated tests passing (superseding the earlier75/76P08 interim result),40feature tests,47assembly passes/1existing skip and main/renderer typechecks. Native, installed, hardware, full parity and final closeout remain unclaimed.
+
+### E6 installed harness ownership amendment (2026-10-30)
+
+After public JS `4a9db5c` and Python `7d1773f` native receipts, the installed writer owns exactly two new files `tests/desktop/device-ui-installed-{run,test}.mjs`; existing `tests/desktop/sensor-lab-installed-{run,artifacts,test}.mjs` for bounded reusable runtime/isolation/index helpers; and `tests/desktop/device-ui-public-{main.ts,run.mjs,test.mjs}` for explicit installed scenario, supplied production leaf and non-instrumented PID observation. The existing renderer, Landlock helper, production launcher and packaging remain read-only. Preserve Lab default behavior and regressions; no duplicated product compiler/copier, copied feature controller or weakened isolation. Actual production leaf bytes must be unchanged. Controller executes native/Linux runs and records exact build/source/artifact identities. This expands only test ownership, not completion or product scope.
