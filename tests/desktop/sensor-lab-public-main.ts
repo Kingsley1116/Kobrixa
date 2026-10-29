@@ -41,7 +41,6 @@ import {
   persistenceWorkerCount,
   diagnosticsFor as workerDiagnostics,
 } from "../../apps/desktop/src/main/plugins/persistence/worker.js";
-import { SensorLabService } from "../../apps/desktop/src/main/sensor-lab/service.js";
 import type { IpcHandle } from "../../apps/desktop/src/main/ipc.js";
 
 type ObjectValue = Record<string, unknown>;
@@ -190,23 +189,14 @@ export function runNativeLab(): void {
             launch,
           },
         ];
-        const legacy = new SensorLabService({
-          directory: path.join(app.getPath("userData"), "sensor-lab"),
-          device() {
-            throw new Error("Legacy device must never be used");
-          },
-          acquire() {
-            throw new Error("Legacy acquisition must never run");
-          },
-          release() {
-            throw new Error("Legacy release must never run");
-          },
-          publish() {
-            throw new Error("Legacy publisher must never run");
-          },
+        // This fixture has no legacy writer. Preserve the durable importer barrier,
+        // but never initialize/repair the original files or pretend to flush live work.
+        const legacy = Object.freeze({
+          freezeAdmission() {},
+          async settleMigration() {},
         });
         legacy.freezeAdmission();
-        gate.push({ phase: "constructed-frozen", at: wall() });
+        gate.push({ phase: "constructed-frozen", writer: "retired", at: wall() });
         const authority = new AuthorityContexts(profile.hostEpoch);
         win = new BrowserWindow({
           width: 1100,

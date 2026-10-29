@@ -249,34 +249,7 @@ contextBridge.exposeInMainWorld("kobrixa", {
     analyze: call("analyze"),
     diagnostics: call("languageDiagnostics"),
   },
-  sensorLab: {
-    getState: call("labGetState"),
-    start: call("labStart"),
-    stop: call("labStop"),
-    retrySave: call("labRetrySave"),
-    list: call("labList"),
-    read: call("labRead"),
-    delete: call("labDelete"),
-    listCalibrations: call("labListCalibrations"),
-    saveCalibration: call("labSaveCalibration"),
-    deleteCalibration: call("labDeleteCalibration"),
-    exportCsv: call("labExportCsv"),
-    onState: (listener) => {
-      const handler = (_event, value) => listener(value);
-      ipcRenderer.on("sensor-lab:state", handler);
-      return () => ipcRenderer.removeListener("sensor-lab:state", handler);
-    },
-  },
   device: {
-    startMotorTest: call("motorStart"),
-    keepMotorTestAlive: call("motorKeepAlive"),
-    stopMotorTest: call("motorStop"),
-    motorTestState: call("motorState"),
-    onMotorTest: (listener) => {
-      const handler = (_event, value) => listener(value);
-      ipcRenderer.on("device:motor-test", handler);
-      return () => ipcRenderer.removeListener("device:motor-test", handler);
-    },
     getPreferences: call("devicePreferences"),
     setPreferences: call("setDevicePreferences"),
     onEvent: (listener) => {

@@ -9,7 +9,6 @@ it("starts all desktop services under the primary callback", async () => {
     "composeDesktopMain(",
     "new DeviceService(",
     "new MonitorService(",
-    "new SensorLabService(",
     "await createCollabService(",
   ])
     expect(source.indexOf(construction), construction).toBeGreaterThan(gate);
@@ -206,4 +205,22 @@ it("installs the quit guard before awaiting desktop worker construction", async 
   expect(admitted).toBeGreaterThan(guard);
   expect(source.slice(guard, admitted)).toContain("const composition = await pendingComposition;");
   expect(source.slice(guard, admitted)).toContain("await composition.dispose()");
+});
+
+it("retires the private Lab writer while retaining migration and core lifecycle guards", async () => {
+  const source = await readFile(new URL("./index.ts", import.meta.url), "utf8");
+  expect(source).not.toMatch(/SensorLabService|sensorLab\.|labBusy|sensor-lab:state/);
+  expect(source).toContain("const legacyLabWriter = Object.freeze({");
+  expect(source).toContain('sourceKey: "builtin:kobrixa.sensor-lab"');
+  expect(source).toContain("legacyLabWriter,");
+  expect(source).toContain("legacyFlush: () => legacyLabWriter.settled()");
+  expect(source).toContain("flush: () => legacyLabWriter.settled()");
+  for (const guard of [
+    "requireCleanClose",
+    "createWindowRetirementHandler",
+    "monitor.disconnect",
+    "powerSessions.suspend",
+    "powerSessions.resume",
+  ])
+    expect(source).toContain(guard);
 });

@@ -705,7 +705,6 @@ export function App(): React.JSX.Element {
     setUpdatePreparing(true);
     try {
       await restoration.current;
-      await window.kobrixa.sensorLab.stop("close");
       await monitor.drain();
       editorRef.current?.captureView();
       await flushDrafts();
@@ -2804,7 +2803,6 @@ export function App(): React.JSX.Element {
     setUpdatePreparing(true);
     setConfirmUpdate(false);
     try {
-      await window.kobrixa.sensorLab.stop("update");
       await monitor.drain();
       await flushSharedRoom();
       await window.kobrixa.updates.prepareInstall();

@@ -25,7 +25,7 @@ export type {
   WorkspaceWriteResult,
 } from "./workspace-files.js";
 import type { DevicePreferences } from "./device-preferences.js";
-import type { MonitorUpdate, SensorLabApi } from "./sensor-lab.js";
+import type { MonitorUpdate } from "./sensor-lab.js";
 import type { QuickFixReply, QuickFixRequest } from "./quick-fixes.js";
 import type { DocumentationRequest } from "./documentation.js";
 import type { UpdatesApi } from "./updates.js";
@@ -221,7 +221,6 @@ export interface KobrixaApi {
       entries: string[],
     ): Promise<SimulationPrepareResult>;
   };
-  sensorLab: SensorLabApi;
   plugins: PluginsApi;
   documentation: { open(request: DocumentationRequest): Promise<void> };
   updates: UpdatesApi;

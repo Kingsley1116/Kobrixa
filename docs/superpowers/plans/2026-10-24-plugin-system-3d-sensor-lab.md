@@ -141,3 +141,28 @@ MANUAL另記：USB/Wi-Fi實體四通道、最大錄製、mode/source變更、mot
 task序列：D0→等待依賴並D1→D2→D3/D4（互斥 paths）→D5/D6→D7→D9a→D8→D9b→D10。失敗回所屬owner修正並重跑相關檢查，不以重複無關全套測試代替定位。
 
 controller需確認技術契約和owner receipts，沒有必須重開的產品決策。預設不自動刪history、不持久draft、超限CSV明確分段、未知資料block保留、只對正式EV3 vocabulary提供原生程式／跨origin比較。未取得3C或MANUAL證據時，交付狀態只能寫「草案／實作待驗收」，不能寫gates closed。
+
+### D8 runtime retirement implementation handoff (2026-10-30; pending final artifact)
+
+Controller authorized removal after strict f38fb2f parity and same-profile restart receipts
+(`kobrixa-lab-public-9MWl1L/receipt.json`, `kobrixa-lab-public-m29KHm/restart-receipt.json`
+under `/private/tmp/kobrixa-d7-linux-cursor-f38fb2f`). The independent pure baseline was
+retained in 4296f51 before deleting the private Lab runtime/tests.
+
+This patch removes the old service/store/private IPC/preload bridge and dead renderer route/CSS.
+Main and public/installed fixtures retain an explicit retired-writer hook: no legacy writer is
+constructed or flushed, while the existing durable migration gate and original read-only roots
+remain. Core close/update/drain, journal, authority, monitor/battery and recovery paths remain.
+General smoke explicitly hands Lab acceptance to the existing public harness and rejects the
+obsolete Lab-only switch. The remaining close-smoke readiness probe at
+`tests/desktop/close-smoke-main.mjs:54` requires a separately owned fixture update because it
+still calls the deleted private bridge; this file was outside the approved write set.
+
+Scoped validation: 238 passing Vitest cases across 17 suites, with 12 pre-existing explicit
+unrun device parity cases; 6 Node boundary tests; main/preload/renderer/fixture types and
+changed-file lint pass. Includes the real-worker original-byte/restart/deletion migration test.
+Old service/UI lifecycle tests were retired, not all transferred: 4296f51 preserves independent
+CSV/chart/calibration/parser oracles and 10 explicit baseline assertions. Detailed commands,
+limitations and stopped hashes: `/private/tmp/d8-retirement-implementation.md`.
+No native/package build was run for this patch; controller final packaging/native and D9b
+remain required. This is not D9b, hardware, or Stage3 closure.

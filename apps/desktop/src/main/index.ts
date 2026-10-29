@@ -21,7 +21,6 @@ import { LanguageService } from "./language/language.js";
 import { WorkspaceService } from "./workspace/workspace.js";
 import { CloseHandshake } from "./window/close.js";
 import { MonitorService } from "./device/monitor-service.js";
-import { SensorLabService } from "./sensor-lab/service.js";
 import { WorkbenchLifecycle } from "./window/workbench-lifecycle.js";
 import { MainProcessCloseGuard } from "./window/main-close.js";
 import { rendererContentSecurityPolicy } from "./window/csp.js";
@@ -117,7 +116,7 @@ async function retryDeviceWork(error: unknown, window?: BrowserWindow): Promise<
   return result.response === 0;
 }
 
-function createWindow(flushSensorLab: () => Promise<void>): void {
+function createWindow(flushDeviceWork: () => Promise<void>): void {
   rendererCanFlush = false;
   mainWindow = new BrowserWindow({
     width: 1420,
@@ -143,7 +142,7 @@ function createWindow(flushSensorLab: () => Promise<void>): void {
     else window.close();
   };
   const mainClose = new MainProcessCloseGuard(
-    flushSensorLab,
+    flushDeviceWork,
     finish,
     (error) => retryDeviceWork(error, window),
     () => {
@@ -290,22 +289,21 @@ const primary = startPrimary(
     };
     // The shipped plugin owns Lab from this release onward. Disabling it must
     // never re-enable the old writer (including before an import is resumed).
-    const legacyLabService: { current?: SensorLabService } = {};
+    // No legacy Lab runtime exists in this binary. These hooks perform no I/O;
+    // settled does not claim to flush another process or a live writer.
+    // Keep the durable migration barrier and its original read-only source roots.
+    const legacyLabWriter = Object.freeze({
+      sourceKey: "builtin:kobrixa.sensor-lab",
+      freezeAdmission() {},
+      async settled() {},
+    });
     const pendingComposition = composeDesktopMain({
       legacyDeviceWriter: {
         sourceKey: "builtin:kobrixa.device-ev3",
         freezeAdmission: () => preferences.freezeAdmission(),
         settled: () => preferences.settleMigration(),
       },
-      legacyLabWriter: {
-        sourceKey: "builtin:kobrixa.sensor-lab",
-        freezeAdmission() {
-          legacyLabService.current?.freezeAdmission();
-        },
-        async settled() {
-          await legacyLabService.current?.settleMigration();
-        },
-      },
+      legacyLabWriter,
       createFoundation: createDesktopFoundation,
       foundationOptions: {
         profile,
@@ -357,12 +355,7 @@ const primary = startPrimary(
       principal: pluginPrincipal,
       scope: currentCoreScope,
       currentScope: isCurrentCoreScope,
-      legacyFlush: async (reason) => {
-        // The coordinator has already ended reservations synchronously before this guard.
-        if (recording) recording.ended = true;
-        if (reason === "suspend") await sensorLab.suspend();
-        else await sensorLab.flush(reason);
-      },
+      legacyFlush: () => legacyLabWriter.settled(),
       report: reportCleanupError,
     });
     installPluginQuitCleanup(
@@ -528,72 +521,6 @@ const primary = startPrimary(
       }),
     });
     const monitor = new MonitorService(legacy, (update) => send("device:monitor-update", update));
-    let recording: { reservationId: string; principal: Principal; ended?: boolean } | undefined;
-    let labBusy = false;
-    const sensorLab = new SensorLabService({
-      directory: path.join(app.getPath("userData"), "sensor-lab"),
-      device: (id) => devices.descriptor(id),
-      acquire: async (id, channels) => {
-        const principal = currentCorePrincipal();
-        const { sources } = await legacy.request("devices/session", { sessionId: id });
-        const channelIds = channels.map((channel) => {
-          const source = sources.channels.find(
-            (source) =>
-              source.portId === `${channel.kind}:${channel.port}` &&
-              source.typeId === `ev3:${channel.type}` &&
-              source.component === channel.channel &&
-              (channel.kind === "output" || source.modeId === `mode:${channel.mode}`),
-          );
-          if (!source) throw new Error("Recording source changed.");
-          return source.channelId;
-        });
-        const result = await broker.request(
-          principal,
-          "devices/recording/reserve",
-          {
-            sessionId: id,
-            channelIds,
-            expectedSourceRevision: sources.sourceRevision,
-          },
-          new AbortController().signal,
-        );
-        if (!result.ok) throw new Error(result.error.message);
-        recording = { reservationId: result.value.reservation.reservationId, principal };
-        try {
-          await monitor.watch(id, true, -1);
-        } catch (error) {
-          await broker.request(
-            principal,
-            "devices/recording/release",
-            { reservationId: recording.reservationId },
-            new AbortController().signal,
-          );
-          recording = undefined;
-          throw error;
-        }
-      },
-      release: async (id) => {
-        if (recording && !recording.ended) {
-          const result = await broker.request(
-            recording.principal,
-            "devices/recording/release",
-            { reservationId: recording.reservationId },
-            new AbortController().signal,
-          );
-          if (!result.ok) throw new Error(result.error.message);
-          recording = undefined;
-        }
-        recording = undefined;
-        await monitor.watch(id, false, -1);
-      },
-      latest: monitor.latest,
-      publish: (state) => {
-        labBusy = state.active || !state.saved;
-        send("sensor-lab:state", state);
-      },
-    });
-    legacyLabService.current = sensorLab;
-    sensorLab.freezeAdmission();
     // On macOS the application can outlive its last window. A quit in that state
     // still has to finish any crash recovery / background checkpoint writes.
     const mainQuit = new MainProcessCloseGuard(
@@ -615,11 +542,9 @@ const primary = startPrimary(
         void mainQuit.request();
       }
     });
-    monitor.subscribe((update) => sensorLab.observe(update));
     devices.subscribe(
       createDeviceLossHandler(
         (id) => {
-          sensorLab.onDisconnect(id);
           void monitor.disconnect(id).catch(reportCleanupError);
         },
         () => {},
@@ -633,17 +558,15 @@ const primary = startPrimary(
     powerMonitor.on("suspend", () => {
       ui.intent.dispose();
       void powerSessions.suspend().catch(reportCleanupError);
-      void sensorLab.suspend().catch(reportCleanupError);
     });
     powerMonitor.on("resume", () => {
       // Resume only the original suspended receipts, never a newly connected replacement.
       void powerSessions.resume().catch(reportCleanupError);
     });
-    // Legacy storage initializes only on an explicit legacy request, never during startup.
     const collab = await createCollabService(app.getPath("userData"), collabServerUrl);
     updates = await createUpdateService(
       renderer,
-      () => operationGate.busy || builds.busy || devices.busy || monitor.busy || labBusy,
+      () => operationGate.busy || builds.busy || devices.busy || monitor.busy,
     );
     const workbench = new WorkbenchLifecycle({
       sessions: async () => {
@@ -683,7 +606,7 @@ const primary = startPrimary(
         rendererCanFlush = true;
         devices.publishSessionCatalog();
       },
-      { monitor, lab: sensorLab },
+      { monitor },
       [
         (handle) => {
           if (process.platform === "win32") registerWindowChromeIpc(handle, () => mainWindow);
@@ -783,7 +706,7 @@ const primary = startPrimary(
             coreActions,
             scope,
             invalidate: () => authority.invalidate(contents.id),
-            flush: () => sensorLab.flush("close"),
+            flush: () => legacyLabWriter.settled(),
             pause: () => monitor.pause(),
           });
           const offNative = attachNativeLifecycle({

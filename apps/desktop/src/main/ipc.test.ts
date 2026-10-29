@@ -34,7 +34,6 @@ function fixture() {
     stop = vi.fn(async (_session: string, _principal: ImportedPrincipal) => {}),
     beforeClose = vi.fn(async () => {}),
     finish = vi.fn();
-  const lab = { flush: vi.fn(async () => {}) };
   registerIpc(
     () => renderer as never,
     {} as never,
@@ -45,7 +44,7 @@ function fixture() {
     new UpdateOperationGate(() => undefined),
     finish,
     undefined,
-    { monitor: {} as never, lab: lab as never },
+    { monitor: {} as never },
     [],
     undefined,
     undefined,
@@ -59,7 +58,6 @@ function fixture() {
     stop,
     beforeClose,
     finish,
-    lab,
     call: (name: string, ...args: unknown[]) => handlers.get(name)!(event, ...args),
   };
 }
@@ -105,11 +103,8 @@ it("F03 report needs the main-issued document and cannot carry an owner or scope
     expect.objectContaining({ kind: "core", adapter: "recovery", hostEpoch: id(1) }),
   );
 });
-it("F17 renderer flush success cannot skip legacy or foundation save blockers", async () => {
+it("F17 renderer flush success cannot skip foundation save blockers", async () => {
   const f = fixture();
-  f.lab.flush.mockRejectedValueOnce(new Error("legacy disk full"));
-  await expect(f.call("workspace:finish-close", id(2), true)).rejects.toThrow("disk full");
-  expect(f.finish).not.toHaveBeenCalled();
   f.beforeClose.mockRejectedValueOnce(new Error("journal unconfirmed"));
   await expect(f.call("workspace:finish-close", id(2), true)).rejects.toThrow("journal");
   expect(f.finish).not.toHaveBeenCalled();
@@ -1964,4 +1959,10 @@ it("persistence routes survive in-place/subframe navigation and admit only a fre
     f.dispose();
   }
   expect(f.retirePreferences).toHaveBeenCalledTimes(2);
+});
+
+it("has no private Lab IPC but retains the monitor subscription endpoint", () => {
+  fixture();
+  expect([...handlers.keys()].filter((name) => name.startsWith("sensor-lab:"))).toEqual([]);
+  expect(handlers.has("device:watch-monitor")).toBe(true);
 });

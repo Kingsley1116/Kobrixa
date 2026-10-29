@@ -1,3 +1,4 @@
+import { sensorLabAcceptanceHandoff } from "./sensor-lab-smoke.mjs";
 import { checkExpandedSettings } from "./settings-smoke.mjs";
 import { compilePreview } from "./preview-smoke.mjs";
 import { compileSimulationFixture } from "./simulator-smoke.mjs";
@@ -5,8 +6,7 @@ import { checkProjects } from "./projects-smoke.mjs";
 import { checkUpdates } from "./updates-smoke.mjs";
 import { checkIndentation } from "./indentation-smoke.mjs";
 import { checkCompletionPerformance } from "./completion-performance-smoke.mjs";
-import { checkSensorLab } from "./sensor-lab-smoke.mjs";
-import { checkMonitor, createMonitorFixture, monitorDescriptor } from "./monitor-smoke.mjs";
+import { checkMonitor, createMonitorFixture } from "./monitor-smoke.mjs";
 import { checkCollab, checkCollabWelcome } from "./collab-smoke.mjs";
 import { motorAcceptanceHandoff } from "./motor-test-smoke.mjs";
 import { checkFileHistory, createFileHistoryFixture } from "./file-history-smoke.mjs";
@@ -28,6 +28,7 @@ import {
   createStaticLanguagesHarness,
 } from "./static-languages-harness.mjs";
 console.log(motorAcceptanceHandoff());
+console.log(sensorLabAcceptanceHandoff());
 const [url, temporary] = process.argv.slice(2);
 const { attachKeyboard, setKeyboardContext } = await import(
   pathToFileURL(path.join(temporary, "keyboard.cjs")).href
@@ -39,7 +40,6 @@ const { resolveBuiltinLanguageService } = await import(
 const { MonitorService } = await import(
   pathToFileURL(path.join(temporary, "monitor-service.cjs")).href
 );
-const { SensorLabService } = await import(pathToFileURL(path.join(temporary, "service.cjs")).href);
 const searchHelpers = await import(
   pathToFileURL(path.join(temporary, "workspace-search.cjs")).href
 );
@@ -129,7 +129,6 @@ let win;
 const monitor = createMonitorFixture((event) => {
   win.webContents.send("device:event", event);
   if (event.type === "usb-recovery" && event.state === "waiting") {
-    sensorLab.onDisconnect(event.previousSessionId);
     void sampler.disconnect(event.previousSessionId);
   }
 });
@@ -141,15 +140,6 @@ const sampler = new MonitorService(
   },
   (update) => win?.webContents.send("device:monitor-update", update),
 );
-const sensorLab = new SensorLabService({
-  directory: path.join(temporary, "sensor-lab"),
-  device: () => monitorDescriptor,
-  acquire: (id) => sampler.acquire(id),
-  release: (id) => sampler.release(id),
-  latest: sampler.latest,
-  publish: (state) => win?.webContents.send("sensor-lab:state", state),
-});
-sampler.subscribe((update) => sensorLab.observe(update));
 const workspace = (id = firstId) => {
   const project = fixtures.get(id);
   return {
@@ -264,32 +254,8 @@ ipcMain.handle("smoke", async (_e, name, args) => {
   if (name === "deviceInputModes") return sampler.inputModes(...args);
   if (name === "deviceSetInputMode") return sampler.setInputMode(...args);
   if (name === "deviceDisconnect") {
-    sensorLab.onDisconnect(args[0]);
     await sampler.disconnect(args[0]);
   }
-  if (name === "labStop") {
-    if (args[0] === "close" || args[0] === "update") {
-      await sensorLab.flush(args[0]);
-      return sensorLab.getState();
-    }
-    return sensorLab.stop();
-  }
-  if (name === "labExportCsv") {
-    await sensorLab.exportCSVContent(args[0]);
-    return { cancelled: true };
-  }
-  const labMethod = {
-    labGetState: "getState",
-    labStart: "start",
-    labRetrySave: "retrySave",
-    labList: "list",
-    labRead: "read",
-    labDelete: "delete",
-    labListCalibrations: "listCalibrations",
-    labSaveCalibration: "saveCalibration",
-    labDeleteCalibration: "deleteCalibration",
-  }[name];
-  if (labMethod) return sensorLab[labMethod](...args);
   if (monitor.handles(name)) return monitor.handle(name, args);
   if (name === "readFile") search.beforeRead(args);
   if (fileHistory.handles(name)) {
@@ -739,7 +705,6 @@ app
         collabPreviewFailures = 1;
       },
     };
-    const labContext = { ...monitorContext, sensorLab };
     const fileHistoryContext = {
       ...projectsContext,
       fileHistory,
@@ -770,11 +735,6 @@ app
     }
     if (process.env.KOBRIXA_SMOKE_FILES_ONLY) {
       await checkFileHistory(fileHistoryContext);
-      app.exit(0);
-      return;
-    }
-    if (process.env.KOBRIXA_SMOKE_SENSOR_LAB_ONLY) {
-      await checkSensorLab(labContext);
       app.exit(0);
       return;
     }
@@ -862,7 +822,6 @@ app
     await checkCollab(collabContext);
     openCount = collabOpenCount;
     writes.splice(collabWriteCount);
-    await checkSensorLab(labContext);
     await checkHighlighting({ js, until, files, win, temporary });
     await checkSharedComponents({ js, key, until, pause, mod, mutations });
     await checkWorkbenchFeatures({ js, key, until, pause, mod, win, temporary });

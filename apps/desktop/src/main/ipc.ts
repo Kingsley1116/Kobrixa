@@ -23,9 +23,6 @@ import type { WorkspaceService } from "./workspace/workspace.js";
 import { workspaceSessionSchema } from "../shared/workspace-session.js";
 import { workspaceSearchRequestSchema } from "./workspace/search.js";
 import type { MonitorService } from "./device/monitor-service.js";
-import type { SensorLabService } from "./sensor-lab/service.js";
-import { sensorLabStartSchema, sensorLabCalibrationSchema } from "./sensor-lab/schema.js";
-import { exportSensorCsv } from "./sensor-lab-export.js";
 import { registerCollabMirrorIpc } from "./collab/mirror.js";
 import { DeviceControlGate, registerDeviceControlIpc } from "./collab/device-control.js";
 
@@ -89,7 +86,7 @@ export function registerIpc(
   operationGate: UpdateOperationGate,
   finishClose: (requestId: string, ready: boolean) => void = () => {},
   rendererReady: () => void = () => {},
-  sensorTools?: { monitor: MonitorService; lab: SensorLabService },
+  sensorTools?: { monitor: MonitorService },
   modules: readonly ((handle: IpcHandle) => void)[] = [],
   /** Runs before quitAndInstall(); plugin processes must be gone before the installer quits. */
   beforeUpdateInstall: () => Promise<void> = async () => {},
@@ -117,7 +114,7 @@ export function registerIpc(
       // action. Safety cleanup must remain reachable while an update fences work.
       if (deviceFoundation && channel === "device:stop") return action(event, ...args);
       if (
-        /^(workspace|device|build|simulator|sensor-lab):/.test(channel) ||
+        /^(workspace|device|build|simulator):/.test(channel) ||
         /^collab:(prepare-project|preview-project|save-copy)$/.test(channel)
       )
         return operationGate.run(channel, () => action(event, ...args));
@@ -139,35 +136,9 @@ export function registerIpc(
     ),
   );
   if (sensorTools) {
-    const { lab, monitor } = sensorTools;
+    const { monitor } = sensorTools;
     handle("device:watch-monitor", (_event, sessionId: unknown, enabled: unknown) =>
       monitor.watch(id.parse(sessionId), z.boolean().parse(enabled)),
-    );
-    handle("sensor-lab:state", () => lab.getState());
-    handle("sensor-lab:start", (_event, request: unknown) =>
-      lab.start(sensorLabStartSchema.parse(request)),
-    );
-    handle("sensor-lab:stop", async (_event, reason: unknown) => {
-      const parsed = z.enum(["manual", "close", "update"]).default("manual").parse(reason);
-      if (parsed === "manual") return lab.stop(parsed);
-      await lab.flush(parsed);
-      return lab.getState();
-    });
-    handle("sensor-lab:retry-save", () => lab.retrySave());
-    handle("sensor-lab:list", () => lab.list());
-    handle("sensor-lab:read", (_event, recordingId: unknown) => lab.read(id.parse(recordingId)));
-    handle("sensor-lab:delete", (_event, recordingId: unknown) =>
-      lab.delete(id.parse(recordingId)),
-    );
-    handle("sensor-lab:calibrations", () => lab.listCalibrations());
-    handle("sensor-lab:save-calibration", (_event, profile: unknown) =>
-      lab.saveCalibration(sensorLabCalibrationSchema.parse(profile)),
-    );
-    handle("sensor-lab:delete-calibration", (_event, profileId: unknown) =>
-      lab.deleteCalibration(id.parse(profileId)),
-    );
-    handle("sensor-lab:export", (_event, recordingId: unknown) =>
-      exportSensorCsv(lab, id.parse(recordingId)),
     );
   }
   handle("documentation:open", (_event, request: unknown) =>
@@ -218,9 +189,6 @@ export function registerIpc(
     updates,
     async () => {
       if (beforeUpdatePrepare) await beforeUpdatePrepare();
-      else {
-        await sensorTools?.lab.flush("update");
-      }
     },
     beforeUpdateInstall,
     resumeAfterUpdate,
@@ -266,7 +234,6 @@ export function registerIpc(
     const parsedId = id.parse(requestId),
       parsedReady = z.boolean().parse(ready);
     if (parsedReady) {
-      await sensorTools?.lab.flush("close");
       if (beforeWindowClose) await beforeWindowClose();
       else await deviceFoundation?.beforeClose();
     }

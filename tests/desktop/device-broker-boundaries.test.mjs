@@ -1,3 +1,4 @@
+import { sensorLabAcceptanceHandoff } from "./sensor-lab-smoke.mjs";
 import { motorAcceptanceHandoff } from "./motor-test-smoke.mjs";
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
@@ -47,7 +48,6 @@ test("F14: runtime imports no desktop implementation; legacy services own no tra
     "device/monitor-service.ts",
     "device/file-batch.ts",
     "device/remote-files.ts",
-    "sensor-lab/service.ts",
   ]) {
     const text = await readFile(path.join(root, "apps/desktop/src/main", file), "utf8");
     assert.doesNotMatch(
@@ -92,7 +92,32 @@ test("retired motor smoke cannot silently satisfy dedicated public acceptance", 
   }
   const main = await readFile(path.join(root, "tests/desktop/smoke-main.mjs"), "utf8");
   assert.match(main, /await checkMonitor\(monitorContext\)/);
-  assert.match(main, /await checkSensorLab\(labContext\)/);
-  assert.match(main, /sensorLab\.onDisconnect\(args\[0\]\)/);
   assert.match(main, /await sampler\.disconnect\(args\[0\]\)/);
+});
+
+test("retired Lab smoke cannot silently satisfy dedicated public acceptance", async () => {
+  const preload = await readFile(path.join(root, "tests/desktop/preload.cjs"), "utf8");
+  assert.doesNotMatch(preload, /sensorLab|sensor-lab:|labGetState|labStart|labStop/);
+  assert.doesNotMatch(
+    preload,
+    /startMotorTest|keepMotorTestAlive|stopMotorTest|motorTestState|onMotorTest|device:motor-test/,
+  );
+  assert.match(preload, /watchMonitor: call\("deviceWatchMonitor"\)/);
+  const close = await readFile(path.join(root, "tests/desktop/close-smoke-main.mjs"), "utf8");
+  assert.doesNotMatch(close, /sensorLab|sensor-lab:/);
+  assert.match(close, /!window\.webContents\.isLoading\(\)/);
+  assert.match(close, /document\.querySelector\("\.app-shell"\)/);
+  assert.match(sensorLabAcceptanceHandoff({}), /NOT RUN.*sensor-lab-public-run\.mjs --run/);
+  assert.throws(
+    () => sensorLabAcceptanceHandoff({ KOBRIXA_SMOKE_SENSOR_LAB_ONLY: "1" }),
+    /retired.*sensor-lab-public-run/,
+  );
+  for (const file of ["run-smoke.mjs", "smoke-main.mjs"]) {
+    const text = await readFile(path.join(root, "tests/desktop", file), "utf8");
+    assert.doesNotMatch(
+      text,
+      /SensorLabService|sensor-lab\/service|checkSensorLab|\blabContext\b|sensorLab\./,
+    );
+    assert.match(text, /sensorLabAcceptanceHandoff\(\)/);
+  }
 });

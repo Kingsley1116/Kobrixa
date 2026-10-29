@@ -185,7 +185,7 @@ export const parityRows = [
     feature: "F-E",
     core: "H-V authority/stop; H-D admission",
     contract: "H-P + 3D freshness",
-    retained: [execution, "renderer/device/sensor-lab-panel.tsx", "renderer/app.tsx"],
+    retained: [execution, "renderer/app.tsx"],
     coverage: "partial",
     exercised: ["read-only-stop", "monitor-values-busy-age"],
     unrun: [
@@ -193,7 +193,7 @@ export const parityRows = [
         input: { agesMs: [-1, 0, 2500, 2501], status: "live", session: "s1" },
         expected: { fresh: [false, true, true, false] },
         reason:
-          "Actual 2.5s check is private isFreshMonitorReading/useFreshReading in sensor-lab-panel.tsx; DOM hook not run. MonitorController alone has no age cutoff.",
+          "Historical baseline panel used private isFreshMonitorReading/useFreshReading for 2.5s freshness; that retired DOM hook was not run. MonitorController alone has no age cutoff. Retirement adds no freshness parity proof.",
       },
     ],
   },
