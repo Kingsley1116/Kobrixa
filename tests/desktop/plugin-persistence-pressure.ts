@@ -569,6 +569,89 @@ export function verifyPressureWorkerTrace(rows: PressureRow[], owners: ResourceO
   return { ...verifyFourExecutions(executions, owners), executions, samples };
 }
 
+/** Join all owners before propagating failure, so cleanup cannot overlap a command. */
+export async function settlePressure<T>(work: Promise<T>[]): Promise<T[]> {
+  const results = await Promise.allSettled(work);
+  const failures = results.filter((r) => r.status === "rejected");
+  if (failures.length === 1) throw failures[0]!.reason;
+  if (failures.length)
+    throw new AggregateError(
+      failures.map((r) => r.reason),
+      "Pressure operations failed",
+    );
+  return results.map((r) => {
+    assert.equal(r.status, "fulfilled");
+    if (r.status !== "fulfilled") throw new Error("Unreachable rejection");
+    return r.value;
+  });
+}
+
+/** Failure cleanup never publishes; preserve the original failure even if cleanup fails. */
+export async function guardPressure<T>(
+  work: () => Promise<T>,
+  cleanup: () => Promise<unknown>,
+): Promise<T> {
+  try {
+    return await work();
+  } catch (cause) {
+    try {
+      await cleanup();
+    } catch (cleanupError) {
+      throw new AggregateError([cause, cleanupError], "Pressure failed; cleanup also failed", {
+        cause,
+      });
+    }
+    throw cause;
+  }
+}
+
+export async function pressureStep(both: (name: string) => Promise<PressureRow[]>, burst: boolean) {
+  if (burst) await both("burst");
+  const committed = await both("replace");
+  const flushed = await both("flush");
+  const restaged = await both("stage");
+  const staging = await both("staging");
+  const inventory = await both("inventory");
+  const phases = { settledFlush: flushed, restoredStaging: restaged };
+  assertPressurePhases(phases);
+  return { committed, flushed, staging, inventory, phases };
+}
+
+/** Receipts prove a settled flush interval, not constant 416 MiB staging pressure. */
+export function assertPressurePhases(phases: PressureRow) {
+  const { settledFlush, restoredStaging } = phases;
+  for (const pair of [settledFlush, restoredStaging]) {
+    assert.equal(pair.length, 2);
+    assert.equal(new Set(pair.map((r: PressureRow) => r.pluginId)).size, 2);
+    for (const row of pair) {
+      assert.equal(row.commandInterval.realm, "main");
+      assert.ok(Number.isFinite(row.commandInterval.startedAt));
+      assert.ok(row.commandInterval.finishedAt >= row.commandInterval.startedAt);
+      assert.equal(row.snapshot.recordCount, PRESSURE.perSource);
+      assert.equal(row.snapshot.readers.length, 0);
+    }
+  }
+  assert.deepEqual(
+    settledFlush.map((r: PressureRow) => r.pluginId).sort(),
+    restoredStaging.map((r: PressureRow) => r.pluginId).sort(),
+  );
+  for (const row of settledFlush) {
+    assert.equal(row.command, "flush");
+    assert.deepEqual(row.snapshot.held, []);
+  }
+  for (const row of restoredStaging) {
+    assert.equal(row.command, "stage");
+    assert.equal(row.result.byteLength, PRESSURE.recordBytes);
+    assert.equal(row.snapshot.held.length, 1);
+    assert.equal(row.snapshot.held[0][1].state, "sealed");
+  }
+  assert.ok(
+    Math.max(...settledFlush.map((r: PressureRow) => r.commandInterval.finishedAt)) <=
+      Math.min(...restoredStaging.map((r: PressureRow) => r.commandInterval.startedAt)),
+    "Restaging must follow both settled flushes",
+  );
+}
+
 export function assertPressurePartial(p: PressureRow) {
   assert.equal(p.status, "partial-memory-unavailable");
   assert.equal(p.fullPass, false);
@@ -622,6 +705,7 @@ export function assertPressurePartial(p: PressureRow) {
         step.ui.main[1].counters.owners === 10,
     ),
   );
+  for (const step of p.steps) assertPressurePhases(step.phases);
   assert.equal(p.worker.peak, 4);
   verifyFourExecutions(p.worker.executions, p.owners);
   assert.equal(p.mainObserver.faults, 0);

@@ -3,6 +3,10 @@ import test from "node:test";
 import { createHash, randomUUID } from "node:crypto";
 import {
   PRESSURE,
+  pressureStep,
+  guardPressure,
+  settlePressure,
+  assertPressurePhases,
   pressureChunk,
   pressureSlice,
   pressureHash,
@@ -149,6 +153,14 @@ function storageFixture(options = {}) {
       return ok({});
     },
     async flush() {
+      if (writes.size)
+        return {
+          ok: false,
+          error: {
+            code: "PLUGIN_E_STORAGE_CONFLICT",
+            detail: { kind: "persistence", reason: "flush-incomplete" },
+          },
+        };
       return ok({ barrier: randomUUID(), durability: "file-and-directory-sync" });
     },
     async quota() {
@@ -235,9 +247,56 @@ test("50 full-size durable unit records, full readback, two maximum staging and 
       .filter((e) => e.operation === "list")
       .every((e) => e.result.ok && Array.isArray(e.result.value.entries)),
   );
-  const before = workloads[0].snapshot().records[0];
+  await assert.rejects(workloads[0].flush(signal()), /flush-incomplete/);
+  assert.equal(fixtures[0].writes.size, 1, "Rejected flush retains the sealed write");
+  const order = [];
+  const both = async (name) => {
+    order.push(name);
+    return settlePressure(
+      workloads.map(async (w, i) => {
+        const startedAt = performance.now();
+        const fn = {
+          replace: w.replaceOne,
+          flush: w.flush,
+          stage: w.stageOne,
+          staging: w.stagingStatus,
+          inventory: w.inventory,
+        }[name];
+        const result = await fn(signal());
+        const snapshot = w.snapshot();
+        return {
+          pluginId: `source-${i}`,
+          command: name,
+          result,
+          snapshot: {
+            recordCount: snapshot.records.length,
+            held: snapshot.held,
+            readers: snapshot.readers,
+          },
+          commandInterval: { realm: "main", startedAt, finishedAt: performance.now() },
+        };
+      }),
+    );
+  };
+  const step = await pressureStep(both, false);
+  assert.deepEqual(order, ["replace", "flush", "stage", "staging", "inventory"]);
+  assert.equal(
+    fixtures.reduce((n, f) => n + f.records.size, 0),
+    50,
+  );
+  assert.equal(
+    fixtures.reduce((n, f) => n + f.writes.size, 0),
+    2,
+  );
+  const bad = structuredClone(step.phases);
+  bad.restoredStaging[0].commandInterval.startedAt = 0;
+  assert.throws(() => assertPressurePhases(bad), /Restaging/);
+  const held = structuredClone(step.phases);
+  held.settledFlush[0].snapshot.held = step.phases.restoredStaging[0].snapshot.held;
+  assert.throws(() => assertPressurePhases(held));
+  const before = workloads[0].snapshot().records[1];
   await workloads[0].replaceOne(signal());
-  assert.notEqual(workloads[0].snapshot().records[0].revision, before.revision);
+  assert.notEqual(workloads[0].snapshot().records[1].revision, before.revision);
   assert.equal(
     fixtures.reduce((n, f) => n + f.writes.size, 0),
     1,
@@ -614,4 +673,51 @@ test("outside nested RPC verifier proves all50 distinct complete hashes and reje
     /Foreign/,
   );
   assert.throws(() => verifyPressureRpcTrace(rows.slice(0, -1), owners));
+});
+
+test("failed pressure step joins both owners and cleans both without masking the business cause", async () => {
+  const cause = new Error("PLUGIN_E_STORAGE_CONFLICT: flush-incomplete");
+  const cleanupFailure = new Error("unknown cleanup disposition");
+  for (const failCleanup of [false, true]) {
+    const calls = [];
+    let secondSettled = false;
+    const both = (name) =>
+      settlePressure(
+        [0, 1].map(async (owner) => {
+          calls.push(`${name}:${owner}`);
+          if (name === "flush") {
+            if (owner === 0) throw cause;
+            await new Promise((resolve) => setImmediate(resolve));
+            secondSettled = true;
+          }
+          if (name === "cleanup") {
+            assert.equal(secondSettled, true);
+            if (owner === 0 && failCleanup) throw cleanupFailure;
+          }
+          return {};
+        }),
+      );
+    await assert.rejects(
+      guardPressure(
+        () => pressureStep(both, false),
+        () => both("cleanup"),
+      ),
+      (error) => {
+        if (!failCleanup) assert.equal(error, cause);
+        else {
+          assert.equal(error.cause, cause);
+          assert.deepEqual(error.errors, [cause, cleanupFailure]);
+        }
+        return true;
+      },
+    );
+    assert.deepEqual(calls, [
+      "replace:0",
+      "replace:1",
+      "flush:0",
+      "flush:1",
+      "cleanup:0",
+      "cleanup:1",
+    ]);
+  }
 });

@@ -6,6 +6,9 @@ import {
 } from "./import-boundaries.js";
 import {
   pressureTransport,
+  pressureStep,
+  guardPressure,
+  settlePressure,
   verifyPressureWorkerTrace,
   assertPressurePartial,
 } from "./plugin-persistence-pressure.js";
@@ -1756,7 +1759,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             };
           };
           const ids = ["acceptance.ui-pressure-a", "acceptance.ui-pressure-b"];
-          const both = (name: string) => Promise.all(ids.map((id) => command(id, name)));
+          const both = (name: string) => settlePressure(ids.map((id) => command(id, name)));
           const close = () =>
             (closing ??= (async () => {
               try {
@@ -1833,131 +1836,136 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
               let sessionId: string | undefined,
                 channelIds: string[] = [];
               const principal = () => authority.core(win.webContents.id, "monitor");
-              const uiReport = await runUiLoad({
-                window: win,
-                composition: live,
-                runtime: runtimeDiagnostics(handles.runtime),
-                directory: config.pressure.uiDirectory,
-                folders: config.pressure.uiFolders,
-                durationMs: 600000,
-                cycles: 1000,
-                snapshotDelay: snapshotDelay(),
-                workload: {
-                  async prepare() {
-                    for (let i = 0; i < 25; i++)
-                      for (const row of await both("seed")) p.seeded.push(row.result);
-                    await both("inventory");
-                    for (let i = 0; i < 25; i++)
-                      for (const row of await both("verify")) p.verified.push(row.result);
-                    await both("stage");
-                    const inventory = accepted(
-                      await live.foundation.broker.request(
-                        principal(),
-                        "devices/list",
-                        {},
-                        new AbortController().signal,
-                      ),
-                    );
-                    const provider = inventory.providers.find((row) => row.state === "available");
-                    assert.ok(provider);
-                    const discovered = accepted(
-                      await live.foundation.broker.request(
-                        principal(),
-                        "devices/discover",
-                        { providerId: provider.providerId },
-                        new AbortController().signal,
-                      ),
-                    );
-                    assert.ok(discovered.candidates[0]);
-                    sessionId = accepted(
-                      await live.foundation.broker.request(
-                        principal(),
-                        "devices/connect",
-                        {
-                          target: {
-                            kind: "candidate",
-                            candidateId: discovered.candidates[0].candidateId,
-                          },
-                        },
-                        new AbortController().signal,
-                      ),
-                    ).session.sessionId;
-                    const sources = accepted(
-                      await live.foundation.broker.request(
-                        principal(),
-                        "devices/session",
-                        { sessionId },
-                        new AbortController().signal,
-                      ),
-                    );
-                    channelIds = sources.sources.channels
-                      .filter((row) => row.state === "ready")
-                      .slice(0, 1)
-                      .map((row) => row.channelId);
-                    assert.equal(channelIds.length, 1);
-                  },
-                  async start() {
-                    p.startedAt = performance.now();
-                  },
-                  async step(index, uiSample) {
-                    const start = performance.now();
-                    assert.ok(sessionId);
-                    const work = await Promise.allSettled([
-                      live.foundation.broker.request(
-                        principal(),
-                        "devices/read",
-                        { sessionId, channelIds, freshness: "fresh" },
-                        new AbortController().signal,
-                      ),
-                      (async () => {
-                        if (index < 30) await both("burst");
-                        // Replace held stages before public idle/total expiry, without changing deadlines.
-                        const committed = await both("replace");
+              const uiReport = await guardPressure(
+                () =>
+                  runUiLoad({
+                    window: win,
+                    composition: live,
+                    runtime: runtimeDiagnostics(handles.runtime),
+                    directory: config.pressure.uiDirectory,
+                    folders: config.pressure.uiFolders,
+                    durationMs: 600000,
+                    cycles: 1000,
+                    snapshotDelay: snapshotDelay(),
+                    workload: {
+                      async prepare() {
+                        for (let i = 0; i < 25; i++)
+                          for (const row of await both("seed")) p.seeded.push(row.result);
+                        await both("inventory");
+                        for (let i = 0; i < 25; i++)
+                          for (const row of await both("verify")) p.verified.push(row.result);
                         await both("stage");
-                        const staging = await both("staging"),
-                          inventory = await both("inventory"),
-                          flushed = await both("flush");
-                        return { committed, staging, inventory, flushed };
-                      })(),
-                    ] as const);
-                    assert.equal(work[0].status, "fulfilled");
-                    assert.equal(work[1].status, "fulfilled");
-                    const provider = work[0].value,
-                      { committed, staging, inventory, flushed } = work[1].value;
-                    assert.equal(provider.ok, true, JSON.stringify(provider));
-                    p.steps.push({
-                      index,
-                      ui: uiSample,
-                      startedAt: start,
-                      finishedAt: performance.now(),
-                      staging: staging.map((r) => r.result),
-                      provider,
-                    });
-                    p.memory.push({ at: performance.now(), ...process.memoryUsage() });
-                    if (index < 30) {
-                      p.samples.inventory.push(inventory);
-                      p.samples.flush.push(flushed);
-                      p.samples.commit.push(committed);
-                    }
-                    assert.deepEqual(pressure.snapshot().faults, []);
-                    assert.equal(sinkFaults, 0);
-                  },
-                  async finish() {
-                    p.finishedAt = performance.now();
-                    await both("cleanup");
-                    await both("flush");
-                    if (sessionId)
-                      accepted(
-                        await live.foundation.broker.request(
-                          principal(),
-                          "devices/disconnect",
-                          { sessionId },
-                          new AbortController().signal,
-                        ),
-                      );
-                  },
-                },
-              });
+                        const inventory = accepted(
+                          await live.foundation.broker.request(
+                            principal(),
+                            "devices/list",
+                            {},
+                            new AbortController().signal,
+                          ),
+                        );
+                        const provider = inventory.providers.find(
+                          (row) => row.state === "available",
+                        );
+                        assert.ok(provider);
+                        const discovered = accepted(
+                          await live.foundation.broker.request(
+                            principal(),
+                            "devices/discover",
+                            { providerId: provider.providerId },
+                            new AbortController().signal,
+                          ),
+                        );
+                        assert.ok(discovered.candidates[0]);
+                        sessionId = accepted(
+                          await live.foundation.broker.request(
+                            principal(),
+                            "devices/connect",
+                            {
+                              target: {
+                                kind: "candidate",
+                                candidateId: discovered.candidates[0].candidateId,
+                              },
+                            },
+                            new AbortController().signal,
+                          ),
+                        ).session.sessionId;
+                        const sources = accepted(
+                          await live.foundation.broker.request(
+                            principal(),
+                            "devices/session",
+                            { sessionId },
+                            new AbortController().signal,
+                          ),
+                        );
+                        channelIds = sources.sources.channels
+                          .filter((row) => row.state === "ready")
+                          .slice(0, 1)
+                          .map((row) => row.channelId);
+                        assert.equal(channelIds.length, 1);
+                      },
+                      async start() {
+                        p.startedAt = performance.now();
+                      },
+                      async step(index, uiSample) {
+                        const start = performance.now();
+                        assert.ok(sessionId);
+                        const work = await Promise.allSettled([
+                          live.foundation.broker.request(
+                            principal(),
+                            "devices/read",
+                            { sessionId, channelIds, freshness: "fresh" },
+                            new AbortController().signal,
+                          ),
+                          pressureStep(both, index < 30),
+                        ] as const);
+                        const rejected = work.filter((r) => r.status === "rejected");
+                        if (rejected.length === 1) throw rejected[0]!.reason;
+                        if (rejected.length)
+                          throw new AggregateError(
+                            rejected.map((r) => r.reason),
+                            "Pressure provider/storage failed",
+                          );
+                        if (work[0].status !== "fulfilled" || work[1].status !== "fulfilled")
+                          throw new Error("Unreachable pressure rejection");
+                        const provider = work[0].value,
+                          { committed, staging, inventory, flushed, phases } = work[1].value;
+                        assert.equal(provider.ok, true, JSON.stringify(provider));
+                        p.steps.push({
+                          index,
+                          ui: uiSample,
+                          startedAt: start,
+                          finishedAt: performance.now(),
+                          phases,
+                          staging: staging.map((r) => r.result),
+                          provider,
+                        });
+                        p.memory.push({ at: performance.now(), ...process.memoryUsage() });
+                        if (index < 30) {
+                          p.samples.inventory.push(inventory);
+                          p.samples.flush.push(flushed);
+                          p.samples.commit.push(committed);
+                        }
+                        assert.deepEqual(pressure.snapshot().faults, []);
+                        assert.equal(sinkFaults, 0);
+                      },
+                      async finish() {
+                        p.finishedAt = performance.now();
+                        await both("cleanup");
+                        await both("flush");
+                        if (sessionId)
+                          accepted(
+                            await live.foundation.broker.request(
+                              principal(),
+                              "devices/disconnect",
+                              { sessionId },
+                              new AbortController().signal,
+                            ),
+                          );
+                      },
+                    },
+                  }),
+                () => both("cleanup"),
+              );
               p.ui = uiReport;
               p.sdkTimings = pressure.outputs.filter(
                 (row) => row.operation && row.at >= p.startedAt && row.at <= p.finishedAt,
