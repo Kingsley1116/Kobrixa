@@ -85,11 +85,19 @@ async function until<T>(
 export function runNativeDevice(): void {
   assert.equal(app.isReady(), false, "Primary lock must precede Electron readiness");
   const root = app.commandLine.getSwitchValue("device-root");
-  const output = path.join(root, "producer.json");
+  const restartPhase = app.commandLine.getSwitchValue("device-restart-phase");
+  assert.ok(["", "1", "2"].includes(restartPhase));
+  const output = path.join(
+    root,
+    restartPhase ? `producer-restart-${restartPhase}.json` : "producer.json",
+  );
+  let restart: ObjectValue | undefined;
   const installed = app.commandLine.hasSwitch("device-installed");
+  assert.ok(!installed || !restartPhase, "Restart is a separate public mode");
   const scenario = installed ? app.commandLine.getSwitchValue("device-scenario") : "healthy";
   assert.ok(["healthy", "absent", "missing-resource", "tampered"].includes(scenario));
   let providerCreations = 0;
+  const providerControls: ReturnType<typeof createFakeDeviceProvider>["control"][] = [];
   assert.ok(path.isAbsolute(root));
   app.setPath("userData", path.join(root, "profile"));
   const wire: Wire[] = [],
@@ -373,6 +381,7 @@ export function runNativeDevice(): void {
                       },
                       now: options.now,
                     });
+                    providerControls.push(fake.control);
                     const discover = fake.provider.discover.bind(fake.provider);
                     fake.provider.discover = async (...args) => {
                       const result = await discover(...args);
@@ -629,6 +638,7 @@ export function runNativeDevice(): void {
         await window.loadFile(path.join(root, "renderer/index.html"), {
           query: {
             digest: settingsDigest,
+            ...(restartPhase ? { restart: restartPhase } : {}),
           },
         });
         await retirement;
@@ -700,6 +710,82 @@ export function runNativeDevice(): void {
         assert.equal(launches.length, 0, "Capture must not activate feature");
         const migrated = desktopDeviceSettings(live).getSnapshot();
         assert.equal(migrated.state, "ready");
+        if (restartPhase) {
+          assert.equal(migrated.state, "ready");
+          if (migrated.state === "ready")
+            assert.equal(migrated.values.skipUnchangedAssets, restartPhase === "1");
+          await click('[data-harness="settings"]');
+          await until(
+            () =>
+              ipc.some(
+                (row) => row.channel === "plugins:settings:watch" && row.finishedAt !== undefined,
+              ),
+            "restart generic form watch",
+          );
+          let finalSnapshot = object(
+            ipc.find((row) => row.channel === "plugins:settings:open")!.result,
+          ).snapshot;
+          let challenge: unknown = null;
+          if (restartPhase === "1") {
+            for (const [method, selector, expected] of [
+              ["update", '[id$="-field-0"]', false],
+              ["reset", '.plugin-ui-node:has([id$="-field-0"]) button', true],
+              ["update", '[id$="-field-0"]', false],
+            ] as const) {
+              const before = ipc.length;
+              await click(selector);
+              const mutation = await until(
+                () =>
+                  ipc
+                    .slice(before)
+                    .find(
+                      (row) =>
+                        row.channel === `plugins:settings:${method}` &&
+                        object(row.result ?? {}).ok === true,
+                    ),
+                `restart ${method} receipt`,
+              );
+              finalSnapshot = object(object(mutation.result).value).snapshot;
+              await until(() => {
+                const current = desktopDeviceSettings(live).getSnapshot();
+                return current.state === "ready" && current.values.skipUnchangedAssets === expected;
+              }, "restart authoritative CAS value");
+            }
+          } else {
+            challenge = await js(
+              `window.kobrixa.plugins.legacyPreferences.challenge("kobrixa.device-preferences").then(()=>({rejected:false}),error=>({rejected:true,error:String(error)}))`,
+            );
+            assert.equal(object(challenge).rejected, true);
+          }
+          await pause(300);
+          const renderer = await js<ObjectValue>("window.deviceRestartSnapshot()");
+          restart = {
+            initialSettings: migrated,
+            profile: await realpath(app.getPath("userData")),
+            scope: scope(),
+            settings: desktopDeviceSettings(live).getSnapshot(),
+            formSnapshot: finalSnapshot,
+            renderer,
+            challenge,
+          };
+          await click('[data-harness="settings"]');
+          await until(
+            () => ipc.some((row) => row.channel === "plugins:settings:unwatch"),
+            "restart form unwatch",
+          );
+          assert.deepEqual(launches, []);
+          assert.deepEqual(wire, []);
+          await live.dispose();
+          cleanup = {
+            bridge: diagnosticsFor(ui.bridge).snapshot(),
+            worker: workerDiagnostics(handles.backend).snapshot(),
+            workers: persistenceWorkerCount(handles.backend),
+          };
+          restart.providerTrace = providerControls.flatMap((control) => [...control.trace()]);
+          assert.deepEqual(restart.providerTrace, []);
+          stage = "complete";
+          return;
+        }
         if (migrated.state === "ready") assert.equal(migrated.values.skipUnchangedAssets, true);
         await click(".plugin-tools-pane button", "Open");
         await until(() => {
@@ -858,6 +944,8 @@ export function runNativeDevice(): void {
           JSON.stringify(
             {
               schema: 1,
+              restartPhase,
+              restart,
               installed,
               scenario,
               providerCreations,
@@ -882,8 +970,13 @@ export function runNativeDevice(): void {
             2,
           ),
         );
-        if (win && !win.isDestroyed()) win.destroy();
-        app.exit(stage === "complete" ? 0 : 1);
+        if (restartPhase && stage === "complete") {
+          if (win && !win.isDestroyed()) win.webContents.session.flushStorageData();
+          app.quit(); // Normal shutdown lets Chromium persist the shared-profile localStorage.
+        } else {
+          if (win && !win.isDestroyed()) win.destroy();
+          app.exit(stage === "complete" ? 0 : 1);
+        }
       }
     },
     () => {

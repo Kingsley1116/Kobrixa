@@ -9,6 +9,7 @@ import {
   realpath,
   symlink,
   writeFile,
+  lstat,
 } from "node:fs/promises";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -16,6 +17,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn, execFileSync } from "node:child_process";
 import { rawResourcePlugin } from "./raw-resource-plugin.mjs";
 
+import { processTable, descendants } from "./builtin-installed-client.mjs";
+import { createProcessMonitor, finishProcessObservation } from "./device-ui-stdio-run.mjs";
 import { copyInstalledLeaf } from "./sensor-lab-installed-artifacts.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const dependencies = process.env.KOBRIXA_E6_DEPS ?? root;
@@ -509,8 +512,14 @@ export async function buildDevice(directory, { productionLeaf } = {}) {
             fileName: "legacy-fixture.js",
             source: `(() => {
                 const entries = [{key:"kobrixa.connectionMode",raw:"usb"},{key:"kobrixa.rememberWifiAddress",raw:"true"},{key:"kobrixa.lastWifiAddress",raw:" 192.0.2.9 "}];
-                for (const {key,raw} of entries) localStorage.setItem(key,raw);
-                console.log("LEGACY_AUDIT:"+JSON.stringify({kind:"seed",at:performance.timeOrigin+performance.now(),entries}));
+                const retained=new URLSearchParams(location.search).get("restart")==="2";
+                if(!retained) for (const {key,raw} of entries) localStorage.setItem(key,raw);
+                console.log("LEGACY_AUDIT:"+JSON.stringify({kind:retained?"retained":"seed",at:performance.timeOrigin+performance.now(),entries:entries.map(({key})=>({key,raw:localStorage.getItem(key)}))}));
+                if(new URLSearchParams(location.search).has("restart")) {
+                  const remove=Storage.prototype.removeItem, clear=Storage.prototype.clear;
+                  Storage.prototype.removeItem=function(key) {if(this===localStorage && entries.some(row=>row.key===key)) console.log("LEGACY_AUDIT:"+JSON.stringify({kind:"write",operation:"remove",key}));return remove.call(this,key);};
+                  Storage.prototype.clear=function() {if(this===localStorage) console.log("LEGACY_AUDIT:"+JSON.stringify({kind:"write",operation:"clear"}));return clear.call(this);};
+                }
                 const set = Storage.prototype.setItem;
                 Storage.prototype.setItem = function(key,value) {
                   if (this === localStorage && entries.some(row=>row.key===key)) console.log("LEGACY_AUDIT:"+JSON.stringify({kind:"write",at:performance.timeOrigin+performance.now(),key,raw:String(value)}));
@@ -581,10 +590,283 @@ export async function buildDevice(directory, { productionLeaf } = {}) {
   return identity;
 }
 
+export async function snapshotRestartProfile(profile) {
+  const original = await readFile(path.join(profile, "device-settings.json"));
+  const base = path.join(profile, "plugins/persistence-v1/namespaces");
+  const matches = [];
+  for (const name of await readdir(base)) {
+    const file = path.join(base, name, "identity.json");
+    const identity = JSON.parse(await readFile(file, "utf8"));
+    if (identity.sourceKey === `builtin:${pluginId}`) matches.push(path.join(base, name));
+  }
+  assert.equal(matches.length, 1);
+  const namespace = matches[0],
+    hashes = {};
+  const read = async (relative) => {
+    const file = path.join(namespace, relative),
+      stat = await lstat(file);
+    assert.ok(stat.isFile() && !stat.isSymbolicLink() && stat.size <= 2 * 1024 * 1024);
+    const bytes = await readFile(file);
+    hashes[relative] = digest(bytes);
+    return { bytes, json: JSON.parse(bytes) };
+  };
+  const document = async (head, folder) => {
+    assert.match(head.object, /^r_[a-zA-Z0-9_-]+\.json$/);
+    const loaded = await read(`${folder}/objects/${head.object}`);
+    assert.equal(loaded.bytes.length, head.byteLength);
+    assert.equal(digest(loaded.bytes), head.sha256);
+    return loaded.json;
+  };
+  const imports = [];
+  const files = (await readdir(path.join(namespace, "imports")))
+    .filter((f) => f.endsWith(".json"))
+    .sort();
+  assert.ok(files.length > 0 && files.length <= 32);
+  for (const file of files) {
+    const head = (await read("imports/" + file)).json;
+    imports.push({ key: head.target.key, head, document: await document(head, "imports") });
+  }
+  const head = (await read("settings/head.json")).json;
+  return {
+    originalSha256: digest(original),
+    settings: { head, document: await document(head, "settings") },
+    imports,
+    hashes,
+  };
+}
+export function verifyRestartReceipt(r) {
+  const { first, second, outside, beforeSecond, afterSecond } = r;
+  assert.equal(outside.length, 2);
+  for (const [i, p] of [first, second].entries()) {
+    assert.equal(p.schema, 1);
+    assert.equal(p.stage, "complete");
+    assert.equal(p.restartPhase, String(i + 1));
+    assert.deepEqual(p.failures, []);
+    for (const name of ["launches", "exits", "wire"]) assert.deepEqual(p[name], []);
+    assert.ok(Number.isSafeInteger(p.mainPid) && p.mainPid > 0);
+    assert.equal(outside[i].pid, p.mainPid);
+    assert.equal(outside[i].code, 0);
+    assert.equal(outside[i].signal, null);
+    assert.equal(outside[i].timedOut, false);
+    assert.deepEqual(outside[i].survivors, []);
+    assert.equal(p.cleanup.workers, 0);
+    for (const counters of [p.cleanup.bridge, p.cleanup.worker]) {
+      assert.ok(Object.keys(counters).length);
+      for (const value of Object.values(counters)) assert.equal(value, 0);
+    }
+    assert.equal(p.restart.settings.state, "ready");
+    assert.equal(p.restart.settings.values.skipUnchangedAssets, false);
+    assert.deepEqual(p.restart.renderer.alerts, []);
+    assert.deepEqual(
+      p.restart.providerTrace,
+      [],
+      "No provider work or operation replay across restart",
+    );
+    assert.equal(p.legacyAudit.length, 1);
+    assert.equal(p.legacyAudit[0].kind, i === 0 ? "seed" : "retained");
+  }
+  assert.notEqual(first.mainPid, second.mainPid);
+  assert.equal(first.restart.profile, second.restart.profile);
+  assert.ok(path.isAbsolute(first.restart.profile));
+  for (const key of ["hostEpoch", "workbenchInstance"]) {
+    assert.ok(first.restart.scope[key] && second.restart.scope[key]);
+    assert.notEqual(first.restart.scope[key], second.restart.scope[key]);
+  }
+  assert.equal(first.restart.initialSettings.state, "ready");
+  assert.equal(first.restart.initialSettings.values.skipUnchangedAssets, true);
+  const changes = first.ipc.filter((row) =>
+    ["plugins:settings:update", "plugins:settings:reset"].includes(row.channel),
+  );
+  assert.deepEqual(
+    changes.map((row) => row.channel),
+    ["plugins:settings:update", "plugins:settings:reset", "plugins:settings:update"],
+  );
+  let previous = first.restart.initialSettings.snapshot.revision;
+  const revisions = [];
+  for (const [i, row] of changes.entries()) {
+    const value = ok(row.result),
+      expected = i === 1;
+    assert.equal(
+      value.snapshot.values.find((v) => v.key === "skipUnchangedAssets").value,
+      expected,
+    );
+    assert.equal(value.receipt.revision, value.snapshot.revision);
+    assert.ok(value.receipt.commitId);
+    assert.ok(["file-and-directory-sync", "file-sync-only"].includes(value.receipt.durability));
+    assert.equal(row.args[1].expectedRevision, previous);
+    if (i) assert.ok(row.at > changes[i - 1].finishedAt);
+    assert.ok(
+      first.native.some(
+        (event) =>
+          event.type === "pointerdown" &&
+          event.isTrusted === true &&
+          event.at < row.at &&
+          (!i || event.at > changes[i - 1].finishedAt),
+      ),
+      "Distinct trusted input before each CAS/reset",
+    );
+    if (i === 1) assert.deepEqual(row.args[1].keys, ["skipUnchangedAssets"]);
+    else assert.deepEqual(row.args[1].changes, [{ key: "skipUnchangedAssets", value: false }]);
+    previous = value.snapshot.revision;
+    revisions.push(previous);
+  }
+  assert.equal(new Set(revisions).size, 3);
+  const final = ok(changes[2].result);
+  assert.equal(first.restart.initialSettings.snapshot.values.length, 9);
+  assert.deepEqual(
+    final.snapshot.values,
+    first.restart.initialSettings.snapshot.values.map((row) =>
+      row.key === "skipUnchangedAssets" ? { ...row, value: false } : row,
+    ),
+  );
+  for (const p of [first, second]) {
+    assert.deepEqual(p.restart.settings.snapshot, final.snapshot);
+    assert.deepEqual(p.restart.formSnapshot, final.snapshot);
+  }
+  for (const p of [first, second]) {
+    const opens = p.ipc.filter((row) => row.channel === "plugins:settings:open");
+    assert.equal(opens.length, 1);
+    assert.deepEqual(opens[0].result.binding.scope, p.restart.scope);
+    assert.deepEqual(
+      opens[0].result.snapshot,
+      p === first ? first.restart.initialSettings.snapshot : final.snapshot,
+    );
+  }
+  assert.equal(second.restart.challenge.rejected, true);
+  assert.equal(second.restart.renderer.migration, "pending");
+  assert.ok(
+    second.ipc.some(
+      (row) => row.channel === "persistence:legacy-preferences-challenge" && row.error,
+    ),
+  );
+  assert.ok(
+    !second.ipc.some((row) =>
+      [
+        "plugins:settings:update",
+        "plugins:settings:reset",
+        "persistence:legacy-preferences-submit",
+      ].includes(row.channel),
+    ),
+  );
+  assert.deepEqual(
+    beforeSecond,
+    afterSecond,
+    "Completed import/settings changed during second process",
+  );
+  assert.equal(beforeSecond.originalSha256, r.originalSha256);
+  assert.match(r.originalSha256, /^[a-f0-9]{64}$/);
+  assert.equal(beforeSecond.settings.head.receipt.revision, final.snapshot.revision);
+  assert.equal(beforeSecond.settings.head.receipt.commitId, final.receipt.commitId);
+  assert.deepEqual(beforeSecond.settings.document.values, final.snapshot.values);
+  assert.equal(beforeSecond.imports.length, 3);
+  const plans = beforeSecond.imports.filter((item) => item.document.plan);
+  assert.equal(plans.length, 1);
+  const plan = plans[0].document;
+  assert.equal(plan.complete, true);
+  assert.equal(plan.plan.descriptorId, "kobrixa.device-preferences");
+  assert.equal(plans[0].key, plan.plan.id);
+  assert.equal(plan.plan.devicePreferencesEvidence.device.sha256, r.originalSha256);
+  assert.equal(plan.items.length, 1);
+  assert.equal(plan.items[0].state, "committed");
+  assert.ok(plan.items[0].receipt.commitId);
+  assert.equal(plan.items[0].receipt.revision, first.restart.initialSettings.snapshot.revision);
+  const nonce = beforeSecond.imports.find((item) => item.document.kind === "nonce")?.document;
+  const barrier = beforeSecond.imports.find((item) => item.document.kind === "barrier")?.document;
+  assert.equal(nonce.state, "consumed");
+  assert.equal(nonce.nonce, plan.plan.preferencesEvidence.nonce);
+  assert.equal(barrier.state, "complete");
+  assert.ok(barrier.barrier);
+  for (const p of [first, second]) {
+    assert.deepEqual(p.restart.renderer.entries, nonce.raw.entries);
+    assert.deepEqual(p.legacyAudit[0].entries, nonce.raw.entries);
+  }
+  return {
+    claim: "two-process same-profile restart",
+    revision: final.snapshot.revision,
+    importId: plan.plan.id,
+    pids: [first.mainPid, second.mainPid],
+  };
+}
+
+async function runPublicProcess(directory, electron, env, phase = "") {
+  const child = spawn(
+    electron,
+    [
+      path.join(directory, "main.cjs"),
+      `--device-root=${directory}`,
+      ...(phase ? [`--device-restart-phase=${phase}`] : []),
+    ],
+    {
+      cwd: directory,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32",
+    },
+  );
+  const known = new Set(),
+    monitorErrors = [];
+  const monitor = phase
+    ? createProcessMonitor({
+        poll: processTable,
+        observe: (rows) => {
+          descendants(rows, child.pid, known);
+        },
+        onError: (e) => monitorErrors.push(String(e)),
+      })
+    : null;
+  monitor?.tick();
+  const logs = [];
+  for (const stream of [child.stdout, child.stderr])
+    stream.on("data", (bytes) => {
+      logs.push(bytes.toString());
+      process.stderr.write(bytes);
+    });
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    try {
+      process.kill(process.platform === "win32" ? child.pid : -child.pid, "SIGKILL");
+    } catch (e) {
+      if (e.code !== "ESRCH") throw e;
+    }
+  }, 150_000);
+  const outside = await new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code, signal) => resolve({ code, signal }));
+  })
+    .catch((error) => ({ code: null, signal: null, error: String(error) }))
+    .finally(() => clearTimeout(timer));
+  await monitor?.stop();
+  const survivors = phase
+    ? await finishProcessObservation({
+        poll: processTable,
+        parent: child.pid,
+        known,
+        onError: (e) => monitorErrors.push(String(e)),
+      })
+    : [];
+  const processResult = { ...outside, pid: child.pid, timedOut, survivors, monitorErrors };
+  await writeFile(
+    path.join(directory, phase ? `process-restart-${phase}.json` : "process.json"),
+    JSON.stringify(processResult, null, 2),
+  );
+  await writeFile(
+    path.join(directory, phase ? `native-restart-${phase}.log` : "native.log"),
+    logs.join(""),
+  );
+  assert.deepEqual(monitorErrors, []);
+  assert.deepEqual(survivors, []);
+  assert.equal(timedOut, false, "Native timeout");
+  assert.equal(outside.code, 0, "Native producer failed; inspect producer.json/native.log");
+  assert.equal(outside.signal, null);
+  return { ...outside, pid: child.pid, timedOut, survivors };
+}
+
 async function main(args) {
+  const restartMode = args.includes("--restart");
   assert.ok(
     ["--build-only", "--run", "--run-built"].includes(args[0]),
-    "Use --build-only | --run | --run-built <absolute directory>",
+    "Use --build-only | --run | --run-built <absolute directory> [--restart]",
   );
   const directory =
     args[0] === "--run-built"
@@ -623,39 +905,40 @@ async function main(args) {
   const require = createRequire(path.join(dependencies, "apps/desktop/package.json"));
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
-  const child = spawn(
-    require("electron"),
-    [path.join(directory, "main.cjs"), `--device-root=${directory}`],
-    {
-      cwd: directory,
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-      detached: process.platform !== "win32",
-    },
-  );
-  const logs = [];
-  for (const stream of [child.stdout, child.stderr])
-    stream.on("data", (bytes) => {
-      logs.push(bytes.toString());
-      process.stderr.write(bytes);
-    });
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    try {
-      process.kill(process.platform === "win32" ? child.pid : -child.pid, "SIGKILL");
-    } catch (e) {
-      if (e.code !== "ESRCH") throw e;
-    }
-  }, 150_000);
-  const outside = await new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code, signal) => resolve({ code, signal }));
-  }).finally(() => clearTimeout(timer));
-  await writeFile(path.join(directory, "native.log"), logs.join(""));
-  assert.equal(timedOut, false, "Native timeout");
-  assert.equal(outside.code, 0, "Native producer failed; inspect producer.json/native.log");
-  assert.equal(outside.signal, null);
+  const electron = require("electron");
+  if (restartMode) {
+    const originalSha256 = digest(
+      await readFile(path.join(directory, "profile/device-settings.json")),
+    );
+    const outside = [];
+    outside.push(await runPublicProcess(directory, electron, env, "1"));
+    const first = JSON.parse(await readFile(path.join(directory, "producer-restart-1.json")));
+    const beforeSecond = await snapshotRestartProfile(path.join(directory, "profile"));
+    outside.push(await runPublicProcess(directory, electron, env, "2"));
+    const second = JSON.parse(await readFile(path.join(directory, "producer-restart-2.json")));
+    const afterSecond = await snapshotRestartProfile(path.join(directory, "profile"));
+    const evidence = { first, second, outside, originalSha256, beforeSecond, afterSecond };
+    await writeFile(
+      path.join(directory, "restart-evidence.json"),
+      JSON.stringify(evidence, null, 2),
+    );
+    const verified = verifyRestartReceipt(evidence);
+    await writeFile(
+      path.join(directory, "restart-receipt.json"),
+      JSON.stringify(
+        {
+          verified,
+          identity,
+          evidenceSha256: digest(await readFile(path.join(directory, "restart-evidence.json"))),
+        },
+        null,
+        2,
+      ),
+    );
+    console.log(`Actual same-profile restart PASS: ${directory}`);
+    return;
+  }
+  const outside = await runPublicProcess(directory, electron, env);
   const producerBytes = await readFile(path.join(directory, "producer.json"));
   const verified = verifyDeviceReceipt(JSON.parse(producerBytes));
   const receipt = { verified, outside, producerSha256: digest(producerBytes), identity };

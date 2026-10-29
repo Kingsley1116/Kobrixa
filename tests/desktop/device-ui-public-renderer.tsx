@@ -47,6 +47,22 @@ settingsStore.set("rightPanel", "plugins");
 settingsStore.set("locale", "en");
 const query = new URLSearchParams(location.search);
 const digest = query.get("digest")!;
+// Read-only restart evidence; all mutations still use the actual generic form/preload.
+if (query.has("restart"))
+  Object.assign(window, {
+    deviceRestartSnapshot: () => ({
+      migration: owner.deviceMigration.getSnapshot(),
+      entries: [
+        "kobrixa.connectionMode",
+        "kobrixa.rememberWifiAddress",
+        "kobrixa.lastWifiAddress",
+      ].map((key) => ({ key, raw: localStorage.getItem(key) })),
+      alerts: Array.from(document.querySelectorAll('[role="alert"]')).map(
+        (node) => node.textContent,
+      ),
+    }),
+  });
+
 // The generic form obtains the real committed document scope from settings.open.
 // Never carry an about:blank scope into the renderer through a pre-navigation URL.
 function DeviceSettings() {

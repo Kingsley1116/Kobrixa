@@ -1,11 +1,17 @@
 import test from "node:test";
-import { readFile, mkdtemp, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readFile, mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
-import { verifyDeviceReceipt, legacyDevice } from "./device-ui-public-run.mjs";
+import {
+  verifyDeviceReceipt,
+  legacyDevice,
+  verifyRestartReceipt,
+  snapshotRestartProfile,
+} from "./device-ui-public-run.mjs";
 
 // Oracle-only manufactured input. Never a producer receipt or native evidence.
 function fixture() {
@@ -590,5 +596,271 @@ test("installed PID observation rejects missing or foreign service without inven
     await assert.rejects(observed.observation);
     assert.equal(await observed.started, "transport");
     assert.equal(utility.fork, original);
+  }
+});
+
+// Independent fabricated restart oracle specimen, never native evidence.
+function restartFixture() {
+  const entries = [
+    { key: "kobrixa.connectionMode", raw: "usb" },
+    { key: "kobrixa.rememberWifiAddress", raw: "true" },
+    { key: "kobrixa.lastWifiAddress", raw: " 192.0.2.9 " },
+  ];
+  const snap = (revision, value) => ({
+    revision,
+    schemaVersion: 1,
+    values: Object.entries({
+      connectionMode: "usb",
+      lastWifiAddress: " 192.0.2.9 ",
+      rememberWifiAddress: true,
+      skipUnchangedAssets: value,
+      usbAutoReconnect: false,
+      usbRetryInterval: 2000,
+      usbRetryLimit: 3,
+      wifiConnectTimeout: 10000,
+      wifiHandshakeTimeout: 5000,
+    }).map(([key, value]) => ({ key, value })),
+  });
+  const row = (method, expected, value, revision, at) => ({
+    channel: "plugins:settings:" + method,
+    at,
+    finishedAt: at + 1,
+    args: [
+      {},
+      method === "reset"
+        ? { expectedRevision: expected, keys: ["skipUnchangedAssets"] }
+        : { expectedRevision: expected, changes: [{ key: "skipUnchangedAssets", value }] },
+    ],
+    result: {
+      ok: true,
+      value: {
+        snapshot: snap(revision, value),
+        receipt: {
+          revision,
+          commitId: "commit-" + revision,
+          durability: "file-and-directory-sync",
+        },
+      },
+    },
+  });
+  const phase = (n) => ({
+    schema: 1,
+    restartPhase: String(n),
+    stage: "complete",
+    mainPid: n,
+    failures: [],
+    launches: [],
+    exits: [],
+    wire: [],
+    legacyAudit: [{ kind: n === 1 ? "seed" : "retained", entries }],
+    cleanup: { workers: 0, bridge: { pending: 0 }, worker: { pending: 0 } },
+    ipc:
+      n === 1
+        ? [
+            row("update", "import", false, "a", 1),
+            row("reset", "a", true, "b", 3),
+            row("update", "b", false, "c", 5),
+          ]
+        : [
+            {
+              channel: "persistence:legacy-preferences-challenge",
+              error: "Unavailable preference descriptor",
+            },
+          ],
+    restart: {
+      providerTrace: [],
+      profile: "/profile",
+      scope: { hostEpoch: "host" + n, workbenchInstance: "scope" + n },
+      settings: {
+        state: "ready",
+        snapshot: snap("c", false),
+        values: { skipUnchangedAssets: false },
+      },
+      renderer: { entries, migration: n === 1 ? "captured" : "pending", alerts: [] },
+      formSnapshot: snap("c", false),
+      challenge: n === 2 ? { rejected: true } : null,
+    },
+  });
+  const first = phase(1),
+    second = phase(2);
+  first.restart.initialSettings = {
+    state: "ready",
+    snapshot: snap("import", true),
+    values: { skipUnchangedAssets: true },
+  };
+  first.native = [
+    { type: "pointerdown", isTrusted: true, at: 0 },
+    { type: "pointerdown", isTrusted: true, at: 2.5 },
+    { type: "pointerdown", isTrusted: true, at: 4.5 },
+  ];
+  for (const p of [first, second])
+    p.ipc.unshift({
+      channel: "plugins:settings:open",
+      result: {
+        binding: { scope: p.restart.scope },
+        snapshot: p === first ? snap("import", true) : snap("c", false),
+      },
+    });
+  const persisted = {
+    originalSha256: "a".repeat(64),
+    settings: {
+      head: { receipt: { revision: "c", commitId: "commit-c" } },
+      document: { values: snap("c", false).values },
+    },
+    imports: [
+      {
+        key: "import/id",
+        document: {
+          complete: true,
+          plan: {
+            id: "import/id",
+            descriptorId: "kobrixa.device-preferences",
+            preferencesEvidence: { nonce: "nonce" },
+            devicePreferencesEvidence: { device: { sha256: "a".repeat(64) } },
+          },
+          items: [
+            { state: "committed", receipt: { commitId: "import-commit", revision: "import" } },
+          ],
+        },
+      },
+      { key: "barrier/id", document: { kind: "barrier", state: "complete", barrier: "barrier" } },
+      {
+        key: "nonce/nonce",
+        document: { kind: "nonce", state: "consumed", nonce: "nonce", raw: { entries } },
+      },
+    ],
+    hashes: { "settings/head.json": "hash" },
+  };
+  return {
+    first,
+    second,
+    outside: [
+      { pid: 1, code: 0, signal: null, timedOut: false, survivors: [] },
+      { pid: 2, code: 0, signal: null, timedOut: false, survivors: [] },
+    ],
+    originalSha256: "a".repeat(64),
+    beforeSecond: structuredClone(persisted),
+    afterSecond: structuredClone(persisted),
+  };
+}
+test("same-profile restart oracle accepts distinct durable final CAS and unchanged completed import", () =>
+  assert.equal(verifyRestartReceipt(restartFixture()).revision, "c"));
+for (const [name, mutate] of [
+  ["same process", (r) => (r.second.mainPid = 1)],
+  ["different profile", (r) => (r.second.restart.profile = "/other")],
+  ["stale scope", (r) => (r.second.restart.scope = r.first.restart.scope)],
+  ["reset value restored", (r) => (r.second.restart.settings.values.skipUnchangedAssets = true)],
+  ["lost durable revision", (r) => (r.second.restart.formSnapshot.revision = "b")],
+  ["new import publication", (r) => (r.afterSecond.imports[0].document.plan.id = "new")],
+  ["changed original", (r) => (r.afterSecond.originalSha256 = "b".repeat(64))],
+  ["reseed", (r) => (r.second.legacyAudit[0].kind = "seed")],
+  ["old writer", (r) => r.second.legacyAudit.push({ kind: "write" })],
+  ["auto activation", (r) => r.second.launches.push({})],
+  ["auto I/O", (r) => r.second.wire.push({})],
+  ["provider replay", (r) => r.second.restart.providerTrace.push({ step: "connect" })],
+  ["new settings publish", (r) => r.second.ipc.push(r.first.ipc[1])],
+  ["challenge accepted", (r) => (r.second.restart.challenge.rejected = false)],
+  ["error UI", (r) => r.second.restart.renderer.alerts.push("error")],
+  ["incomplete import", (r) => (r.beforeSecond.imports[0].document.complete = false)],
+  ["unclean process", (r) => (r.outside[1].code = 1)],
+])
+  test("restart rejects " + name, () => {
+    const r = restartFixture();
+    mutate(r);
+    assert.throws(() => verifyRestartReceipt(r));
+  });
+
+test("restart file observer verifies actual head/object bytes and detects corruption", async (t) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "e7-profile-unit-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await writeFile(path.join(directory, "device-settings.json"), JSON.stringify(legacyDevice));
+  const ns = path.join(directory, "plugins/persistence-v1/namespaces/unit");
+  await mkdir(path.join(ns, "imports/objects"), { recursive: true });
+  await mkdir(path.join(ns, "settings/objects"), { recursive: true });
+  await writeFile(
+    path.join(ns, "identity.json"),
+    JSON.stringify({ sourceKey: "builtin:kobrixa.device-ev3" }),
+  );
+  const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
+  async function store(folder, name, key, document) {
+    const bytes = Buffer.from(JSON.stringify(document)),
+      object = `r_${name}.json`;
+    await writeFile(path.join(ns, folder, "objects", object), bytes);
+    await writeFile(
+      path.join(ns, folder, folder === "settings" ? "head.json" : name + ".json"),
+      JSON.stringify({
+        object,
+        byteLength: bytes.length,
+        sha256: hash(bytes),
+        target: { key },
+        receipt: { revision: "c", commitId: "commit-c" },
+      }),
+    );
+  }
+  const data = restartFixture().beforeSecond;
+  for (const [i, item] of data.imports.entries())
+    await store("imports", String(i), item.key, item.document);
+  await store("settings", "settings", "settings", data.settings.document);
+  const before = await snapshotRestartProfile(directory);
+  assert.equal(before.imports.length, 3);
+  assert.equal(before.originalSha256, hash(Buffer.from(JSON.stringify(legacyDevice))));
+  assert.deepEqual(await snapshotRestartProfile(directory), before);
+  await writeFile(path.join(ns, "imports/objects/r_0.json"), "{}");
+  await assert.rejects(snapshotRestartProfile(directory));
+});
+
+test("actual generated seed script leaves phase2 localStorage untouched", async () => {
+  const source = await readFile(new URL("./device-ui-public-run.mjs", import.meta.url), "utf8");
+  const script = /source: `([\s\S]*?)`,/.exec(source)?.[1];
+  assert.ok(script);
+  for (const phase of ["1", "2"]) {
+    const entries = new Map([
+      ["kobrixa.connectionMode", "wifi"],
+      ["kobrixa.rememberWifiAddress", "false"],
+      ["kobrixa.lastWifiAddress", "original raw"],
+    ]);
+    const before = [...entries],
+      writes = [],
+      logs = [];
+    class Storage {
+      getItem(key) {
+        return entries.get(key) ?? null;
+      }
+      setItem(key, value) {
+        writes.push([key, value]);
+        entries.set(key, value);
+      }
+      removeItem(key) {
+        entries.delete(key);
+      }
+      clear() {
+        entries.clear();
+      }
+    }
+    const storage = new Storage();
+    Function(
+      "Storage",
+      "localStorage",
+      "location",
+      "console",
+      "performance",
+      script,
+    )(
+      Storage,
+      storage,
+      { search: "?restart=" + phase },
+      { log: (line) => logs.push(JSON.parse(line.slice(13))) },
+      { timeOrigin: 0, now: () => 1 },
+    );
+    if (phase === "2") {
+      assert.deepEqual([...entries], before);
+      assert.deepEqual(writes, []);
+      assert.equal(logs[0].kind, "retained");
+    } else {
+      assert.equal(writes.length, 3);
+      assert.equal(logs[0].kind, "seed");
+    }
+    storage.removeItem("kobrixa.connectionMode");
+    assert.equal(logs.at(-1).operation, "remove");
   }
 });
