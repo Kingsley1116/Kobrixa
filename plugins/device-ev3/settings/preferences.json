@@ -1,7 +1,8 @@
 {
   "schemaVersion": 1,
   "title": {
-    "en": "Device preferences"
+    "en": "Device preferences",
+    "zh-TW": "裝置偏好設定"
   },
   "fields": [
     {
@@ -9,7 +10,8 @@
       "type": "boolean",
       "default": true,
       "label": {
-        "en": "Skip unchanged assets"
+        "en": "Skip unchanged assets",
+        "zh-TW": "略過未變更的資產"
       }
     },
     {
@@ -17,7 +19,8 @@
       "type": "boolean",
       "default": true,
       "label": {
-        "en": "USB auto reconnect"
+        "en": "USB auto reconnect",
+        "zh-TW": "USB 自動重新連線"
       }
     },
     {
@@ -25,37 +28,43 @@
       "type": "enum",
       "default": "backoff",
       "label": {
-        "en": "USB retry interval"
+        "en": "USB retry interval",
+        "zh-TW": "USB 重試間隔"
       },
       "options": [
         {
           "value": "backoff",
           "label": {
-            "en": "backoff"
+            "en": "backoff",
+            "zh-TW": "漸進延遲"
           }
         },
         {
           "value": 1000,
           "label": {
-            "en": "1000"
+            "en": "1000",
+            "zh-TW": "1000"
           }
         },
         {
           "value": 2000,
           "label": {
-            "en": "2000"
+            "en": "2000",
+            "zh-TW": "2000"
           }
         },
         {
           "value": 5000,
           "label": {
-            "en": "5000"
+            "en": "5000",
+            "zh-TW": "5000"
           }
         },
         {
           "value": 10000,
           "label": {
-            "en": "10000"
+            "en": "10000",
+            "zh-TW": "10000"
           }
         }
       ]
@@ -65,31 +74,36 @@
       "type": "enum",
       "default": "unlimited",
       "label": {
-        "en": "USB retry limit"
+        "en": "USB retry limit",
+        "zh-TW": "USB 重試次數"
       },
       "options": [
         {
           "value": "unlimited",
           "label": {
-            "en": "unlimited"
+            "en": "unlimited",
+            "zh-TW": "不限次數"
           }
         },
         {
           "value": 3,
           "label": {
-            "en": "3"
+            "en": "3",
+            "zh-TW": "3"
           }
         },
         {
           "value": 5,
           "label": {
-            "en": "5"
+            "en": "5",
+            "zh-TW": "5"
           }
         },
         {
           "value": 10,
           "label": {
-            "en": "10"
+            "en": "10",
+            "zh-TW": "10"
           }
         }
       ]
@@ -99,31 +113,36 @@
       "type": "enum",
       "default": 5000,
       "label": {
-        "en": "Wi-Fi connect timeout"
+        "en": "Wi-Fi connect timeout",
+        "zh-TW": "Wi-Fi 連線逾時"
       },
       "options": [
         {
           "value": 3000,
           "label": {
-            "en": "3000"
+            "en": "3000",
+            "zh-TW": "3000"
           }
         },
         {
           "value": 5000,
           "label": {
-            "en": "5000"
+            "en": "5000",
+            "zh-TW": "5000"
           }
         },
         {
           "value": 10000,
           "label": {
-            "en": "10000"
+            "en": "10000",
+            "zh-TW": "10000"
           }
         },
         {
           "value": 30000,
           "label": {
-            "en": "30000"
+            "en": "30000",
+            "zh-TW": "30000"
           }
         }
       ]
@@ -133,31 +152,36 @@
       "type": "enum",
       "default": 3000,
       "label": {
-        "en": "Wi-Fi handshake timeout"
+        "en": "Wi-Fi handshake timeout",
+        "zh-TW": "Wi-Fi 握手逾時"
       },
       "options": [
         {
           "value": 1000,
           "label": {
-            "en": "1000"
+            "en": "1000",
+            "zh-TW": "1000"
           }
         },
         {
           "value": 3000,
           "label": {
-            "en": "3000"
+            "en": "3000",
+            "zh-TW": "3000"
           }
         },
         {
           "value": 5000,
           "label": {
-            "en": "5000"
+            "en": "5000",
+            "zh-TW": "5000"
           }
         },
         {
           "value": 10000,
           "label": {
-            "en": "10000"
+            "en": "10000",
+            "zh-TW": "10000"
           }
         }
       ]
@@ -167,19 +191,22 @@
       "type": "enum",
       "default": "usb",
       "label": {
-        "en": "Connection mode"
+        "en": "Connection mode",
+        "zh-TW": "連線模式"
       },
       "options": [
         {
           "value": "usb",
           "label": {
-            "en": "usb"
+            "en": "usb",
+            "zh-TW": "USB"
           }
         },
         {
           "value": "wifi",
           "label": {
-            "en": "wifi"
+            "en": "wifi",
+            "zh-TW": "Wi-Fi"
           }
         }
       ]
@@ -189,7 +216,8 @@
       "type": "boolean",
       "default": false,
       "label": {
-        "en": "Remember Wi-Fi address"
+        "en": "Remember Wi-Fi address",
+        "zh-TW": "記住 Wi-Fi 位址"
       }
     },
     {
@@ -197,7 +225,8 @@
       "type": "string",
       "default": "",
       "label": {
-        "en": "Last Wi-Fi address"
+        "en": "Last Wi-Fi address",
+        "zh-TW": "上次 Wi-Fi 位址"
       },
       "minLength": 0,
       "maxLength": 45,
