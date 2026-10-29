@@ -13,6 +13,7 @@ import {
 import {
   pressureTransport,
   pressureStep,
+  createPressureCadence,
   guardPressure,
   settlePressure,
   verifyPressureWorkerTrace,
@@ -1850,6 +1851,8 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             closing: Promise<void> | undefined,
             evidence: CaseEvidence | undefined;
           const observer = pressureQueue!;
+          const cadence = createPressureCadence();
+          const pacing = new AbortController();
           let sinkFaults = 0;
           const flush = () => {
             try {
@@ -1899,6 +1902,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           const both = (name: string) => settlePressure(ids.map((id) => command(id, name)));
           const close = () =>
             (closing ??= (async () => {
+              pacing.abort(new Error("Pressure fixture closing"));
               try {
                 await live.dispose();
                 const until = performance.now() + 5000;
@@ -1991,7 +1995,8 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                         await both("inventory");
                         for (let i = 0; i < 25; i++)
                           for (const row of await both("verify")) p.verified.push(row.result);
-                        await both("stage");
+                        p.initialStages = await both("stage");
+                        cadence.completed(p.initialStages);
                         const inventory = accepted(
                           await live.foundation.broker.request(
                             principal(),
@@ -2044,6 +2049,8 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                         p.startedAt = performance.now();
                       },
                       async step(index, uiSample) {
+                        // Async pacing leaves UI updates active; no public RPC is pending yet.
+                        const admissionCadence = await cadence.wait(pacing.signal);
                         const start = performance.now();
                         assert.ok(sessionId);
                         const work = await Promise.allSettled([
@@ -2067,12 +2074,14 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                         const provider = work[0].value,
                           { committed, staging, inventory, flushed, phases } = work[1].value;
                         assert.equal(provider.ok, true, JSON.stringify(provider));
+                        cadence.completed(phases.restoredStaging);
                         p.steps.push({
                           index,
                           ui: uiSample,
                           startedAt: start,
                           finishedAt: performance.now(),
                           phases,
+                          cadence: admissionCadence,
                           staging: staging.map((r) => r.result),
                           provider,
                         });

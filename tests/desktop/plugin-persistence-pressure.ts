@@ -605,6 +605,102 @@ export async function guardPressure<T>(
   }
 }
 
+/** Fixture admission pacing, not an RPC deadline or product retention change.
+ * 25 seed terminals + at most ~24 replacements/120s + one live stage < 64/source.
+ * Anchor to observed stage completion, conservatively later than its actual admission.
+ */
+export const PRESSURE_ADMISSION_SPACING_MS = 5000;
+export function createPressureCadence(
+  clock = {
+    now: () => performance.now(),
+    wait: (ms: number, signal: AbortSignal) => pause(ms, undefined, { signal }),
+  },
+) {
+  let previous: Array<{ pluginId: string; finishedAt: number }> = [];
+  let waiting = false;
+  return {
+    completed(stages: PressureRow[]) {
+      assert.equal(waiting, false);
+      assert.equal(stages.length, 2);
+      assert.equal(new Set(stages.map((s) => s.pluginId)).size, 2);
+      const next = stages.map((s) => {
+        assert.equal(s.command, "stage");
+        assert.equal(s.commandInterval.realm, "main");
+        assert.ok(Number.isFinite(s.commandInterval.finishedAt));
+        assert.ok(s.commandInterval.finishedAt >= s.commandInterval.startedAt);
+        const old = previous.find((p) => p.pluginId === s.pluginId);
+        if (old) assert.ok(s.commandInterval.finishedAt >= old.finishedAt);
+        return { pluginId: String(s.pluginId), finishedAt: s.commandInterval.finishedAt as number };
+      });
+      if (previous.length)
+        assert.deepEqual(
+          next.map((r) => r.pluginId).sort(),
+          previous.map((r) => r.pluginId).sort(),
+        );
+      previous = next;
+    },
+    async wait(signal: AbortSignal) {
+      signal.throwIfAborted();
+      assert.equal(waiting, false, "Only one pressure cadence wait may run");
+      assert.equal(previous.length, 2, "Initial real stages are required");
+      waiting = true;
+      try {
+        const waitStartedAt = clock.now();
+        assert.ok(Number.isFinite(waitStartedAt));
+        const dueAt =
+          Math.max(...previous.map((r) => r.finishedAt)) + PRESSURE_ADMISSION_SPACING_MS;
+        let releasedAt = waitStartedAt;
+        while (releasedAt < dueAt) {
+          await clock.wait(dueAt - releasedAt, signal);
+          signal.throwIfAborted();
+          const next = clock.now();
+          assert.ok(Number.isFinite(next) && next >= releasedAt, "Cadence clock must be monotonic");
+          releasedAt = next;
+        }
+        signal.throwIfAborted();
+        return {
+          realm: "main",
+          minSpacingMs: PRESSURE_ADMISSION_SPACING_MS,
+          previousStages: structuredClone(previous),
+          waitStartedAt,
+          dueAt,
+          releasedAt,
+        };
+      } finally {
+        waiting = false;
+      }
+    },
+  };
+}
+
+export function assertPressureCadence(steps: PressureRow[], initialStages: PressureRow[]) {
+  let previous = initialStages;
+  assert.equal(previous.length, 2);
+  for (const step of steps) {
+    const c = step.cadence;
+    assert.equal(c.realm, "main");
+    assert.equal(c.minSpacingMs, PRESSURE_ADMISSION_SPACING_MS);
+    assert.deepEqual(
+      c.previousStages,
+      previous.map((r) => ({ pluginId: r.pluginId, finishedAt: r.commandInterval.finishedAt })),
+    );
+    assert.equal(
+      c.dueAt,
+      Math.max(...previous.map((r) => r.commandInterval.finishedAt)) +
+        PRESSURE_ADMISSION_SPACING_MS,
+    );
+    assert.ok(Number.isFinite(c.waitStartedAt) && c.waitStartedAt <= c.releasedAt);
+    assert.ok(c.releasedAt >= c.dueAt && c.releasedAt <= step.startedAt);
+    assert.ok(
+      step.phases.settledFlush.every(
+        (r: PressureRow) => r.commandInterval.startedAt >= step.startedAt,
+      ),
+    );
+    previous = step.phases.restoredStaging;
+    assert.ok(previous.every((r: PressureRow) => r.commandInterval.startedAt >= step.startedAt));
+  }
+}
+
 export async function pressureStep(both: (name: string) => Promise<PressureRow[]>, burst: boolean) {
   if (burst) await both("burst");
   const committed = await both("replace");
@@ -706,6 +802,7 @@ export function assertPressurePartial(p: PressureRow) {
     ),
   );
   for (const step of p.steps) assertPressurePhases(step.phases);
+  assertPressureCadence(p.steps, p.initialStages);
   assert.equal(p.worker.peak, 4);
   verifyFourExecutions(p.worker.executions, p.owners);
   assert.equal(p.mainObserver.faults, 0);

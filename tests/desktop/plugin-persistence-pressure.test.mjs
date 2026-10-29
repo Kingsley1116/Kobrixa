@@ -4,6 +4,8 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   PRESSURE,
   pressureStep,
+  createPressureCadence,
+  assertPressureCadence,
   guardPressure,
   settlePressure,
   assertPressurePhases,
@@ -720,4 +722,126 @@ test("failed pressure step joins both owners and cleans both without masking the
       "cleanup:1",
     ]);
   }
+});
+
+const cadenceStages = (at) =>
+  ["source-a", "source-b"].map((pluginId) => ({
+    pluginId,
+    command: "stage",
+    commandInterval: { realm: "main", startedAt: at, finishedAt: at + 1 },
+  }));
+test("pressure admission cadence: rolling 120s retention stays below 64 through seed, 600s and overrun", async () => {
+  for (const wakeOverrun of [0, 1700]) {
+    let now = 1;
+    const clock = {
+      now: () => now,
+      wait: async (ms, signal) => {
+        signal.throwIfAborted();
+        now += ms + wakeOverrun;
+      },
+    };
+    const cadence = createPressureCadence(clock),
+      initial = cadenceStages(0),
+      steps = [];
+    cadence.completed(initial);
+    // Conservatively assume all 25 seeds became terminal together at t=0.
+    let terminal = Array(25).fill(0),
+      peak = 26,
+      samplesAt600 = 0;
+    const admissions = [0];
+    while (now < 780000) {
+      const before = now;
+      const observation = await cadence.wait(signal());
+      assert.ok(now - admissions.at(-1) < 30000, "The held stage does not expire during pacing");
+      const startedAt = now;
+      now += 100; // Actual commit interval: the previously held stage becomes terminal.
+      terminal = terminal.filter((at) => now - at < 120000);
+      terminal.push(now);
+      peak = Math.max(peak, terminal.length);
+      const settledFlush = [0, 1].map(() => ({
+        commandInterval: { startedAt: now, finishedAt: now + 50 },
+      }));
+      now += 50;
+      admissions.push(now); // Next real begin follows settled flush; pacing is outside this interval.
+      const stages = cadenceStages(now);
+      now += 1;
+      cadence.completed(stages);
+      peak = Math.max(peak, terminal.length + 1);
+      assert.ok(terminal.length + 1 < 64);
+      steps.push({
+        startedAt,
+        cadence: observation,
+        phases: { settledFlush, restoredStaging: stages },
+      });
+      if (before < 600000) samplesAt600++;
+    }
+    assert.ok(samplesAt600 >= 30, "At least thirty samples fit in the unchanged 600s workload");
+    assert.ok(peak <= 51, `Conservative seed + retained replacements + live stage: ${peak}`);
+    assert.ok(now >= 780000, "Model also covers workload overrun, without eviction or retry");
+    for (let i = 1; i < admissions.length; i++)
+      assert.ok(admissions[i] - admissions[i - 1] >= 5000);
+    assertPressureCadence(steps, initial);
+    const bad = structuredClone(steps);
+    bad[1].cadence.releasedAt = bad[1].cadence.dueAt - 1;
+    assert.throws(() => assertPressureCadence(bad, initial));
+    const rpcIncludesWait = structuredClone(steps);
+    rpcIncludesWait[0].phases.settledFlush[0].commandInterval.startedAt = 0;
+    assert.throws(() => assertPressureCadence(rpcIncludesWait, initial));
+  }
+});
+test("pressure admission cadence: asynchronous wait can cancel without admitting or extending prior stage", async () => {
+  let now = 1,
+    waits = 0,
+    ticked = false;
+  const control = new AbortController(),
+    reason = new Error("fixture cancelled");
+  const cadence = createPressureCadence({
+    now: () => now,
+    wait: async (_ms, signal) => {
+      waits++;
+      await new Promise((resolve) =>
+        setImmediate(() => {
+          ticked = true;
+          control.abort(reason);
+          resolve();
+        }),
+      );
+      signal.throwIfAborted();
+    },
+  });
+  cadence.completed(cadenceStages(0));
+  await assert.rejects(cadence.wait(control.signal), (error) => error === reason);
+  assert.equal(ticked, true, "Event loop continues while cadence waits");
+  assert.equal(waits, 1);
+  await assert.rejects(cadence.wait(control.signal), (error) => error === reason);
+  assert.equal(waits, 1, "Already cancelled does not wait or admit");
+  now = 5001;
+  const resumed = await cadence.wait(signal());
+  assert.equal(resumed.dueAt, 5001, "Cancellation did not renew the previous stage timestamp");
+});
+test("pressure admission cadence: early timer wake rechecks monotonic time; errors never retry a mutation", async () => {
+  let now = 1,
+    waits = 0;
+  const failure = new Error("timer failed");
+  const cadence = createPressureCadence({
+    now: () => now,
+    wait: async (ms) => {
+      waits++;
+      if (waits === 1) throw failure;
+      now += waits === 2 ? ms - 1 : ms;
+    },
+  });
+  cadence.completed(cadenceStages(0));
+  await assert.rejects(cadence.wait(signal()), (error) => error === failure);
+  const observed = await cadence.wait(signal());
+  assert.equal(waits, 3);
+  assert.equal(observed.releasedAt, 5001);
+  const backwards = createPressureCadence({
+    now: () => now,
+    wait: async () => {
+      now--;
+    },
+  });
+  backwards.completed(cadenceStages(now));
+  await assert.rejects(backwards.wait(signal()), /monotonic/);
 });
