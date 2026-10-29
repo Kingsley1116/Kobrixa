@@ -713,6 +713,38 @@ export async function pressureStep(both: (name: string) => Promise<PressureRow[]
   return { committed, flushed, staging, inventory, phases };
 }
 
+/** Abort unpublished final stages; the preceding settled flush is the saved barrier.
+ * Aborted publication tickets are not saved and must not be relabeled by a final flush. */
+export async function finishPressure(
+  both: (name: string) => Promise<PressureRow[]>,
+  phases: PressureRow,
+) {
+  assertPressurePhases(phases);
+  const cleanup = await both("cleanup");
+  assertPressureFinish(cleanup, phases);
+  return cleanup;
+}
+export function assertPressureFinish(cleanup: PressureRow[], phases: PressureRow) {
+  assertPressurePhases(phases);
+  assert.equal(cleanup.length, 2);
+  assert.deepEqual(
+    cleanup.map((r) => r.pluginId).sort(),
+    phases.restoredStaging.map((r: PressureRow) => r.pluginId).sort(),
+  );
+  for (const row of cleanup) {
+    assert.equal(row.command, "cleanup");
+    assert.deepEqual(row.snapshot.held, []);
+    assert.deepEqual(row.snapshot.readers, []);
+    assert.equal(row.snapshot.recordCount, PRESSURE.perSource);
+    assert.equal(row.commandInterval.realm, "main");
+    assert.ok(row.commandInterval.finishedAt >= row.commandInterval.startedAt);
+    assert.ok(
+      row.commandInterval.startedAt >=
+        Math.max(...phases.restoredStaging.map((r: PressureRow) => r.commandInterval.finishedAt)),
+    );
+  }
+}
+
 /** Receipts prove a settled flush interval, not constant 416 MiB staging pressure. */
 export function assertPressurePhases(phases: PressureRow) {
   const { settledFlush, restoredStaging } = phases;
@@ -803,6 +835,7 @@ export function assertPressurePartial(p: PressureRow) {
   );
   for (const step of p.steps) assertPressurePhases(step.phases);
   assertPressureCadence(p.steps, p.initialStages);
+  assertPressureFinish(p.finishCleanup, p.steps.at(-1).phases);
   assert.equal(p.worker.peak, 4);
   verifyFourExecutions(p.worker.executions, p.owners);
   assert.equal(p.mainObserver.faults, 0);

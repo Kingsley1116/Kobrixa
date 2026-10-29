@@ -4,6 +4,8 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   PRESSURE,
   pressureStep,
+  finishPressure,
+  assertPressureFinish,
   createPressureCadence,
   assertPressureCadence,
   guardPressure,
@@ -43,7 +45,8 @@ function storageFixture(options = {}) {
     writes = new Map(),
     reads = new Map();
   let revision = 0,
-    closed = 0;
+    closed = 0,
+    aborted = 0;
   const ok = (value) => ({ ok: true, value });
   const storage = {
     async beginWrite(input) {
@@ -100,6 +103,7 @@ function storageFixture(options = {}) {
     async abortWrite({ write }) {
       if (options.unknownAbort) return ok({ disposition: "unknown" });
       writes.delete(write);
+      aborted++;
       return ok({ disposition: "aborted" });
     },
     async writeStatus({ write }) {
@@ -155,7 +159,7 @@ function storageFixture(options = {}) {
       return ok({});
     },
     async flush() {
-      if (writes.size)
+      if (writes.size || aborted)
         return {
           ok: false,
           error: {
@@ -263,6 +267,7 @@ test("50 full-size durable unit records, full readback, two maximum staging and 
           stage: w.stageOne,
           staging: w.stagingStatus,
           inventory: w.inventory,
+          cleanup: w.cleanup,
         }[name];
         const result = await fn(signal());
         const snapshot = w.snapshot();
@@ -311,8 +316,26 @@ test("50 full-size durable unit records, full readback, two maximum staging and 
   await workloads[0].stageOne(signal());
   fixtures[0].options.expired = true;
   await assert.rejects(workloads[0].stagingStatus(signal()), /Expired staging/);
-  for (const w of workloads) await w.cleanup();
+  const durableBeforeFinish = fixtures.map((f) => [...f.records.values()]);
+  const beforeFinish = order.length;
+  const cleanup = await finishPressure(both, step.phases);
+  assert.deepEqual(
+    order.slice(beforeFinish),
+    ["cleanup"],
+    "No final flush or publication after abort",
+  );
   assert.ok(fixtures.every((f) => f.writes.size === 0 && f.reads.size === 0));
+  assert.deepEqual(
+    fixtures.map((f) => [...f.records.values()]),
+    durableBeforeFinish,
+  );
+  for (const w of workloads) await assert.rejects(w.flush(signal()), /flush-incomplete/);
+  const falseClean = structuredClone(cleanup);
+  falseClean[0].snapshot.held = [["unpublished", { state: "sealed" }]];
+  assert.throws(() => assertPressureFinish(falseClean, step.phases));
+  const falseFlush = structuredClone(cleanup);
+  falseFlush[0].command = "flush";
+  assert.throws(() => assertPressureFinish(falseFlush, step.phases));
 });
 test("corrupt nested data fails and failed close remains owned for cleanup", async () => {
   const f = storageFixture({ corrupt: true, failClose: true }),

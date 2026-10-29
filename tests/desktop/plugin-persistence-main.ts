@@ -13,6 +13,7 @@ import {
 import {
   pressureTransport,
   pressureStep,
+  finishPressure,
   createPressureCadence,
   guardPressure,
   settlePressure,
@@ -2096,8 +2097,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                       },
                       async finish() {
                         p.finishedAt = performance.now();
-                        await both("cleanup");
-                        await both("flush");
+                        p.finishCleanup = await finishPressure(both, p.steps.at(-1).phases);
                         if (sessionId)
                           accepted(
                             await live.foundation.broker.request(
