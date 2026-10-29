@@ -101,9 +101,35 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
   }
   private targetKey(t: PublicationTicket): string { return JSON.stringify([t.owner.sourceKey, t.target.kind, t.target.kind === "record" ? t.target.id : t.target.kind === "settings" ? "settings" : t.target.key]); }
   private releaseTarget(t: PublicationTicket): void { const key = this.targetKey(t); if (this.targets.get(key) === t.id) this.targets.delete(key); }
+  private readonly terminalDeletes = new Map<string,string>();
+  private async admitTerminalDelete(t:PublicationTicket,byteLength:number):Promise<void> {
+    if(this.finalAdmissions.has(t.id) || t.target.kind!=="record" || !this.frozenTargets.has(JSON.stringify([ownerKey(t.owner),t.target.id])))return;
+    if(this.frozen.has(ownerKey(t.owner)) || byteLength!==0 || t.metadata.kind!=="record" || !t.metadata.deleted ||
+      t.target.expectedRevision===null || t.metadata.record.checkpoint!=="final")throw new Error("stale");
+    const record=await this.stat(t.owner,t.target.id);
+    if(record.revision!==t.target.expectedRevision)throw new Error("revision-mismatch");
+    if(record.checkpoint!=="final")throw new Error("stale");
+    if([...this.entries.values()].some(e=>e.ticket.target.kind==="record" && e.ticket.owner.sourceKey===t.owner.sourceKey &&
+      e.ticket.target.id===record.id && e.state!=="committed" && e.state!=="aborted"))throw new Error("write-in-progress");
+    // A final head alone is insufficient while its checkpoint/drain is still open.
+    let cursor:string|undefined,terminal=false;
+    do {
+      const page=await this.auxiliaryKeys(t.owner,"recovery",cursor);
+      for(const key of page.keys) {
+        const bytes=await this.auxiliary(t.owner,"recovery",key);if(!bytes)continue;
+        const parsed=checkpointDocumentSchema.safeParse(JSON.parse(Buffer.from(bytes).toString("utf8")));
+        if(!parsed.success || parsed.data.record.id!==record.id)continue;
+        if(parsed.data.state==="open")throw new Error("stale");
+        if(parsed.data.state==="final" && parsed.data.record.revision===record.revision)terminal=true;
+      }
+      cursor=page.nextCursor??undefined;
+    } while(cursor);
+    if(!terminal)throw new Error("stale");
+    this.terminalDeletes.set(t.id,JSON.stringify(t));
+  }
   private admitted(t: PublicationTicket): void {
     this.fs.profile.assertHeld();
-    if (t.owner.hostEpoch !== this.fs.profile.hostEpoch || (!this.finalAdmissions.has(t.id) && !this.recoveryDocuments.has(t.id) && (this.frozen.has(ownerKey(t.owner)) || (t.target.kind === "record" && this.frozenTargets.has(JSON.stringify([ownerKey(t.owner), t.target.id])))))) throw new Error("stale");
+    if (t.owner.hostEpoch !== this.fs.profile.hostEpoch || (!this.finalAdmissions.has(t.id) && !this.recoveryDocuments.has(t.id) && (this.frozen.has(ownerKey(t.owner)) || (t.target.kind === "record" && this.frozenTargets.has(JSON.stringify([ownerKey(t.owner), t.target.id])) && this.terminalDeletes.get(t.id)!==JSON.stringify(t))))) throw new Error("stale");
     if(this.blockedSources.has(t.owner.sourceKey))throw new Error(this.blockedSources.get(t.owner.sourceKey));
     if (this.uncertain.has(t.owner.sourceKey)) throw new Error("publish-uncertain");
   }
@@ -233,10 +259,10 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     this.publication.set(ticket.owner.sourceKey,run);return run;
   }
   async reserve(ticket: PublicationTicket, byteLength: number, memory?: SharedArrayBuffer, byteOffset=0): Promise<void> {
-    try {await this.reserveOne(ticket,byteLength,memory,byteOffset);}catch(error) {
+    try {await this.admitTerminalDelete(ticket,byteLength);await this.reserveOne(ticket,byteLength,memory,byteOffset);}catch(error) {
       this.recordUnadmittedReserve(ticket);
       throw error;
-    }
+    } finally { this.terminalDeletes.delete(ticket.id); }
   }
   private async reserveOne(ticket: PublicationTicket, byteLength: number, memory?: SharedArrayBuffer, byteOffset=0): Promise<void> {
     await this.prune(); this.admitted(ticket);await this.checkImportAdmission(ticket);

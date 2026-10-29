@@ -1,3 +1,4 @@
+import { ReserveNotAdmittedError } from "./engine-port.js";
 import { wallExpiry as projectWallExpiry } from "./wall-expiry.js";
 import type { SealedPayloadPin } from "./engine-port.js";
 import { randomUUID, createHash } from "node:crypto";
@@ -612,6 +613,12 @@ export function createRecordService(
             await deps.engine.seal(ticket, 0, createHash("sha256").digest("hex"));
             if (signal.aborted || !deps.live(owner)) stale();
           } catch (error) {
+            if (error instanceof ReserveNotAdmittedError) {
+              deleting.delete(key);
+              targets.delete(key);
+              if (error.rejection instanceof Error && error.rejection.message === "stale") stale();
+              throw error.rejection;
+            }
             // No publication was requested. Only a proven abort releases this
             // target; unknown cleanup remains reconcilable using the same ticket.
             const aborted = await deps.engine.abort(ticket).catch(() => "unknown" as const);

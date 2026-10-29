@@ -20,6 +20,12 @@ export type FinalWriteGrant = Readonly<{ owner: PersistenceOwner; recordId: Reco
   checkpoint: Handle; token: Handle; deadlineMonotonicMs: number;
   deviceDrain?: DeviceDrainGrant }>;
 export type SealedPayloadPin = Readonly<{ pin: Handle; expiresMonotonicMs: number }>;
+// Host-only evidence that this unique reserve was rejected before worker dispatch.
+export class ReserveNotAdmittedError extends Error {
+  constructor(readonly rejection: unknown) {
+    super(rejection instanceof Error ? rejection.message : "reserve-not-admitted", { cause: rejection });
+  }
+}
 export interface PersistenceEnginePort {
   reserveFinal?(ticket: PublicationTicket, byteLength: number, grant: FinalWriteGrant): Promise<void>;
   publishRecovery?(ticket: PublicationTicket, sealedPin: Handle, deadlineMonotonicMs: number): ReturnType<PersistenceEnginePort["publish"]>;

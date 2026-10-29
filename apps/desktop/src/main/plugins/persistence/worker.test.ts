@@ -639,3 +639,75 @@ it("preserves the record on delete seal failure and permits a fresh explicit ret
     expect(await service.request(principal,"storage/delete",params,signal)).toMatchObject({ok:true,value:{deleted:true}});
   }finally{await env.backend.dispose();}
 });
+
+it.each(["confirmed", "unknown-delete", "unknown-final"])("deletes a terminal drained final through the same owner without reopening old writes: %s",async(mode)=>{
+  const env=await launch(path.join(directory,randomUUID())),owner=ownerFor(env.profile.hostEpoch),bytes=Buffer.from("final recording");
+  const service=createRecordService({now:()=>performance.now(),wall:Date.now,live:()=>true,permission:()=>true,
+    engine:env.backend.engine,read:env.backend.reads,evidence:env.backend.evidence,
+    checkpoint:{authorize:()=>"none",committed(){},open:()=>false,register:async()=>{throw new Error("unused");},abandon:async()=>{throw new Error("unused");}}});
+  const principal={kind:"plugin" as const,owner,authorityContext:null},signal=new AbortController().signal,initial=make(owner,bytes);
+  try {
+    await stage(env.backend,initial,bytes);await env.backend.engine.publish(initial);
+    if(initial.metadata.kind!=="record" || initial.target.kind!=="record")throw new Error("record required");
+    const checkpoint=randomUUID(),document:PublicationTicket={id:randomUUID(),owner,deadlineMonotonicMs:performance.now()+120000,
+      target:{kind:"recovery",key:checkpoint},metadata:{kind:"recovery",key:checkpoint}};
+    await stage(env.backend,document,Buffer.from(JSON.stringify({formatVersion:1,checkpoint,record:initial.metadata.record,binding:null,state:"open"})));
+    await env.backend.engine.publish(document);
+    const deadline=performance.now()+10000;
+    env.backend.engine.fenceTarget(owner,initial.target.id,deadline);
+    const early=await service.request(principal,"storage/delete",{id:initial.target.id,expectedRevision:initial.metadata.record.revision},signal);
+    expect(early.ok).toBe(false);
+    expect(await env.backend.reads.stat(owner,initial.target.id)).toMatchObject({revision:initial.metadata.record.revision});
+    const final:PublicationTicket={...initial,id:randomUUID(),target:{...initial.target,expectedRevision:initial.metadata.record.revision},
+      metadata:{...initial.metadata,record:{...initial.metadata.record,revision:`r_${randomUUID().replaceAll("-","")}`,checkpoint:"final"}}};
+    await env.backend.engine.reserveFinal!(final,bytes.length,{owner,recordId:initial.target.id,checkpoint,token:randomUUID(),deadlineMonotonicMs:deadline});
+    await env.backend.engine.append(final,0,bytes);await env.backend.engine.seal(final,bytes.length,hash(bytes));
+    if(final.metadata.kind!=="record")throw new Error("record required");
+    if(mode==="unknown-final") {
+      env.control.arm("after-publish","fail");
+      expect(await env.backend.engine.publish(final)).toMatchObject({disposition:"unknown"});
+      expect((await service.request(principal,"storage/delete",{id:initial.target.id,expectedRevision:final.metadata.record.revision},signal)).ok).toBe(false);
+      expect(await env.backend.engine.reconcile(final)).toMatchObject({disposition:"committed"});
+    } else expect(await env.backend.engine.publish(final)).toMatchObject({disposition:"committed"});
+    const barrier=env.backend.evidence.captureDrain!({kind:"target",owner,recordId:initial.target.id},deadline);
+    expect(await env.backend.evidence.flush(barrier)).toMatchObject({state:"saved"});
+    const params={id:initial.target.id,expectedRevision:final.metadata.record.revision};
+    // Final bytes are committed, but an open checkpoint is still an active drain.
+    const active=await service.request(principal,"storage/delete",params,signal);
+    expect(active.ok).toBe(false);
+    expect(JSON.stringify(active)).not.toContain("publish-uncertain");
+    expect(await env.backend.reads.stat(owner,params.id)).toMatchObject({revision:params.expectedRevision});
+    await env.backend.evidence.saveCheckpoint!(owner,{checkpoint,record:final.metadata.record,binding:null,state:"final"});
+    expect(await service.request(principal,"storage/delete",{...params,expectedRevision:initial.metadata.record.revision},signal))
+      .toMatchObject({ok:false,error:{detail:{reason:"revision-mismatch"}}});
+    if(mode==="unknown-delete") {
+      env.control.arm("after-publish","fail");
+      expect(await service.request(principal,"storage/delete",params,signal)).toMatchObject({ok:false,error:{detail:{reason:"publish-uncertain"}}});
+      expect(await service.request(principal,"storage/delete",{...params,expectedRevision:initial.metadata.record.revision},signal))
+        .toMatchObject({ok:false,error:{code:"PLUGIN_E_STALE_RESOURCE"}});
+    }
+    const deleted=await service.request(principal,"storage/delete",params,signal);
+    expect(deleted).toMatchObject({ok:true,value:{deleted:true}});
+    expect(await service.request(principal,"storage/delete",params,signal)).toEqual(deleted);
+    expect((await env.backend.reads.list(owner,{limit:64})).entries).toEqual([]);
+    await expect(env.backend.engine.reserve({...final,id:randomUUID()},bytes.length)).rejects.toThrow("stale");
+    await expect(env.backend.engine.reserveFinal!({...final,id:randomUUID()},bytes.length,
+      {owner,recordId:initial.target.id,checkpoint,token:randomUUID(),deadlineMonotonicMs:deadline})).rejects.toThrow("stale");
+    await expect(env.backend.engine.append(final,0,bytes)).rejects.toThrow();
+  }finally{await service.close();await env.backend.dispose();}
+});
+
+it("does not turn a never-admitted retired-owner delete into unknown publication",async()=>{
+  const env=await launch(path.join(directory,randomUUID())),owner=ownerFor(env.profile.hostEpoch),bytes=Buffer.from("retired");
+  const service=createRecordService({now:()=>performance.now(),wall:Date.now,live:()=>true,permission:()=>true,
+    engine:env.backend.engine,read:env.backend.reads,evidence:env.backend.evidence,
+    checkpoint:{authorize:()=>"none",committed(){},open:()=>false,register:async()=>{throw new Error("unused");},abandon:async()=>{throw new Error("unused");}}});
+  const t=make(owner,bytes),principal={kind:"plugin" as const,owner,authorityContext:null},signal=new AbortController().signal;
+  try {
+    await stage(env.backend,t,bytes);await env.backend.engine.publish(t);
+    if(t.metadata.kind!=="record")throw new Error("record required");
+    env.backend.engine.fence(owner,performance.now());
+    expect(await service.request(principal,"storage/delete",{id:t.metadata.record.id,expectedRevision:t.metadata.record.revision},signal))
+      .toMatchObject({ok:false,error:{code:"PLUGIN_E_STALE_RESOURCE"}});
+  }finally{await service.close();await env.backend.dispose();}
+});

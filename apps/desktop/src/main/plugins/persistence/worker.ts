@@ -1,3 +1,4 @@
+import { ReserveNotAdmittedError } from "./engine-port.js";
 import { Worker, MessageChannel, parentPort, workerData, type MessagePort } from "node:worker_threads";
 import { createHash,randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -69,7 +70,7 @@ const args={
   "sources.map":z.tuple([text,text]),"sources.appendMapped":z.tuple([z.strictObject({mapped:handle,ticket,offset:count,maxBytes:count.min(1).max(262144)})]),
   "sources.releaseMapped":z.tuple([handle]),"sources.inventory":z.tuple([text]),"sources.read":z.tuple([text,text,count,count.min(1).max(262144)]),
 } satisfies Record<Operation,z.ZodType>;
-const gateBinding=z.strictObject({slot:count.max(1023),sequence:count.min(1)});
+const gateBinding=z.strictObject({slot:count.max(1023),sequence:count.min(1),targetFenceDeadline:z.number().finite().nonnegative().optional()});
 const envelope=z.strictObject({gate:gateBinding.optional(),version:z.literal(1),id:count.min(1),operation:z.enum(Object.keys(args) as [Operation,...Operation[]]),args:z.array(z.unknown())});
 export const PersistenceWorkerRequest=envelope.superRefine((r,ctx)=>{if((["engine.reserve","engine.reserveFinal"].includes(r.operation))!==!!r.gate || !args[r.operation].safeParse(r.args).success)ctx.addIssue({code:"custom",message:"invalid-args"});});
 export type PersistenceWorkerRequest<K extends Operation=Operation>=K extends Operation?
@@ -197,7 +198,9 @@ export async function startPersistenceWorker(input:{profile:ProfileWriterLock;ro
   async function admit(t:PublicationTicket,size:number,grant?:FinalWriteGrant) {
     input.profile.assertHeld();pruneLedger();
     const target=t.target.kind==="record"?JSON.stringify([ownerKey(t.owner),t.target.id]):"";
-    if(ready.recovery!=="ready" || ledger.has(t.id))throw new Error("stale");
+    if(ledger.has(t.id))throw new Error("stale");
+    try {
+    if(ready.recovery!=="ready")throw new Error("stale");
     if(grant) {
       finalGrant.parse(grant);
       const deadline=Math.min(ownerDeadlines.get(ownerKey(t.owner))??Infinity,targetDeadlines.get(target)??Infinity,
@@ -207,14 +210,21 @@ export async function startPersistenceWorker(input:{profile:ProfileWriterLock;ro
         ownerKey(grant.owner)!==ownerKey(t.owner) || t.target.kind!=="record" || t.target.id!==grant.recordId ||
         input.now()>=deadline)throw new Error("stale");
       grant={...structuredClone(grant),deadlineMonotonicMs:deadline};finalClaims.add(identity);
-    } else if(retired.has(ownerKey(t.owner)) || targets.has(target))throw new Error("stale");
+    // Only a fresh zero-byte tombstone may cross a settled target fence. The
+    // worker still proves terminal checkpoint + CAS; the fence is never removed.
+    } else if(retired.has(ownerKey(t.owner)) || (targets.has(target) &&
+      !(size===0 && t.metadata.kind==="record" && t.metadata.deleted &&
+        ![...ledger.values()].some(e=>e.settledAt===null && ownerKey(e.ticket.owner)===ownerKey(t.owner) &&
+          e.ticket.target.kind==="record" && JSON.stringify([ownerKey(e.ticket.owner),e.ticket.target.id])===target))))throw new Error("stale");
     args["engine.reserve"].parse([t,size]);
+    if(freeSlots.length===0)throw new Error("gate-slot-limit");
+    } catch(error) { throw new ReserveNotAdmittedError(error); }
     const slot=freeSlots.pop();if(slot===undefined)throw new Error("gate-slot-limit");
     Atomics.store(inUse,slot,1);const gate=new PublicationGate(Math.min(t.deadlineMonotonicMs,grant?.deadlineMonotonicMs??Infinity),held,gateOffset(slot),true);
     const accepted=++sequence;ledger.set(t.id,{ticket:structuredClone(t),gate,sequence:accepted,slot,settledAt:null,unadmittedClean:false});
     let posted=false;
-    try{await send(grant?"engine.reserveFinal":"engine.reserve",grant?[t,size,grant]:[t,size],{slot,sequence:accepted},()=>{posted=true;});}
-    catch(e){if(!posted)releaseSlot(t.id);throw e;}
+    try{await send(grant?"engine.reserveFinal":"engine.reserve",grant?[t,size,grant]:[t,size],{slot,sequence:accepted,...(!grant && targets.has(target)?{targetFenceDeadline:targetDeadlines.get(target)!}:{})},()=>{posted=true;});}
+    catch(e){if(!posted){releaseSlot(t.id);throw new ReserveNotAdmittedError(e);}throw e;}
   }
   const engine:PersistenceBackend["engine"]={
     reserve:(t,size)=>admit(t,size),reserveFinal:(t,size,grant)=>admit(t,size,grant),
@@ -291,7 +301,13 @@ export function runPersistenceWorker(input:{mappers:ReadonlyMap<string,LegacyImp
       "engine.publishRecovery":store.publishRecovery.bind(store),
       "evidence.retainSealed":store.retainSealed.bind(store),
       "evidence.saveCheckpoint":store.saveCheckpoint.bind(store),
-      "engine.reserve":(t:PublicationTicket,n:number)=>store.reserve(t,n,boot.held,gateOffset([...accepted].find(([,e])=>e.ticket.id===t.id)![0])),"engine.append":store.append.bind(store),"engine.seal":store.seal.bind(store),"engine.publish":store.publish.bind(store),"engine.reconcile":store.reconcile.bind(store),"engine.abort":store.abort.bind(store),
+      "engine.reserve":(t:PublicationTicket,n:number)=>{
+        const request=[...requests.values()].find(r=>r.operation==="engine.reserve" && (r.args[0] as PublicationTicket).id===t.id);
+        // Mirror the host fence even before any reserveFinal has reached this worker.
+        if(request?.gate?.targetFenceDeadline!==undefined && t.target.kind==="record")
+          store.fenceTarget(t.owner,t.target.id,request.gate.targetFenceDeadline);
+        return store.reserve(t,n,boot.held,gateOffset([...accepted].find(([,e])=>e.ticket.id===t.id)![0]));
+      },"engine.append":store.append.bind(store),"engine.seal":store.seal.bind(store),"engine.publish":store.publish.bind(store),"engine.reconcile":store.reconcile.bind(store),"engine.abort":store.abort.bind(store),
       "reads.settings":store.settings.bind(store),"reads.stat":store.stat.bind(store),"reads.list":store.list.bind(store),"reads.open":store.open.bind(store),"reads.read":store.read.bind(store),"reads.close":store.close.bind(store),
       "evidence.flush":(b:PersistenceBarrier,tickets:PublicationTicket[])=>store.flushEvidence(b,tickets.filter(t=>matches(b.scope,t))),
       "evidence.quota":async(o:PersistenceOwner)=>({ok:true as const,value:store.quota.snapshot(o.sourceKey)}),"evidence.settingsDigest":store.settingsDigest.bind(store),"evidence.auxiliary":store.auxiliary.bind(store),"evidence.auxiliaryKeys":store.auxiliaryKeys.bind(store),"evidence.recoveryPage":store.recoveryPage.bind(store),"evidence.loadRecovery":store.loadRecovery.bind(store),"evidence.saveRecovery":store.saveRecovery.bind(store),"evidence.removeRecovery":store.removeRecovery.bind(store),
