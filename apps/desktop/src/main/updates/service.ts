@@ -238,13 +238,7 @@ export class UpdateOperationGate {
     if (
       service?.installing ||
       (service?.preparing &&
-        ![
-          "workspace:write",
-          "workspace:save-draft",
-          "workspace:save-session",
-          "device:motor-test-stop",
-          "device:motor-test-state",
-        ].includes(channel))
+        !["workspace:write", "workspace:save-draft", "workspace:save-session"].includes(channel))
     )
       throw new Error("busy");
     this.active++;

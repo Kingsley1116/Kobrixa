@@ -106,8 +106,6 @@ import {
 import { ToolsPanel, ActivityPanel } from "./device/tools-panel.js";
 import { RemoteFilesPanel } from "./device/remote-files-panel.js";
 import { RemoteFilesController } from "./device/remote-files.js";
-import { motorTestActive } from "../shared/motor-test.js";
-import { MotorTestController } from "./device/motor-test-controller.js";
 import { BatteryStatus } from "./device/battery-status.js";
 import { MonitorController } from "./device/monitor-controller.js";
 import { MonitorWorkspace } from "./device/monitor-workspace.js";
@@ -329,8 +327,6 @@ export function App(): React.JSX.Element {
   const execution = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const executionLocked =
     controller.editingLockedFor(activeSession?.workspace.id) || updatePreparing || closingProject;
-  const [motorTest] = useState(() => new MotorTestController(window.kobrixa.device));
-  const motorBusy = useSyncExternalStore(motorTest.subscribe, motorTest.getBusy);
   const [remoteFiles] = useState(() => new RemoteFilesController(window.kobrixa, controller));
   const [monitor] = useState(
     () =>
@@ -422,17 +418,11 @@ export function App(): React.JSX.Element {
   );
   useEffect(() => {
     void sensorLab.initialize();
-    void motorTest.initialize();
-    const stopMotorActivity = motorTest.subscribe(() =>
-      controller.recordMotorTest(motorTest.getSnapshot()),
-    );
     return () => {
       sensorLab.dispose();
-      stopMotorActivity();
-      void motorTest.dispose();
       void monitor.dispose().catch(() => {});
     };
-  }, [sensorLab, monitor, motorTest, controller]);
+  }, [sensorLab, monitor]);
   const [deviceOverlay, setDeviceOverlay] = useState(false);
   useEffect(() => {
     remoteFiles.setSession(execution.session?.id, execution.deployed?.path);
@@ -721,7 +711,6 @@ export function App(): React.JSX.Element {
     try {
       await restoration.current;
       await window.kobrixa.sensorLab.stop("close");
-      await motorTest.drain();
       await monitor.drain();
       editorRef.current?.captureView();
       await flushDrafts();
@@ -2821,7 +2810,6 @@ export function App(): React.JSX.Element {
     setConfirmUpdate(false);
     try {
       await window.kobrixa.sensorLab.stop("update");
-      await motorTest.drain();
       await monitor.drain();
       await flushSharedRoom();
       await window.kobrixa.updates.prepareInstall();
@@ -2850,11 +2838,10 @@ export function App(): React.JSX.Element {
   }, [updates?.phase]);
 
   function runCommand(command: AppCommand): void {
-    if (
-      command === "stop" &&
-      (motorTestActive(motorTest.getSnapshot()) || motorTest.getSnapshot().phase === "unconfirmed")
-    ) {
-      void motorTest.stop();
+    // Trusted core Stop also owns public motion; keep it ahead of UI fences.
+    if (command === "stop") {
+      if (execution.phase === "building") void controller.cancelBuild();
+      else void controller.stop();
       return;
     }
     if (updatePreparingRef.current || closingProjectRef.current) return;
@@ -2871,10 +2858,6 @@ export function App(): React.JSX.Element {
     }
     if (command === "nextTab" || command === "previousTab") {
       cycleTabs(command === "nextTab" ? 1 : -1);
-      return;
-    }
-    if (command === "stop" && execution.phase === "building") {
-      void controller.cancelBuild();
       return;
     }
     if (command === "collab") {
@@ -2943,14 +2926,10 @@ export function App(): React.JSX.Element {
       case "run":
         if (!controller.deviceControlBlocked) requestExecution(true);
         break;
-      case "stop":
-        if (execution.session && !controller.locked) void controller.stop();
-        break;
     }
   }
 
   function requestExecution(run: boolean): void {
-    if (run && motorTestActive(motorTest.getSnapshot())) return;
     if (
       !workspace ||
       controller.locked ||
@@ -3255,12 +3234,7 @@ export function App(): React.JSX.Element {
           }
           deviceControlNotice={controlNotice}
           deviceLocked={
-            updatePreparing ||
-            controller.locked ||
-            motorBusy ||
-            managingEntries ||
-            projectBusy ||
-            modalOpen
+            updatePreparing || controller.locked || managingEntries || projectBusy || modalOpen
           }
           projectLocked={
             restoring || updatePreparing || managingEntries || projectBusy || modalOpen
@@ -3269,7 +3243,6 @@ export function App(): React.JSX.Element {
           locked={executionLocked || managingEntries || projectBusy || modalOpen}
           canSave={Boolean(!settingsActive && active && active.dirty)}
           state={execution}
-          motorTesting={motorBusy}
           onNew={() => runCommand("newProject")}
           onOpen={() => runCommand("openProject")}
           onSave={() => runCommand("save")}
@@ -4125,7 +4098,6 @@ export function App(): React.JSX.Element {
               monitor={
                 <MonitorWorkspace
                   lab={sensorLab}
-                  motor={motorTest}
                   view={monitorView}
                   onView={setMonitorView}
                   controller={monitor}
@@ -4162,7 +4134,7 @@ export function App(): React.JSX.Element {
                     state={execution}
                     devices={devices}
                     discovering={discovering}
-                    locked={updatePreparing || controller.locked || motorBusy}
+                    locked={updatePreparing || controller.locked}
                     mode={connectionMode}
                     onMode={(mode) => {
                       setConnectionMode(mode);
@@ -4188,7 +4160,7 @@ export function App(): React.JSX.Element {
                   state={remoteState}
                   active={toolTab === "files"}
                   locale={locale}
-                  locked={updatePreparing || controller.locked || motorBusy}
+                  locked={updatePreparing || controller.locked}
                   controlNotice={controlNotice}
                   deployedPath={execution.deployed?.path}
                   onConnect={() => setToolTab("connection")}

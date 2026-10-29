@@ -23,12 +23,6 @@ import type { WorkspaceService } from "./workspace/workspace.js";
 import { workspaceSessionSchema } from "../shared/workspace-session.js";
 import { workspaceSearchRequestSchema } from "./workspace/search.js";
 import type { MonitorService } from "./device/monitor-service.js";
-import {
-  motorTestRefSchema,
-  motorTestRequestSchema,
-  type MotorTestService,
-} from "./device/motor-test-service.js";
-import type { MotorTestRequest } from "../shared/motor-test.js";
 import type { SensorLabService } from "./sensor-lab/service.js";
 import { sensorLabStartSchema, sensorLabCalibrationSchema } from "./sensor-lab/schema.js";
 import { exportSensorCsv } from "./sensor-lab-export.js";
@@ -95,7 +89,7 @@ export function registerIpc(
   operationGate: UpdateOperationGate,
   finishClose: (requestId: string, ready: boolean) => void = () => {},
   rendererReady: () => void = () => {},
-  sensorTools?: { monitor: MonitorService; lab: SensorLabService; motors?: MotorTestService },
+  sensorTools?: { monitor: MonitorService; lab: SensorLabService },
   modules: readonly ((handle: IpcHandle) => void)[] = [],
   /** Runs before quitAndInstall(); plugin processes must be gone before the installer quits. */
   beforeUpdateInstall: () => Promise<void> = async () => {},
@@ -132,11 +126,7 @@ export function registerIpc(
   };
 
   for (const register of modules) register(handle);
-  registerDeviceControlIpc(
-    handle,
-    deviceControl,
-    () => sensorTools?.motors?.flush() ?? Promise.resolve(),
-  );
+  registerDeviceControlIpc(handle, deviceControl);
   handle("updates:state", () => updates.getState());
   handle("simulator:cancel", (_event, workspaceId: unknown) =>
     builds.cancelSimulation(id.parse(workspaceId)),
@@ -148,35 +138,6 @@ export function registerIpc(
       z.array(file).max(4).parse(entries),
     ),
   );
-  if (sensorTools?.motors) {
-    const motors = sensorTools.motors;
-    handle("device:motor-test-state", () => motors.getState());
-    handle("device:motor-test-start", (event, request: unknown) => {
-      const parsed = motorTestRequestSchema.parse(request) as MotorTestRequest;
-      try {
-        return motors.start(parsed, event.sender.id);
-      } catch (error) {
-        return {
-          request: parsed,
-          phase: "failed",
-          angle: null,
-          displacement: null,
-          elapsedMs: 0,
-          message: error instanceof Error ? error.message : String(error),
-        };
-      }
-    });
-    handle("device:motor-test-keepalive", (event, ref: unknown) =>
-      motors.keepAlive(motorTestRefSchema.parse(ref), event.sender.id),
-    );
-    handle("device:motor-test-stop", (event, ref: unknown, brake: unknown) =>
-      motors.stop(
-        motorTestRefSchema.parse(ref),
-        event.sender.id,
-        z.boolean().default(true).parse(brake),
-      ),
-    );
-  }
   if (sensorTools) {
     const { lab, monitor } = sensorTools;
     handle("device:watch-monitor", (_event, sessionId: unknown, enabled: unknown) =>
@@ -189,7 +150,6 @@ export function registerIpc(
     handle("sensor-lab:stop", async (_event, reason: unknown) => {
       const parsed = z.enum(["manual", "close", "update"]).default("manual").parse(reason);
       if (parsed === "manual") return lab.stop(parsed);
-      await sensorTools.motors?.flush();
       await lab.flush(parsed);
       return lab.getState();
     });
@@ -259,7 +219,6 @@ export function registerIpc(
     async () => {
       if (beforeUpdatePrepare) await beforeUpdatePrepare();
       else {
-        await sensorTools?.motors?.flush();
         await sensorTools?.lab.flush("update");
       }
     },
@@ -307,7 +266,6 @@ export function registerIpc(
     const parsedId = id.parse(requestId),
       parsedReady = z.boolean().parse(ready);
     if (parsedReady) {
-      await sensorTools?.motors?.flush();
       await sensorTools?.lab.flush("close");
       if (beforeWindowClose) await beforeWindowClose();
       else await deviceFoundation?.beforeClose();

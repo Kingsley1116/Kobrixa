@@ -34,8 +34,7 @@ function fixture() {
     stop = vi.fn(async (_session: string, _principal: ImportedPrincipal) => {}),
     beforeClose = vi.fn(async () => {}),
     finish = vi.fn();
-  const motors = { flush: vi.fn(async () => {}) },
-    lab = { flush: vi.fn(async () => {}) };
+  const lab = { flush: vi.fn(async () => {}) };
   registerIpc(
     () => renderer as never,
     {} as never,
@@ -46,7 +45,7 @@ function fixture() {
     new UpdateOperationGate(() => undefined),
     finish,
     undefined,
-    { monitor: {} as never, lab: lab as never, motors: motors as never },
+    { monitor: {} as never, lab: lab as never },
     [],
     undefined,
     undefined,
@@ -60,7 +59,6 @@ function fixture() {
     stop,
     beforeClose,
     finish,
-    motors,
     lab,
     call: (name: string, ...args: unknown[]) => handlers.get(name)!(event, ...args),
   };

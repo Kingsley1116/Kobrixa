@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BuildEvent, CompileResult, DeviceEvent, KobrixaApi } from "../../shared/api.js";
-import type { MotorTestState } from "../../shared/motor-test.js";
 import { DEVICE_CONTROL_DENIED, ExecutionController, filesToSave } from "./execution.js";
 import { readTheme } from "../settings/theme.js";
 
@@ -82,11 +81,6 @@ function setup() {
       preview: vi.fn(),
     },
     device: {
-      startMotorTest: vi.fn(),
-      keepMotorTestAlive: vi.fn(),
-      stopMotorTest: vi.fn(),
-      motorTestState: vi.fn(),
-      onMotorTest: () => () => {},
       watchMonitor: vi.fn(),
       onMonitor: () => () => {},
       monitor: vi.fn(),
@@ -170,65 +164,6 @@ describe("execution flow", () => {
     expect(await h.controller.preview(h.request)).toBeUndefined();
     expect(h.controller.getSnapshot().error?.detail).toBe("Preview snapshot missing");
     expect(h.controller.locked).toBe(false);
-  });
-  it("records motor transitions once and keeps their starting project association", () => {
-    const { controller } = setup();
-    const state: MotorTestState = {
-      request: {
-        sessionId: "ev3",
-        testId: "motor-1",
-        port: 2,
-        power: 20,
-        direction: -1,
-        mode: "angle",
-        degrees: 90,
-        brake: true,
-      },
-      phase: "preparing",
-      angle: null,
-      displacement: null,
-      elapsedMs: 0,
-    };
-    controller.recordMotorTest(state);
-    controller.recordMotorTest({ ...state, phase: "running" });
-    controller.recordMotorTest({ ...state, phase: "running", angle: 10 });
-    controller.setWorkspace("w2");
-    controller.recordMotorTest({ ...state, phase: "completed" });
-    expect(controller.getSnapshot().logs).toHaveLength(0);
-    controller.setWorkspace("w1");
-    expect(controller.getSnapshot().logs.map((entry) => entry.message)).toEqual([
-      "motorPreparing",
-      "motorStarted",
-      "motorCompleted",
-    ]);
-    expect(controller.getSnapshot().logs[0]?.detail).toBe("C · -20% · 90°");
-    expect(controller.editingLocked).toBe(false);
-  });
-  it("keeps a motor test without an open project in device activity", () => {
-    const { controller } = setup();
-    controller.setWorkspace(undefined);
-    controller.recordMotorTest({
-      request: {
-        sessionId: "ev3",
-        testId: "motor-global",
-        port: 0,
-        power: 20,
-        direction: 1,
-        mode: "jog",
-        brake: true,
-      },
-      phase: "unconfirmed",
-      angle: null,
-      displacement: null,
-      elapsedMs: 0,
-      message: "Disconnected",
-    });
-    expect(controller.getSnapshot().logs[0]).toMatchObject({
-      message: "motorUnconfirmed",
-      failed: true,
-    });
-    controller.setWorkspace("w2");
-    expect(controller.getSnapshot().logs).toHaveLength(1);
   });
   it("locks device actions during a mode change without logging each monitor sample", async () => {
     const h = setup();
@@ -972,4 +907,13 @@ it("E5 legacy promise-owned connect does not double-adopt or double-run", async 
   connected.resolve("s1");
   await work;
   expect(h.calls).toEqual(["save", "build", "deploy", "run"]);
+});
+
+it("C retirement sends adopted public-session Stop through the retained core API without a project", async () => {
+  const h = setup();
+  h.controller.setWorkspace(undefined);
+  h.emitDevice(publicCatalog(1));
+  await h.controller.stop();
+  expect(h.api.device.stop).toHaveBeenCalledTimes(1);
+  expect(h.api.device.stop).toHaveBeenCalledWith("public-session");
 });

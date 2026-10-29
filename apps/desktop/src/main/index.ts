@@ -21,7 +21,6 @@ import { LanguageService } from "./language/language.js";
 import { WorkspaceService } from "./workspace/workspace.js";
 import { CloseHandshake } from "./window/close.js";
 import { MonitorService } from "./device/monitor-service.js";
-import { MotorTestService } from "./device/motor-test-service.js";
 import { SensorLabService } from "./sensor-lab/service.js";
 import { WorkbenchLifecycle } from "./window/workbench-lifecycle.js";
 import { MainProcessCloseGuard } from "./window/main-close.js";
@@ -361,7 +360,6 @@ const primary = startPrimary(
       legacyFlush: async (reason) => {
         // The coordinator has already ended reservations synchronously before this guard.
         if (recording) recording.ended = true;
-        await motors.flush();
         if (reason === "suspend") await sensorLab.suspend();
         else await sensorLab.flush(reason);
       },
@@ -530,17 +528,12 @@ const primary = startPrimary(
       }),
     });
     const monitor = new MonitorService(legacy, (update) => send("device:monitor-update", update));
-    // P150 has no declarative motion scope. The service refuses starts until D160 supplies it.
-    const motors = new MotorTestService({
-      publish: (state) => send("device:motor-test-update", state),
-    });
     let recording: { reservationId: string; principal: Principal; ended?: boolean } | undefined;
     let labBusy = false;
     const sensorLab = new SensorLabService({
       directory: path.join(app.getPath("userData"), "sensor-lab"),
       device: (id) => devices.descriptor(id),
       acquire: async (id, channels) => {
-        if (motors.busy) throw new Error("Stop the motor test before recording.");
         const principal = currentCorePrincipal();
         const { sources } = await legacy.request("devices/session", { sessionId: id });
         const channelIds = channels.map((channel) => {
@@ -626,13 +619,10 @@ const primary = startPrimary(
     devices.subscribe(
       createDeviceLossHandler(
         (id) => {
-          motors.disconnected(id);
           sensorLab.onDisconnect(id);
           void monitor.disconnect(id).catch(reportCleanupError);
         },
-        (id) => {
-          void motors.reconnected(id).catch(reportCleanupError);
-        },
+        () => {},
       ),
     );
     const powerSessions = createSessionPowerLifecycle({
@@ -653,8 +643,7 @@ const primary = startPrimary(
     const collab = await createCollabService(app.getPath("userData"), collabServerUrl);
     updates = await createUpdateService(
       renderer,
-      () =>
-        operationGate.busy || builds.busy || devices.busy || monitor.busy || motors.busy || labBusy,
+      () => operationGate.busy || builds.busy || devices.busy || monitor.busy || labBusy,
     );
     const workbench = new WorkbenchLifecycle({
       sessions: async () => {
@@ -694,7 +683,7 @@ const primary = startPrimary(
         rendererCanFlush = true;
         devices.publishSessionCatalog();
       },
-      { monitor, lab: sensorLab, motors },
+      { monitor, lab: sensorLab },
       [
         (handle) => {
           if (process.platform === "win32") registerWindowChromeIpc(handle, () => mainWindow);
@@ -820,13 +809,13 @@ const primary = startPrimary(
           contents.once("destroyed", offNative);
         }
         mainWindow?.on("blur", () => {
-          void motors.stopAll();
+          ui.intent.dispose();
         });
         mainWindow?.on("hide", () => {
-          void motors.stopAll();
+          ui.intent.dispose();
         });
         mainWindow?.on("minimize", () => {
-          void motors.stopAll();
+          ui.intent.dispose();
         });
       })();
       opening = work;

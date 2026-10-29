@@ -1,3 +1,4 @@
+import { motorAcceptanceHandoff } from "./motor-test-smoke.mjs";
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
@@ -44,7 +45,6 @@ test("F14: runtime imports no desktop implementation; legacy services own no tra
   for (const file of [
     "device/device.ts",
     "device/monitor-service.ts",
-    "device/motor-test-service.ts",
     "device/file-batch.ts",
     "device/remote-files.ts",
     "sensor-lab/service.ts",
@@ -77,4 +77,22 @@ test("H-I runs device boundary/conformance tests and real transport smoke", asyn
   assert.ok(pkg.scripts["test:desktop"].includes("pnpm test:device-broker"));
   const ci = await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8");
   assert.match(ci, /pnpm test:device-broker:smoke/);
+});
+
+test("retired motor smoke cannot silently satisfy dedicated public acceptance", async () => {
+  assert.match(motorAcceptanceHandoff({}), /NOT RUN.*motor-test-public-run\.mjs --all/);
+  assert.throws(
+    () => motorAcceptanceHandoff({ KOBRIXA_SMOKE_MOTORS_ONLY: "1" }),
+    /retired.*motor-test-public-run/,
+  );
+  for (const file of ["run-smoke.mjs", "smoke-main.mjs"]) {
+    const text = await readFile(path.join(root, "tests/desktop", file), "utf8");
+    assert.doesNotMatch(text, /motor-test-service|createMotorFixture|checkMotorTests|motorContext/);
+    assert.match(text, /motorAcceptanceHandoff\(\)/);
+  }
+  const main = await readFile(path.join(root, "tests/desktop/smoke-main.mjs"), "utf8");
+  assert.match(main, /await checkMonitor\(monitorContext\)/);
+  assert.match(main, /await checkSensorLab\(labContext\)/);
+  assert.match(main, /sensorLab\.onDisconnect\(args\[0\]\)/);
+  assert.match(main, /await sampler\.disconnect\(args\[0\]\)/);
 });

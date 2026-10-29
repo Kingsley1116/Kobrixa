@@ -344,3 +344,38 @@ describe("bounded broker presentation", () => {
     expect(progress(snapshot({ elapsedMs: DEVICE_LIMITS_V1.movementMs }), spec("jog"))).toBe(1);
   });
 });
+
+// Transferred legacy controls assertions: independent port drafts and three movement modes.
+describe("retired desktop motor controls parity", () => {
+  it.each(PORTS)(
+    "keeps %s defaults independent and emits only the selected mode fields",
+    (port) => {
+      for (const mode of ["jog", "timed", "relative-angle"] as const) {
+        const form = initialForm();
+        expect(form[fieldKey(port, "power")]).toBe(20);
+        expect(form[fieldKey(port, "seconds")]).toBe(1);
+        expect(form[fieldKey(port, "degrees")]).toBe(90);
+        form.port = port;
+        form[fieldKey(port, "mode")] = mode;
+        const result = motionFromForm(form, { ...actuator, portId: port }, -1);
+        expect(result.ok).toBe(true);
+        if (!result.ok) throw Error("Expected valid default");
+        expect(result.spec).toMatchObject({
+          mode,
+          power: 20,
+          brake: true,
+          direction: mode === "jog" ? -1 : 1,
+        });
+        expect("durationMs" in result.spec).toBe(mode === "timed");
+        expect("degrees" in result.spec).toBe(mode === "relative-angle");
+        expect(initialForm()[fieldKey(port, "mode")]).toBe("jog");
+      }
+    },
+  );
+  it("preserves elapsed/absolute-angle progress and clamp", () => {
+    expect(progress(snapshot({ elapsedMs: 250 }), spec("timed"))).toBe(0.25);
+    expect(progress(snapshot({ displacement: -45 }), spec("relative-angle"))).toBe(0.5);
+    expect(progress(snapshot({ elapsedMs: 20000 }), spec("timed"))).toBe(1);
+    expect(progress(snapshot({ displacement: null }), spec("relative-angle"))).toBeNull();
+  });
+});
