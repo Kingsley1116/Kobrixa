@@ -1,0 +1,32 @@
+[
+  {
+    "file": "installed.json.gz",
+    "bytes": 137109,
+    "sha256": "9b578d75387655f00aa75f93852497a6e4c544790c1f3869cd1dca5b7eaf4f89",
+    "gzipSha256": "fb1b6345cec672be5fc82d10ea5249fe39754c0be72810c7bb134f7f18f4b00c"
+  },
+  {
+    "file": "healthy.log.gz",
+    "bytes": 11064,
+    "sha256": "a6c068d891cef76b0b4d69a48c08a24d98d81ff2e8977a9e266cf40f236e8227",
+    "gzipSha256": "b77cf03400663f476b5325f419c17e06298ed0c2cab1a6fd4c9b3ba4fb992ac4"
+  },
+  {
+    "file": "restart.log.gz",
+    "bytes": 5064,
+    "sha256": "ab413a7cecbcc61d79d4cffbfe1f00cf87937d7d131820e66114b0c5b5001469",
+    "gzipSha256": "244174374b75a4298f3098a9dccc42af81f4fadd9a7b59519d40e3c1c303f1f2"
+  },
+  {
+    "file": "missing.log.gz",
+    "bytes": 11097,
+    "sha256": "1fdb9d42b61ecbc4b6fc89d01c06fd0a8b4c2ff273f26ba524ba6ff3b32cb26f",
+    "gzipSha256": "a6cc27c7fc6077a07441e1bd8b836998811b2967c5a7aa29c31c778710010396"
+  },
+  {
+    "file": "tampered.log.gz",
+    "bytes": 9591,
+    "sha256": "bba60de194d2a8de3ee47788751531cb30aadc3e07ffbbb56df5038702786882",
+    "gzipSha256": "5bd0937c6ba6590cca0631cd9b507ccc19d49097f87224990025d3f2069df9a4"
+  }
+]
