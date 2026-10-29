@@ -1,0 +1,15 @@
+# Lab legacy runtime retirement and resulting product
+
+Product source `a77387d` removes the private Lab service/store, IPC/preload API, old renderer and styles. The existing read-only original-file importer and durable migration barrier remain attached through explicit retired-writer hooks; core stop, close/update/suspend drains, authority, monitor and recovery remain. Frozen pure baseline oracles were retained separately in `4296f51`. Independent scoped review found no actionable issue; its original report is included.
+
+## Executed results
+
+- Full desktop regression at the retirement source: 4,006 PASS, 22 existing SKIP, one failure. The sole failure was an obsolete Motor boundary test requiring the now-retired Lab IPC. `d5001c0` changes that expectation to absence while preserving monitor/core stop/files assertions; its focused rerun PASS. This is not a claim that a second full suite ran.
+- Complete Linux arm64 product build PASS. First offline attempt lacked the Electron packaging cache; the successful build downloaded official Electron 44.7.0. Native executions used `--network none` plus source filesystem denial, empty PATH, Chromium sandbox and context isolation.
+- `cRGLEW`: unchanged full production executable/archive, four cases healthy/restart/missing/tampered PASS, graceful exits and no remaining owned PIDs. Seven packaging assertions PASS. `product-audit.json` binds archive SHA and confirms both old Motor and Lab private routes absent from all packaged JavaScript. These cases exercise Motor in the new whole product, not physical devices.
+- `e0I9Md`: four actual Lab payload cases PASS (healthy/absent/missing-resource/tampered), including generic public interaction, final stored record, export/copy, original process identity and replacement owner. Original Lab and EV3 provider payloads come unchanged from the same `a77387d` product. `7ae9fa9` fixes only acceptance-host copying of the EV3 provider dependency after it became an optional source; it does not force-enable unavailable providers. The prior `ofTsYg` fixture failure remains archived and is not relabelled.
+- `ooe0Za`: actual main PIDs 929 then 1369, same profile, imported destination deletion retained, new final recording survives restart, original files and durable evidence unchanged, no automatic reconnect/recording replay. Both normal shutdowns complete and outside process cleanup is empty.
+
+The Lab payload run and restart are acceptance hosts using the actual plugin/worker/public routing and a fake provider; they are not the same as unchanged full-product Lab UI/hardware acceptance. Original artifacts/profiles remain in the controller directories; retained JSON includes their exact hashes. All archived logs/receipts preserve original bytes in gzip with SHA-256 inventory.
+
+Stage 3 remains open for remaining foundation import/fault/load/compatibility/second-instance aggregation, final feature-wide installed/manual/platform work and physical hardware observations. No skipped test or synthetic result is promoted to an executed acceptance row.
