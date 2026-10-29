@@ -25,7 +25,20 @@ const ok = (result) => {
 };
 
 /** Inert pure oracle: build success or a submitted receipt alone cannot pass. */
-export function verifyLabReceipt(report) {
+export function verifyLabReceipt(report, { requireParity = false } = {}) {
+  if (requireParity) assert.ok(report.checkpoints?.parity, "D7 parity extension required");
+  if (report.checkpoints?.parity) {
+    const boundary = report.checkpoints.history;
+    const base = verifyLabReceipt({
+      ...report,
+      checkpoints: { ...report.checkpoints, parity: undefined },
+      wire: report.wire.filter((row) => row.sequence <= boundary.sequence),
+      ipc: report.ipc.filter((row) => row.at <= boundary.at),
+      brokerCalls: report.brokerCalls.filter((row) => row.at <= boundary.at),
+      drains: report.drains.filter((row) => row.at <= boundary.at),
+    });
+    return { ...base, parity: verifyLabParity(report) };
+  }
   assert.equal(report.schema, 1);
   assert.equal(report.stage, "complete");
   assert.deepEqual(report.failures, []);
@@ -292,6 +305,412 @@ export function verifyLabReceipt(report) {
   };
 }
 
+// Additional native slice. Historical/installed receipts retain the base verifier contract.
+export function verifyLabParity(report) {
+  const p = report.checkpoints.parity;
+  assert.ok(p, "D7 parity extension required");
+  const owner = report.launches[0].owner;
+  let sequence = -1;
+  for (const row of report.wire) {
+    assert.deepEqual(row.owner, owner);
+    assert.ok(row.sequence > sequence);
+    sequence = row.sequence;
+  }
+  const pairs = (method, direction = "plugin-host") =>
+    report.wire
+      .filter((row) => row.direction === direction && row.message.method === method)
+      .map((request) => {
+        const replies = report.wire.filter(
+          (row) =>
+            row.direction !== direction &&
+            !row.message.method &&
+            row.message.id === request.message.id &&
+            row.sequence > request.sequence,
+        );
+        assert.equal(replies.length, 1, `Original ${method} reply`);
+        return {
+          request,
+          response: replies[0],
+          params: request.message.params,
+          value: ok(replies[0].message.result),
+        };
+      });
+  const names = [
+    "live-profile",
+    "save-profile",
+    "list-profile",
+    "reset-profile",
+    "apply-profile",
+    "delete-profile",
+    "live-second",
+    "start-second",
+    "stop-second",
+    "list-two",
+    "view-first",
+    "compare-second",
+    "raw",
+    "calibrated",
+    "live-delete",
+    "fresh-history",
+    "delete-first",
+    "list-after-delete",
+  ];
+  assert.deepEqual(
+    p.steps.map((s) => s.name),
+    names,
+  );
+  let last = report.checkpoints.history.at;
+  const step = (name) => p.steps.find((s) => s.name === name);
+  for (const s of p.steps) {
+    assert.ok(s.at >= last && s.finishedAt >= s.at && s.after >= s.before);
+    last = s.finishedAt;
+  }
+  assert.ok(p.finishedAt >= last && report.exits[0].at > p.finishedAt);
+  const within = (row, name) =>
+    row.request.sequence > step(name).before && row.response.sequence <= step(name).after;
+  const used = new Set();
+  const trusted = (ipc, name, expectedNode, dialog = false) => {
+    assert.ok(ipc && ipc.at >= step(name).at && ipc.finishedAt <= step(name).finishedAt);
+    const drivers = Object.values(report.checkpoints).filter(
+      (row) => row.stage === `parity-${name}` && row.at <= ipc.at,
+    );
+    const events = report.native.filter(
+      (e) =>
+        e.isTrusted &&
+        e.type === "pointerdown" &&
+        e.at >= step(name).at &&
+        e.at < ipc.at &&
+        (dialog
+          ? e.dialog === true
+          : expectedNode === "#status"
+            ? e.status === true
+            : e.node === expectedNode) &&
+        drivers.some((d) => d.targetId === e.targetId && d.at <= e.at),
+    );
+    const e = events.at(-1);
+    assert.ok(e && !used.has(e), `Distinct native ${name}`);
+    used.add(e);
+    assert.ok(
+      report.native.some(
+        (up) =>
+          up.type === "pointerup" &&
+          up.isTrusted &&
+          up.targetId === e.targetId &&
+          up.at > e.at &&
+          up.at <= ipc.at,
+      ),
+    );
+    return e;
+  };
+  const commands = pairs("command/invoke", "host-plugin");
+  const action = (name, command, node, dialog = false) => {
+    const rows = commands.filter(
+      (r) => within(r, name) && r.params.command === `${pluginId}.${command}`,
+    );
+    assert.equal(rows.length, 1, `One ${name} command`);
+    const row = rows[0];
+    assert.equal(row.params.context.origin, "panel");
+    assert.deepEqual(row.value.fieldErrors, []);
+    const ipc = report.ipc.find(
+      (i) =>
+        i.channel === "plugins:ui:interact" &&
+        i.result?.ok &&
+        i.result.value.invocationId === row.params.invocationId,
+    );
+    assert.ok(ipc);
+    assert.deepEqual(ipc.args[0].binding, row.params.context.binding);
+    assert.equal(ipc.args[0].nodeId, node);
+    assert.ok(ipc.at <= row.request.at && ipc.finishedAt >= row.response.at);
+    trusted(ipc, name, node, dialog);
+    return row;
+  };
+  for (const [name, command, node] of [
+    ["live-profile", "live", "live"],
+    ["save-profile", "save-profile", "save-profile"],
+    ["list-profile", "refresh", "refresh"],
+    ["reset-profile", "reset", "reset"],
+    ["live-second", "live", "live"],
+    ["start-second", "start", "start"],
+    ["list-two", "refresh", "refresh"],
+    ["live-delete", "live", "live"],
+    ["fresh-history", "refresh", "refresh"],
+    ["list-after-delete", "refresh", "refresh"],
+  ])
+    action(name, command, node);
+  const pageContains = (dataset, meta, before, binding) =>
+    report.ipc.some(
+      (i) =>
+        i.channel === "plugins:ui:data-read" &&
+        i.result?.ok &&
+        i.finishedAt < before &&
+        i.args[0].dataset === dataset &&
+        (!binding || JSON.stringify(i.args[0].binding) === JSON.stringify(binding)) &&
+        i.result.value.chunk.entries.some(
+          (e) => e.key === meta.id && e.version === String(meta.revision),
+        ),
+    );
+  const rowAction = (name, command, dataset, meta, deleting = false) => {
+    const row = action(name, command, deleting ? `delete-${dataset}-confirm` : dataset, deleting);
+    assert.equal(row.params.arguments.key, meta.id);
+    assert.equal(row.params.arguments.revision, String(meta.revision));
+    assert.ok(
+      pageContains(dataset, meta, row.request.at, row.params.context.binding),
+      `Published ${name} row`,
+    );
+    const admission = report.ipc.filter(
+      (i) =>
+        i.channel === "plugins:ui:interact" &&
+        i.result?.ok &&
+        i.at >= step(name).at &&
+        i.finishedAt <= step(name).finishedAt,
+    );
+    const selected = admission.find(
+      (i) =>
+        i.args[0].kind === "list" && i.args[0].key === meta.id && i.args[0].dataset === dataset,
+    );
+    assert.ok(selected);
+    assert.equal(selected.args[0].revision, row.params.arguments.dataset);
+    assert.ok(
+      report.ipc.some(
+        (i) =>
+          i.channel === "plugins:ui:data-read" &&
+          i.result?.ok &&
+          i.finishedAt < selected.at &&
+          i.args[0].dataset === dataset &&
+          i.result.value.revision === selected.args[0].revision &&
+          i.result.value.chunk.entries.some(
+            (e) => e.key === meta.id && e.version === String(meta.revision),
+          ),
+      ),
+    );
+    if (deleting) {
+      assert.equal(selected.args[0].actionId, command);
+      trusted(selected, name, dataset);
+    }
+    return row;
+  };
+  const commits = pairs("storage/commitWrite"),
+    begins = pairs("storage/beginWrite");
+  const written = (meta) => {
+    const commit = commits.find(
+      (r) => r.value.record.id === meta.id && r.value.record.revision === meta.revision,
+    );
+    assert.ok(commit);
+    assert.deepEqual(commit.value.record, meta);
+    const begin = begins.find((r) => r.value.write === commit.params.write);
+    assert.ok(begin);
+    let offset = 0;
+    const chunks = pairs("storage/writeChunk").filter((r) => r.params.write === begin.value.write);
+    const bytes = Buffer.concat(
+      chunks.map((r) => {
+        assert.equal(r.params.offset, offset);
+        const b = Buffer.from(r.params.data, "base64");
+        assert.equal(b.toString("base64"), r.params.data);
+        offset += b.length;
+        return b;
+      }),
+    );
+    assert.equal(bytes.length, meta.byteLength);
+    assert.equal(digest(bytes), meta.sha256);
+    assert.equal(begin.params.sha256, meta.sha256);
+    assert.equal(begin.params.byteLength, meta.byteLength);
+    return { commit, begin, payload: JSON.parse(bytes.toString("utf8")) };
+  };
+  const read = (meta, name) => {
+    const opened = pairs("storage/openRead").find(
+      (r) =>
+        within(r, name) && r.params.id === meta.id && r.params.expectedRevision === meta.revision,
+    );
+    assert.ok(opened, `Pinned ${name} read`);
+    assert.deepEqual(opened.value.record, meta);
+    let offset = 0;
+    const chunks = pairs("storage/readChunk").filter((r) => r.params.read === opened.value.read);
+    const bytes = Buffer.concat(
+      chunks.map((r, i) => {
+        assert.ok(within(r, name));
+        assert.equal(r.params.offset, offset);
+        assert.equal(r.value.offset, offset);
+        const b = Buffer.from(r.value.data, "base64");
+        assert.equal(b.toString("base64"), r.value.data);
+        offset += b.length;
+        assert.equal(r.value.nextOffset, offset);
+        assert.equal(r.value.eof, i === chunks.length - 1);
+        return b;
+      }),
+    );
+    assert.equal(bytes.length, meta.byteLength);
+    assert.equal(digest(bytes), meta.sha256);
+    return JSON.parse(bytes.toString("utf8"));
+  };
+  assert.notEqual(p.first.id, p.second.id);
+  assert.notEqual(p.profile.id, p.first.id);
+  assert.notEqual(p.profile.id, p.second.id);
+  const profile = written(p.profile);
+  assert.ok(within(profile.commit, "save-profile"));
+  assert.equal(p.profile.kind, "sensor-lab.calibration");
+  assert.equal(profile.payload.name, "D7 saved calibration");
+  const first = written(p.first),
+    second = written(p.second);
+  assert.equal(first.payload.name, "D7 actual Lab");
+  assert.equal(second.payload.name, "D7 comparison Lab");
+  assert.notEqual(first.payload.id, second.payload.id);
+  assert.ok(first.payload.frames.length && second.payload.frames.length);
+  assert.deepEqual(profile.payload.calibration, first.payload.channels[0].calibration);
+  assert.ok(
+    pairs("storage/list").some(
+      (r) =>
+        within(r, "list-profile") &&
+        r.params.kind === "sensor-lab.calibration" &&
+        r.value.entries.some((meta) => JSON.stringify(meta) === JSON.stringify(p.profile)),
+    ),
+    "Original profile listed through SDK",
+  );
+  rowAction("apply-profile", "apply-profile", "profiles", p.profile);
+  assert.deepEqual(read(p.profile, "apply-profile"), profile.payload);
+  assert.equal(p.applied.form["source-a"], "42");
+  assert.equal(p.applied.form["target-b"], "200");
+  assert.deepEqual(second.payload.channels[0].calibration, profile.payload.calibration);
+  const reservation = pairs("devices/recording/reserve").find((r) => within(r, "start-second"));
+  assert.ok(reservation);
+  const registered = pairs("storage/registerCheckpoint").find(
+    (r) => r.params.reservation === reservation.value.reservation.reservationId,
+  );
+  assert.ok(registered);
+  assert.equal(registered.params.id, p.second.id);
+  const drain = report.drains.find((d) =>
+    d.offer.checkpoints.some((c) => c.checkpoint === registered.value.checkpoint),
+  );
+  assert.ok(drain && drain.report.state === "saved" && !drain.report.blocker);
+  assert.deepEqual(drain.offer.owner, owner);
+  assert.equal(second.begin.params.checkpoint.handle, registered.value.checkpoint);
+  assert.equal(second.begin.params.checkpoint.phase, "final");
+  assert.equal(second.commit.params.drainToken, drain.offer.token);
+  assert.ok(within(second.commit, "stop-second"));
+  const submitted = pairs("storage/drain", "host-plugin").find(
+    (row) => row.params.token === drain.offer.token,
+  );
+  assert.ok(submitted && submitted.value.status === "submitted");
+  assert.deepEqual(submitted.value.writes, [second.begin.value.write]);
+  assert.ok(
+    drain.report.records.some(
+      (record) =>
+        record.id === p.second.id && record.committedRevision === p.second.revision && record.final,
+    ),
+  );
+  const original = begins.find(
+    (row) => row.params.target.mode === "create" && row.value.id === p.second.id,
+  );
+  assert.ok(original);
+  let originalOffset = 0;
+  const originalBytes = Buffer.concat(
+    pairs("storage/writeChunk")
+      .filter((row) => row.params.write === original.value.write)
+      .map((row) => {
+        assert.equal(row.params.offset, originalOffset);
+        const bytes = Buffer.from(row.params.data, "base64");
+        originalOffset += bytes.length;
+        return bytes;
+      }),
+  );
+  assert.equal(originalBytes.length, original.params.byteLength);
+  assert.equal(digest(originalBytes), original.params.sha256);
+  assert.equal(
+    JSON.parse(originalBytes.toString("utf8")).id,
+    second.payload.id,
+    "Second original model identity retained",
+  );
+
+  const stop = report.ipc.find(
+    (i) =>
+      i.channel === "plugins:ui:interact" &&
+      i.args[0].kind === "core" &&
+      i.args[0].actionId === "stop" &&
+      i.at >= step("stop-second").at &&
+      i.result?.ok,
+  );
+  assert.ok(stop);
+  trusted(stop, "stop-second", "#status");
+  assert.ok(
+    report.brokerCalls.some(
+      (r) =>
+        r.method === "devices/recording/release" &&
+        r.params.reservationId === reservation.value.reservation.reservationId &&
+        r.at >= stop.at &&
+        r.result?.ok &&
+        JSON.stringify(r.principal.owner) === JSON.stringify(owner),
+    ),
+  );
+  rowAction("view-first", "view-record", "history", p.first);
+  assert.deepEqual(read(p.first, "view-first"), first.payload);
+  rowAction("compare-second", "compare-record", "history", p.second);
+  assert.deepEqual(read(p.second, "compare-second"), second.payload);
+  for (const [name, calibrated, value] of [
+    ["raw", false, 42],
+    ["calibrated", true, 0],
+  ]) {
+    const evidence = p[name],
+      page = evidence.page;
+    assert.equal(evidence.form.calibrated, calibrated);
+    assert.ok(report.ipc.some((i) => JSON.stringify(i) === JSON.stringify(page)));
+    assert.ok(page.at >= step(name).at && page.finishedAt <= step(name).finishedAt);
+    assert.equal(page.args[0].dataset, "chart0");
+    ok(page.result);
+    assert.equal(page.result.value.header.view, "full");
+    for (const series of [0, 1])
+      assert.ok(
+        page.result.value.chunk.entries.some((point) => point[0] === series && point[3] === value),
+      );
+    assert.ok(
+      report.native.some(
+        (e) =>
+          e.type === "input" &&
+          e.isTrusted &&
+          e.node === "calibrated" &&
+          e.at >= step(name).at &&
+          e.at <= step(name).finishedAt,
+      ),
+    );
+  }
+  assert.notEqual(p.raw.page.result.value.revision, p.calibrated.page.result.value.revision);
+  for (const [name, command, dataset, meta] of [
+    ["delete-profile", "delete-profiles", "profiles", p.profile],
+    ["delete-first", "delete-history", "history", p.first],
+  ]) {
+    rowAction(name, command, dataset, meta, true);
+    const removed = pairs("storage/delete").filter((r) => within(r, name));
+    assert.equal(removed.length, 1);
+    assert.equal(removed[0].params.id, meta.id);
+    assert.equal(removed[0].params.expectedRevision, meta.revision);
+    assert.equal(removed[0].value.deleted, true);
+    const listed = pairs("storage/list").find(
+      (r) =>
+        r.request.sequence > removed[0].response.sequence &&
+        r.params.kind === meta.kind &&
+        r.value.nextCursor === null,
+    );
+    assert.ok(listed && !listed.value.entries.some((e) => e.id === meta.id));
+    if (dataset === "history")
+      assert.ok(
+        listed.value.entries.some((e) => e.id === p.second.id && e.revision === p.second.revision),
+      );
+  }
+  assert.ok(
+    report.ipc.some(
+      (i) =>
+        i.channel === "plugins:ui:data-read" &&
+        i.result?.ok &&
+        i.at >= step("delete-first").at &&
+        i.args[0].dataset === "history" &&
+        !i.result.value.chunk.entries.some((e) => e.key === p.first.id) &&
+        i.result.value.chunk.entries.some((e) => e.key === p.second.id),
+    ),
+  );
+  for (const counters of [report.cleanup.bridge, report.cleanup.worker])
+    for (const v of Object.values(counters)) assert.equal(v, 0);
+  assert.equal(report.cleanup.workers, 0);
+  return { profile: p.profile.id, first: p.first.id, second: p.second.id };
+}
+
 export async function buildLab(directory) {
   const require = createRequire(import.meta.url);
   const { build } = createRequire(require.resolve("vitest/package.json"))("esbuild");
@@ -513,7 +932,7 @@ async function main(args) {
   assert.equal(outside.code, 0, "Native producer failed; inspect producer.json/native.log");
   assert.equal(outside.signal, null);
   const producerBytes = await readFile(path.join(directory, "producer.json"));
-  const verified = verifyLabReceipt(JSON.parse(producerBytes));
+  const verified = verifyLabReceipt(JSON.parse(producerBytes), { requireParity: true });
   const receipt = { verified, outside, producerSha256: digest(producerBytes), identity };
   await writeFile(path.join(directory, "receipt.json"), JSON.stringify(receipt, null, 2));
   console.log(`Actual public Lab PASS: ${path.join(directory, "receipt.json")}`);

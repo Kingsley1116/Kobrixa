@@ -65,6 +65,8 @@ for (const type of ["pointerdown", "pointerup", "pointercancel", "keydown", "key
             close: !!element?.closest('[data-close-contribution="true"]'),
             status: !!element?.closest("#lab-status"),
             targetId: control ? nativeTargetId(control) : null,
+            ariaLabel: control?.getAttribute("aria-label"),
+            dialog: !!element?.closest('[role="dialog"]'),
             key: event instanceof KeyboardEvent ? event.key : null,
             repeat: event instanceof KeyboardEvent ? event.repeat : null,
           }),

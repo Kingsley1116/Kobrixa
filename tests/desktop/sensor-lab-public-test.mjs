@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
-import { verifyLabReceipt } from "./sensor-lab-public-run.mjs";
+import { verifyLabReceipt, verifyLabParity } from "./sensor-lab-public-run.mjs";
 
 // Oracle UNIT fixture only. Never used by the native producer or emitted as native evidence.
 function oracleFixture() {
@@ -347,3 +347,414 @@ test("rejects a substituted model UUID even when final storage metadata is inter
   created.message.params.sha256 = createHash("sha256").update(bytes).digest("hex");
   assert.throws(() => verifyLabReceipt(report), /Original model identity/);
 });
+
+// Synthetic oracle-only evidence. Never emitted by the native producer.
+function parityFixture() {
+  const owner = {
+    sourceKey: "builtin:kobrixa.sensor-lab",
+    pluginId: "kobrixa.sensor-lab",
+    generation: 1,
+    hostEpoch: "host",
+    processEpoch: "process",
+  };
+  const r = {
+    launches: [{ owner }],
+    exits: [{ owner, at: 3000 }],
+    wire: [],
+    ipc: [],
+    native: [],
+    brokerCalls: [],
+    drains: [],
+    checkpoints: { history: { at: 10 } },
+    cleanup: { bridge: {}, worker: {}, workers: 0 },
+  };
+  const names = [
+    "live-profile",
+    "save-profile",
+    "list-profile",
+    "reset-profile",
+    "apply-profile",
+    "delete-profile",
+    "live-second",
+    "start-second",
+    "stop-second",
+    "list-two",
+    "view-first",
+    "compare-second",
+    "raw",
+    "calibrated",
+    "live-delete",
+    "fresh-history",
+    "delete-first",
+    "list-after-delete",
+  ];
+  const p = {
+    steps: names.map((name, i) => ({ name, at: 100 + i * 100, finishedAt: 195 + i * 100 })),
+    finishedAt: 1900,
+    applied: { form: { "source-a": "42", "target-b": "200" } },
+  };
+  r.checkpoints.parity = p;
+  const step = (name) => p.steps.find((s) => s.name === name);
+  let id = 0;
+  const pair = (method, params, value, at, direction = "plugin-host", end = at + 0.1) => {
+    const request = { direction, owner, at, sequence: 0, message: { id: ++id, method, params } };
+    const response = {
+      direction: direction === "plugin-host" ? "host-plugin" : "plugin-host",
+      owner,
+      at: end,
+      sequence: 0,
+      message: { id, result: { ok: true, value } },
+    };
+    r.wire.push(request, response);
+    return { request, response };
+  };
+  const calibration = {
+    twoPoint: true,
+    sourceA: 42,
+    sourceB: 100,
+    targetA: 0,
+    targetB: 200,
+    zeroOffset: 0,
+    unit: "raw",
+  };
+  const payload = (id, name) => ({
+    id,
+    name,
+    channels: [{ calibration }],
+    frames: [{ values: [42] }],
+  });
+  const models = {
+    first: payload("model-first", "D7 actual Lab"),
+    second: payload("model-second", "D7 comparison Lab"),
+    profile: { id: "model-profile", name: "D7 saved calibration", calibration },
+  };
+  for (const name of ["first", "profile", "second"]) {
+    const bytes = Buffer.from(JSON.stringify(models[name])),
+      sha256 = createHash("sha256").update(bytes).digest("hex");
+    const meta = {
+      id: name,
+      revision: `${name}-revision`,
+      kind: name === "profile" ? "sensor-lab.calibration" : "sensor-lab.recording",
+      byteLength: bytes.length,
+      sha256,
+      checkpoint: name === "profile" ? null : "final",
+    };
+    p[name] = meta;
+    const at =
+      name === "first" ? 1 : step(name === "profile" ? "save-profile" : "stop-second").at + 30;
+    pair(
+      "storage/beginWrite",
+      {
+        target: { mode: "create" },
+        sha256,
+        byteLength: bytes.length,
+        ...(name === "second"
+          ? { checkpoint: { handle: "checkpoint-second", phase: "final" } }
+          : {}),
+      },
+      { write: `write-${name}`, id: name },
+      at,
+    );
+    pair(
+      "storage/writeChunk",
+      { write: `write-${name}`, offset: 0, data: bytes.toString("base64") },
+      {},
+      at + 1,
+    );
+    pair(
+      "storage/commitWrite",
+      { write: `write-${name}`, ...(name === "second" ? { drainToken: "drain-second" } : {}) },
+      { record: meta },
+      at + 2,
+    );
+  }
+  const binding = { panelInstance: "panel" };
+  let targetId = 0;
+  function input(name, node, at, dialog = false, status = false) {
+    const target = ++targetId;
+    r.checkpoints[`input-${target}`] = { stage: `parity-${name}`, at: at - 3, targetId: target };
+    r.native.push(
+      { type: "pointerdown", isTrusted: true, at: at - 2, node, dialog, status, targetId: target },
+      { type: "pointerup", isTrusted: true, at: at - 1, node, dialog, status, targetId: target },
+    );
+  }
+  function command(name, cmd, node, args = {}, dialog = false) {
+    const at = step(name).at,
+      invocationId = `invoke-${name}`;
+    pair(
+      "command/invoke",
+      {
+        command: `kobrixa.sensor-lab.${cmd}`,
+        arguments: args,
+        invocationId,
+        context: { origin: "panel", binding },
+      },
+      { fieldErrors: [] },
+      at + 15,
+      "host-plugin",
+      at + 80,
+    );
+    const action = { kind: dialog ? "dialogConfirm" : "action", nodeId: node, binding };
+    const ipc = {
+      channel: "plugins:ui:interact",
+      args: [action],
+      at: at + 14,
+      finishedAt: at + 81,
+      result: { ok: true, value: { invocationId } },
+    };
+    r.ipc.push(ipc);
+    input(name, node, at + 14, dialog);
+    return ipc;
+  }
+  function page(dataset, metas, at, revision = 1) {
+    const ipc = {
+      channel: "plugins:ui:data-read",
+      args: [{ dataset, binding, revision }],
+      at,
+      finishedAt: at + 0.1,
+      result: {
+        ok: true,
+        value: {
+          revision,
+          chunk: { entries: metas.map((m) => ({ key: m.id, version: String(m.revision) })) },
+        },
+      },
+    };
+    r.ipc.push(ipc);
+    return ipc;
+  }
+  for (const [name, cmd] of [
+    ["live-profile", "live"],
+    ["save-profile", "save-profile"],
+    ["list-profile", "refresh"],
+    ["reset-profile", "reset"],
+    ["live-second", "live"],
+    ["start-second", "start"],
+    ["list-two", "refresh"],
+    ["live-delete", "live"],
+    ["fresh-history", "refresh"],
+    ["list-after-delete", "refresh"],
+  ])
+    command(name, cmd, cmd);
+  for (const [name, cmd, dataset, meta, deleting] of [
+    ["apply-profile", "apply-profile", "profiles", p.profile, false],
+    ["delete-profile", "delete-profiles", "profiles", p.profile, true],
+    ["view-first", "view-record", "history", p.first, false],
+    ["compare-second", "compare-record", "history", p.second, false],
+    ["delete-first", "delete-history", "history", p.first, true],
+  ]) {
+    const at = step(name).at;
+    page(dataset, [meta], at + 1);
+    const ipc = command(
+      name,
+      cmd,
+      deleting ? `delete-${dataset}-confirm` : dataset,
+      { key: meta.id, revision: String(meta.revision), dataset: 1 },
+      deleting,
+    );
+    const selected = {
+      kind: "list",
+      nodeId: dataset,
+      dataset,
+      key: meta.id,
+      revision: 1,
+      actionId: cmd,
+      binding,
+    };
+    if (deleting) {
+      r.ipc.push({
+        channel: "plugins:ui:interact",
+        at: at + 6,
+        finishedAt: at + 7,
+        args: [selected],
+        result: { ok: true, value: { kind: "view" } },
+      });
+      input(name, dataset, at + 6);
+      pair(
+        "storage/delete",
+        { id: meta.id, expectedRevision: meta.revision },
+        { deleted: true },
+        at + 30,
+      );
+      pair(
+        "storage/list",
+        { kind: meta.kind },
+        { entries: dataset === "history" ? [p.second] : [], nextCursor: null },
+        at + 35,
+      );
+    } else {
+      ipc.args[0] = selected;
+      const model = models[meta.id],
+        bytes = Buffer.from(JSON.stringify(model));
+      pair(
+        "storage/openRead",
+        { id: meta.id, expectedRevision: meta.revision },
+        { record: meta, read: `read-${name}` },
+        at + 30,
+      );
+      pair(
+        "storage/readChunk",
+        { read: `read-${name}`, offset: 0 },
+        { offset: 0, nextOffset: bytes.length, eof: true, data: bytes.toString("base64") },
+        at + 31,
+      );
+    }
+  }
+  pair(
+    "storage/list",
+    { kind: "sensor-lab.calibration" },
+    { entries: [p.profile], nextCursor: null },
+    step("list-profile").at + 30,
+  );
+  pair(
+    "devices/recording/reserve",
+    {},
+    { reservation: { reservationId: "reservation-second" } },
+    step("start-second").at + 30,
+  );
+  pair(
+    "storage/registerCheckpoint",
+    { reservation: "reservation-second", id: p.second.id },
+    { checkpoint: "checkpoint-second" },
+    step("start-second").at + 31,
+  );
+  r.drains.push({
+    at: step("stop-second").at + 20,
+    offer: { owner, token: "drain-second", checkpoints: [{ checkpoint: "checkpoint-second" }] },
+    report: {
+      state: "saved",
+      blocker: false,
+      records: [{ id: p.second.id, committedRevision: p.second.revision, final: true }],
+    },
+  });
+  pair(
+    "storage/drain",
+    { token: "drain-second" },
+    { status: "submitted", writes: ["write-second"] },
+    step("stop-second").at + 21,
+    "host-plugin",
+    step("stop-second").at + 70,
+  );
+  const stopAt = step("stop-second").at + 14;
+  r.ipc.push({
+    channel: "plugins:ui:interact",
+    at: stopAt,
+    finishedAt: stopAt + 70,
+    args: [{ kind: "core", actionId: "stop" }],
+    result: { ok: true, value: {} },
+  });
+  input("stop-second", undefined, stopAt, false, true);
+  r.brokerCalls.push({
+    method: "devices/recording/release",
+    params: { reservationId: "reservation-second" },
+    at: stopAt + 1,
+    principal: { kind: "plugin", owner },
+    result: { ok: true, value: {} },
+  });
+  for (const [name, calibrated, value, revision] of [
+    ["raw", false, 42, 10],
+    ["calibrated", true, 0, 11],
+  ]) {
+    const at = step(name).at;
+    const chart = {
+      channel: "plugins:ui:data-read",
+      args: [{ dataset: "chart0", binding }],
+      at: at + 20,
+      finishedAt: at + 21,
+      result: {
+        ok: true,
+        value: {
+          revision,
+          header: { view: "full" },
+          chunk: {
+            entries: [
+              [0, 0, 0, value],
+              [1, 0, 0, value],
+            ],
+          },
+        },
+      },
+    };
+    r.ipc.push(chart);
+    p[name] = { page: chart, form: { calibrated } };
+    r.native.push({ type: "input", isTrusted: true, node: "calibrated", at: at + 10 });
+  }
+  page("history", [p.second], step("list-after-delete").at + 20, 2);
+  r.wire.sort((a, b) => a.at - b.at).forEach((row, index) => (row.sequence = index + 1));
+  for (const s of p.steps) {
+    s.before = Math.max(0, ...r.wire.filter((row) => row.at < s.at).map((row) => row.sequence));
+    s.after = Math.max(
+      ...r.wire.filter((row) => row.at <= s.finishedAt).map((row) => row.sequence),
+    );
+  }
+  return r;
+}
+test("D7 oracle accepts correlated synthetic extension (not native evidence)", () =>
+  assert.deepEqual(verifyLabParity(parityFixture()), {
+    profile: "profile",
+    first: "first",
+    second: "second",
+  }));
+test("extended public runner requires parity; historical base stays independently verifiable", () =>
+  assert.throws(
+    () => verifyLabReceipt(oracleFixture(), { requireParity: true }),
+    /extension required/,
+  ));
+for (const [name, mutate] of [
+  ["missing step", (r) => r.checkpoints.parity.steps.pop()],
+  ["foreign owner", (r) => (r.wire[0].owner = { ...r.wire[0].owner, processEpoch: "foreign" })],
+  ["same recording identity", (r) => (r.checkpoints.parity.second = r.checkpoints.parity.first)],
+  [
+    "substituted profile bytes",
+    (r) =>
+      (r.wire.find(
+        (x) =>
+          x.message.method === "storage/writeChunk" && x.message.params.write === "write-profile",
+      ).message.params.data = "e30="),
+  ],
+  [
+    "wrong pinned read",
+    (r) =>
+      (r.wire.find((x) => x.message.method === "storage/openRead").message.params.expectedRevision =
+        "other"),
+  ],
+  ["missing confirmation click", (r) => (r.native = r.native.filter((e) => !e.dialog))],
+  [
+    "wrong delete ID",
+    (r) => (r.wire.find((x) => x.message.method === "storage/delete").message.params.id = "other"),
+  ],
+  [
+    "stale row dataset",
+    (r) =>
+      (r.wire.find(
+        (x) =>
+          x.message.method === "command/invoke" &&
+          x.message.params.command.endsWith("delete-history"),
+      ).message.params.arguments.dataset = 99),
+  ],
+  [
+    "raw shown as calibrated",
+    (r) => (r.checkpoints.parity.calibrated.page.result.value.chunk.entries[1][3] = 42),
+  ],
+  ["missing second series", (r) => r.checkpoints.parity.raw.page.result.value.chunk.entries.pop()],
+  ["wrong original checkpoint", (r) => (r.drains[0].offer.checkpoints[0].checkpoint = "other")],
+  [
+    "original still listed",
+    (r) => {
+      const q = r.wire.find(
+        (x) =>
+          x.message.method === "storage/list" && x.message.params.kind === "sensor-lab.recording",
+      );
+      r.wire
+        .find((x) => !x.message.method && x.message.id === q.message.id)
+        .message.result.value.entries.push(r.checkpoints.parity.first);
+    },
+  ],
+  ["missing original response", (r) => r.wire.splice(1, 1)],
+  ["orphan worker", (r) => (r.cleanup.workers = 1)],
+])
+  test(`D7 rejects ${name}`, () => {
+    const r = parityFixture();
+    mutate(r);
+    assert.throws(() => verifyLabParity(r));
+  });

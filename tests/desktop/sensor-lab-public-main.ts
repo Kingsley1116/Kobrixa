@@ -450,12 +450,30 @@ export function runNativeLab(): void {
             `enabled target ${selector} ${text ?? ""}`,
           );
           await pause(100);
-          const bounds = await js<{ x: number; y: number }>(
-            `(() => { const e=${find}; const r=e.getBoundingClientRect(); if(e.disabled || r.width<=0 || r.height<=0) throw Error('Target unavailable'); return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}; })()`,
+          const bounds = await js<{
+            x: number;
+            y: number;
+            targetId: number;
+            ariaLabel: string | null;
+          }>(
+            `(() => { const e=${find}; const r=e.getBoundingClientRect(); if(e.disabled || r.width<=0 || r.height<=0) throw Error('Target unavailable'); return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2),targetId:window.labNativeTargetId(e),ariaLabel:e.getAttribute("aria-label")}; })()`,
           );
-          checkpoints[`input-${sequence}`] = { stage, selector, text, at: wall() };
+          checkpoints[`input-${sequence}`] = {
+            stage,
+            selector,
+            text,
+            at: wall(),
+            targetId: bounds.targetId,
+            ariaLabel: bounds.ariaLabel,
+          };
           for (const type of ["mouseDown", "mouseUp"] as const) {
-            window.webContents.sendInputEvent({ type, ...bounds, button: "left", clickCount: 1 });
+            window.webContents.sendInputEvent({
+              type,
+              x: bounds.x,
+              y: bounds.y,
+              button: "left",
+              clickCount: 1,
+            });
             await pause(30);
           }
         };
@@ -627,9 +645,161 @@ export function runNativeLab(): void {
         );
         checkpoints.history = {
           at: wall(),
+          sequence,
           state: state(),
           text: await js<string>("document.body.innerText"),
         };
+        // Selected D7 parity only; all mutations remain trusted generic UI actions.
+        const steps: ObjectValue[] = [];
+        const parity: ObjectValue = { steps };
+        checkpoints.parity = parity;
+        const step = async (name: string, action: () => Promise<void>) => {
+          stage = `parity-${name}`;
+          const row: ObjectValue = { name, at: wall(), before: sequence };
+          steps.push(row);
+          await action();
+          row.finishedAt = wall();
+          row.after = sequence;
+        };
+        const latestPage = (dataset: string) =>
+          ipc
+            .filter(
+              (row) =>
+                row.channel === "plugins:ui:data-read" &&
+                object((row.args as unknown[])[0]).dataset === dataset &&
+                object(row.result ?? {}).ok === true,
+            )
+            .at(-1);
+        const rowAction = async (dataset: string, id: string, label: string, name: string) => {
+          const before = sequence;
+          await click(
+            `[data-ui-node="${dataset}"] button[aria-label=${JSON.stringify(`${label}: ${id}`)}]`,
+          );
+          if (label === "Delete") await click('[role="dialog"] button', "Delete");
+          await until(
+            () =>
+              exchanges("command/invoke", "host-plugin").some(
+                (row) =>
+                  row.request.sequence > before &&
+                  object(row.request.message.params).command === `kobrixa.sensor-lab.${name}` &&
+                  success(row),
+              ),
+            name,
+          );
+        };
+        const finalRecords = () =>
+          exchanges("storage/commitWrite")
+            .filter(success)
+            .map((row) => object(accepted(row.response.message.result).record))
+            .filter((meta) => meta.kind === "sensor-lab.recording" && meta.checkpoint === "final");
+        const first = finalRecords()[0]!;
+        assert.ok(first);
+        parity.first = first;
+        await step("live-profile", () => command("live"));
+        await edit("profile-name", "D7 saved calibration");
+        await step("save-profile", () => command("save-profile"));
+        const calibrationProfile = await until(
+          () =>
+            exchanges("storage/commitWrite")
+              .filter(success)
+              .map((row) => object(accepted(row.response.message.result).record))
+              .find((meta) => meta.kind === "sensor-lab.calibration"),
+          "saved calibration metadata",
+        );
+        parity.profile = calibrationProfile;
+        await step("list-profile", () => command("refresh"));
+        await until(() => latestPage("profiles"), "profile dataset");
+        await step("reset-profile", () => command("reset"));
+        await step("apply-profile", () =>
+          rowAction("profiles", String(calibrationProfile.id), "Apply", "apply-profile"),
+        );
+        await until(
+          () => state()?.form["source-a"] === "42" && state()?.form["target-b"] === "200",
+          "restored profile calibration",
+        );
+        parity.applied = state();
+        await step("delete-profile", () =>
+          rowAction("profiles", String(calibrationProfile.id), "Delete", "delete-profiles"),
+        );
+        await step("live-second", () => command("live"));
+        await edit("recording-name", "D7 comparison Lab");
+        await step("start-second", () => command("start"));
+        const secondReserve = exchanges("devices/recording/reserve").filter(success).at(-1)!;
+        const secondId = object(
+          accepted(secondReserve.response.message.result).reservation,
+        ).reservationId;
+        await until(
+          () =>
+            exchanges("devices/recording/read").some(
+              (row) =>
+                success(row) &&
+                object(row.request.message.params).reservationId === secondId &&
+                (accepted(row.response.message.result).frames as unknown[]).length > 0,
+            ),
+          "second recording frames",
+        );
+        await step("stop-second", async () => {
+          const before = drains.length;
+          await click("#lab-status button", "Stop recording");
+          await until(
+            () => drains.slice(before).some((d) => d.report?.state === "saved"),
+            "second saved drain",
+            25_000,
+          );
+        });
+        const second = await until(
+          () => finalRecords().find((meta) => meta.id !== first.id),
+          "distinct second final record",
+        );
+        parity.second = second;
+        await step("list-two", () => command("refresh"));
+        await step("view-first", () =>
+          rowAction("history", String(first.id), "View", "view-record"),
+        );
+        await step("compare-second", () =>
+          rowAction("history", String(second.id), "Compare", "compare-record"),
+        );
+        const chart = async (calibrated: boolean) => {
+          const before = wall();
+          if (state()?.form.calibrated !== calibrated)
+            await click('[data-ui-node="calibrated"] input');
+          else {
+            await click('[data-ui-node="calibrated"] input');
+            await until(() => state()?.form.calibrated !== calibrated, "toggle chart mode");
+            await click('[data-ui-node="calibrated"] input');
+          }
+          await until(() => state()?.form.calibrated === calibrated, "canonical chart mode");
+          const page = await until(() => {
+            const page = latestPage("chart0");
+            if (!page || Number(page.at) <= before) return;
+            const value = accepted(page.result);
+            const entries = object(value.chunk).entries as number[][];
+            return entries?.some((p) => p[0] === 0 && p[3] === (calibrated ? 0 : 42)) &&
+              entries.some((p) => p[0] === 1 && p[3] === (calibrated ? 0 : 42))
+              ? page
+              : undefined;
+          }, "two actual comparison series");
+          parity[calibrated ? "calibrated" : "raw"] = { page, form: state()?.form };
+        };
+        await step("raw", () => chart(false));
+        await step("calibrated", () => chart(true));
+        await step("live-delete", () => command("live"));
+        await step("fresh-history", () => command("refresh"));
+        await step("delete-first", () =>
+          rowAction("history", String(first.id), "Delete", "delete-history"),
+        );
+        await step("list-after-delete", () => command("refresh"));
+        await until(() => {
+          const page = latestPage("history");
+          if (!page) return false;
+          const entries = object(accepted(page.result).chunk).entries as ObjectValue[];
+          return (
+            entries.some((row) => row.key === second.id) &&
+            !entries.some((row) => row.key === first.id)
+          );
+        }, "original history ID absent, second retained");
+        parity.finishedAt = wall();
+        parity.sequence = sequence;
         stage = "cleanup";
         await live.dispose();
         await until(() => exits.length === launches.length, "original SDK exits");
