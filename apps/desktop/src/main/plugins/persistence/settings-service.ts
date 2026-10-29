@@ -40,6 +40,8 @@ type Change = {
   cause: "update" | "reset" | "migrate" | "import";
 };
 export type SettingsDependencies = {
+  /** Additional write-only admission; never substitutes for owner/permission checks. */
+  mutationAllowed?(owner: ResourceOwner): boolean;
   now(): number;
   allowed(principal: Principal, permission: "settings.read" | "settings.write"): boolean;
   readResource(owner: ResourceOwner): Promise<{
@@ -118,6 +120,14 @@ function valuesFor(
     : settingsFailure("PLUGIN_E_SETTINGS_SCHEMA", "size-limit");
 }
 export function createSettingsService(deps: SettingsDependencies) {
+  function assertMutationAllowed(owner: ResourceOwner): void {
+    if (!(deps.mutationAllowed?.(owner) ?? true))
+      throw {
+        ok: false,
+        error: { code: "PLUGIN_E_DISABLED", message: "Settings migration is not ready." },
+      } satisfies Failure;
+  }
+
   const tails = new Map<string, Promise<unknown>>();
   const unresolved = new Map<
     string,
@@ -284,6 +294,8 @@ export function createSettingsService(deps: SettingsDependencies) {
       }),
     );
     const check = () => {
+      // No await between this host fence and reserve/append/publish.
+      assertMutationAllowed(owner);
       if (signal.aborted)
         throw { ok: false, error: { code: "PLUGIN_E_CANCELLED", message: "Cancelled." } };
       if (deps.now() >= ticket.deadlineMonotonicMs)
@@ -383,8 +395,14 @@ export function createSettingsService(deps: SettingsDependencies) {
     signal: AbortSignal,
     current: () => Promise<void>,
   ): Promise<SettingsRequestMap[M]["result"]> {
-    try {
+    const mutation =
+      method === "settings/update" || method === "settings/reset" || method === "settings/migrate";
+    const continuation = async () => {
       await current();
+      if (mutation) assertMutationAllowed(owner);
+    };
+    try {
+      await continuation();
     } catch (error) {
       return (
         isFailure(error) ? error : settingsFailure("PLUGIN_E_SETTINGS_SAVE", "io")
@@ -395,13 +413,13 @@ export function createSettingsService(deps: SettingsDependencies) {
       .catch(() => {})
       .then(async () => {
         try {
-          await current();
+          await continuation();
           if (signal.aborted)
             return {
               ok: false as const,
               error: { code: "PLUGIN_E_CANCELLED" as const, message: "Cancelled." },
             };
-          return await handlers[method](owner, params, signal, current);
+          return await handlers[method](owner, params, signal, continuation);
         } catch (error) {
           return isFailure(error) ? error : settingsFailure("PLUGIN_E_SETTINGS_SAVE", "io");
         }
@@ -736,6 +754,7 @@ function makeSettingsComposition(input: CompositionInput) {
   }
   const service = createSettingsService({
     now: input.now,
+    mutationAllowed: (owner) => input.sources.settingsWriteAllowed?.(owner.sourceKey) ?? true,
     allowed: (principal) =>
       !disposed && principal.kind === "plugin" && input.sources.current(principal.owner),
     async readResource(owner) {

@@ -1169,3 +1169,226 @@ it("migration normalizes before publication; same-schema inconsistent committed/
   );
   expect(result.ok && result.value.snapshot.values).toContainEqual({ key: "address", value: "" });
 });
+
+const migrationWriteDenied = {
+  ok: false,
+  error: { code: "PLUGIN_E_DISABLED", message: "Settings migration is not ready." },
+};
+const gateUpdate = {
+  schemaVersion: 1,
+  expectedRevision: null,
+  changes: [{ key: "enabled", value: false }],
+};
+it.each(["update", "reset", "migrate"] as const)(
+  "migration write gate: %s denies before reads/reserve and succeeds only after readiness",
+  async (method) => {
+    const f = fixture();
+    let ready = false;
+    f.deps.mutationAllowed = vi.fn(() => ready);
+    const reserve = vi.spyOn(f.deps.engine, "reserve");
+    const loaded = vi.spyOn(f.deps, "readResource");
+    const previousRevision = `r_${"1".repeat(32)}`;
+    if (method === "migrate") {
+      f.setStored({
+        schemaVersion: 1,
+        revision: previousRevision,
+        values: [{ key: "enabled", value: true }],
+      });
+      loaded.mockResolvedValue({
+        resource: { ...resource, schemaVersion: 2 },
+        digest: "a".repeat(64),
+        validationDigest: "b".repeat(64),
+      });
+    }
+    const write = () =>
+      method === "update"
+        ? f.service.request(principal, "settings/update", gateUpdate, signal())
+        : method === "reset"
+          ? f.service.request(
+              principal,
+              "settings/reset",
+              { schemaVersion: 1, expectedRevision: null, keys: ["enabled"] },
+              signal(),
+            )
+          : f.service.request(
+              principal,
+              "settings/migrate",
+              {
+                schemaVersion: 2,
+                fromSchemaVersion: 1,
+                expectedRevision: previousRevision,
+                values: [
+                  { key: "enabled", value: false },
+                  { key: "connection.mode", value: 1 },
+                ],
+              },
+              signal(),
+            );
+    expect(await write()).toEqual(migrationWriteDenied);
+    expect(loaded).not.toHaveBeenCalled();
+    expect(reserve).not.toHaveBeenCalled();
+    expect(f.publish).not.toHaveBeenCalled();
+    ready = true;
+    expect((await write()).ok).toBe(true);
+    expect(f.publish).toHaveBeenCalledOnce();
+    expect(f.deps.mutationAllowed).toHaveBeenCalledWith(owner);
+  },
+);
+it("migration write gate: checks after the awaited current continuation", async () => {
+  const f = fixture();
+  let ready = true;
+  f.deps.mutationAllowed = () => ready;
+  const reserve = vi.spyOn(f.deps.engine, "reserve");
+  const result = await f.service.requestOwner(
+    owner,
+    "settings/update",
+    gateUpdate,
+    signal(),
+    async () => {
+      await Promise.resolve();
+      ready = false;
+    },
+  );
+  expect(result).toEqual(migrationWriteDenied);
+  expect(reserve).not.toHaveBeenCalled();
+});
+it("migration write gate: rechecks queued writes without gating read-only work", async () => {
+  const f = fixture();
+  let ready = true;
+  f.deps.mutationAllowed = vi.fn(() => ready);
+  const original = f.deps.readResource;
+  let release!: () => void;
+  const wait = new Promise<void>((done) => {
+    release = done;
+  });
+  const loaded = vi.spyOn(f.deps, "readResource").mockImplementationOnce(async (owner) => {
+    await wait;
+    return original(owner);
+  });
+  const reserve = vi.spyOn(f.deps.engine, "reserve");
+  const reading = f.service.request(principal, "settings/read", { schemaVersion: 1 }, signal());
+  await vi.waitFor(() => expect(loaded).toHaveBeenCalledOnce());
+  const writing = f.service.request(principal, "settings/update", gateUpdate, signal());
+  await vi.waitFor(() => expect(f.deps.mutationAllowed).toHaveBeenCalled());
+  ready = false;
+  release();
+  expect((await reading).ok).toBe(true);
+  expect(await writing).toEqual(migrationWriteDenied);
+  expect(reserve).not.toHaveBeenCalled();
+});
+it("migration write gate: bound forms and public mutations share the private hook, reads remain usable", async () => {
+  const f = boundFixture();
+  f.sources.settingsWriteAllowed = () => false;
+  const { binding } = await f.open();
+  const reserve = vi.spyOn(f.deps.engine, "reserve");
+  expect(await f.bound.update(binding, gateUpdate)).toEqual(migrationWriteDenied);
+  expect(
+    await f.bound.reset(binding, { schemaVersion: 1, expectedRevision: null, keys: ["enabled"] }),
+  ).toEqual(migrationWriteDenied);
+  const api = settingsRequests(f.backend);
+  expect(await api.request(principal, "settings/update", gateUpdate, signal())).toEqual(
+    migrationWriteDenied,
+  );
+  expect(
+    await api.request(
+      principal,
+      "settings/reset",
+      { schemaVersion: 1, expectedRevision: null, keys: ["enabled"] },
+      signal(),
+    ),
+  ).toEqual(migrationWriteDenied);
+  expect(
+    await api.request(
+      principal,
+      "settings/migrate",
+      {
+        schemaVersion: 2,
+        fromSchemaVersion: 1,
+        expectedRevision: `r_${"1".repeat(32)}`,
+        values: [],
+      },
+      signal(),
+    ),
+  ).toEqual(migrationWriteDenied);
+  expect((await f.bound.read(binding)).ok).toBe(true);
+  expect((await api.request(principal, "settings/watch", { schemaVersion: 1 }, signal())).ok).toBe(
+    true,
+  );
+  const migrationRead = await api.request(principal, "settings/readMigration", {}, signal());
+  expect(migrationRead).toMatchObject({ error: { code: "PLUGIN_E_SETTINGS_SCHEMA" } });
+  expect(reserve).not.toHaveBeenCalled();
+  f.sources.settingsWriteAllowed = () => true;
+  expect((await f.bound.update(binding, gateUpdate)).ok).toBe(true);
+  await api.dispose();
+});
+it.each(["bound", "public"] as const)(
+  "migration write gate: %s write revoked during seal aborts before publication",
+  async (route) => {
+    const f = boundFixture();
+    let ready = true;
+    f.sources.settingsWriteAllowed = () => ready;
+    const { binding } = await f.open();
+    let release!: () => void;
+    const seal = vi.spyOn(f.deps.engine, "seal").mockImplementation(
+      () =>
+        new Promise<void>((done) => {
+          release = done;
+        }),
+    );
+    const abort = vi.spyOn(f.deps.engine, "abort");
+    const work =
+      route === "bound"
+        ? f.bound.update(binding, gateUpdate)
+        : settingsRequests(f.backend).request(principal, "settings/update", gateUpdate, signal());
+    await vi.waitFor(() => expect(seal).toHaveBeenCalledOnce());
+    ready = false;
+    release();
+    expect(await work).toEqual(migrationWriteDenied);
+    expect(abort).toHaveBeenCalledOnce();
+    expect(f.publish).not.toHaveBeenCalled();
+    expect(f.changed).not.toHaveBeenCalled();
+    await settingsRequests(f.backend).dispose();
+  },
+);
+it("migration write gate: unrelated sources retain normal writes and cannot gain permission", async () => {
+  const f = boundFixture();
+  f.sources.settingsWriteAllowed = (sourceKey) => sourceKey !== owner.sourceKey;
+  const blocked = await f.open();
+  expect(await f.bound.update(blocked.binding, gateUpdate)).toEqual(migrationWriteDenied);
+  const other = await f.open(f.secondScope, "builtin:other.settings");
+  expect((await f.bound.update(other.binding, gateUpdate)).ok).toBe(true);
+  await settingsRequests(f.backend).dispose();
+  const direct = fixture();
+  direct.deps.mutationAllowed = () => true;
+  direct.setLive(false);
+  expect(
+    await direct.service.request(principal, "settings/update", gateUpdate, signal()),
+  ).toMatchObject({
+    ok: false,
+    error: { code: "PLUGIN_E_DISABLED", message: "Settings unavailable." },
+  });
+  expect(direct.publish).not.toHaveBeenCalled();
+});
+
+it("migration write gate: withdrawal between async continuation and publish cannot commit", async () => {
+  const f = fixture();
+  let ready = true,
+    sealed = false;
+  f.deps.engine.seal = async () => {
+    sealed = true;
+  };
+  f.deps.mutationAllowed = () => {
+    const admitted = ready;
+    if (sealed && admitted)
+      queueMicrotask(() => {
+        ready = false;
+      });
+    return admitted;
+  };
+  const abort = vi.spyOn(f.deps.engine, "abort");
+  expect(await f.service.request(principal, "settings/update", gateUpdate, signal())).toEqual(
+    migrationWriteDenied,
+  );
+  expect(f.publish).not.toHaveBeenCalled();
+  expect(abort).toHaveBeenCalledOnce();
+});

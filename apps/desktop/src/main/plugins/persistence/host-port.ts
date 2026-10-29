@@ -82,6 +82,8 @@ export type HostSettingsNamespace = Readonly<{
   uiResourceGeneration: number;
 }>;
 export interface PersistenceSourcePort {
+  /** Private host migration fence; absent preserves ordinary settings writes. */
+  settingsWriteAllowed?(sourceKey: string): boolean;
   settingsNamespace?(sourceKey: string): HostSettingsNamespace | null;
   current(owner: ResourceOwner): boolean;
   settings(input: { sourceKey: string; resourceDigest: Sha256 }): Promise<{
