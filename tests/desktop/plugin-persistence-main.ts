@@ -1,3 +1,8 @@
+import {
+  importObserver,
+  produceImportSlice,
+  assertImportPhase,
+} from "./plugin-persistence-import.js";
 import { compatibilityObserver } from "./plugin-persistence-compatibility.js";
 import type { Wire as CompatibilityWire } from "./plugin-persistence-compatibility.js";
 // @ts-expect-error Node's pure oracle entry imports the test-local TypeScript source.
@@ -39,6 +44,7 @@ export type FoundationCase =
 import type { ContentionObservation, ContentionForm } from "./plugin-persistence-contention.js";
 
 export type CaseEvidence = {
+  importSlice?: CompatibilityWire;
   compatibility?: CompatibilityWire;
   optionalPhase?: OptionalWire;
   optionalOff?: OptionalWire;
@@ -965,6 +971,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
       "renderer-loss",
       "all-optional-off",
       "compatibility",
+      "import-restart",
     ].includes(config.case)
   )
     throw new Error(
@@ -1041,6 +1048,9 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             .UserPersistenceActions.prototype,
         )
       : undefined;
+  const { syntheticImportDescriptor } =
+    await import("../../apps/desktop/src/main/plugins/persistence/import-fixtures.js");
+  const imported = config.case === "import-restart" ? importObserver(config.importWire) : undefined;
   const compatibility = config.case === "compatibility" ? compatibilityObserver() : undefined;
   let optionalPolicy: OptionalWire | undefined;
   let window: InstanceType<typeof BrowserWindow> | undefined;
@@ -1242,12 +1252,12 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         }
 
         const builtins = [...BUILTIN_PLUGIN_SOURCES];
-        for (const role of ["recording", "settings"]) {
+        for (const role of ["recording", "settings", ...(imported ? ["import"] : [])]) {
           if (optional) {
             builtins.push(optional.source(config.buildRoot, role));
             continue;
           }
-          const pluginId = `acceptance.ui-${role}`,
+          const pluginId = role === "import" ? "test.synthetic" : `acceptance.ui-${role}`,
             sourceKey = `builtin:${pluginId}`,
             slug = `acceptance-builtin-${role}`;
           // Explicit test-only sources use the real payload validator and launcher.
@@ -1349,6 +1359,8 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                 ...hooks,
                 onOutput(plugin, line) {
                   hooks.onOutput?.(plugin, line);
+                  if (imported && plugin.id === "test.synthetic" && plugin.channelOwner)
+                    imported.output(plugin.channelOwner, line);
                   const row = compatibility?.rows.find(
                     (r) => r.owner.processEpoch === plugin.channelOwner?.processEpoch,
                   );
@@ -1367,7 +1379,11 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                     ? compatibility.begin(plugin.channelOwner)
                     : undefined;
                 const child = await launch(plugin);
-                return row ? compatibility!.attach(row, child) : child;
+                return imported && plugin.id === "test.synthetic" && plugin.channelOwner
+                  ? imported.attach(plugin.channelOwner, child)
+                  : row
+                    ? compatibility!.attach(row, child)
+                    : child;
               };
             },
             userData,
@@ -1396,6 +1412,20 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           ...(["action-replay", "renderer-loss", "all-optional-off"].includes(config.case)
             ? { nativeActions }
             : {}),
+          ...(imported
+            ? {
+                legacy: {
+                  descriptors: [syntheticImportDescriptor],
+                  writers: [
+                    {
+                      sourceKey: syntheticImportDescriptor.targetSourceKey,
+                      freezeAdmission() {},
+                      async settled() {},
+                    },
+                  ],
+                },
+              }
+            : {}),
           worker: {
             entry: config.workerEntry,
             control(control: PersistenceFaultControl) {
@@ -1415,6 +1445,67 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         const admittedProvider = provider!,
           providerControl = fake!;
         assert.ok(fault, "Missing actual worker control");
+        if (imported) {
+          assert.equal(handles.recovery, "ready");
+          assert.equal(live.stage3.persistence, handles.host.participant);
+          assert.equal(handles.profile, profile);
+          // No document is loaded on restart: the real host/worker and public plugin
+          // channel operate without a renderer capture or private fixture handlers.
+          let closed: Promise<void> | undefined;
+          fixture = {
+            composition: {
+              profile: handles.profile,
+              journalProfile,
+              persistenceProfile: handles.persistenceProfile,
+              host: handles.host,
+              stage3: live.stage3,
+              get workerCount() {
+                return persistenceWorkerCount(handles.backend);
+              },
+              get reservationListenerCount() {
+                return listeners;
+              },
+            },
+            environment: {
+              commit: config.commit,
+              artifact: config.artifact,
+              artifactSha256: config.artifactSha256,
+              os: os.release(),
+              architecture: process.arch,
+              cpu: os.cpus()[0]?.model ?? "unknown",
+              ramBytes: os.totalmem(),
+              filesystem: config.filesystem,
+              node: process.versions.node,
+              electron: process.versions.electron ?? "",
+              memoryMethod: "not-measured-partial-import",
+              warmCold: "cold",
+            },
+            async runCase(id) {
+              assert.equal(id, "import-restart");
+              const evidence = await produceImportSlice({
+                config,
+                live,
+                fault: fault!,
+                observer: imported,
+              });
+              assertImportPhase(evidence.importSlice);
+              return evidence;
+            },
+            close() {
+              return (closed ??= (async () => {
+                await live.dispose();
+                restoreReservation();
+                assert.equal(persistenceWorkerCount(handles.backend), 0);
+                assert.equal(listeners, 0);
+                assert.deepEqual(failures, []);
+                win.destroy();
+              })());
+            },
+          };
+          assertRealComposition(fixture);
+          return;
+        }
+
         assert.equal(handles.recovery, "ready");
         assert.equal(live.stage3.persistence, handles.host.participant);
         assert.equal(handles.profile, profile);

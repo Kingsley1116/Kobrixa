@@ -1,3 +1,4 @@
+import { assertImportSlice, originalFiles, IMPORT_SLICE } from "./plugin-persistence-import.ts";
 import { approvedHost, pins, versions } from "./plugin-persistence-compatibility.ts";
 import { assertOptionalPhaseReceipt } from "./plugin-persistence-optional-off.ts";
 import assert from "node:assert/strict";
@@ -378,6 +379,7 @@ export async function superviseCase(
   io,
   { timeoutMs = 60000, pollMs = 100, settleMs = 5000 } = {},
 ) {
+  let expectedImportKill = false;
   let child,
     tracker,
     originalError,
@@ -450,11 +452,36 @@ export async function superviseCase(
     while (!updateExit()) {
       await observe();
       if (originalError) break;
+      if (
+        config.case === "import-restart" &&
+        config.importPhase === "kill" &&
+        !expectedImportKill
+      ) {
+        const paused = await io.readCandidate();
+        if (paused.entryFailure) throw new Error("Import entry failed before boundary");
+        if (paused.candidate) {
+          assert.equal(paused.candidate.status, "paused-import");
+          assert.equal(paused.candidate.runId, config.runId);
+          for (const key of ["profileId", "commit", "artifactSha256", "bundleSha256"])
+            assert.equal(paused.candidate[key], config[key]);
+          assert.equal(paused.candidate.pid, child.pid);
+          const o = paused.candidate.evidence.importSlice;
+          assert.equal(o.phase, "kill");
+          assert.equal(o.slice, IMPORT_SLICE);
+          assert.ok(o.trace.some((t) => t.point === "after-publish" && t.ticket === o.ticket.id));
+          expectedImportKill = true;
+          await terminateOwned();
+        }
+      }
       if (io.now() >= deadline) throw new Error("Electron timeout; profile retained");
       await io.sleep(pollMs);
     }
     updateExit();
-    if (parentExit.observed && (parentExit.code !== 0 || parentExit.signal !== null))
+    if (
+      parentExit.observed &&
+      !(expectedImportKill && parentExit.signal === "SIGKILL") &&
+      (parentExit.code !== 0 || parentExit.signal !== null)
+    )
       throw new Error(`Electron exited ${parentExit.code} (${parentExit.signal ?? "no signal"})`);
   } catch (error) {
     remember(error);
@@ -488,6 +515,19 @@ export async function superviseCase(
   }
   if (cleanupErrors.length && !originalError)
     remember(new Error("Process cleanup/observation failed"));
+  if (!originalError && expectedImportKill) {
+    assert.equal(parentExit.signal, "SIGKILL");
+    assert.equal(remaining.length, 0);
+    return {
+      ...candidate,
+      status: "killed-import",
+      exitCode: parentExit.code,
+      signal: parentExit.signal,
+      exitedAt: parentExit.at,
+      cleanup: { children: remaining.length, errors: cleanupErrors },
+      observedProcesses: tracker.observed(),
+    };
+  }
   let receipt;
   if (!originalError)
     try {
@@ -663,7 +703,11 @@ async function launchCase(electron, entry, configFile, reportFile, config) {
         }),
       reportFailure: (failure) => console.error(JSON.stringify(failure)),
     },
-    ["sealed-ttl", "compatibility"].includes(config.case) ? { timeoutMs: 120000 } : undefined,
+    config.case === "import-restart"
+      ? { timeoutMs: 300000 }
+      : ["sealed-ttl", "compatibility"].includes(config.case)
+        ? { timeoutMs: 120000 }
+        : undefined,
   );
 }
 export function selectFoundationCases({ referencesOnly = false, caseId } = {}) {
@@ -681,6 +725,7 @@ export function selectFoundationCases({ referencesOnly = false, caseId } = {}) {
       "renderer-loss",
       "all-optional-off",
       "compatibility",
+      "import-restart",
     ].includes(caseId)
   )
     return [caseId];
@@ -689,7 +734,13 @@ export function selectFoundationCases({ referencesOnly = false, caseId } = {}) {
     "BLOCKED: remaining observation-table producers, B2-N01–29, public parity, load/import and installed trials await controller continuation",
   );
 }
-export async function runFoundationEvidence({ referencesOnly = false, caseId } = {}) {
+export async function runFoundationEvidence({ referencesOnly = false, caseId, importTrial } = {}) {
+  if (caseId === "import-restart")
+    assert.equal(
+      importTrial,
+      IMPORT_SLICE,
+      "RF5 incomplete: use explicit --import-trial head-before-receipt",
+    );
   const selectedCases = selectFoundationCases({ referencesOnly, caseId });
   const handoffs = await preflight();
   const renderer = await readFoundationRenderer(handoffs.rendererArtifact);
@@ -813,6 +864,40 @@ export async function runFoundationEvidence({ referencesOnly = false, caseId } =
     });
   const syntheticRoot = path.join(directory, "synthetic");
   await mkdir(syntheticRoot);
+  if (selectedCases.includes("import-restart")) {
+    for (let i = 0; i < 50; i++) {
+      const prefix = JSON.stringify({ formatVersion: 1, item: i, payload: "" });
+      const json = JSON.stringify({
+        formatVersion: 1,
+        item: i,
+        payload: String.fromCharCode(65 + (i % 26)).repeat(8388608 - Buffer.byteLength(prefix)),
+      });
+      assert.equal(Buffer.byteLength(json), 8388608);
+      await writeFile(path.join(syntheticRoot, `${String(i).padStart(2, "0")}.json`), json, {
+        flag: "wx",
+      });
+    }
+    const target = path.join(buildRoot, "plugins/acceptance-builtin-import");
+    await mkdir(target, { recursive: true });
+    await bundle(
+      path.join(root, "tests/desktop/fixtures/plugin-persistence/import-consumer.ts"),
+      path.join(target, "main.cjs"),
+    );
+    await cp(
+      path.join(root, "tests/desktop/fixtures/plugin-persistence/import-kobrixa-plugin.json"),
+      path.join(target, "kobrixa-plugin.json"),
+    );
+    const files = [];
+    for (const name of ["kobrixa-plugin.json", "main.cjs"]) {
+      const bytes = await readFile(path.join(target, name));
+      files.push({ path: name, bytes: bytes.length, sha256: digest(bytes) });
+    }
+    await writeFile(
+      path.join(target, "resource-index.json"),
+      JSON.stringify({ version: 1, pluginId: "test.synthetic", files }),
+    );
+  }
+
   const workerSource = path.join(directory, "worker.ts"),
     workerEntry = path.join(buildRoot, "worker.cjs");
   await writeFile(
@@ -856,6 +941,13 @@ app.exit(code);
       await readFile(workerEntry),
       Buffer.from(renderer.receiptSha256),
       Buffer.from(JSON.stringify(compatibility ?? null)),
+      ...(selectedCases.includes("import-restart")
+        ? [
+            await readFile(
+              path.join(buildRoot, "plugins/acceptance-builtin-import/resource-index.json"),
+            ),
+          ]
+        : []),
       await readFile(
         path.join(buildRoot, "plugins/acceptance-builtin-recording/resource-index.json"),
       ),
@@ -882,6 +974,7 @@ app.exit(code);
     const config = {
       case: id,
       ...(compatibility ? { compatibility } : {}),
+      ...(id === "import-restart" ? { importTrial, syntheticRoot } : {}),
       profile,
       profileId: randomUUID(),
       runId: randomUUID(),
@@ -896,6 +989,54 @@ app.exit(code);
       preload: handoffs.preload,
       filesystem: handoffs.filesystem,
     };
+    if (id === "import-restart") {
+      const phases = [];
+      const killedReceipt = path.join(directory, "import-kill.receipt.json");
+      for (const importPhase of ["kill", "reopen1", "reopen2", "reopen3", "deleted"]) {
+        const phase = {
+          ...config,
+          importPhase,
+          runId: randomUUID(),
+          killedReceipt,
+          importWire: path.join(directory, `import-${importPhase}.wire.jsonl`),
+          report: path.join(directory, `import-${importPhase}.candidate.json`),
+        };
+        const file = path.join(directory, `import-${importPhase}.json`);
+        await writeFile(file, JSON.stringify(phase), { flag: "wx" });
+        const receipt = await launchCase(electron, entry, file, phase.report, phase);
+        await writeFile(
+          path.join(directory, `import-${importPhase}.receipt.json`),
+          JSON.stringify(receipt),
+          { flag: "wx" },
+        );
+        phases.push(receipt);
+      }
+      assertImportSlice(phases);
+      assert.deepEqual(
+        await originalFiles(syntheticRoot),
+        phases[0].evidence.importSlice.originals,
+      );
+      const partial = {
+        format: 1,
+        level: "real-process",
+        status: "partial-import-trial",
+        rf5Complete: false,
+        trial: IMPORT_SLICE,
+        reports: phases,
+        artifact: entry,
+        bundleSha256,
+        artifactSha256,
+        pending: [
+          "18-boundary RF5 matrix",
+          "six full-load publication trials",
+          "pre-raw absence and fresh-window capture",
+          "settings stale-nonce proof",
+          "full foundation import-restart case",
+        ],
+      };
+      await writeFile(output, JSON.stringify(partial), { flag: "wx" });
+      return partial;
+    }
     if (id === "all-optional-off") {
       const settingsProfile = await mkdtemp(path.join(directory, "optional-settings-"));
       const receipts = {};
@@ -1007,6 +1148,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       await runFoundationEvidence({
         referencesOnly: process.argv.includes("--references"),
         caseId: process.argv.find((arg) => arg.startsWith("--case="))?.slice(7),
+        importTrial: process.argv.find((arg) => arg.startsWith("--import-trial="))?.slice(15),
       });
   } catch (error) {
     console.error(error.message);

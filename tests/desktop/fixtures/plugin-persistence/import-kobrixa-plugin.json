@@ -1,0 +1,29 @@
+{
+  "id": "test.synthetic",
+  "version": "1.0.0",
+  "apiVersion": "^1.7.0",
+  "runtime": {
+    "kind": "node",
+    "entry": "main.cjs"
+  },
+  "activationEvents": ["onCommand:test.synthetic.inspect", "onCommand:test.synthetic.delete-first"],
+  "permissions": ["storage.read", "storage.write"],
+  "contributes": {
+    "commands": [
+      {
+        "id": "test.synthetic.inspect",
+        "title": {
+          "en": "inspect",
+          "zh-TW": "inspect"
+        }
+      },
+      {
+        "id": "test.synthetic.delete-first",
+        "title": {
+          "en": "delete-first",
+          "zh-TW": "delete-first"
+        }
+      }
+    ]
+  }
+}

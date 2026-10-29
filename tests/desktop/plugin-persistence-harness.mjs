@@ -1,3 +1,4 @@
+import { assertImportPhase } from "./plugin-persistence-import.ts";
 import { assertOptionalEvidence, assertOptionalPhase } from "./plugin-persistence-optional-off.ts";
 import { assertRendererLossEvidence } from "./plugin-persistence-renderer-loss.ts";
 export { assertRendererLossEvidence };
@@ -625,7 +626,9 @@ export function assertDisconnectEvidence(evidence) {
   });
 }
 export function verifyRunReceipt(r, expected = {}) {
-  assertFoundationOutcome(r.case, r.evidence, { serialized: true });
+  if (r.case === "import-restart" && r.evidence?.importSlice)
+    assertImportPhase(r.evidence.importSlice);
+  else assertFoundationOutcome(r.case, r.evidence, { serialized: true });
   if (r.case === "all-optional-off") {
     assertOptionalEvidence(r.evidence, r.hostEpoch);
     for (const phase of [r.evidence.optionalOff.seed, r.evidence.optionalOff.settings])
@@ -1064,6 +1067,10 @@ export function assertContentionEvidence(evidence) {
   assert.equal(evidence.checks.dirtyDraftPreserved, true);
 }
 export function verifyFoundationReports(reports, cases) {
+  assert.ok(
+    reports.every((r) => !r.evidence?.importSlice),
+    "partial import trial is not full foundation acceptance",
+  );
   assert.deepEqual(
     reports.map((r) => r.case).sort(),
     [...cases].sort(),
