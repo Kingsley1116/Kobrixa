@@ -23,15 +23,15 @@ describe("retired motor test IPC", () => {
       new UpdateOperationGate(() => updates),
       undefined,
       undefined,
-      { monitor: {} as never, lab: {} as never },
+      { monitor: {} as never },
     );
     for (const name of ["start", "stop", "keepalive", "state"])
       expect(handlers.has(`device:motor-test-${name}`)).toBe(false);
+    expect([...handlers.keys()].some((name) => name.startsWith("sensor-lab:"))).toBe(false);
     for (const name of [
       "device:stop",
       "device:monitor",
       "device:watch-monitor",
-      "sensor-lab:start",
       "device:files-prepare",
     ])
       expect(handlers.has(name)).toBe(true);
