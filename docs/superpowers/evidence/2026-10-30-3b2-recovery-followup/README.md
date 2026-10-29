@@ -1,0 +1,11 @@
+# Recovery follow-up and desktop regression
+
+Product candidate `284b264` includes1979204 (verified pending import quarantine), a8c0ddb (preserve unresolved ordinary evidence), and284b264 (finish an interrupted quarantine before fresh admission). No ordinary orphan is automatically promoted. Original ordinary missing-head/no-backup cases remain unavailable, with their evidence retained. Imported candidates require their exact pending durable journal and bounded payload verification.
+
+Independent scoped review identified a second-crash defect: a payload-only quarantine left the old temporary head behind, causing the next publication attempt to encounter two candidates. The retained actual-filesystem RED reproduces that sequence. The fix completes only the still-authorized half move; mismatched, occupied or ambiguous evidence remains blocked. Both8MiB payloads survive and consume16MiB of the existing temporary quota; no new deletion policy or quota limit was introduced.
+
+The implementer ran104 direct recovery/atomic-store/filesystem tests successfully, plus scoped types/lint. The controller separately ran the new consecutive-interruption test and four denial cases (5PASS; other tests deliberately filtered). Ordinary evidence retention had a prior actual-filesystem RED and99directPASS; the controller reran its new regression independently. These filesystem snapshots/faults are not claims of physical power-loss or additional OS-kill coverage. Frozen six-native evidence at6f2496c stays separate.
+
+The complete desktop suite against284b264 product sources passed: **4024PASS /22existingSKIP;309filesPASS /1fileSKIP;172.50seconds**. Command from E apps/desktop: D installed `node_modules/vitest/vitest.mjs run --config /private/tmp/e6-full-desktop.config.mjs`. Environment-specific configs and build wrappers are retained; package aliases point to this E source, dependencies come from the existing D installation. No install or sibling product dist is claimed. Later concurrent changes at that time were outside product src; the controller checked no product-source delta when archiving. Skips remain unexecuted.
+
+The gzip inventory preserves original logs/review/config bytes. This checkpoint does not close semantic import matrix, load, installed/manual/hardware or Stage3 gates.
