@@ -1,3 +1,4 @@
+import { SEMANTIC_IMPORT_BOUNDARIES, assertSemanticPhase } from "./import-boundaries.ts";
 import { assertPressurePartial } from "./plugin-persistence-pressure.ts";
 import { assertImportPhase } from "./plugin-persistence-import.ts";
 import { assertOptionalEvidence, assertOptionalPhase } from "./plugin-persistence-optional-off.ts";
@@ -627,9 +628,11 @@ export function assertDisconnectEvidence(evidence) {
   });
 }
 export function verifyRunReceipt(r, expected = {}) {
-  if (r.case === "import-restart" && r.evidence?.importSlice)
-    assertImportPhase(r.evidence.importSlice);
-  else if (r.case === "storage-ui-pressure") assertPressurePartial(r.evidence.pressure);
+  if (r.case === "import-restart" && r.evidence?.importSlice) {
+    if (SEMANTIC_IMPORT_BOUNDARIES.includes(r.evidence.importSlice.slice))
+      assertSemanticPhase(r.evidence.importSlice);
+    else assertImportPhase(r.evidence.importSlice);
+  } else if (r.case === "storage-ui-pressure") assertPressurePartial(r.evidence.pressure);
   else assertFoundationOutcome(r.case, r.evidence, { serialized: true });
   if (r.case === "all-optional-off") {
     assertOptionalEvidence(r.evidence, r.hostEpoch);

@@ -1,4 +1,9 @@
 import {
+  SEMANTIC_IMPORT_BOUNDARIES,
+  assertSemanticPause,
+  assertSemanticSequence,
+} from "./import-boundaries.ts";
+import {
   assertPressurePartial,
   verifyPressureWorkerTrace,
   verifyPressureRpcTrace,
@@ -480,7 +485,10 @@ export async function superviseCase(
           assert.equal(paused.candidate.pid, child.pid);
           const o = paused.candidate.evidence.importSlice;
           assert.equal(o.phase, "kill");
-          assertImportPause(o, config.importTrial ?? IMPORT_SLICE);
+          if (SEMANTIC_IMPORT_BOUNDARIES.includes(config.importTrial)) {
+            assert.equal(o.boundary, config.importTrial);
+            assertSemanticPause(o);
+          } else assertImportPause(o, config.importTrial ?? IMPORT_SLICE);
           expectedImportKill = true;
           await terminateOwned();
         }
@@ -751,12 +759,17 @@ export function selectFoundationCases({ referencesOnly = false, caseId } = {}) {
     "BLOCKED: remaining observation-table producers, B2-N01–29, public parity, load/import and installed trials await controller continuation",
   );
 }
+export function selectImportTrials(selection) {
+  if (selection === IMPORT_SIX) return [...IMPORT_PUBLICATION_TRIALS];
+  if (selection === "semantic-eight") return [...SEMANTIC_IMPORT_BOUNDARIES];
+  assert.ok(
+    [IMPORT_SLICE, ...IMPORT_PUBLICATION_TRIALS, ...SEMANTIC_IMPORT_BOUNDARIES].includes(selection),
+    "RF5 incomplete: use explicit --import-trial=publication-six, semantic-eight, or one named trial",
+  );
+  return [selection];
+}
 export async function runFoundationEvidence({ referencesOnly = false, caseId, importTrial } = {}) {
-  if (caseId === "import-restart")
-    assert.ok(
-      [IMPORT_SLICE, IMPORT_SIX, ...IMPORT_PUBLICATION_TRIALS].includes(importTrial),
-      "RF5 incomplete: use explicit --import-trial=publication-six (or one named publication trial)",
-    );
+  if (caseId === "import-restart") selectImportTrials(importTrial);
   const selectedCases = selectFoundationCases({ referencesOnly, caseId });
   const handoffs = await preflight();
   const renderer = await readFoundationRenderer(handoffs.rendererArtifact);
@@ -1129,7 +1142,7 @@ app.exit(code);
     };
     if (id === "import-restart") {
       const trials = [];
-      for (const trial of importTrial === IMPORT_SIX ? IMPORT_PUBLICATION_TRIALS : [importTrial]) {
+      for (const trial of selectImportTrials(importTrial)) {
         const trialProfile = await mkdtemp(path.join(directory, `import-${trial}-`));
         const trialProfileId = randomUUID();
         const phases = [];
@@ -1157,18 +1170,28 @@ app.exit(code);
           );
           phases.push(receipt);
         }
-        assertImportSlice(phases);
+        if (SEMANTIC_IMPORT_BOUNDARIES.includes(trial)) await assertSemanticSequence(phases);
+        else assertImportSlice(phases);
         assert.deepEqual(
           await originalFiles(syntheticRoot),
           phases[0].evidence.importSlice.originals,
         );
         trials.push({ trial, reports: phases });
       }
-      assertImportTrials(trials, importTrial);
+      const semantic = selectImportTrials(importTrial).every((t) =>
+        SEMANTIC_IMPORT_BOUNDARIES.includes(t),
+      );
+      if (semantic) {
+        assert.deepEqual(
+          trials.map((t) => t.trial),
+          selectImportTrials(importTrial),
+        );
+        assert.equal(new Set(trials.map((t) => t.reports[0].profileId)).size, trials.length);
+      } else assertImportTrials(trials, importTrial);
       const partial = {
         format: 1,
         level: "real-process",
-        status: "partial-import-trial",
+        status: semantic ? "partial-import-semantic-trials" : "partial-import-trial",
         rf5Complete: false,
         trial: importTrial,
         trials,
@@ -1179,6 +1202,12 @@ app.exit(code);
         pending: [
           "18-boundary RF5 matrix",
           ...(importTrial === IMPORT_SIX ? [] : ["remaining full-load publication trials"]),
+          ...(semantic
+            ? [
+                "raw/consumption window-capture boundaries",
+                "trusted-host skip is not UI confirmation proof",
+              ]
+            : []),
           "pre-raw absence and fresh-window capture",
           "settings stale-nonce proof",
           "full foundation import-restart case",

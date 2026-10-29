@@ -852,3 +852,12 @@ test("slice reopened journal uses the observed coordinator owner, never the hist
   );
   assert.equal(backend.imports.load, load);
 });
+
+import { assertImportStorage } from "./plugin-persistence-import.ts";
+test("slice storage proof permits explicit trusted-skip count without weakening the six-trial oracle", () => {
+  const o = sliceOracle("deleted");
+  o.phase = "reopen1";
+  assertImportStorage(o, 49);
+  assert.throws(() => assertImportStorage(o, 50));
+  assert.throws(() => assertImportPhase(o));
+});

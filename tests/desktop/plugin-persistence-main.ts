@@ -1,4 +1,10 @@
 import {
+  SEMANTIC_IMPORT_BOUNDARIES,
+  observeImportWriter,
+  produceSemanticImport,
+  assertSemanticPhase,
+} from "./import-boundaries.js";
+import {
   pressureTransport,
   verifyPressureWorkerTrace,
   assertPressurePartial,
@@ -1067,6 +1073,14 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
   const { syntheticImportDescriptor } =
     await import("../../apps/desktop/src/main/plugins/persistence/import-fixtures.js");
   const imported = config.case === "import-restart" ? importObserver(config.importWire) : undefined;
+  const semanticImport =
+    !!imported && (SEMANTIC_IMPORT_BOUNDARIES as readonly string[]).includes(config.importTrial);
+  const importWriter = {
+    sourceKey: syntheticImportDescriptor.targetSourceKey,
+    freezeAdmission() {},
+    async settled() {},
+  };
+  const importWitness = semanticImport ? observeImportWriter(importWriter) : undefined;
   const compatibility = config.case === "compatibility" ? compatibilityObserver() : undefined;
   const pressure =
     config.case === "storage-ui-pressure"
@@ -1461,13 +1475,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             ? {
                 legacy: {
                   descriptors: [syntheticImportDescriptor],
-                  writers: [
-                    {
-                      sourceKey: syntheticImportDescriptor.targetSourceKey,
-                      freezeAdmission() {},
-                      async settled() {},
-                    },
-                  ],
+                  writers: [importWitness?.writer ?? importWriter],
                 },
               }
             : {}),
@@ -1480,6 +1488,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           },
         });
         assert.ok(composition);
+        importWitness?.composed();
         const live = composition,
           handles = desktopFoundationTestHandles(live),
           ui = desktopUi(live);
@@ -1527,13 +1536,16 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             },
             async runCase(id) {
               assert.equal(id, "import-restart");
-              const evidence = await produceImportSlice({
-                config,
-                live,
-                fault: fault!,
-                observer: imported,
-              });
-              assertImportPhase(evidence.importSlice);
+              const evidence = semanticImport
+                ? await produceSemanticImport({
+                    config,
+                    live,
+                    observer: imported,
+                    witness: importWitness!,
+                  })
+                : await produceImportSlice({ config, live, fault: fault!, observer: imported });
+              if (semanticImport) assertSemanticPhase(evidence.importSlice);
+              else assertImportPhase(evidence.importSlice);
               return evidence;
             },
             close() {

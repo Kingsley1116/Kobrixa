@@ -514,6 +514,10 @@ export function assertImportPhase(o: Wire) {
         : "pending",
     );
   }
+  assertImportStorage(o, o.phase === "deleted" ? 49 : 50);
+}
+/** Shared actual RPC/stream proof; callers independently determine their target count. */
+export function assertImportStorage(o: Wire, expectedRecords: number) {
   const boots = o.processes.filter((p: Wire) => p.kind === "boot");
   assert.equal(boots.length, 1);
   assert.ok(boots[0].pid > 0 && boots[0].pid !== o.pid);
@@ -542,7 +546,7 @@ export function assertImportPhase(o: Wire) {
   assert.ok(list?.message.result);
   const records = list.message.result.value.entries;
   assert.equal(list.message.result.value.nextCursor, undefined);
-  assert.equal(records.length, o.phase === "deleted" ? 49 : 50);
+  assert.equal(records.length, expectedRecords);
   assert.equal(new Set(records.map((r: Wire) => r.id)).size, records.length);
   for (const record of records) {
     assert.equal(record.byteLength, 8388608);
