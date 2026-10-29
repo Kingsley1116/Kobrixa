@@ -707,7 +707,7 @@ export function verifyLabParity(report) {
       (r) =>
         r.request.sequence > removed[0].response.sequence &&
         r.params.kind === meta.kind &&
-        r.value.nextCursor === null,
+        r.value.nextCursor === undefined,
     );
     assert.ok(listed && !listed.value.entries.some((e) => e.id === meta.id));
     if (dataset === "history")

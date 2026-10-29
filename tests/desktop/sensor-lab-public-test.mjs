@@ -589,7 +589,7 @@ function parityFixture() {
       pair(
         "storage/list",
         { kind: meta.kind },
-        { entries: dataset === "history" ? [p.second] : [], nextCursor: null },
+        { entries: dataset === "history" ? [p.second] : [] },
         at + 35,
       );
     } else {
@@ -613,7 +613,7 @@ function parityFixture() {
   pair(
     "storage/list",
     { kind: "sensor-lab.calibration" },
-    { entries: [p.profile], nextCursor: null },
+    { entries: [p.profile] },
     step("list-profile").at + 30,
   );
   pair(
@@ -714,6 +714,18 @@ test("D7 oracle accepts correlated synthetic extension (not native evidence)", (
     first: "first",
     second: "second",
   }));
+for (const cursor of [null, "more-records"]) {
+  test(`D7 rejects a non-terminal or invalid storage cursor: ${cursor}`, () => {
+    const r = parityFixture();
+    for (const request of r.wire.filter((row) => row.message.method === "storage/list")) {
+      const response = r.wire.find(
+        (row) => !row.message.method && row.message.id === request.message.id,
+      );
+      response.message.result.value.nextCursor = cursor;
+    }
+    assert.throws(() => verifyLabParity(r));
+  });
+}
 test("extended public runner requires parity; historical base stays independently verifiable", () =>
   assert.throws(
     () => verifyLabReceipt(oracleFixture(), { requireParity: true }),
