@@ -109,28 +109,28 @@ source-free installed：離線、無 checkout/外部 Node、實際產品 entry�
 | hardware／monitor 仲裁 | fake provider modes/pin/program/files gaps/battery-null/freshness | USB/Wi-Fi 四通道、電量/電壓/program/modes、最大錄製與 motor 互斥 |
 | installed/native/resources | source-free、missing/hash/unsupported version/native load fail、無 fallback/orphan | 各實交 OS/arch；en/zh-TW、明暗、320px、125%、鍵盤/focus/讀屏 |
 
-## 4. S3-01–16 證據索引（全部待補）
+## 4. S3-01–16 證據索引（2026-10-30 更新，未結案）
 
-每列 evidence 最終填 committed repo-relative artifact link＋實際 commit/build hash；沒有證據保持待驗，不能只貼忽略目錄或絕對工作樹路徑。I＝implementation；A＝automated；M＝MANUAL。下列是應取得內容，不代表存在。
+下表連結已提交的原始證據；每份 receipt 的來源 commit、dirty 狀態、環境、替代邊界及未驗項仍有效。舊 commit 的通過結果不自動等於最終整合 artifact 通過。I＝implementation；A＝automated；M＝MANUAL。沒有把既有 stage2 人工項改成完成。
 
-| Criterion | I／責任 | A | M | Evidence／保留例外 |
-| --- | --- | --- | --- | --- |
-| S3-01 | H-P 1.5–1.8、E1 | schema/SDK/版本 drift、1.4 舊 command | 不取代自動契約 | 待填 owner receipts＋conformance；D1 未定不得 closed |
-| S3-02 | B2/C/D＋E6 雙 consumer | 真 MessagePort/stdio，全成功/失敗/取消路徑 | 硬體另列 | 待填雙語 transport traces；不只 TS wrapper |
-| S3-03 | C public-only | source/bundle/trace audit | 無替代證據 | 待填 C artifact；3E 另附 E7 audit |
-| S3-04 | C motor | hold/start/stop/hide/late/失權 | S3-13 | 待填 C public E2E，未借 3E monitor 代簽 |
-| S3-05 | 3A/B1/B2＋E2/E5 | provider/locks/Disconnect 順序、busy | 實體仲裁 | 待填 broker/coordinator trace；保留 core adapters |
-| S3-06 | 3A authority＋E5 | admission/續行失權與偽造 | 合作持權轉移 | 待填 authority cases；collaboration UI 仍例外 |
-| S3-07 | B1/D v2＋E4 | versions/limits/gap/stale、最大負載延遲/RSS | 可操作性 | 待填 D1 budgets 與 raw metrics，不提高 limits 過關 |
-| S3-08 | D Lab 全遷移 | models/recorder/drain/history/CSV/restart | S3-14 | 待填 D evidence；approved pure model 不等全套 |
-| S3-09 | B2/D＋E3 | 六 prefs/import/CAS/reset/disk-full/records | 匯入與 recovery | 待填 receipts/checkpoints，原檔保留 |
-| S3-10 | B1＋E2/E5 | §4.7 每列、all-off/second instance/cold safe | switches/recovery | 待填生命周期矩陣；必要 compiler 保留 |
-| S3-11 | B1/B2＋E5 | close/update/save/stop failures、無 orphan | force-exit 復原 | 待填 fault/receipt/drain trace，不將 timeout 當完成 |
-| S3-12 | H-K＋E6/E7 | 三 feature source-free 產品 payload/native 布局 | S3-15 | 待填各 artifact hash/OS/arch/installed paths |
-| S3-13 | C/3A | failure injection 輔助 | 真 USB/Wi-Fi motion/stop/kill/拔線 | 待填硬體/firmware/platform/觀察；mock 不代簽 |
-| S3-14 | D/3A＋E4/E5 | monitor/modes/recording/foreground fixtures | 四通道/長錄/CSV/remote-files/合作 | 待填硬體記錄；重連非恢復原操作 |
-| S3-15 | H-K/H-V＋E8 | installed smoke、renderer/resource failures | 各 OS/arch、雙語主題/scale/focus/cold safe | 待填平台表；未測逐項列出 |
-| S3-16 | E8 與各 feature owner | 文件/例外/caller 對照 | 未完人工項明列 | 待填雙語文件與 ledger diff；remote-files 等保留、stage2 分帳 |
+| Criterion | 已有證據 | 尚待完成／保留例外 |
+| --- | --- | --- |
+| S3-01：版本／雙 SDK | [E 整合與完整 desktop 回歸](../evidence/2026-10-30-3e-integration/README.md)；已實作 API 1.8 | 最終版本／schema／SDK conformance 彙整，不能用 desktop 回歸代替 |
+| S3-02：公開雙 transport | [D Python stdio](../evidence/2026-10-26-3d-python-stdio/README.md)、[D 公開 Lab](../evidence/2026-10-26-3d-public-lab/README.md) | E JS／Python native 修正重跑中；取消、timeout、故障矩陣仍須各自證明 |
+| S3-03：公開-only feature | [C native／產品封裝](../evidence/2026-10-24-3c-native-installed/README.md) | C/D/E legacy exit 的 source／bundle／trace 最終三重 audit |
+| S3-04：motor 垂直路徑 | [C 77 native cases](../evidence/2026-10-24-3c-native-installed/README.md) | 最終整合重建；硬體 M 不由 fake provider 代簽 |
+| S3-05：共用 broker | [foundation retirement／release／disconnect](../evidence/2026-10-24-stage3-foundation-integration/README.md)、[E core session 整合](../evidence/2026-10-30-3e-integration/README.md) | 真實設備仲裁及剩餘 fault rows；保留 core adapters |
+| S3-06：authority | [48 native motion races](../evidence/2026-10-23-3b1-native-motion/README.md)、[disabled-source core authority](../evidence/2026-10-26-stage3-disabled-core/README.md) | 合作 UI 持權轉移／offline 人工驗證；collaboration UI 保留例外 |
+| S3-07：有界 UI／events | [B1 最大負載](../evidence/2026-10-23-3b1-ui-load/README.md)、[SDK backpressure](../evidence/2026-10-23-3b1-sdk-backpressure/README.md) | D v2 圖表／資料集最大負載及最終 artifact 延遲／RSS；B1 數據不代簽 v2 |
+| S3-08：Lab | [公開 Lab native](../evidence/2026-10-26-3d-public-lab/README.md)、[Linux installed Lab](../evidence/2026-10-26-3d-installed-linux/README.md) | D7 完整 parity、D8 legacy exit、D9b 重建及人工驗證 |
+| S3-09：settings／storage | [sealed TTL](../evidence/2026-10-26-3b2-sealed-ttl/README.md)、[E 九欄 migration 整合](../evidence/2026-10-30-3e-integration/README.md) | B2 N01–29/P170 彙整、E native migration restart；原檔保留 |
+| S3-10：lifecycle／開關 | [all optional off 冷啟動](../evidence/2026-10-26-3b2-all-optional-off/README.md)、[renderer loss／explicit restart](../evidence/2026-10-26-3b2-renderer-loss/README.md) | §4.7 全列索引、second-instance／cold-safe 最終整合與一般使用者 UI |
+| S3-11：stop／save／quit | [suspend/wake coordinator](../evidence/2026-10-24-3b2-suspend/README.md)、[action replay 整合](../evidence/2026-10-26-stage3-action-integration/README.md) | 真 OS suspend、產品 quit/update／save-failure 完整矩陣；timeout 不當完成 |
+| S3-12：source-free installed | [C Linux 產品](../evidence/2026-10-24-3c-linux-installed/README.md)、[D Linux payload](../evidence/2026-10-26-3d-installed-linux/README.md) | E installed；C/D 最終移除 legacy 後重建。D receipt 是 acceptance host，不能寫成完整 app |
+| S3-13：motor 硬體 | C/3A 自動注入只作輔助 | USB／Wi-Fi motion／stop／kill／拔線實體觀察待驗 |
+| S3-14：Lab／monitor 硬體 | D/E fake provider 與軟體回歸 | 四通道、長錄、CSV、remote-files、合作及真設備互斥待驗 |
+| S3-15：平台／可及性 | 已有 Linux arm64 receipts；[Mac installed 隔離阻塞](../evidence/2026-10-26-3d-installed-mac-blocked/README.md) | 實交 OS/arch、雙語／明暗／320px／125%／鍵盤／讀屏；未測不能外推 |
+| S3-16：文件／例外帳 | [E 雙語文件與證據界線](../evidence/2026-10-30-3e-integration/README.md) | legacy caller 最終清單、各 owner 收尾及手動驗收結果；Stage3 保持未結案 |
 
 順序為 E0→E1→E2/E3（paths 序列）→E4→E5→E6→E7→E8；D1 blocker 未解可停在 fixtures，不削減完成目標。最後只在所有必要 I/A/M 有真實證據時提出 closeout；本計畫不宣告 Stage 3 完成，也不授權整合分支或 main 合併。
 
