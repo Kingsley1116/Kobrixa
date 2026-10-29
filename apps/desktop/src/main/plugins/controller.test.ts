@@ -3801,11 +3801,15 @@ beforeAll(async () => {
   const entry = path.join(testWorkerDirectory170, "entry.ts");
   const worker = fileURLToPath(new URL("./persistence/worker.ts", import.meta.url));
   const fixtures = fileURLToPath(new URL("./persistence/import-fixtures.ts", import.meta.url));
+  const deviceMapper = fileURLToPath(
+    new URL("./persistence/device-settings-import.ts", import.meta.url),
+  );
   await writeFile(
     entry,
-    `import {runPersistenceWorker} from ${JSON.stringify(worker)};
+    `import {runPersistenceWorker,shippedLegacySourceRoots} from ${JSON.stringify(worker)};
     import {syntheticPreferencesImportDescriptor} from ${JSON.stringify(fixtures)};
-    runPersistenceWorker({mappers:new Map([[syntheticPreferencesImportDescriptor.id,syntheticPreferencesImportDescriptor]])});`,
+    import {deviceSettingsImportDescriptor} from ${JSON.stringify(deviceMapper)};
+    runPersistenceWorker({mappers:new Map([[syntheticPreferencesImportDescriptor.id,syntheticPreferencesImportDescriptor], [deviceSettingsImportDescriptor.id,deviceSettingsImportDescriptor]]),sourceRootsForStore:root=>new Map([[deviceSettingsImportDescriptor.id,shippedLegacySourceRoots(root).get(deviceSettingsImportDescriptor.id)]]),lazySourceRoots:true});`,
   );
   await buildWorker170({
     configFile: false,
@@ -5115,6 +5119,216 @@ it("registered cancellation before output begin releases the real worker destina
   } finally {
     resume();
     await service.dispose();
+    await composition.dispose();
+    await f.cleanup();
+  }
+});
+
+import { desktopDeviceSettings, legacyPreferencesFor170 } from "./controller.js";
+import { devicePreferencesResource } from "./persistence/device-preferences-port.js";
+import { DEVICE_IMPORT_ID } from "./persistence/device-settings-import.js";
+
+it("composes device settings against the actual worker before any feature activation", async () => {
+  const f = await compositionInput();
+  const freeze = vi.fn();
+  f.input.legacyDeviceWriter = {
+    sourceKey: "builtin:kobrixa.device-ev3",
+    freezeAdmission: freeze,
+    settled: async () => {},
+  };
+  f.input.plugins.builtins = [
+    staticSource170("kobrixa.device-ev3", JSON.stringify(devicePreferencesResource)),
+  ];
+  const launcher = vi.fn<PluginLauncher>(async () => {
+    throw new Error("Must not activate");
+  });
+  f.input.plugins.launcher = () => launcher;
+  const composition = await composeDesktopMain(f.input, {});
+  const host = desktopDeviceSettings(composition);
+  const policy = f.factory.mock.calls[0]![0].connectionPolicy;
+  const policyChanged = vi.fn();
+  const offPolicy = f.factory.mock.calls[0]![0].subscribeConnectionPolicy!(policyChanged);
+  try {
+    expect(host.getSnapshot().state).toBe("unavailable");
+    expect(() => policy()).toThrow();
+    const api = legacyPreferencesFor170(
+      f.input.scope(),
+      composition.plugins.persistence170!.imports,
+    );
+    const challenge = await api.challenge(DEVICE_IMPORT_ID);
+    expect(freeze).toHaveBeenCalled();
+    const snapshot = {
+      nonce: challenge.nonce,
+      scope: challenge.scope,
+      entries: challenge.keys.map((key) => ({ key, raw: null })),
+    };
+    expect(await api.submit(snapshot)).toEqual({ state: "accepted" });
+    await vi.waitFor(() => expect(host.getSnapshot().state).toBe("ready"));
+    expect(policy()).toMatchObject({ wifiConnectTimeoutMs: 5000, usbAutoReconnect: true });
+    expect(policyChanged).toHaveBeenCalled();
+    expect(await api.submit(snapshot)).toEqual({ state: "reconciled" });
+    await composition.plugins.setEnabled("builtin:kobrixa.device-ev3", false);
+    expect(() => policy()).toThrow();
+    await composition.plugins.setEnabled("builtin:kobrixa.device-ev3", true);
+    await vi.waitFor(() => expect(host.getSnapshot().state).toBe("ready"));
+    expect(launcher).not.toHaveBeenCalled();
+    expect(freeze).toHaveBeenCalled();
+  } finally {
+    await composition.dispose();
+    expect(host.getSnapshot().state).toBe("unavailable");
+    offPolicy();
+    await f.cleanup();
+  }
+});
+
+it("does not enter device migration or retain a challenge for a disabled or retired source", async () => {
+  const f = await compositionInput();
+  const freeze = vi.fn();
+  f.input.legacyDeviceWriter = {
+    sourceKey: "builtin:kobrixa.device-ev3",
+    freezeAdmission: freeze,
+    settled: async () => {},
+  };
+  f.input.plugins.builtins = [
+    staticSource170("kobrixa.device-ev3", JSON.stringify(devicePreferencesResource)),
+  ];
+  const composition = await composeDesktopMain(f.input, {});
+  try {
+    const imports = composition.plugins.persistence170!.imports;
+    const scope = f.input.scope();
+    const api = legacyPreferencesFor170(scope, imports);
+    await composition.plugins.setEnabled("builtin:kobrixa.device-ev3", false);
+    const freezes = freeze.mock.calls.length;
+    await expect(api.challenge(DEVICE_IMPORT_ID)).rejects.toThrow();
+    expect(freeze).toHaveBeenCalledTimes(freezes);
+    await composition.plugins.setEnabled("builtin:kobrixa.device-ev3", true);
+    const challenge = await vi.waitFor(() => api.challenge(DEVICE_IMPORT_ID));
+    imports.retirePreferences(scope);
+    await expect(
+      api.submit({
+        nonce: challenge.nonce,
+        scope,
+        entries: challenge.keys.map((key) => ({ key, raw: null })),
+      }),
+    ).rejects.toThrow();
+    expect(desktopDeviceSettings(composition).getSnapshot().state).toBe("unavailable");
+  } finally {
+    await composition.dispose();
+    await f.cleanup();
+  }
+});
+
+it("starts with a disabled device source without optional migration or legacy policy fallback", async () => {
+  const f = await compositionInput();
+  const { filePluginStateStore } = await import("./state-store.js");
+  const store = filePluginStateStore(f.input.plugins.userData);
+  await store.load();
+  await store.save({
+    disabled: new Set(["builtin:kobrixa.device-ev3"]),
+    legacyDisabledIds: new Set(),
+  });
+  const freeze = vi.fn(),
+    settle = vi.fn(async () => {});
+  f.input.legacyDeviceWriter = {
+    sourceKey: "builtin:kobrixa.device-ev3",
+    freezeAdmission: freeze,
+    settled: settle,
+  };
+  f.input.plugins.builtins = [
+    staticSource170("kobrixa.device-ev3", JSON.stringify(devicePreferencesResource)),
+  ];
+  const composition = await composeDesktopMain(f.input, {});
+  try {
+    const handles = desktopFoundationTestHandles(composition);
+    const register = vi.spyOn(handles.backend.sources, "register");
+    const reads = vi.spyOn(handles.backend.reads, "settings");
+    const host = desktopDeviceSettings(composition);
+    await host.refresh();
+    expect(host.getSnapshot().state).toBe("unavailable");
+    expect(() => f.factory.mock.calls[0]![0].connectionPolicy()).toThrow();
+    expect(freeze).not.toHaveBeenCalled();
+    expect(settle).not.toHaveBeenCalled();
+    expect(register).not.toHaveBeenCalled();
+    expect(reads).not.toHaveBeenCalled();
+    expect(handles.channels()).toEqual([]);
+  } finally {
+    await composition.dispose();
+    await f.cleanup();
+  }
+});
+
+it("keeps device settings mutations behind pristine import while unrelated settings stay writable", async () => {
+  const f = await compositionInput();
+  f.input.legacyDeviceWriter = {
+    sourceKey: "builtin:kobrixa.device-ev3",
+    freezeAdmission() {},
+    async settled() {},
+  };
+  const raw = JSON.stringify(devicePreferencesResource);
+  f.input.plugins.builtins = [staticSource170("kobrixa.device-ev3", raw), staticSource170()];
+  const composition = await composeDesktopMain(f.input, {});
+  try {
+    const { settings, imports } = composition.plugins.persistence170!;
+    const device = await settings.open({
+      sourceKey: "builtin:kobrixa.device-ev3",
+      resourceDigest: createHash("sha256").update(raw).digest("hex"),
+      scope: f.input.scope(),
+    });
+    expect(device.snapshot.revision).toBeNull();
+    const reserve = vi.spyOn(desktopFoundationTestHandles(composition).backend.engine, "reserve");
+    expect(
+      await settings.update(device.binding, {
+        schemaVersion: 1,
+        expectedRevision: null,
+        changes: [{ key: "usbRetryLimit", value: 5 }],
+      }),
+    ).toMatchObject({ ok: false, error: { code: "PLUGIN_E_DISABLED" } });
+    expect(
+      await settings.reset(device.binding, {
+        schemaVersion: 1,
+        expectedRevision: null,
+        keys: ["usbRetryLimit"],
+      }),
+    ).toMatchObject({ ok: false, error: { code: "PLUGIN_E_DISABLED" } });
+    expect(reserve).not.toHaveBeenCalled();
+    const unrelated = await settings.open({
+      sourceKey: "builtin:test.settings",
+      resourceDigest: createHash("sha256").update(settingsRaw170).digest("hex"),
+      scope: f.input.scope(),
+    });
+    expect(
+      await settings.update(unrelated.binding, {
+        schemaVersion: 1,
+        expectedRevision: null,
+        changes: [{ key: "device.choice", value: "1" }],
+      }),
+    ).toMatchObject({ ok: true });
+    const api = legacyPreferencesFor170(f.input.scope(), imports);
+    const challenge = await api.challenge(DEVICE_IMPORT_ID);
+    expect(
+      await api.submit({
+        nonce: challenge.nonce,
+        scope: challenge.scope,
+        entries: challenge.keys.map((key) => ({ key, raw: null })),
+      }),
+    ).toEqual({ state: "accepted" });
+    const admitted = await settings.open({
+      sourceKey: "builtin:kobrixa.device-ev3",
+      resourceDigest: createHash("sha256").update(raw).digest("hex"),
+      scope: f.input.scope(),
+    });
+    expect(admitted.snapshot.revision).not.toBeNull();
+    expect(
+      await settings.update(admitted.binding, {
+        schemaVersion: 1,
+        expectedRevision: admitted.snapshot.revision,
+        changes: [{ key: "usbRetryLimit", value: 5 }],
+      }),
+    ).toMatchObject({ ok: true });
+    await vi.waitFor(() =>
+      expect(desktopDeviceSettings(composition).connectionPolicy().usbRetryLimit).toBe(5),
+    );
+  } finally {
     await composition.dispose();
     await f.cleanup();
   }

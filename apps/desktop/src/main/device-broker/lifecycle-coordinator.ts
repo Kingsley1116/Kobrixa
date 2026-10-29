@@ -32,6 +32,7 @@ export interface DesktopFoundationOptions {
   hasPermission: (principal: Principal, permission: Permission) => boolean;
   requirements: (owner: ResourceOwner) => readonly DeviceRequirement[] | null;
   connectionPolicy: () => DeviceConnectionPolicy;
+  subscribeConnectionPolicy?: (changed: () => void) => () => void;
   operationGate: DeviceOperationGate;
   providerFactory?: (catalog: ProviderCatalogPort) => BuiltinDeviceProvider;
 }
@@ -49,6 +50,8 @@ import type { LegacyWriterPort } from "../plugins/persistence/import-sources.js"
 
 export interface DesktopMainCompositionInput {
   legacyLabWriter?: LegacyWriterPort;
+  /** Enable after the device feature replacement is installed; no legacy policy fallback. */
+  legacyDeviceWriter?: LegacyWriterPort;
   createFoundation: typeof createDesktopFoundation;
   foundationOptions: DesktopFoundationOptions;
   plugins: Omit<StartPluginsOptions, "stage3" | "stage3Host" | "onStage3Runtime">;
@@ -772,6 +775,9 @@ export async function createDesktopFoundation(
     hasPermission: input.hasPermission,
     requirements: input.requirements,
     connectionPolicy: input.connectionPolicy,
+    ...(input.subscribeConnectionPolicy
+      ? { subscribeConnectionPolicy: input.subscribeConnectionPolicy }
+      : {}),
     operationGate: input.operationGate,
   });
   let attached = false,

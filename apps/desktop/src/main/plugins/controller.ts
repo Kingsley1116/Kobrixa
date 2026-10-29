@@ -1,3 +1,10 @@
+import { DeviceSettingsMigrationGate } from "./persistence/device-settings-migration.js";
+import {
+  createDeviceSettingsHost,
+  type DeviceSettingsHost,
+} from "./persistence/device-settings-host.js";
+import { DEVICE_IMPORT_ID } from "./persistence/device-settings-import.js";
+import { DEVICE_PREFERENCES_SOURCE } from "./persistence/device-preferences-port.js";
 import { cancelUiConnectionRecovery } from "./core-recovery.js";
 import { SensorLabMigrationGate } from "./persistence/sensor-lab-migration.js";
 import { releaseUiRecording } from "./ui-bridge.js";
@@ -1365,13 +1372,46 @@ export function desktopUi(composition: DesktopMainComposition): DesktopUi {
   if (!ui) throw new Error("Unknown desktop UI composition.");
   return ui;
 }
+const deviceSettingsHosts = new WeakMap<DesktopMainComposition, DeviceSettingsHost>();
+/** Host-only policy reader; never exposes a plugin principal or fallback writer. */
+export function desktopDeviceSettings(composition: DesktopMainComposition): DeviceSettingsHost {
+  const host = deviceSettingsHosts.get(composition);
+  if (!host) throw new Error("Device settings are not attached.");
+  return host;
+}
 export async function composeDesktopMain(
   input: DesktopMainCompositionInput,
   test?: DesktopCompositionTestOptions,
 ): Promise<DesktopMainComposition> {
   const { profile, now, coreActions } = input.foundationOptions;
   profile.assertHeld();
-  const foundation = await input.createFoundation(input.foundationOptions);
+  if (input.legacyDeviceWriter && input.legacyDeviceWriter.sourceKey !== DEVICE_PREFERENCES_SOURCE)
+    throw new Error("Foreign legacy device writer.");
+  let deviceSettings: DeviceSettingsHost | undefined;
+  let offDeviceSettings: (() => void) | undefined;
+  const policyListeners = new Set<() => void>();
+  const disposeDeviceSettings = () => {
+    offDeviceSettings?.();
+    policyListeners.clear();
+    deviceSettings?.dispose();
+  };
+  const foundation = await input.createFoundation(
+    input.legacyDeviceWriter
+      ? {
+          ...input.foundationOptions,
+          subscribeConnectionPolicy: (changed) => {
+            policyListeners.add(changed);
+            return () => {
+              policyListeners.delete(changed);
+            };
+          },
+          connectionPolicy: () => {
+            if (!deviceSettings) throw new Error("Device settings are not attached.");
+            return deviceSettings.connectionPolicy();
+          },
+        }
+      : input.foundationOptions,
+  );
   const broker = foundation.broker;
   let runtimeAttachment: UiRuntimeAttachment | undefined;
   const originalChannels = new Map<string, Stage3ChannelContext>();
@@ -1418,6 +1458,12 @@ export async function composeDesktopMain(
         await labMigration.prepare(signal);
         labMigration.assertReady();
         if (!plugins.acceptingUi) throw new Error("Plugin admission is paused.");
+      }
+      if (source === DEVICE_PREFERENCES_SOURCE && input.legacyDeviceWriter) {
+        if (!deviceSettings) throw new Error("Device settings are not attached.");
+        await deviceSettings.migration.prepare(signal);
+        if (!deviceSettings.migration.ready() || !plugins.acceptingUi)
+          throw new Error("Device settings are not admitted.");
       }
       signal.throwIfAborted();
       return runtime().activateInitialized(source, signal);
@@ -1493,6 +1539,10 @@ export async function composeDesktopMain(
   });
   const sourceProjection = createPersistenceSources170({
     onRetire: (sourceKey) => settingsRequests(backend).retire(sourceKey),
+    settingsWriteAllowed: (sourceKey) =>
+      !input.legacyDeviceWriter ||
+      sourceKey !== DEVICE_PREFERENCES_SOURCE ||
+      (persistenceAdmitted && deviceSettings?.migration.ready() === true),
     hostSettings: {
       hostEpoch: profile.hostEpoch,
       current: () => {
@@ -1633,6 +1683,39 @@ export async function composeDesktopMain(
     await foundation.dispose();
     throw error;
   }
+  if (input.legacyDeviceWriter) {
+    const migration = new DeviceSettingsMigrationGate({
+      backend,
+      sources: sourceProjection.port,
+      writer: input.legacyDeviceWriter,
+      currentScope: input.currentScope,
+    });
+    deviceSettings = createDeviceSettingsHost({
+      backend,
+      migration,
+      namespace: () => sourceProjection.port.settingsNamespace?.(DEVICE_PREFERENCES_SOURCE) ?? null,
+    });
+    offDeviceSettings = deviceSettings.watch(() => {
+      for (const changed of [...policyListeners]) {
+        try {
+          changed();
+        } catch (error) {
+          input.report(error);
+        }
+      }
+    });
+  }
+  let deviceNamespace: string | undefined;
+  const reconcileDeviceSettings = () => {
+    if (!deviceSettings) return;
+    const next = JSON.stringify(
+      sourceProjection.port.settingsNamespace?.(DEVICE_PREFERENCES_SOURCE) ?? null,
+    );
+    if (next !== deviceNamespace) {
+      deviceNamespace = next;
+      deviceSettings.sourceChanged();
+    }
+  };
   const stage3 = persistence170.stage3;
   let detail: ReturnType<typeof createPersistenceRecoveryBridge170>;
   try {
@@ -1650,6 +1733,7 @@ export async function composeDesktopMain(
     subscriptions.dispose();
     intent.dispose();
     events.dispose();
+    disposeDeviceSettings();
     await persistence170.host.dispose();
     await foundation.dispose();
     throw error;
@@ -2018,6 +2102,7 @@ export async function composeDesktopMain(
         }
         await catalog.replace(sources);
         inventory = key;
+        reconcileDeviceSettings();
       });
       void refresh.catch(input.report);
       return refresh;
@@ -2044,6 +2129,7 @@ export async function composeDesktopMain(
             sourceProjection.reconcileCoreSources(plugins.persistenceCoreSources());
             if (sourceProjection.reconcileSources(plugins.persistenceCatalogSources()))
               inventory = "";
+            reconcileDeviceSettings();
             void refreshCatalog();
           }
         });
@@ -2077,6 +2163,43 @@ export async function composeDesktopMain(
       currentSource: sourceProjection.currentSource,
       importOwner,
     });
+    if (deviceSettings) {
+      const original = imports;
+      const migration = deviceSettings.migration;
+      const issued = new Map<string, ImportedCoreWindowScope>();
+      const accept: LegacyImportHostPort["acceptPreferencesEvidence"] = (snapshot) =>
+        issued.has(snapshot.nonce)
+          ? migration.acceptPreferencesEvidence(snapshot)
+          : original.acceptPreferencesEvidence(snapshot);
+      imports = {
+        ...original,
+        async issuePreferences(request) {
+          if (request.descriptorId !== DEVICE_IMPORT_ID) return original.issuePreferences(request);
+          if (issued.size >= 32) throw new Error("Device preference challenge limit.");
+          const challenge = await migration.issuePreferences(request);
+          if (!input.currentScope(request.scope)) throw new Error("Stale preference scope.");
+          if (!issued.has(challenge.nonce) && issued.size >= 32)
+            throw new Error("Device preference challenge limit.");
+          issued.set(challenge.nonce, structuredClone(challenge.scope));
+          return challenge;
+        },
+        acceptPreferencesEvidence: accept,
+        async acceptPreferences(snapshot) {
+          if ((await accept(snapshot)).state === "pending") throw new Error("import-pending");
+        },
+        retirePreferences(scope) {
+          original.retirePreferences(scope);
+          migration.retirePreferences(scope);
+          for (const [nonce, owner] of issued)
+            if (
+              owner.hostEpoch === scope.hostEpoch &&
+              owner.workbenchInstance === scope.workbenchInstance
+            )
+              issued.delete(nonce);
+        },
+      };
+      uiDisposers.push(() => issued.clear());
+    }
     plugins.attachPersistence170({
       settings: persistence170.host.settings,
       detail,
@@ -2084,6 +2207,7 @@ export async function composeDesktopMain(
       scope: input.scope,
     });
     persistenceAdmitted = true;
+    reconcileDeviceSettings();
     let disposed = false;
     let disposal: Promise<void> | undefined;
     const composition: DesktopMainComposition = {
@@ -2100,6 +2224,7 @@ export async function composeDesktopMain(
           await refresh.catch(input.report);
           disposeUi();
           detail.dispose();
+          disposeDeviceSettings();
           await persistence170.host.dispose();
           await foundation.dispose();
           lifecycle.dispose();
@@ -2148,6 +2273,7 @@ export async function composeDesktopMain(
           channels: () => Object.freeze([...observed.values()]),
         }),
       );
+    if (deviceSettings) deviceSettingsHosts.set(composition, deviceSettings);
     lifecycles.set(composition, lifecycle);
     desktopUis.set(composition, {
       bridge,
@@ -2199,6 +2325,7 @@ export async function composeDesktopMain(
       // original runtime without invoking legacy services that do not yet exist.
       if (plugins) await plugins.shutdown();
       detail.dispose();
+      disposeDeviceSettings();
       await persistence170.host.dispose();
       await foundation.dispose();
       cleanupLifecycle?.dispose();
@@ -2510,6 +2637,7 @@ type PersistenceSourceRow170 = {
 };
 export function createPersistenceSources170(input: {
   onRetire?: (sourceKey: string) => void;
+  settingsWriteAllowed?: (sourceKey: string) => boolean;
   hostSettings?: { hostEpoch: string; current: () => boolean };
   currentScope: (scope: CoreWindowScope) => boolean;
   currentRuntime: (owner: ResourceOwner) => boolean;
@@ -2544,6 +2672,7 @@ export function createPersistenceSources170(input: {
       if (value.owner.sourceKey === sourceKey) namespaces.delete(id);
   };
   const port: PersistenceSourcePort = {
+    settingsWriteAllowed: (sourceKey) => input.settingsWriteAllowed?.(sourceKey) ?? true,
     settingsNamespace(sourceKey) {
       if (!input.hostSettings?.current()) {
         hostNamespaces.clear();
