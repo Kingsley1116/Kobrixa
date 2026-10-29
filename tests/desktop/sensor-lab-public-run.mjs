@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
   cp,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -15,6 +16,8 @@ import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn, execFileSync } from "node:child_process";
+import { processTable, descendants } from "./builtin-installed-client.mjs";
+import { createProcessMonitor, finishProcessObservation } from "./device-ui-stdio-run.mjs";
 import { rawResourcePlugin } from "./raw-resource-plugin.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -861,6 +864,318 @@ export async function buildLab(directory) {
   return identity;
 }
 
+export const restartOriginals = (() => {
+  const id = "12345678-1234-4234-8234-123456789abc";
+  const source = {
+    id: '["input",0,30,0,1,"cm"]',
+    kind: "input",
+    port: 0,
+    type: 30,
+    mode: 0,
+    channel: 1,
+    name: "US",
+    modeName: "distance",
+    unit: "cm",
+    decimals: 1,
+  };
+  const channel = {
+    source,
+    calibration: {
+      twoPoint: false,
+      sourceA: 0,
+      sourceB: 100,
+      targetA: 0,
+      targetB: 100,
+      zeroOffset: 0,
+      unit: "cm",
+    },
+  };
+  return {
+    [`recordings/${id}.json`]: JSON.stringify({
+      schemaVersion: 1,
+      id,
+      name: "D7 original import",
+      startedAt: 100,
+      durationMs: 1000,
+      frameCount: 2,
+      device: { id: "brick", name: "EV3", transport: "usb" },
+      channels: [channel],
+      frames: [
+        { sampledAt: 200, elapsedMs: 0, values: [null], status: "busy", segment: 0 },
+        { sampledAt: 1200, elapsedMs: 1000, values: [3], status: "ok", segment: 1 },
+      ],
+    }),
+    [`calibrations/${id}.json`]: JSON.stringify({
+      schemaVersion: 1,
+      profile: { id, name: "D7 original calibration", ...channel },
+    }),
+  };
+})();
+export async function seedLabRestart(profile) {
+  for (const [file, bytes] of Object.entries(restartOriginals)) {
+    const target = path.join(profile, "sensor-lab", file);
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, bytes, { flag: "wx" });
+  }
+}
+export async function snapshotLabRestart(profile) {
+  const originals = {};
+  for (const [file, expected] of Object.entries(restartOriginals)) {
+    const bytes = await readFile(path.join(profile, "sensor-lab", file));
+    assert.equal(digest(bytes), digest(expected), `Original rewritten: ${file}`);
+    originals[file] = digest(bytes);
+  }
+  const base = path.join(profile, "plugins/persistence-v1/namespaces"),
+    matches = [];
+  for (const name of await readdir(base)) {
+    const folder = path.join(base, name);
+    if (
+      JSON.parse(await readFile(path.join(folder, "identity.json"))).sourceKey ===
+      `builtin:${pluginId}`
+    )
+      matches.push(folder);
+  }
+  assert.equal(matches.length, 1);
+  const folder = matches[0],
+    hashes = {};
+  const read = async (relative) => {
+    const file = path.join(folder, relative),
+      stat = await lstat(file);
+    assert.ok(stat.isFile() && !stat.isSymbolicLink() && stat.size <= 8 * 1024 * 1024);
+    const bytes = await readFile(file);
+    hashes[relative] = digest(bytes);
+    return { bytes, json: JSON.parse(bytes) };
+  };
+  const load = async (relative, objects) => {
+    const head = (await read(relative)).json;
+    const kind = head.metadata.kind;
+    assert.equal(kind, objects === "imports/objects" ? "import" : "record");
+    if (head.object === null) {
+      assert.equal(head.metadata.deleted, true);
+      return { head, document: null };
+    }
+    assert.match(
+      head.object,
+      kind === "record" ? /^r_[a-zA-Z0-9_-]+\.bin$/ : /^r_[a-zA-Z0-9_-]+\.json$/,
+    );
+    const data = await read(`${objects}/${head.object}`);
+    assert.equal(data.bytes.length, head.byteLength);
+    assert.equal(digest(data.bytes), head.sha256);
+    return { head, document: data.json };
+  };
+  const imports = [],
+    records = [];
+  const names = (await readdir(path.join(folder, "imports")))
+    .filter((f) => f.endsWith(".json"))
+    .sort();
+  assert.equal(names.length, 4);
+  for (const name of names) imports.push(await load(`imports/${name}`, "imports/objects"));
+  const ids = (await readdir(path.join(folder, "records"))).sort();
+  assert.ok(ids.length <= 8);
+  for (const id of ids) {
+    assert.match(id, /^[a-zA-Z0-9-]+$/);
+    records.push(await load(`records/${id}/head.json`, `records/${id}/objects`));
+  }
+  return { originals, imports, records, hashes };
+}
+export function verifyLabRestart(r) {
+  const { first, second, before, after, outside } = r;
+  assert.deepEqual(before, after, "Restart changed durable heads/imports/originals");
+  assert.deepEqual(
+    before.originals,
+    Object.fromEntries(
+      Object.entries(restartOriginals).map(([key, bytes]) => [key, digest(bytes)]),
+    ),
+  );
+  assert.equal(outside.length, 2);
+  for (const [i, p] of [first, second].entries()) {
+    assert.equal(p.stage, "complete");
+    assert.deepEqual(p.failures, []);
+    assert.equal(p.restart.phase, String(i + 1));
+    assert.ok(Number.isInteger(p.restart.mainPid) && p.restart.mainPid > 0);
+    assert.equal(outside[i].pid, p.restart.mainPid);
+    assert.equal(outside[i].code, 0);
+    assert.equal(outside[i].signal, null);
+    assert.equal(outside[i].timedOut, false);
+    assert.deepEqual(outside[i].survivors, []);
+    assert.equal(p.cleanup.workers, 0);
+    for (const counters of [p.cleanup.bridge, p.cleanup.worker])
+      for (const v of Object.values(counters)) assert.equal(v, 0);
+    assert.equal(p.launches.length, 1);
+    assert.equal(p.exits.length, 1);
+  }
+  assert.notEqual(first.restart.mainPid, second.restart.mainPid);
+  assert.equal(first.restart.profile, second.restart.profile);
+  assert.ok(path.isAbsolute(first.restart.profile));
+  assert.notEqual(first.restart.scope.hostEpoch, second.restart.scope.hostEpoch);
+  assert.notEqual(first.restart.scope.workbenchInstance, second.restart.scope.workbenchInstance);
+  const pairs = (p, method) =>
+    p.wire
+      .filter((q) => q.direction === "plugin-host" && q.message.method === method)
+      .map((q) => {
+        const answers = p.wire.filter(
+          (a) =>
+            a.direction === "host-plugin" &&
+            a.sequence > q.sequence &&
+            a.message.id === q.message.id &&
+            !a.message.method &&
+            JSON.stringify(a.owner) === JSON.stringify(q.owner),
+        );
+        assert.equal(answers.length, 1);
+        return { request: q.message.params, value: ok(answers[0].message.result) };
+      });
+  const deleted = first.restart.deleted,
+    saved = first.restart.saved;
+  assert.notEqual(deleted.id, saved.id);
+  assert.equal(saved.checkpoint, "final");
+  assert.ok(
+    pairs(first, "storage/delete").some(
+      (x) =>
+        x.request.id === deleted.id &&
+        x.request.expectedRevision === deleted.revision &&
+        x.value.deleted === true,
+    ),
+  );
+  assert.ok(
+    pairs(first, "storage/commitWrite").some(
+      (x) =>
+        x.value.record?.id === saved.id &&
+        x.value.record.revision === saved.revision &&
+        x.value.record.sha256 === saved.sha256,
+    ),
+  );
+  const plans = before.imports.filter((x) => x.document.plan);
+  assert.equal(plans.length, 2);
+  for (const suffix of ["recordings", "calibrations"]) {
+    const descriptor = `kobrixa.sensor-lab.${suffix}-import`;
+    const plan = plans.find((x) => x.document.plan.descriptorId === descriptor)?.document;
+    assert.ok(plan?.complete);
+    assert.equal(plan.items.length, 1);
+    assert.equal(plan.items[0].state, "committed");
+    assert.ok(plan.items[0].receipt.revision);
+    assert.ok(
+      before.imports.some(
+        (x) =>
+          x.document.kind === "barrier" &&
+          x.document.descriptorId === descriptor &&
+          x.document.state === "complete",
+      ),
+    );
+  }
+  const tombstone = before.records.find((x) => x.head.target.id === deleted.id);
+  assert.equal(tombstone?.head.metadata.deleted, true);
+  const retained = before.records.find((x) => x.head.target.id === saved.id);
+  assert.equal(retained?.head.receipt.revision, saved.revision);
+  assert.equal(retained.head.sha256, saved.sha256);
+  assert.equal(retained.document.schemaVersion, 2);
+  assert.ok(retained.document.frameCount > 0);
+  assert.deepEqual(second.restart.history, [saved]);
+  assert.deepEqual(second.restart.profiles, first.restart.profiles);
+  assert.equal(second.restart.profiles.length, 1);
+  assert.ok(
+    pairs(second, "storage/list").some(
+      (x) =>
+        x.request.kind === "sensor-lab.recording" &&
+        x.value.entries.length === 1 &&
+        x.value.entries[0].id === saved.id,
+    ),
+  );
+  const opens = pairs(second, "storage/openRead").filter((x) => x.request.id === saved.id);
+  assert.ok(opens.length > 0);
+  let verified = false;
+  for (const opened of opens) {
+    const chunks = pairs(second, "storage/readChunk")
+      .filter((x) => x.request.read === opened.value.read)
+      .sort((a, b) => a.value.offset - b.value.offset);
+    if (!chunks.at(-1)?.value.eof) continue;
+    let offset = 0;
+    const buffers = [];
+    for (const { value } of chunks) {
+      assert.equal(value.offset, offset);
+      const b = Buffer.from(value.data, "base64");
+      offset += b.length;
+      buffers.push(b);
+    }
+    assert.equal(offset, saved.byteLength);
+    assert.equal(digest(Buffer.concat(buffers)), saved.sha256);
+    verified = true;
+  }
+  assert.ok(verified, "Actual restarted SDK read must match saved durable bytes");
+  for (const q of second.wire.filter((x) => x.message.method))
+    assert.ok(
+      ![
+        "storage/beginWrite",
+        "storage/commitWrite",
+        "storage/delete",
+        "devices/connect",
+        "devices/recording/reserve",
+      ].includes(q.message.method),
+      "Restart replay/mutation",
+    );
+  assert.deepEqual(second.drains, []);
+  return { deleted: deleted.id, retained: saved.id, mainPids: outside.map((x) => x.pid) };
+}
+async function runLabRestartProcess(directory, electron, env, phase) {
+  const child = spawn(
+    electron,
+    [path.join(directory, "main.cjs"), `--lab-root=${directory}`, `--lab-restart-phase=${phase}`],
+    {
+      cwd: directory,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32",
+    },
+  );
+  const known = new Set(),
+    errors = [],
+    logs = [];
+  const monitor = createProcessMonitor({
+    poll: processTable,
+    observe: (rows) => descendants(rows, child.pid, known),
+    onError: (e) => errors.push(String(e)),
+  });
+  monitor.tick();
+  for (const stream of [child.stdout, child.stderr])
+    stream.on("data", (b) => {
+      logs.push(b.toString());
+      process.stderr.write(b);
+    });
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    try {
+      process.kill(process.platform === "win32" ? child.pid : -child.pid, "SIGKILL");
+    } catch (e) {
+      if (e.code !== "ESRCH") errors.push(String(e));
+    }
+  }, 150_000);
+  const result = await new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code, signal) => resolve({ code, signal }));
+  })
+    .catch((e) => ({ code: null, signal: null, error: String(e) }))
+    .finally(() => clearTimeout(timer));
+  await monitor.stop();
+  const survivors = await finishProcessObservation({
+    poll: processTable,
+    parent: child.pid,
+    known,
+    onError: (e) => errors.push(String(e)),
+  });
+  const outside = { ...result, pid: child.pid, timedOut, survivors, errors };
+  await writeFile(
+    path.join(directory, `process-restart-${phase}.json`),
+    JSON.stringify(outside, null, 2),
+  );
+  await writeFile(path.join(directory, `native-restart-${phase}.log`), logs.join(""));
+  assert.deepEqual(errors, []);
+  assert.deepEqual(survivors, []);
+  assert.equal(timedOut, false);
+  assert.equal(result.code, 0);
+  assert.equal(result.signal, null);
+  return outside;
+}
+
 async function main(args) {
   assert.ok(
     ["--build-only", "--run", "--run-built"].includes(args[0]),
@@ -899,6 +1214,37 @@ async function main(args) {
   const require = createRequire(path.join(root, "apps/desktop/package.json"));
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
+  if (args.includes("--restart")) {
+    await seedLabRestart(path.join(directory, "profile"));
+    const outside = [];
+    outside.push(await runLabRestartProcess(directory, require("electron"), env, "1"));
+    const first = JSON.parse(await readFile(path.join(directory, "producer-restart-1.json")));
+    const before = await snapshotLabRestart(path.join(directory, "profile"));
+    await writeFile(path.join(directory, "restart-before.json"), JSON.stringify(before, null, 2));
+    outside.push(await runLabRestartProcess(directory, require("electron"), env, "2"));
+    const second = JSON.parse(await readFile(path.join(directory, "producer-restart-2.json")));
+    const after = await snapshotLabRestart(path.join(directory, "profile"));
+    const evidence = { first, second, before, after, outside };
+    await writeFile(
+      path.join(directory, "restart-evidence.json"),
+      JSON.stringify(evidence, null, 2),
+    );
+    const verified = verifyLabRestart(evidence);
+    await writeFile(
+      path.join(directory, "restart-receipt.json"),
+      JSON.stringify(
+        {
+          verified,
+          identity,
+          evidenceSha256: digest(await readFile(path.join(directory, "restart-evidence.json"))),
+        },
+        null,
+        2,
+      ),
+    );
+    console.log(`Actual Lab restart PASS: ${directory}`);
+    return;
+  }
   const child = spawn(
     require("electron"),
     [path.join(directory, "main.cjs"), `--lab-root=${directory}`],

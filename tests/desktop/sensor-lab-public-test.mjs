@@ -1,8 +1,17 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
-import { readFile } from "node:fs/promises";
-import { verifyLabReceipt, verifyLabParity } from "./sensor-lab-public-run.mjs";
+import { readFile, mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import path from "node:path";
+import { tmpdir } from "node:os";
+import {
+  restartOriginals,
+  seedLabRestart,
+  snapshotLabRestart,
+  verifyLabRestart,
+  verifyLabReceipt,
+  verifyLabParity,
+} from "./sensor-lab-public-run.mjs";
 
 // Oracle UNIT fixture only. Never used by the native producer or emitted as native evidence.
 function oracleFixture() {
@@ -878,4 +887,302 @@ test("D7 deletion cannot continue when the modal remains after Close", async () 
     ),
     /dialog closed/,
   );
+});
+
+// Synthetic oracle inputs only; never emitted as native producer evidence.
+function restartFixture() {
+  const bytes = Buffer.from(JSON.stringify({ schemaVersion: 2, frameCount: 2 }));
+  const saved = {
+    id: "saved",
+    revision: "r_saved",
+    checkpoint: "final",
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    byteLength: bytes.length,
+  };
+  const deleted = { id: "imported", revision: "r_import" };
+  const phase = (n) => ({
+    stage: "complete",
+    failures: [],
+    launches: [{}],
+    exits: [{}],
+    cleanup: { workers: 0, bridge: {}, worker: {} },
+    wire: [],
+    drains: [],
+    restart: {
+      phase: String(n),
+      mainPid: n,
+      profile: "/same-profile",
+      scope: { hostEpoch: `h${n}`, workbenchInstance: `w${n}` },
+      profiles: [{ id: "calibration", revision: "r_calibration" }],
+    },
+  });
+  const first = phase(1),
+    second = phase(2);
+  Object.assign(first.restart, { saved, deleted });
+  second.restart.history = [saved];
+  const pair = (p, method, request, value) => {
+    const id = p.wire.length + 1;
+    const owner = { sourceKey: "builtin:kobrixa.sensor-lab", hostEpoch: p.restart.scope.hostEpoch };
+    p.wire.push(
+      { sequence: id, direction: "plugin-host", owner, message: { id, method, params: request } },
+      {
+        sequence: id + 1,
+        direction: "host-plugin",
+        owner,
+        message: { id, result: { ok: true, value } },
+      },
+    );
+  };
+  pair(
+    first,
+    "storage/delete",
+    { id: deleted.id, expectedRevision: deleted.revision },
+    { deleted: true },
+  );
+  pair(first, "storage/commitWrite", {}, { record: saved });
+  pair(second, "storage/list", { kind: "sensor-lab.recording" }, { entries: [saved] });
+  pair(
+    second,
+    "storage/openRead",
+    { id: saved.id, expectedRevision: saved.revision },
+    { read: "token", record: saved },
+  );
+  pair(
+    second,
+    "storage/readChunk",
+    { read: "token" },
+    { offset: 0, eof: true, data: bytes.toString("base64") },
+  );
+  const before = {
+    originals: Object.fromEntries(
+      Object.entries(restartOriginals).map(([key, value]) => [
+        key,
+        createHash("sha256").update(value).digest("hex"),
+      ]),
+    ),
+    hashes: { head: "hash" },
+    imports: ["recordings", "calibrations"].flatMap((suffix) => {
+      const descriptorId = `kobrixa.sensor-lab.${suffix}-import`;
+      return [
+        {
+          document: {
+            plan: { descriptorId },
+            complete: true,
+            items: [{ state: "committed", receipt: { revision: "r_import" } }],
+          },
+        },
+        { document: { kind: "barrier", descriptorId, state: "complete" } },
+      ];
+    }),
+    records: [
+      { head: { target: { id: deleted.id }, metadata: { deleted: true } }, document: null },
+      {
+        head: {
+          target: { id: saved.id },
+          receipt: { revision: saved.revision },
+          sha256: saved.sha256,
+        },
+        document: JSON.parse(bytes),
+      },
+    ],
+  };
+  return {
+    first,
+    second,
+    before,
+    after: structuredClone(before),
+    outside: [1, 2].map((pid) => ({ pid, code: 0, signal: null, timedOut: false, survivors: [] })),
+  };
+}
+test("D7 restart oracle accepts distinct processes, durable bytes and deletion without re-import", () => {
+  assert.deepEqual(verifyLabRestart(restartFixture()).mainPids, [1, 2]);
+});
+for (const [name, mutate] of [
+  [
+    "same process",
+    (r) => {
+      r.second.restart.mainPid = 1;
+      r.outside[1].pid = 1;
+    },
+  ],
+  [
+    "different profile",
+    (r) => {
+      r.second.restart.profile = "/other";
+    },
+  ],
+  [
+    "stale authority",
+    (r) => {
+      r.second.restart.scope = r.first.restart.scope;
+    },
+  ],
+  [
+    "new durable publication",
+    (r) => {
+      r.after.hashes.head = "changed";
+    },
+  ],
+  [
+    "original rewrite",
+    (r) => {
+      r.before.originals = r.after.originals = {};
+    },
+  ],
+  [
+    "empty import",
+    (r) => {
+      r.before.imports[0].document.items = [];
+      r.after = structuredClone(r.before);
+    },
+  ],
+  [
+    "lost tombstone",
+    (r) => {
+      r.before.records[0].head.metadata.deleted = false;
+      r.after = structuredClone(r.before);
+    },
+  ],
+  [
+    "resurrected import",
+    (r) => {
+      r.second.restart.history.push(r.first.restart.deleted);
+    },
+  ],
+  [
+    "orphan",
+    (r) => {
+      r.outside[1].survivors = [9];
+    },
+  ],
+  [
+    "missing read reply",
+    (r) => {
+      r.second.wire.pop();
+    },
+  ],
+  [
+    "foreign reply",
+    (r) => {
+      r.second.wire.at(-1).owner = { hostEpoch: "foreign" };
+    },
+  ],
+  [
+    "changed read bytes",
+    (r) => {
+      r.second.wire.at(-1).message.result.value.data = "e30=";
+    },
+  ],
+  [
+    "uncertain delete",
+    (r) => {
+      r.first.wire[1].message.result = { ok: false, error: { code: "PLUGIN_E_STORAGE_IO" } };
+    },
+  ],
+  [
+    "automatic recording",
+    (r) => {
+      r.second.wire.push({ message: { method: "devices/recording/reserve" } });
+    },
+  ],
+])
+  test(`D7 restart rejects ${name}`, () => {
+    const r = restartFixture();
+    mutate(r);
+    assert.throws(() => verifyLabRestart(r));
+  });
+
+test("D7 restart seeds exact original envelopes once, refuses consumed source, and detects rewrite", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "d7-restart-"));
+  try {
+    await seedLabRestart(dir);
+    for (const [file, expected] of Object.entries(restartOriginals))
+      assert.equal(await readFile(path.join(dir, "sensor-lab", file), "utf8"), expected);
+    await assert.rejects(seedLabRestart(dir), /EEXIST/);
+    await writeFile(path.join(dir, "sensor-lab", Object.keys(restartOriginals)[0]), "{}");
+    await assert.rejects(snapshotLabRestart(dir), /Original rewritten/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("D7 snapshot reads real record .bin, import .json and deleted heads with strict bytes", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "d7-heads-"));
+  const namespace = path.join(dir, "plugins/persistence-v1/namespaces/lab");
+  const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
+  const write = async (relative, data) => {
+    const file = path.join(namespace, relative);
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, data);
+  };
+  const headFor = (kind, object, bytes, target) => ({
+    metadata: { kind },
+    target,
+    object,
+    byteLength: Buffer.byteLength(bytes),
+    sha256: hash(bytes),
+    receipt: { revision: "r_one" },
+  });
+  try {
+    await seedLabRestart(dir);
+    await write("identity.json", JSON.stringify({ sourceKey: "builtin:kobrixa.sensor-lab" }));
+    const documents = ["recordings", "calibrations"].flatMap((suffix) => [
+      { plan: { descriptorId: `kobrixa.sensor-lab.${suffix}-import` }, complete: true, items: [] },
+      { kind: "barrier", descriptorId: `kobrixa.sensor-lab.${suffix}-import`, state: "complete" },
+    ]);
+    const importHeads = [];
+    for (const [i, document] of documents.entries()) {
+      const bytes = JSON.stringify(document),
+        object = `r_import${i}.json`;
+      const head = headFor("import", object, bytes, { kind: "import", key: `import/${i}` });
+      importHeads.push(head);
+      await write(`imports/${i}.json`, JSON.stringify(head));
+      await write(`imports/objects/${object}`, bytes);
+    }
+    const payload = JSON.stringify({
+      schemaVersion: 2,
+      id: "model",
+      frameCount: 1,
+      frames: [{ values: [42] }],
+    });
+    const head = headFor("record", "r_saved.bin", payload, { kind: "record", id: "saved" });
+    await write("records/saved/head.json", JSON.stringify(head));
+    await write("records/saved/objects/r_saved.bin", payload);
+    await write(
+      "records/deleted/head.json",
+      JSON.stringify({
+        metadata: { kind: "record", deleted: true },
+        target: { kind: "record", id: "deleted" },
+        object: null,
+        byteLength: 0,
+        sha256: hash(""),
+      }),
+    );
+    const snapshot = await snapshotLabRestart(dir);
+    assert.equal(snapshot.imports.length, 4);
+    assert.equal(
+      snapshot.records.find((row) => row.head.target.id === "saved").document.frames[0].values[0],
+      42,
+    );
+    assert.equal(snapshot.records.find((row) => row.head.target.id === "deleted").document, null);
+    assert.equal(snapshot.hashes["records/saved/objects/r_saved.bin"], hash(payload));
+    for (const object of ["r_saved.json", "../r_saved.bin", "/r_saved.bin"]) {
+      await write("records/saved/head.json", JSON.stringify({ ...head, object }));
+      await assert.rejects(snapshotLabRestart(dir));
+    }
+    await write("records/saved/head.json", JSON.stringify(head));
+    await write("imports/0.json", JSON.stringify({ ...importHeads[0], object: "r_import0.bin" }));
+    await assert.rejects(snapshotLabRestart(dir));
+    await write("imports/0.json", JSON.stringify(importHeads[0]));
+    await write("records/saved/objects/r_saved.bin", payload.replace("42", "43"));
+    await assert.rejects(snapshotLabRestart(dir), /Expected values to be strictly equal/);
+    await write("records/saved/objects/r_saved.bin", "not json");
+    await write(
+      "records/saved/head.json",
+      JSON.stringify(headFor("record", "r_saved.bin", "not json", head.target)),
+    );
+    await assert.rejects(snapshotLabRestart(dir), SyntaxError);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

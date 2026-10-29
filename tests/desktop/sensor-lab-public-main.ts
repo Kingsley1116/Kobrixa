@@ -80,7 +80,13 @@ async function until<T>(
 export function runNativeLab(): void {
   assert.equal(app.isReady(), false, "Primary lock must precede Electron readiness");
   const root = app.commandLine.getSwitchValue("lab-root");
-  const output = path.join(root, "producer.json");
+  const restartPhase = app.commandLine.getSwitchValue("lab-restart-phase");
+  assert.ok(["", "1", "2"].includes(restartPhase));
+  const output = path.join(
+    root,
+    restartPhase ? `producer-restart-${restartPhase}.json` : "producer.json",
+  );
+  const restart: ObjectValue = { phase: restartPhase, mainPid: process.pid };
   assert.ok(path.isAbsolute(root));
   app.setPath("userData", path.join(root, "profile"));
   const wire: Wire[] = [],
@@ -307,6 +313,11 @@ export function runNativeLab(): void {
           },
           { worker: { entry: path.join(root, "persistence-worker.cjs"), control() {} } },
         );
+        if (restartPhase)
+          Object.assign(restart, {
+            profile: await realpath(app.getPath("userData")),
+            scope: scope(),
+          });
         const live = composition,
           ui = desktopUi(live),
           handles = desktopFoundationTestHandles(live);
@@ -419,20 +430,21 @@ export function runNativeLab(): void {
         window.webContents.on("render-process-gone", (_, detail) =>
           failures.push(`Renderer exited early: ${JSON.stringify(detail)}`),
         );
-        accepted(
-          await live.foundation.broker.request(
-            authority.core(sender, "recovery"),
-            "devices/connect",
-            {
-              target: {
-                kind: "wifi-address",
-                providerId: "kobrixa.device-ev3",
-                address: "127.0.0.1",
+        if (restartPhase !== "2")
+          accepted(
+            await live.foundation.broker.request(
+              authority.core(sender, "recovery"),
+              "devices/connect",
+              {
+                target: {
+                  kind: "wifi-address",
+                  providerId: "kobrixa.device-ev3",
+                  address: "127.0.0.1",
+                },
               },
-            },
-            new AbortController().signal,
-          ),
-        );
+              new AbortController().signal,
+            ),
+          );
         await window.loadFile(path.join(root, "renderer/index.html"));
         window.show();
         window.focus();
@@ -519,10 +531,119 @@ export function runNativeLab(): void {
             `successful ${name}`,
           );
         };
+        const latestPage = (dataset: string) =>
+          ipc
+            .filter(
+              (row) =>
+                row.channel === "plugins:ui:data-read" &&
+                object((row.args as unknown[])[0]).dataset === dataset &&
+                object(row.result ?? {}).ok === true,
+            )
+            .at(-1);
+        const rowAction = async (dataset: string, id: string, label: string, name: string) => {
+          const before = sequence;
+          await click(
+            `[data-ui-node="${dataset}"] button[aria-label=${JSON.stringify(`${label}: ${id}`)}]`,
+          );
+          if (label === "Delete") await click('[role="dialog"] button', "Delete");
+          await until(
+            () =>
+              exchanges("command/invoke", "host-plugin").some(
+                (row) =>
+                  row.request.sequence > before &&
+                  object(row.request.message.params).command === `kobrixa.sensor-lab.${name}` &&
+                  success(row),
+              ),
+            name,
+          );
+          if (label === "Delete") {
+            // Confirmation dispatches a command; the generic modal stays open until Close.
+            // A successful plugin reply is not evidence that its backdrop is gone.
+            await click('[role="dialog"] button', "Close");
+            await until(
+              () => js(`!document.querySelector('[role="dialog"]')`),
+              `${name} dialog closed`,
+            );
+          }
+        };
+        const finalRecords = () =>
+          exchanges("storage/commitWrite")
+            .filter(success)
+            .map((row) => object(accepted(row.response.message.result).record))
+            .filter((meta) => meta.kind === "sensor-lab.recording" && meta.checkpoint === "final");
+        const restartCleanup = async () => {
+          await live.dispose();
+          await until(() => exits.length === launches.length, "restart SDK exit");
+          cleanup = {
+            bridge: diagnosticsFor(ui.bridge).snapshot(),
+            worker: workerDiagnostics(handles.backend).snapshot(),
+            workers: persistenceWorkerCount(handles.backend),
+          };
+          assert.equal(cleanup.workers, 0);
+          for (const counters of [cleanup.bridge, cleanup.worker])
+            for (const value of Object.values(object(counters))) assert.equal(value, 0);
+          assert.deepEqual(failures, []);
+          stage = "complete";
+        };
         stage = "open";
         await click('.plugin-tools-pane [role="tabpanel"] > button', "Open");
         await until(() => state(), "original panel snapshot");
         checkpoints.open = { at: wall(), state: state(), owner };
+        if (restartPhase) {
+          stage = `restart-${restartPhase}-history`;
+          await command("refresh");
+          const listed = (kind: string) =>
+            exchanges("storage/list")
+              .filter((row) => success(row) && object(row.request.message.params).kind === kind)
+              .at(-1);
+          const history = await until(() => listed("sensor-lab.recording"), "restart history list");
+          const profiles = await until(
+            () => listed("sensor-lab.calibration"),
+            "restart profile list",
+          );
+          const entries = accepted(history.response.message.result).entries as ObjectValue[];
+          assert.equal(entries.length, 1);
+          restart.history = entries;
+          restart.profiles = accepted(profiles.response.message.result).entries;
+          if (restartPhase === "1") {
+            assert.equal(entries[0]!.label, "D7 original import");
+            restart.deleted = entries[0];
+            await rowAction("history", String(entries[0]!.id), "Delete", "delete-history");
+            await command("refresh");
+            assert.deepEqual(
+              accepted(listed("sensor-lab.recording")!.response.message.result).entries,
+              [],
+            );
+          } else {
+            const id = String(entries[0]!.id);
+            await rowAction("history", id, "View", "view-record");
+            const opened = await until(
+              () =>
+                exchanges("storage/openRead").find(
+                  (row) => success(row) && object(row.request.message.params).id === id,
+                ),
+              "restart durable read token",
+            );
+            const token = accepted(opened.response.message.result).read;
+            await until(
+              () =>
+                exchanges("storage/readChunk").some(
+                  (row) =>
+                    success(row) &&
+                    object(row.request.message.params).read === token &&
+                    accepted(row.response.message.result).eof === true,
+                ),
+              "restart durable payload EOF",
+            );
+            await until(
+              () => js<boolean>('!!document.querySelector("[data-ui-node=chart0] svg")'),
+              "restart history chart",
+            );
+            restart.state = state();
+            await restartCleanup();
+            return;
+          }
+        }
         stage = "source-selection";
         await command("select-current");
         const beforeSelect = sequence;
@@ -649,6 +770,12 @@ export function runNativeLab(): void {
           state: state(),
           text: await js<string>("document.body.innerText"),
         };
+        if (restartPhase === "1") {
+          restart.saved = finalRecords()[0];
+          assert.ok(restart.saved);
+          await restartCleanup();
+          return;
+        }
         // Selected D7 parity only; all mutations remain trusted generic UI actions.
         const steps: ObjectValue[] = [];
         const parity: ObjectValue = { steps };
@@ -661,46 +788,6 @@ export function runNativeLab(): void {
           row.finishedAt = wall();
           row.after = sequence;
         };
-        const latestPage = (dataset: string) =>
-          ipc
-            .filter(
-              (row) =>
-                row.channel === "plugins:ui:data-read" &&
-                object((row.args as unknown[])[0]).dataset === dataset &&
-                object(row.result ?? {}).ok === true,
-            )
-            .at(-1);
-        const rowAction = async (dataset: string, id: string, label: string, name: string) => {
-          const before = sequence;
-          await click(
-            `[data-ui-node="${dataset}"] button[aria-label=${JSON.stringify(`${label}: ${id}`)}]`,
-          );
-          if (label === "Delete") await click('[role="dialog"] button', "Delete");
-          await until(
-            () =>
-              exchanges("command/invoke", "host-plugin").some(
-                (row) =>
-                  row.request.sequence > before &&
-                  object(row.request.message.params).command === `kobrixa.sensor-lab.${name}` &&
-                  success(row),
-              ),
-            name,
-          );
-          if (label === "Delete") {
-            // Confirmation dispatches a command; the generic modal stays open until Close.
-            // A successful plugin reply is not evidence that its backdrop is gone.
-            await click('[role="dialog"] button', "Close");
-            await until(
-              () => js(`!document.querySelector('[role="dialog"]')`),
-              `${name} dialog closed`,
-            );
-          }
-        };
-        const finalRecords = () =>
-          exchanges("storage/commitWrite")
-            .filter(success)
-            .map((row) => object(accepted(row.response.message.result).record))
-            .filter((meta) => meta.kind === "sensor-lab.recording" && meta.checkpoint === "final");
         const first = finalRecords()[0]!;
         assert.ok(first);
         parity.first = first;
@@ -835,6 +922,7 @@ export function runNativeLab(): void {
           JSON.stringify(
             {
               schema: 1,
+              ...(restartPhase ? { restart } : {}),
               stage,
               versions: process.versions,
               wire,
@@ -854,8 +942,13 @@ export function runNativeLab(): void {
             2,
           ),
         );
-        if (win && !win.isDestroyed()) win.destroy();
-        app.exit(stage === "complete" ? 0 : 1);
+        if (restartPhase && stage === "complete") {
+          win?.webContents.session.flushStorageData();
+          app.quit();
+        } else {
+          if (win && !win.isDestroyed()) win.destroy();
+          app.exit(stage === "complete" ? 0 : 1);
+        }
       }
     },
     () => {
