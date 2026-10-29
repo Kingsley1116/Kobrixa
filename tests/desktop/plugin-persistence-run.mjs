@@ -1,4 +1,12 @@
-import { assertImportSlice, originalFiles, IMPORT_SLICE } from "./plugin-persistence-import.ts";
+import {
+  assertImportSlice,
+  assertImportTrials,
+  assertImportPause,
+  originalFiles,
+  IMPORT_SLICE,
+  IMPORT_PUBLICATION_TRIALS,
+  IMPORT_SIX,
+} from "./plugin-persistence-import.ts";
 import { approvedHost, pins, versions } from "./plugin-persistence-compatibility.ts";
 import { assertOptionalPhaseReceipt } from "./plugin-persistence-optional-off.ts";
 import assert from "node:assert/strict";
@@ -467,8 +475,7 @@ export async function superviseCase(
           assert.equal(paused.candidate.pid, child.pid);
           const o = paused.candidate.evidence.importSlice;
           assert.equal(o.phase, "kill");
-          assert.equal(o.slice, IMPORT_SLICE);
-          assert.ok(o.trace.some((t) => t.point === "after-publish" && t.ticket === o.ticket.id));
+          assertImportPause(o, config.importTrial ?? IMPORT_SLICE);
           expectedImportKill = true;
           await terminateOwned();
         }
@@ -736,10 +743,9 @@ export function selectFoundationCases({ referencesOnly = false, caseId } = {}) {
 }
 export async function runFoundationEvidence({ referencesOnly = false, caseId, importTrial } = {}) {
   if (caseId === "import-restart")
-    assert.equal(
-      importTrial,
-      IMPORT_SLICE,
-      "RF5 incomplete: use explicit --import-trial head-before-receipt",
+    assert.ok(
+      [IMPORT_SLICE, IMPORT_SIX, ...IMPORT_PUBLICATION_TRIALS].includes(importTrial),
+      "RF5 incomplete: use explicit --import-trial=publication-six (or one named publication trial)",
     );
   const selectedCases = selectFoundationCases({ referencesOnly, caseId });
   const handoffs = await preflight();
@@ -990,45 +996,57 @@ app.exit(code);
       filesystem: handoffs.filesystem,
     };
     if (id === "import-restart") {
-      const phases = [];
-      const killedReceipt = path.join(directory, "import-kill.receipt.json");
-      for (const importPhase of ["kill", "reopen1", "reopen2", "reopen3", "deleted"]) {
-        const phase = {
-          ...config,
-          importPhase,
-          runId: randomUUID(),
-          killedReceipt,
-          importWire: path.join(directory, `import-${importPhase}.wire.jsonl`),
-          report: path.join(directory, `import-${importPhase}.candidate.json`),
-        };
-        const file = path.join(directory, `import-${importPhase}.json`);
-        await writeFile(file, JSON.stringify(phase), { flag: "wx" });
-        const receipt = await launchCase(electron, entry, file, phase.report, phase);
-        await writeFile(
-          path.join(directory, `import-${importPhase}.receipt.json`),
-          JSON.stringify(receipt),
-          { flag: "wx" },
+      const trials = [];
+      for (const trial of importTrial === IMPORT_SIX ? IMPORT_PUBLICATION_TRIALS : [importTrial]) {
+        const trialProfile = await mkdtemp(path.join(directory, `import-${trial}-`));
+        const trialProfileId = randomUUID();
+        const phases = [];
+        const prefix = `import-${trial}`;
+        const killedReceipt = path.join(directory, `${prefix}-kill.receipt.json`);
+        for (const importPhase of ["kill", "reopen1", "reopen2", "reopen3", "deleted"]) {
+          const phase = {
+            ...config,
+            importPhase,
+            importTrial: trial,
+            profile: trialProfile,
+            profileId: trialProfileId,
+            runId: randomUUID(),
+            killedReceipt,
+            importWire: path.join(directory, `${prefix}-${importPhase}.wire.jsonl`),
+            report: path.join(directory, `${prefix}-${importPhase}.candidate.json`),
+          };
+          const file = path.join(directory, `${prefix}-${importPhase}.json`);
+          await writeFile(file, JSON.stringify(phase), { flag: "wx" });
+          const receipt = await launchCase(electron, entry, file, phase.report, phase);
+          await writeFile(
+            path.join(directory, `${prefix}-${importPhase}.receipt.json`),
+            JSON.stringify(receipt),
+            { flag: "wx" },
+          );
+          phases.push(receipt);
+        }
+        assertImportSlice(phases);
+        assert.deepEqual(
+          await originalFiles(syntheticRoot),
+          phases[0].evidence.importSlice.originals,
         );
-        phases.push(receipt);
+        trials.push({ trial, reports: phases });
       }
-      assertImportSlice(phases);
-      assert.deepEqual(
-        await originalFiles(syntheticRoot),
-        phases[0].evidence.importSlice.originals,
-      );
+      assertImportTrials(trials, importTrial);
       const partial = {
         format: 1,
         level: "real-process",
         status: "partial-import-trial",
         rf5Complete: false,
-        trial: IMPORT_SLICE,
-        reports: phases,
+        trial: importTrial,
+        trials,
+        ...(trials.length === 1 ? { reports: trials[0].reports } : {}),
         artifact: entry,
         bundleSha256,
         artifactSha256,
         pending: [
           "18-boundary RF5 matrix",
-          "six full-load publication trials",
+          ...(importTrial === IMPORT_SIX ? [] : ["remaining full-load publication trials"]),
           "pre-raw absence and fresh-window capture",
           "settings stale-nonce proof",
           "full foundation import-restart case",

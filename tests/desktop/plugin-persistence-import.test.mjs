@@ -524,3 +524,288 @@ test("slice observer preserves and forwards ok:false without decoding value; ora
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+import {
+  armImportTrial,
+  assertImportPause,
+  IMPORT_PUBLICATION_TRIALS,
+} from "./plugin-persistence-import.ts";
+for (const cut of IMPORT_PUBLICATION_TRIALS)
+  test(`slice forwarding cut ${cut} retains exact journal meaning`, async () => {
+    const owner = {
+      sourceKey: "builtin:test.synthetic",
+      pluginId: "test.synthetic",
+      hostEpoch: randomUUID(),
+    };
+    const items = Array.from({ length: 50 }, (_, i) => {
+      const ticket = { id: `attempt-${i}`, owner, target: { kind: "record", id: `record-${i}` } };
+      return {
+        key: `key-${i}`,
+        state: cut.endsWith("marker") ? "committed" : "pending",
+        receipt: cut.endsWith("marker") ? { commitId: ticket.id } : null,
+        publicationTicket: ticket,
+        skipReason: null,
+      };
+    });
+    let journal = {
+      plan: {
+        id: "import/test",
+        items: items.map((i) => ({
+          key: i.key,
+          ticket: { ...i.publicationTicket, id: `planned-${i.key}` },
+        })),
+      },
+      items,
+      complete: false,
+    };
+    let armed,
+      reached,
+      recordCalls = 0,
+      completeCalls = 0,
+      publishCalls = 0;
+    const trace = [],
+      stop = new Error("external-supervisor-stop");
+    const fault = {
+      arm(point) {
+        armed = point;
+      },
+      reached() {
+        return new Promise((resolve) => {
+          reached = resolve;
+        });
+      },
+      trace() {
+        return trace;
+      },
+    };
+    const at = (point, ticket) => {
+      assert.equal(armed, point);
+      trace.push({ point, ticket, time: 1 });
+      reached();
+      return new Promise(() => {});
+    };
+    const backend = {
+      engine: {
+        async publish(ticket) {
+          publishCalls++;
+          return at(cut, ticket.id);
+        },
+      },
+      imports: {
+        async admit() {
+          return items[0].publicationTicket;
+        },
+        async load() {
+          return structuredClone(journal);
+        },
+        async record(o, id, evidence) {
+          assert.deepEqual(o, owner);
+          assert.equal(id, journal.plan.id);
+          recordCalls++;
+          journal.items[0] = structuredClone(evidence);
+        },
+        async complete(o, id) {
+          assert.deepEqual(o, owner);
+          assert.equal(id, journal.plan.id);
+          completeCalls++;
+          if (cut === "before-marker") return at("import-marker", null);
+          journal.complete = true;
+        },
+      },
+    };
+    let paused;
+    armImportTrial(backend, fault, cut, async (evidence) => {
+      paused = { slice: cut, phase: "kill", ...evidence };
+      assertImportPause(paused);
+      throw stop;
+    });
+    const ticket = await backend.imports.admit(owner, journal.plan.id, items[0].key);
+    const evidence = { ...items[0], state: "committed", receipt: { commitId: ticket.id } };
+    await assert.rejects(
+      cut.endsWith("publish")
+        ? backend.engine.publish(ticket)
+        : cut.endsWith("receipt")
+          ? backend.imports.record(owner, journal.plan.id, evidence)
+          : backend.imports.complete(owner, journal.plan.id),
+      (e) => e === stop,
+    );
+    assert.ok(paused);
+    assert.equal(publishCalls, cut.endsWith("publish") ? 1 : 0);
+    assert.equal(recordCalls, cut === "after-receipt" ? 1 : 0);
+    assert.equal(completeCalls, cut.endsWith("marker") ? 1 : 0);
+    assert.throws(() => assertImportPause({ ...paused, cut: "forged" }));
+    if (cut.endsWith("marker")) {
+      const bad = structuredClone(paused);
+      bad.journal.complete = !bad.journal.complete;
+      assert.throws(() => assertImportPause(bad));
+      if (cut === "before-marker") {
+        const badTrace = structuredClone(paused);
+        badTrace.trace[0].ticket = ticket.id;
+        assert.throws(() => assertImportPause(badTrace));
+      }
+    }
+    if (cut.endsWith("receipt")) {
+      const bad = structuredClone(paused);
+      bad.evidence.receipt.commitId = "other";
+      assert.throws(() => assertImportPause(bad));
+    }
+  });
+
+function shortSliceOracle() {
+  const o = sliceOracle();
+  const first = o.wire.findIndex((r) => r.chunk);
+  const reply = o.wire[first],
+    request = o.wire[first - 1];
+  const extraRequest = structuredClone(request),
+    extraReply = structuredClone(reply);
+  // Split one real protocol-sized slot into 100000 + 162144 bytes.
+  reply.chunk.bytes = 100000;
+  reply.message.result.value.nextOffset = 100000;
+  extraRequest.message.id = "short-extra";
+  extraRequest.message.params.offset = 100000;
+  extraReply.params.offset = 100000;
+  extraReply.message.id = extraReply.requestId = "short-extra";
+  extraReply.message.result.value.offset = 100000;
+  extraReply.chunk.offset = 100000;
+  extraReply.chunk.bytes = 162144;
+  o.wire.splice(first + 1, 0, extraRequest, extraReply);
+  o.wire.forEach((r, i) => {
+    r.sequence = i + 1;
+  });
+  return o;
+}
+test("slice oracle accepts contiguous short reads without requiring 32 chunks", () =>
+  assertImportPhase(shortSliceOracle()));
+for (const [name, mutate] of Object.entries({
+  gap: (r) => {
+    r.chunk.offset++;
+  },
+  overlap: (r) => {
+    r.params.offset--;
+  },
+  zero: (r) => {
+    r.chunk.bytes = 0;
+  },
+  oversize: (r) => {
+    r.chunk.bytes = 262145;
+  },
+  "early eof": (r) => {
+    r.chunk.eof = true;
+    r.message.result.value.eof = true;
+  },
+  "wrong next offset": (r) => {
+    r.message.result.value.nextOffset++;
+  },
+}))
+  test(`slice short reads reject ${name}`, () => {
+    const o = shortSliceOracle();
+    mutate(o.wire.find((r) => r.chunk));
+    assert.throws(() => assertImportPhase(o));
+  });
+test("slice short reads reject missing final EOF and wrong full-stream SHA", () => {
+  for (const field of ["eof", "recordSha256"]) {
+    const o = shortSliceOracle(),
+      last = o.wire.filter((r) => r.chunk).at(-1);
+    last.chunk[field] = field === "eof" ? false : "b".repeat(64);
+    assert.throws(() => assertImportPhase(o));
+  }
+});
+test("slice observer hashes an actual irregular short-read stream independently of segmentation", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "import-short-"));
+  try {
+    let receive;
+    const observer = importObserver(path.join(dir, "wire.jsonl"));
+    const child = observer.attach(
+      { sourceKey: "builtin:test.synthetic" },
+      {
+        onMessage(fn) {
+          receive = fn;
+          return () => {};
+        },
+        onExit() {
+          return () => {};
+        },
+        send() {},
+      },
+    );
+    const call = (id, method, params, value) => {
+      receive(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
+      child.send(JSON.stringify({ jsonrpc: "2.0", id, result: { ok: true, value } }));
+    };
+    call(1, "storage/openRead", {}, { read: "read", record: { id: "record" } });
+    const bytes = Buffer.from("actual bytes with irregular chunks"),
+      lengths = [1, 7, bytes.length - 8];
+    let offset = 0;
+    for (const [i, length] of lengths.entries()) {
+      const data = bytes.subarray(offset, offset + length);
+      call(
+        i + 2,
+        "storage/readChunk",
+        { read: "read", offset, maxBytes: 262144 },
+        {
+          offset,
+          nextOffset: offset + length,
+          data: data.toString("base64"),
+          eof: i === lengths.length - 1,
+        },
+      );
+      offset += length;
+    }
+    const chunks = observer.rows.filter((r) => r.chunk);
+    assert.deepEqual(
+      chunks.map((r) => r.chunk.bytes),
+      lengths,
+    );
+    assert.equal(
+      chunks.at(-1).chunk.recordSha256,
+      createHash("sha256").update(bytes).digest("hex"),
+    );
+    assert.ok(chunks.every((r) => r.message.result.value.data === undefined));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+import { assertImportTrials, IMPORT_SIX } from "./plugin-persistence-import.ts";
+test("slice six-trial oracle rejects missing/reordered cuts and profile reuse", () => {
+  assert.throws(() => assertImportTrials([], IMPORT_SIX));
+  const trials = IMPORT_PUBLICATION_TRIALS.map((trial) => ({
+    trial,
+    reports: [{ profileId: "reused" }],
+  }));
+  assert.throws(() => assertImportTrials(trials, IMPORT_SIX));
+  assert.throws(() => assertImportTrials(trials.slice().reverse(), IMPORT_SIX));
+});
+for (const cut of IMPORT_PUBLICATION_TRIALS)
+  test(`slice reopen oracle checks ${cut} durable state`, () => {
+    const o = sliceOracle();
+    o.slice = o.cut = cut;
+    o.journalKey = "first";
+    const committed = ["after-receipt", "before-marker", "after-marker"].includes(cut);
+    o.journalAtReopen = {
+      plan: { items: Array.from({ length: 50 }, (_, i) => ({ key: i ? String(i) : "first" })) },
+      items: Array.from({ length: 50 }, (_, i) => ({
+        key: i ? String(i) : "first",
+        state: committed ? "committed" : "pending",
+      })),
+      complete: cut === "after-marker",
+    };
+    if (cut === "before-publish") o.reconciliation.disposition = "not-committed";
+    assertImportPhase(o);
+    const bad = structuredClone(o);
+    bad.journalAtReopen.complete = !bad.journalAtReopen.complete;
+    assert.throws(() => assertImportPhase(bad));
+    const wrong = structuredClone(o);
+    wrong.journalAtReopen.items[0].state = committed ? "pending" : "committed";
+    assert.throws(() => assertImportPhase(wrong));
+    if (cut === "before-publish") {
+      const next = structuredClone(o);
+      next.phase = "reopen2";
+      next.journalAtReopen.complete = true;
+      next.journalAtReopen.items.forEach((i) => {
+        i.state = "committed";
+      });
+      next.reconciliation.disposition = "committed";
+      assertImportPhase(next);
+    }
+  });

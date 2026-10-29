@@ -4,6 +4,7 @@ import { createReadStream, appendFileSync } from "node:fs";
 import { readdir, readFile, writeFile, rename } from "node:fs/promises";
 import path from "node:path";
 import type { PluginProcess } from "@kobrixa/plugin-runtime";
+import type { PersistenceBackend } from "../../apps/desktop/src/main/plugins/persistence/engine-port.js";
 import type { ResourceOwner } from "@kobrixa/plugin-protocol";
 import type { DesktopMainComposition } from "../../apps/desktop/src/main/device-broker/lifecycle-coordinator.js";
 import type { PersistenceFaultControl } from "../../apps/desktop/src/main/plugins/persistence/worker.js";
@@ -11,6 +12,208 @@ import type { PersistenceFaultControl } from "../../apps/desktop/src/main/plugin
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type Wire = Record<string, any>;
 export const IMPORT_SLICE = "head-before-receipt";
+export const IMPORT_PUBLICATION_TRIALS = [
+  "before-publish",
+  "after-publish",
+  "before-receipt",
+  "after-receipt",
+  "before-marker",
+  "after-marker",
+] as const;
+export const IMPORT_SIX = "publication-six";
+export function importCut(trial: string) {
+  if (trial === IMPORT_SLICE) return "after-publish";
+  assert.ok(
+    (IMPORT_PUBLICATION_TRIALS as readonly string[]).includes(trial),
+    "Unknown import publication trial",
+  );
+  return trial;
+}
+
+/** Specific forwarding probes; never replace the worker, its result, or publication. */
+export function armImportTrial(
+  backend: PersistenceBackend,
+  fault: PersistenceFaultControl,
+  trial: string,
+  pause: (evidence: Wire) => Promise<never>,
+) {
+  const cut = importCut(trial);
+  const publish = backend.engine.publish.bind(backend.engine);
+  const admit = backend.imports.admit.bind(backend.imports);
+  const record = backend.imports.record.bind(backend.imports);
+  const complete = backend.imports.complete.bind(backend.imports);
+  let selected = false;
+  let context: Wire | undefined;
+  backend.imports.admit = async (owner, planId, key) => {
+    const ticket = await admit(owner, planId, key);
+    if (!selected) {
+      const saved = await backend.imports.load(owner, planId);
+      assert.ok(saved);
+      const item = saved.plan.items.find((i) => i.key === key);
+      assert.ok(item);
+      context = { owner, planId, key, ticket, plannedTicket: item.ticket, journal: saved };
+    }
+    return ticket;
+  };
+  backend.engine.publish = async (ticket) => {
+    if (
+      !selected &&
+      ticket.target.kind === "record" &&
+      ["before-publish", "after-publish"].includes(cut)
+    ) {
+      selected = true;
+      assert.equal(context?.ticket.id, ticket.id);
+      const point = cut as "before-publish" | "after-publish";
+      const start = fault.trace().length;
+      fault.arm(point, "pause");
+      const reached = fault.reached(point);
+      const operation = publish(ticket);
+      // Observe rejection immediately, including failure before the selected hook.
+      await Promise.race([
+        reached,
+        operation.then(() => {
+          throw Error("Publication missed fault");
+        }),
+      ]);
+      return pause({
+        ...context,
+        method: "engine.publish",
+        cut,
+        trace: fault.trace().slice(start),
+      });
+    }
+    return publish(ticket);
+  };
+  backend.imports.record = async (owner, planId, evidence) => {
+    if (
+      !selected &&
+      evidence.state === "committed" &&
+      ["before-receipt", "after-receipt"].includes(cut)
+    ) {
+      selected = true;
+      assert.ok(evidence.publicationTicket);
+      assert.equal(evidence.receipt?.commitId, evidence.publicationTicket.id);
+      const before = await backend.imports.load(owner, planId);
+      assert.ok(before);
+      const item = before.plan.items.find((i) => i.key === evidence.key);
+      assert.ok(item);
+      if (cut === "after-receipt") await record(owner, planId, evidence);
+      const journal = await backend.imports.load(owner, planId);
+      return pause({
+        cut,
+        method: "imports.record",
+        owner,
+        planId,
+        key: evidence.key,
+        ticket: evidence.publicationTicket,
+        plannedTicket: item.ticket,
+        evidence,
+        before,
+        journal,
+        returned: cut === "after-receipt",
+        trace: [],
+      });
+    }
+    return record(owner, planId, evidence);
+  };
+  backend.imports.complete = async (owner, planId) => {
+    if (!selected && ["before-marker", "after-marker"].includes(cut)) {
+      selected = true;
+      const before = await backend.imports.load(owner, planId);
+      assert.ok(before && !before.complete);
+      assert.equal(before.items.length, 50);
+      assert.ok(
+        before.items.every((i) => i.state === "committed" && i.receipt && i.publicationTicket),
+      );
+      const first = before.items[0]!;
+      const item = before.plan.items.find((i) => i.key === first.key)!;
+      const evidence: Wire = {
+        cut,
+        method: "imports.complete",
+        owner,
+        planId,
+        ticket: first.publicationTicket,
+        plannedTicket: item.ticket,
+        key: first.key,
+        before,
+      };
+      if (cut === "before-marker") {
+        const start = fault.trace().length;
+        fault.arm("import-marker", "pause");
+        const reached = fault.reached("import-marker");
+        const operation = complete(owner, planId);
+        await Promise.race([
+          reached,
+          operation.then(() => {
+            throw Error("Completion missed fault");
+          }),
+        ]);
+        return pause({
+          ...evidence,
+          journal: before,
+          returned: false,
+          trace: fault.trace().slice(start),
+        });
+      }
+      await complete(owner, planId);
+      return pause({
+        ...evidence,
+        journal: await backend.imports.load(owner, planId),
+        returned: true,
+        trace: [],
+      });
+    }
+    return complete(owner, planId);
+  };
+}
+
+export function assertImportPause(o: Wire, trial = o.slice) {
+  const cut = importCut(trial);
+  assert.equal(o.slice, trial);
+  // Old first-slice receipts had no semantic-cut field.
+  if (o.cut === undefined && trial === IMPORT_SLICE) {
+    assert.ok(o.trace.some((t: Wire) => t.point === "after-publish" && t.ticket === o.ticket.id));
+    return;
+  }
+  assert.equal(o.cut, cut);
+  assert.equal(o.owner.sourceKey, "builtin:test.synthetic");
+  assert.deepEqual(o.ticket.owner, o.owner);
+  assert.equal(o.journal.plan.id, o.planId);
+  assert.equal(o.journal.plan.items.length, 50);
+  const item = o.journal.items.find((i: Wire) => i.key === o.key);
+  assert.ok(item);
+  assert.deepEqual(o.journal.plan.items.find((i: Wire) => i.key === o.key).ticket, o.plannedTicket);
+  assert.deepEqual(item.publicationTicket, o.ticket);
+  if (cut.endsWith("publish")) {
+    assert.equal(o.method, "engine.publish");
+    assert.equal(item.state, "pending");
+    assert.equal(o.journal.complete, false);
+    assert.ok(o.trace.some((t: Wire) => t.point === cut && t.ticket === o.ticket.id));
+  } else if (cut.endsWith("receipt")) {
+    assert.equal(o.method, "imports.record");
+    assert.equal(o.before.items.find((i: Wire) => i.key === o.key).state, "pending");
+    assert.equal(o.evidence.receipt.commitId, o.ticket.id);
+    assert.equal(o.evidence.state, "committed");
+    assert.equal(o.returned, cut === "after-receipt");
+    assert.equal(item.state, o.returned ? "committed" : "pending");
+    if (o.returned) assert.deepEqual(item, o.evidence);
+    assert.equal(o.journal.complete, false);
+  } else {
+    assert.equal(o.method, "imports.complete");
+    assert.equal(o.before.complete, false);
+    assert.equal(o.journal.items.length, 50);
+    assert.ok(
+      o.journal.items.every(
+        (i: Wire) => i.state === "committed" && i.receipt?.commitId === i.publicationTicket?.id,
+      ),
+    );
+    assert.equal(o.returned, cut === "after-marker");
+    assert.equal(o.journal.complete, o.returned);
+    if (!o.returned)
+      assert.ok(o.trace.some((t: Wire) => t.point === "import-marker" && t.ticket === null));
+  }
+}
+
 export async function originalFiles(root: string) {
   const rows = [];
   for (const name of (await readdir(root)).sort()) {
@@ -134,11 +337,12 @@ export async function produceImportSlice(input: {
   const { config, live, fault, observer } = input,
     handles = desktopFoundationTestHandles(live),
     backend = handles.backend;
-  assert.equal(config.importTrial, IMPORT_SLICE);
+  const cut = importCut(config.importTrial);
   assert.ok(["kill", "reopen1", "reopen2", "reopen3", "deleted"].includes(config.importPhase));
   const originals = await originalFiles(config.syntheticRoot);
   const base: Wire = {
-    slice: IMPORT_SLICE,
+    slice: config.importTrial,
+    cut,
     phase: config.importPhase,
     rf5Complete: false,
     originals,
@@ -148,44 +352,56 @@ export async function produceImportSlice(input: {
   };
   const imports = live.plugins.persistence170!.imports;
   if (config.importPhase === "kill") {
-    const publish = backend.engine.publish.bind(backend.engine);
-    let selected: Wire | undefined;
-    backend.engine.publish = async (ticket) => {
-      if (!selected && ticket.target.kind === "record") {
-        selected = structuredClone(ticket);
-        fault.arm("after-publish", "pause");
-        const reached = fault.reached("after-publish");
-        const operation = publish(ticket);
-        await reached;
-        const trace = fault.trace().filter((t) => t.ticket === ticket.id);
-        assert.ok(trace.some((t) => t.point === "after-publish"));
-        await publishImportPause(config.report, {
-          format: 1,
-          level: "real-process",
-          case: "import-restart",
-          status: "paused-import",
-          runId: config.runId,
-          profileId: config.profileId,
-          pid: process.pid,
-          hostEpoch: handles.profile.hostEpoch,
-          commit: config.commit,
-          bundleSha256: config.bundleSha256,
-          artifactSha256: config.artifactSha256,
-          evidence: { importSlice: { ...base, ticket, trace } },
-          pausedAt: Date.now(),
-        });
-        return operation;
-      }
-      return publish(ticket);
-    };
+    armImportTrial(backend, fault, config.importTrial, async (evidence) => {
+      const observed = { ...base, ...evidence };
+      assertImportPause(observed);
+      await publishImportPause(config.report, {
+        format: 1,
+        level: "real-process",
+        case: "import-restart",
+        status: "paused-import",
+        runId: config.runId,
+        profileId: config.profileId,
+        pid: process.pid,
+        hostEpoch: handles.profile.hostEpoch,
+        commit: config.commit,
+        bundleSha256: config.bundleSha256,
+        artifactSha256: config.artifactSha256,
+        evidence: { importSlice: observed },
+        pausedAt: Date.now(),
+      });
+      // Only the external supervisor terminates this host. Do not advance the operation.
+      return new Promise<never>(() => {});
+    });
     await imports.run(syntheticImportDescriptor, new AbortController().signal);
     throw Error("Selected import boundary did not pause");
   }
   const killed = JSON.parse(await readFile(config.killedReceipt, "utf8"));
   assert.deepEqual(originals, killed.evidence.importSlice.originals);
   // Reconcile the exact old ticket before the coordinator can dispatch new work.
-  const reconciliation = await backend.imports.reconcile(killed.evidence.importSlice.ticket);
-  assert.equal(reconciliation.disposition, "committed");
+  const prior = killed.evidence.importSlice;
+  assertImportPause(prior, config.importTrial);
+  // A pre-publication attempt is replaced on resume. Its planned ticket remains
+  // the stable journal anchor; do not pretend the retired attempt was committed.
+  const anchor =
+    cut === "before-publish" && config.importPhase !== "reopen1"
+      ? prior.plannedTicket
+      : prior.ticket;
+  const reconciliation = await backend.imports.reconcile(anchor);
+  assert.equal(
+    reconciliation.disposition,
+    cut === "before-publish" && config.importPhase === "reopen1" ? "not-committed" : "committed",
+  );
+  const journalAtReopen = await backend.imports.load(prior.owner, prior.planId);
+  assert.ok(journalAtReopen);
+  if (config.importPhase === "reopen1") {
+    assert.equal(journalAtReopen.complete, cut === "after-marker");
+    const item = journalAtReopen.items.find((i) => i.key === prior.key)!;
+    assert.equal(
+      item.state,
+      ["after-receipt", "before-marker", "after-marker"].includes(cut) ? "committed" : "pending",
+    );
+  } else assert.equal(journalAtReopen.complete, true);
   let progress: Awaited<ReturnType<typeof imports.run>> | undefined;
   for (let attempt = 0; attempt < 10; attempt++) {
     progress = await imports.run(syntheticImportDescriptor, new AbortController().signal);
@@ -208,7 +424,14 @@ export async function produceImportSlice(input: {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   const observed = captureImportObservation(
-    { ...base, reconciliation, progress },
+    {
+      ...base,
+      reconciliation,
+      reconciliationTicket: anchor,
+      journalAtReopen,
+      journalKey: prior.key,
+      progress,
+    },
     observer,
     fault.trace(),
   );
@@ -232,7 +455,7 @@ export async function publishImportPause(file: string, report: Wire) {
 }
 
 export function assertImportPhase(o: Wire) {
-  assert.equal(o.slice, IMPORT_SLICE);
+  const cut = importCut(o.slice);
   assert.equal(o.rf5Complete, false);
   assert.ok(["reopen1", "reopen2", "reopen3", "deleted"].includes(o.phase));
   assert.equal(o.originals.length, 50);
@@ -240,8 +463,25 @@ export function assertImportPhase(o: Wire) {
     o.originals.reduce((n: number, r: Wire) => n + r.bytes, 0),
     419430400,
   );
-  assert.equal(o.reconciliation.disposition, "committed");
+  assert.equal(
+    o.reconciliation.disposition,
+    cut === "before-publish" && o.phase === "reopen1" ? "not-committed" : "committed",
+  );
   assert.equal(o.progress.state, "complete");
+  if (o.cut !== undefined) {
+    assert.equal(o.cut, cut);
+    assert.equal(o.journalAtReopen.plan.items.length, 50);
+    assert.equal(o.journalAtReopen.items.length, 50);
+    assert.equal(o.journalAtReopen.complete, o.phase !== "reopen1" || cut === "after-marker");
+    const first = o.journalAtReopen.items.find((i: Wire) => i.key === o.journalKey);
+    assert.ok(first);
+    assert.equal(
+      first.state,
+      o.phase !== "reopen1" || ["after-receipt", "before-marker", "after-marker"].includes(cut)
+        ? "committed"
+        : "pending",
+    );
+  }
   const boots = o.processes.filter((p: Wire) => p.kind === "boot");
   assert.equal(boots.length, 1);
   assert.ok(boots[0].pid > 0 && boots[0].pid !== o.pid);
@@ -289,14 +529,29 @@ export function assertImportPhase(o: Wire) {
     );
     assert.equal(closed.length, 1);
     const chunks = replies.filter((r: Wire) => r.chunk?.recordId === record.id);
-    assert.equal(chunks.length, 32);
+    assert.ok(chunks.length > 0);
+    let offset = 0;
     chunks.forEach((r: Wire, index: number) => {
       assert.equal(r.params.read, opened[0].message.result.value.read);
       assert.ok(opened[0].sequence < r.sequence && r.sequence < closed[0].sequence);
-      assert.equal(r.chunk.sha256, source.chunks[index].sha256);
-      assert.equal(r.chunk.offset, index * 262144);
-      assert.equal(r.chunk.bytes, 262144);
-      assert.equal(r.chunk.eof, index === 31);
+      const aligned = source.chunks.find(
+        (c: Wire) => c.offset === r.chunk.offset && c.bytes === r.chunk.bytes,
+      );
+      if (aligned) assert.equal(r.chunk.sha256, aligned.sha256);
+      assert.match(r.chunk.sha256, /^[0-9a-f]{64}$/);
+      assert.equal(r.chunk.offset, offset);
+      assert.equal(r.params.offset, offset);
+      assert.ok(Number.isSafeInteger(r.chunk.bytes) && r.chunk.bytes > 0);
+      assert.ok(
+        Number.isSafeInteger(r.params.maxBytes) &&
+          r.params.maxBytes > 0 &&
+          r.params.maxBytes <= 262144,
+      );
+      assert.ok(r.chunk.bytes <= r.params.maxBytes);
+      offset += r.chunk.bytes;
+      assert.ok(offset <= record.byteLength);
+      assert.equal(r.chunk.eof, offset === record.byteLength);
+      assert.equal(r.chunk.eof, index === chunks.length - 1);
       assert.equal(r.requestId, r.message.id);
       assert.equal(r.message.result.value.data, undefined);
       assert.equal(r.message.result.value.offset, r.chunk.offset);
@@ -313,7 +568,8 @@ export function assertImportPhase(o: Wire) {
       assert.ok(request.sequence < r.sequence);
       assert.deepEqual(request.owner, r.owner);
     });
-    assert.equal(chunks.at(-1).chunk.recordSha256, record.sha256);
+    assert.equal(offset, record.byteLength);
+    assert.equal(chunks.at(-1).chunk.recordSha256, source.sha256);
   }
   if (o.phase === "reopen3") {
     const deleted = replies.filter((r: Wire) => r.method === "storage/delete");
@@ -332,12 +588,7 @@ export function assertImportSlice(receipts: Wire[]) {
   const killed = receipts[0]!;
   assert.equal(killed.signal, "SIGKILL");
   assert.equal(killed.status, "killed-import");
-  assert.ok(
-    killed.evidence.importSlice.trace.some(
-      (r: Wire) =>
-        r.point === "after-publish" && r.ticket === killed.evidence.importSlice.ticket.id,
-    ),
-  );
+  assertImportPause(killed.evidence.importSlice);
   assert.equal(new Set(receipts.map((r) => r.hostEpoch)).size, 5);
   assert.equal(new Set(receipts.map((r) => r.pid)).size, 5);
   let expected: Wire[] | undefined, deletedId: string | undefined;
@@ -350,7 +601,17 @@ export function assertImportSlice(receipts: Wire[]) {
       assert.equal(receipt[key], killed[key]);
     const o = receipt.evidence.importSlice;
     assertImportPhase(o);
-    assert.equal(o.reconciliation.receipt.commitId, killed.evidence.importSlice.ticket.id);
+    assert.equal(o.slice, killed.evidence.importSlice.slice);
+    if (o.cut !== undefined) {
+      assert.deepEqual(o.journalAtReopen.plan, killed.evidence.importSlice.journal.plan);
+      assert.equal(o.journalKey, killed.evidence.importSlice.key);
+    }
+    if (importCut(o.slice) !== "before-publish")
+      assert.equal(o.reconciliation.receipt.commitId, killed.evidence.importSlice.ticket.id);
+    else if (o.phase !== "reopen1") {
+      assert.deepEqual(o.reconciliationTicket, killed.evidence.importSlice.plannedTicket);
+      assert.notEqual(o.reconciliation.receipt.commitId, killed.evidence.importSlice.ticket.id);
+    }
     const boot = o.processes.find((p: Wire) => p.kind === "boot");
     assert.ok(
       receipt.observedDescendants.some((p: Wire) => p.pid === boot.pid),
@@ -373,4 +634,21 @@ export function assertImportSlice(receipts: Wire[]) {
       deletedId = replies.find((r: Wire) => r.method === "storage/delete").params.id;
   }
   assert.ok(deletedId);
+}
+
+/** Six publication cuts are still only a subset of the 18-boundary matrix. */
+export function assertImportTrials(trials: Wire[], selection: string) {
+  const required = selection === IMPORT_SIX ? [...IMPORT_PUBLICATION_TRIALS] : [selection];
+  assert.deepEqual(
+    trials.map((t) => t.trial),
+    required,
+  );
+  assert.equal(new Set(trials.map((t) => t.reports[0]?.profileId)).size, required.length);
+  const all = trials.flatMap((t) => t.reports);
+  assert.equal(new Set(all.map((r) => r.pid)).size, required.length * 5);
+  assert.equal(new Set(all.map((r) => r.hostEpoch)).size, required.length * 5);
+  for (const t of trials) {
+    assert.equal(t.reports[0].evidence.importSlice.slice, t.trial);
+    assertImportSlice(t.reports);
+  }
 }
