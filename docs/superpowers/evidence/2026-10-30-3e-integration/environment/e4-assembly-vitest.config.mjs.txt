@@ -1,0 +1,12 @@
+import base from '/private/tmp/e3-gate-vitest.config.mjs';
+const r='/Users/kingsley/.codex/worktrees/plugin-3e/Kobrixa';
+export default {...base, resolve:{alias:[
+{find:/^vite$/,replacement:"/private/tmp/e4-build-wrapper.mjs"},
+{find:/^@kobrixa\/basic-plus\/language$/,replacement:r+'/frontends/basic-plus/src/language.ts'},
+{find:/^@kobrixa\/basic-plus$/,replacement:r+'/frontends/basic-plus/src/index.ts'},
+{find:/^@kobrixa\/compiler$/,replacement:r+'/packages/compiler/src/index.ts'},
+{find:/^@kobrixa\/ir$/,replacement:r+'/packages/ir/src/index.ts'},
+{find:/^@kobrixa\/backend-ev3$/,replacement:r+'/packages/backend-ev3/src/index.ts'},
+{find:/^@kobrixa\/device$/,replacement:r+'/packages/device/src/index.ts'},
+{find:/^micromatch$/,replacement:"/Users/kingsley/.codex/worktrees/plugin-3d/Kobrixa/node_modules/micromatch/index.js"},
+...base.resolve.alias]}, test:{...base.test,include:['apps/desktop/src/main/plugins/builtin.test.ts','apps/desktop/src/main/packaging.test.ts']}};

@@ -21,7 +21,17 @@
       "build": "actual production EV3 entry/resource index in temporary output"
     },
     "mainImportTypes": "pass",
-    "rendererImportTypes": "pass"
+    "rendererImportTypes": "pass",
+    "fullDesktop": {
+      "passed": 4053,
+      "skipped": 22,
+      "passedFiles": 317,
+      "skippedFiles": 1,
+      "configuration": "environment/e6-full-desktop.config.mjs.txt",
+      "productCommit": "dfae915",
+      "runCommit": "b0a21a3",
+      "note": "Full single run after temporary dependency/source resolution fixes; preceding failures retained in controller tmp, no product changes to repair environment."
+    }
   },
   "sourceSha256": {
     "apps/desktop/packaging.ts": "ae30ec44586f02df618620b3da0856e8ab084e0a2ba4a69020ed3b19d5934252",
@@ -66,7 +76,14 @@
     "p08-review.md": "0e43a39dfde367ad502085895a8d206572b9125f86df1d4a97481f3a6367f1e0",
     "core-tests.log": "981b3a327af2267287da74643b4e63dd95884d9241eed3491d474cdbc545559e",
     "feature-tests.log": "1040521f20e9e6adc2ce025fdad5591a3d58c39b421b993cd13f5cf81535934f",
-    "assembly-tests.log": "f12939b4978284c968babb3a075c2bb99e8b2e2ab3d64d7dd1308215de648f00"
+    "assembly-tests.log": "f12939b4978284c968babb3a075c2bb99e8b2e2ab3d64d7dd1308215de648f00",
+    "full-desktop.log": "aa433d6053488dd36a423afb06d18f7e230dc7cdbaa283829a65454f1a69a692",
+    "environment/e6-esbuild-wrapper.mjs.txt": "a547678bd523b2f54cbde007ea0732eb5640bbca6e7e883f3408b176b1565f61",
+    "environment/e4-assembly-vitest.config.mjs.txt": "23d6dc300def60d56eebb6f5cc45c23f6f85a7b2bcb5a77aa99c2e4f12388f7a",
+    "environment/e6-full-desktop.config.mjs.txt": "1aba8661fbb90783f3cd0680ab12f3bc602d502dba4dcd139441877c64475834",
+    "environment/e4-build-wrapper.mjs.txt": "a0dfb7a74a70a868585770eb2fd28789cdf2b3fe3a8ff14bbb6e1ad71b8bc1dd",
+    "environment/e3-vite-source-wrapper.mjs.txt": "d002acd3b9972516e74b0e47c1b051ddbe8ad65f6b9c4326c4e1cd0e242bd816",
+    "environment/e3-gate-vitest.config.mjs.txt": "4c3047cf6d301de42916cc204b8b145f781fd3c1f294f40636df7e3d8f280278"
   },
   "notEstablished": [
     "Electron native device feature product path",
