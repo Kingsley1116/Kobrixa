@@ -118,12 +118,110 @@ export async function verifyLeaf(directory, pluginId) {
   return index;
 }
 
+// Serialized into the already-paused main inspector frame; no product code changes.
+export function observeInstalledWorkers(threads, emit, clock) {
+  const original = threads.Worker;
+  const timeline = [];
+  let ordinal = 0;
+  const describe = (value, seen = new Set()) => {
+    if (value === undefined) return { type: "undefined" };
+    if (value === null || ["string", "number", "boolean"].includes(typeof value)) return value;
+    if (typeof value !== "object") return { type: typeof value };
+    if (seen.has(value)) return { type: "reference" };
+    seen.add(value);
+    if (value instanceof URL) return { type: "URL", href: value.href };
+    if (
+      ArrayBuffer.isView(value) ||
+      value instanceof ArrayBuffer ||
+      value instanceof SharedArrayBuffer
+    )
+      return { type: value.constructor.name, byteLength: value.byteLength };
+    if (Array.isArray(value)) return value.map((item) => describe(item, seen));
+    const result = {};
+    for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(value))) {
+      result[key] = Object.hasOwn(descriptor, "value")
+        ? describe(descriptor.value, seen)
+        : { type: "accessor" };
+    }
+    return result;
+  };
+  const record = (worker, event, detail = {}) => {
+    // Diagnostics must never replace a constructor/event error or break delivery.
+    try {
+      const row = { sequence: timeline.length, worker, event, ...clock(), ...detail };
+      timeline.push(row);
+      emit(row);
+    } catch {
+      /* Keep the original Worker behavior. */
+    }
+  };
+  const observed = new Proxy(original, {
+    construct(target, args, newTarget) {
+      const worker = ordinal++;
+      record(worker, "construct", { arguments: describe(args) });
+      let child;
+      try {
+        child = Reflect.construct(target, args, newTarget === observed ? target : newTarget);
+      } catch (error) {
+        record(worker, "constructor-error", { error: describe(error) });
+        throw error;
+      }
+      record(worker, "constructed", { threadId: child.threadId });
+      const originalEmit = child.emit;
+      const ownEmit = Object.getOwnPropertyDescriptor(child, "emit");
+      function observedEmit(event, ...values) {
+        if (event === "online") record(worker, "online", { threadId: child.threadId });
+        if (event === "error") record(worker, "error", { error: describe(values[0]) });
+        if (event === "exit") record(worker, "exit", { code: values[0] });
+        if (event === "message" && values[0]?.kind === "ready")
+          record(worker, "message", { message: describe(values[0]) });
+        try {
+          return Reflect.apply(originalEmit, this, [event, ...values]);
+        } finally {
+          if (event === "exit" && child.emit === observedEmit) {
+            if (ownEmit) Object.defineProperty(child, "emit", ownEmit);
+            else delete child.emit;
+          }
+        }
+      }
+      // No event listeners, refs, timers, or ports are added to the worker.
+      child.emit = observedEmit;
+      return child;
+    },
+  });
+  threads.Worker = observed;
+  if (threads.Worker !== observed) throw Error("Cannot observe original Worker");
+  return {
+    timeline,
+    restore() {
+      if (threads.Worker !== observed) throw Error("Worker observer was replaced");
+      threads.Worker = original;
+      return threads.Worker === original;
+    },
+  };
+}
+
+export function collectWorkerTimeline(output, prior = []) {
+  const rows = new Map(prior.map((row) => [row.sequence, row]));
+  for (const line of output.split("\n")) {
+    if (!line.startsWith("KOBRIXA_INSTALLED_WORKER ")) continue;
+    const row = JSON.parse(line.slice("KOBRIXA_INSTALLED_WORKER ".length));
+    assert.ok(Number.isSafeInteger(row.sequence) && row.sequence >= 0);
+    if (rows.has(row.sequence)) assert.deepEqual(rows.get(row.sequence), row);
+    rows.set(row.sequence, row);
+  }
+  return [...rows.values()].sort((a, b) => a.sequence - b.sequence);
+}
+
 // Inspector-only observation: call and return the original fork without changing
 // arguments, services, channels, or product policy. Exit records survive app quit.
-const installProbe = `(() => {
+export const installProbe = `(() => {
   const require = process.getBuiltinModule('module').createRequire(process.execPath);
   const electron = require('electron');
   if (!electron.utilityProcess?.fork || !electron.app) throw Error('Main Electron probe unavailable');
+  const workers = (${observeInstalledWorkers.toString()})(require('node:worker_threads'),
+    row => process.stderr.write('\\nKOBRIXA_INSTALLED_WORKER ' + JSON.stringify(row) + '\\n'),
+    () => ({ at: Date.now(), monotonicMs: performance.now(), execArgv: [...process.execArgv], resourcesPath: process.resourcesPath }));
   const original = electron.utilityProcess.fork;
   const records = [];
   const emit = record => process.stderr.write('\\nKOBRIXA_INSTALLED_PROBE ' + JSON.stringify(record) + '\\n');
@@ -137,10 +235,10 @@ const installProbe = `(() => {
   }
   electron.utilityProcess.fork = observed;
   if (electron.utilityProcess.fork !== observed) throw Error('Cannot observe original utilityProcess.fork');
-  globalThis.__installedProbe = { electron, require, records, restore() {
+  globalThis.__installedProbe = { electron, require, records, workers, restore() {
     if (electron.utilityProcess.fork !== observed) throw Error('fork observer was replaced');
     electron.utilityProcess.fork = original;
-    return electron.utilityProcess.fork === original;
+    return workers.restore() && electron.utilityProcess.fork === original;
   }};
   return true;
 })()`;
@@ -184,6 +282,7 @@ async function launchProduct(config, receipt, check) {
   receipt.profile = profile;
   receipt.forcedCleanup = false;
   receipt.forks = [];
+  receipt.workerTimeline = [];
   const sample = async () => {
     if (!child?.pid) return [];
     return descendants(await processTable(), child.pid, known);
@@ -357,6 +456,7 @@ async function launchProduct(config, receipt, check) {
     receipt.beforeQuit = await state();
     requiredCompilers(receipt.beforeQuit);
     receipt.forks = await forks();
+    receipt.workerTimeline = await main.js("__installedProbe.workers.timeline");
     receipt.probeRestored = await main.js("__installedProbe.restore()");
     assert.equal(receipt.probeRestored, true);
     // Dispatch quit synchronously and let the official shutdown coordination run.
@@ -375,6 +475,7 @@ async function launchProduct(config, receipt, check) {
     if (!receipt.probeRestored && main && receipt.originalForkObserved) {
       try {
         receipt.forks = await main.js("__installedProbe.records");
+        receipt.workerTimeline = await main.js("__installedProbe.workers.timeline");
         receipt.probeRestored = await main.js("__installedProbe.restore()");
       } catch (error) {
         cleanupErrors.push(errorRecord(error));
@@ -469,6 +570,11 @@ async function launchProduct(config, receipt, check) {
           cleanupErrors.push(errorRecord(error));
         }
       }
+    try {
+      receipt.workerTimeline = collectWorkerTimeline(output, receipt.workerTimeline);
+    } catch (error) {
+      cleanupErrors.push(errorRecord(error));
+    }
     try {
       await writeFile(path.join(directory, `${receipt.name}.log`), output);
     } catch (error) {

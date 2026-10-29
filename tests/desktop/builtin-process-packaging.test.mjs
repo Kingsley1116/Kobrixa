@@ -4,7 +4,14 @@ import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { verifyLeaf } from "./builtin-process-installed.mjs";
+import { EventEmitter } from "node:events";
+import { runInNewContext } from "node:vm";
+import {
+  observeInstalledWorkers,
+  collectWorkerTimeline,
+  installProbe,
+  verifyLeaf,
+} from "./builtin-process-installed.mjs";
 
 async function makeLeaf(directory) {
   const manifest = {
@@ -292,3 +299,135 @@ test(
   async () =>
     assertProductReceipt(JSON.parse(await readFile(process.env.KOBRIXA_BUILTIN_REPORT, "utf8"))),
 );
+
+test("installed Worker observer preserves constructor arguments, prototype, and event delivery", () => {
+  const calls = [],
+    emitted = [];
+  class Worker extends EventEmitter {
+    constructor(...args) {
+      super();
+      calls.push({ args, instance: this, newTarget: new.target });
+      this.threadId = 17;
+    }
+  }
+  const threads = { Worker };
+  const probe = observeInstalledWorkers(
+    threads,
+    (row) => emitted.push(row),
+    () => ({ at: 10, monotonicMs: 2 }),
+  );
+  const options = { workerData: { held: new SharedArrayBuffer(16) }, transferList: [] };
+  const child = new threads.Worker("/installed/persistence-worker.cjs", options);
+  assert.equal(calls[0].args[1], options);
+  assert.equal(calls[0].instance, child);
+  assert.equal(calls[0].newTarget, Worker);
+  assert.equal(Object.getPrototypeOf(child), Worker.prototype);
+  assert.equal(threads.Worker.prototype, Worker.prototype);
+  assert.deepEqual(child.eventNames(), []);
+  const ready = { version: 1, kind: "ready", recovery: "ready" };
+  let received;
+  child.on("message", (value) => {
+    received = value;
+  });
+  child.emit("online");
+  assert.equal(child.emit("message", ready), true);
+  assert.equal(received, ready);
+  const error = Object.assign(new Error("startup failure"), { code: "EACCES" });
+  assert.throws(
+    () => child.emit("error", error),
+    (value) => value === error,
+  );
+  assert.equal(child.emit("exit", 1), false);
+  assert.equal(Object.hasOwn(child, "emit"), false);
+  assert.deepEqual(
+    emitted.map((row) => row.event),
+    ["construct", "constructed", "online", "message", "error", "exit"],
+  );
+  assert.equal(emitted[0].arguments[0], "/installed/persistence-worker.cjs");
+  assert.deepEqual(emitted[0].arguments[1], {
+    workerData: { held: { type: "SharedArrayBuffer", byteLength: 16 } },
+    transferList: [],
+  });
+  assert.deepEqual(emitted[3].message, ready);
+  assert.equal(emitted[4].error.code, "EACCES");
+  assert.equal(emitted[5].code, 1);
+  assert.equal(probe.restore(), true);
+  assert.equal(threads.Worker, Worker);
+});
+
+test("installed Worker observer preserves subclasses and original constructor failures", () => {
+  const originalError = new Error("bad entry");
+  class Worker extends EventEmitter {
+    constructor(entry) {
+      super();
+      if (entry === "bad") throw originalError;
+    }
+  }
+  const threads = { Worker };
+  const probe = observeInstalledWorkers(
+    threads,
+    () => {
+      throw Error("diagnostic sink failed");
+    },
+    () => ({ at: 1 }),
+  );
+  class Derived extends threads.Worker {}
+  const child = new Derived("ok");
+  assert.equal(Object.getPrototypeOf(child), Derived.prototype);
+  assert.throws(
+    () => new threads.Worker("bad"),
+    (value) => value === originalError,
+  );
+  assert.equal(probe.timeline.at(-1).event, "constructor-error");
+  probe.restore();
+});
+
+test("serialized inspector probe persists early exit even when main cannot be queried", () => {
+  class Worker extends EventEmitter {
+    constructor() {
+      super();
+      this.threadId = 9;
+    }
+  }
+  const threads = { Worker };
+  const originalFork = () => new EventEmitter();
+  const electron = { app: {}, utilityProcess: { fork: originalFork } };
+  let output = "";
+  const context = {
+    URL,
+    performance,
+    SharedArrayBuffer,
+    process: {
+      execPath: "/installed/kobrixa",
+      execArgv: ["--inspect-brk=127.0.0.1:0"],
+      resourcesPath: "/installed/resources",
+      getBuiltinModule: () => ({
+        createRequire: () => (name) => (name === "electron" ? electron : threads),
+      }),
+      stderr: {
+        write: (text) => {
+          output += text;
+        },
+      },
+    },
+  };
+  assert.equal(runInNewContext(installProbe, context), true);
+  const child = new threads.Worker("/installed/worker.cjs", { workerData: {} });
+  child.emit("online");
+  child.emit("exit", 0);
+  // No inspector snapshot available: reconstruct solely from emitted diagnostics.
+  const rows = collectWorkerTimeline(output);
+  assert.deepEqual(
+    rows.map((row) => row.event),
+    ["construct", "constructed", "online", "exit"],
+  );
+  assert.equal(rows.at(-1).code, 0);
+  assert.deepEqual(rows[0].execArgv, ["--inspect-brk=127.0.0.1:0"]);
+  assert.equal(rows[0].resourcesPath, "/installed/resources");
+  assert.deepEqual(collectWorkerTimeline(output, rows.slice(0, 2)), rows);
+  assert.equal(context.__installedProbe.restore(), true);
+  assert.equal(threads.Worker, Worker);
+  assert.equal(electron.utilityProcess.fork, originalFork);
+  assert.throws(() => collectWorkerTimeline("KOBRIXA_INSTALLED_WORKER {bad}"));
+  assert.throws(() => collectWorkerTimeline(output, [{ ...rows[0], worker: 999 }]));
+});
