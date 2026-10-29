@@ -454,6 +454,9 @@ async function launchProduct(config, receipt, check) {
     await main.send("Debugger.resume");
     await main.send("Debugger.disable");
     receipt.mainDebuggerDisabledAfterProbe = true;
+    main.close();
+    main = undefined;
+    receipt.mainInspectorDetachedDuringStartup = true;
     const browserUrl = await alive(
       () => output.match(/DevTools listening on (ws:\/\/[^\s]+)/)?.[1],
     );
@@ -466,6 +469,8 @@ async function launchProduct(config, receipt, check) {
         (page) => page.type === "page" && page.url.startsWith("file:"),
       );
     });
+    main = await connect(mainUrl);
+    clients.push(main);
     renderer = await connect(target.webSocketDebuggerUrl);
     clients.push(renderer);
     await alive(() =>
