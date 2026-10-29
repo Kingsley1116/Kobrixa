@@ -103,3 +103,46 @@ export async function copyInstalledLeaf(artifact, destination, pluginId) {
   assert.deepEqual(await verifyLeaf(destination, pluginId), index);
   return index;
 }
+
+// Observe the unchanged synchronous fork call, then restore before awaiting launch.
+// The transport promise never depends on the slower OS/evidence observation.
+export function observeUtilityLaunch({ utility, plugin, launch, observe, timeoutMs = 5500 }) {
+  const original = utility.fork,
+    captured = [];
+  let started;
+  try {
+    utility.fork = function (...args) {
+      const child = Reflect.apply(original, this, args);
+      if (args[0] === plugin.entry)
+        captured.push({ child, entry: args[0], serviceName: args[2]?.serviceName });
+      return child;
+    };
+    started = Promise.resolve(launch());
+  } catch (error) {
+    started = Promise.reject(error);
+  } finally {
+    utility.fork = original;
+  }
+  const observation = started.then(async () => {
+    assert.equal(captured.length, 1, "Exactly one original utility fork required");
+    const { child, entry, serviceName } = captured[0];
+    assert.equal(serviceName, "Kobrixa plugin " + plugin.id);
+    assert.ok(Number.isSafeInteger(child.pid) && child.pid > 0, "Original utility PID missing");
+    const identity = { pid: child.pid, entry, serviceName, method: "utilityProcess.fork" };
+    let timer;
+    try {
+      return await Promise.race([
+        Promise.resolve().then(() => observe(identity)),
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () => reject(Error("Installed process observation timed out")),
+            timeoutMs,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+  return { started, observation };
+}

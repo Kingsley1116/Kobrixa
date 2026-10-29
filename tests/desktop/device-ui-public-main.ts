@@ -4,8 +4,9 @@ import { realpath, writeFile, readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { connect } from "node:net";
 import { execFile } from "node:child_process";
+import { observeUtilityLaunch } from "./sensor-lab-installed-artifacts.mjs";
 import { processTable } from "./builtin-installed-client.mjs";
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, utilityProcess } from "electron";
 import type { PluginLauncher } from "@kobrixa/plugin-runtime";
 import { pluginManifestSchema, type ResourceOwner } from "@kobrixa/plugin-protocol";
 import {
@@ -100,6 +101,7 @@ export function runNativeDevice(): void {
   const logs: string[] = [],
     failures: string[] = [];
   const checkpoints: ObjectValue = {};
+  const processObservations: Promise<void>[] = [];
   const navigation: ObjectValue[] = [];
   const inputs: ObjectValue[] = [],
     legacyAudit: ObjectValue[] = [];
@@ -126,33 +128,46 @@ export function runNativeDevice(): void {
       const originalOwner = owner;
       const row: ObjectValue = { owner: originalOwner, at: wall() };
       launches.push(row);
-      const child = await launch(plugin);
-      // Observe the original Electron utility process, never alter the leaf or launcher.
-      try {
-        if (installed) {
-          row.entry = plugin.entry;
-          row.sha256 = createHash("sha256")
-            .update(await readFile(plugin.entry))
-            .digest("hex");
-          const metric = await until(() => {
-            const rows = app
-              .getAppMetrics()
-              .filter((p) => p.serviceName === `Kobrixa plugin ${plugin.id}`);
-            assert.ok(rows.length <= 1, "Ambiguous utility process");
-            return rows[0];
-          }, "original utility process metric");
-          const os = (await processTable()).find(
-            (p) => p.pid === metric.pid && p.ppid === process.pid,
-          );
-          assert.ok(os, "Missing actual utility OS child");
-          row.pid = os.pid;
-          row.parentPid = os.ppid;
-          row.processObservation = { ...os, serviceName: metric.serviceName };
-        }
-      } catch (error) {
-        child.kill();
-        throw error;
-      }
+      let started: ReturnType<PluginLauncher>;
+      if (installed) {
+        const observed = observeUtilityLaunch({
+          utility: utilityProcess,
+          plugin,
+          launch: () => launch(plugin),
+          observe: async (identity: {
+            pid: number;
+            entry: string;
+            serviceName: string;
+            method: string;
+          }) => {
+            row.entry = identity.entry;
+            row.sha256 = createHash("sha256")
+              .update(await readFile(identity.entry))
+              .digest("hex");
+            const os = (await processTable()).find(
+              (p) => p.pid === identity.pid && p.ppid === process.pid,
+            );
+            assert.ok(os, "Missing original utility OS child");
+            row.pid = identity.pid;
+            row.parentPid = os.ppid;
+            row.processObservation = {
+              ...os,
+              serviceName: identity.serviceName,
+              method: identity.method,
+              forkPid: identity.pid,
+            };
+          },
+        });
+        started = observed.started;
+        // Observe errors immediately, retain their reason, and check before acceptance.
+        processObservations.push(
+          observed.observation.catch((error: unknown) => {
+            row.observationError = String(error);
+            failures.push(`installed process identity: ${String(error)}`);
+          }),
+        );
+      } else started = launch(plugin);
+      const child = await started;
       const processHandle = child;
       processHandle.onExit((exit) => exits.push({ owner: originalOwner, at: wall(), exit }));
       const record = (direction: Wire["direction"], text: string) =>
@@ -687,7 +702,12 @@ export function runNativeDevice(): void {
         assert.equal(migrated.state, "ready");
         if (migrated.state === "ready") assert.equal(migrated.values.skipUnchangedAssets, true);
         await click(".plugin-tools-pane button", "Open");
-        await until(() => state()?.data.presentation, "original feature presentation");
+        await until(() => {
+          assert.deepEqual(failures, [], "Installed process observation failed");
+          return state()?.data.presentation;
+        }, "original feature presentation");
+        await Promise.all(processObservations);
+        assert.deepEqual(failures, [], "Installed process observation failed");
         await pause(250);
         checkpoint("opened");
         assert.equal(exchanges("devices/connect").length, 0);
@@ -830,6 +850,7 @@ export function runNativeDevice(): void {
         if (composition)
           await composition.dispose().catch((error) => failures.push(`cleanup: ${String(error)}`));
       } finally {
+        await Promise.all(processObservations);
         for (const unsubscribe of off.reverse()) unsubscribe();
         for (const name of ipcNames) ipcMain.removeHandler(name);
         await writeFile(

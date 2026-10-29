@@ -56,6 +56,8 @@ export function verifyDeviceReceipt(report, { installed = false } = {}) {
     assert.ok(Number.isSafeInteger(launch.pid) && launch.pid > 0);
     assert.equal(launch.parentPid, report.mainPid);
     assert.equal(observed.pid, launch.pid);
+    assert.equal(observed.forkPid, launch.pid);
+    assert.equal(observed.method, "utilityProcess.fork");
     assert.equal(observed.ppid, report.mainPid);
     assert.equal(observed.serviceName, "Kobrixa plugin " + pluginId);
     assert.equal(report.exits[0].exit.code, 0);

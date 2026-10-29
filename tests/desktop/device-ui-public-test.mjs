@@ -2,6 +2,7 @@ import test from "node:test";
 import { readFile, mkdtemp, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 import { verifyDeviceReceipt, legacyDevice } from "./device-ui-public-run.mjs";
@@ -345,7 +346,7 @@ for (const address of ["192.0.2.9", " 192.0.2.9 "])
     const deps = process.env.KOBRIXA_E6_DEPS ?? root;
     const require = createRequire(path.join(deps, "package.json"));
     const { build } = createRequire(require.resolve("vitest/package.json"))("esbuild");
-    const directory = await mkdtemp("/private/tmp/e6-freeze-test-");
+    const directory = await mkdtemp(path.join(tmpdir(), "e6-freeze-test-"));
     try {
       const output = path.join(directory, "actual.mjs");
       await build({
@@ -485,7 +486,13 @@ function installedPidFixture() {
   Object.assign(r.launches[0], {
     pid: 2,
     parentPid: 1,
-    processObservation: { pid: 2, ppid: 1, serviceName: "Kobrixa plugin kobrixa.device-ev3" },
+    processObservation: {
+      pid: 2,
+      ppid: 1,
+      forkPid: 2,
+      method: "utilityProcess.fork",
+      serviceName: "Kobrixa plugin kobrixa.device-ev3",
+    },
   });
   r.exits[0].exit = { code: 0 };
   return r;
@@ -495,6 +502,8 @@ test("installed receipt accepts OS-observed utility PID without instrumented lea
 for (const [name, mutate] of [
   ["foreign parent", (r) => (r.launches[0].processObservation.ppid = 99)],
   ["wrong service", (r) => (r.launches[0].processObservation.serviceName = "other")],
+  ["unobserved fork", (r) => delete r.launches[0].processObservation.forkPid],
+  ["wrong observation method", (r) => (r.launches[0].processObservation.method = "invented")],
   ["invented pid", (r) => (r.launches[0].pid = 3)],
   ["nonzero exit", (r) => (r.exits[0].exit.code = 1)],
 ])
@@ -503,3 +512,83 @@ for (const [name, mutate] of [
     mutate(r);
     assert.throws(() => verifyDeviceReceipt(r, { installed: true }));
   });
+
+test("installed PID observation never delays transport and restores exact fork", async () => {
+  const { observeUtilityLaunch } = await import("./sensor-lab-installed-artifacts.mjs");
+  const nativeChild = { pid: 42 };
+  const calls = [];
+  const original = function (...args) {
+    calls.push(args);
+    assert.equal(this, utility);
+    return nativeChild;
+  };
+  const utility = { fork: original };
+  const plugin = { entry: "/leaf/main.cjs", id: "kobrixa.device-ev3" };
+  let resolveProbe,
+    listener = false;
+  const transport = {
+    onMessage() {
+      listener = true;
+    },
+  };
+  const observed = observeUtilityLaunch({
+    utility,
+    plugin,
+    launch: () => {
+      const actual = utility.fork(plugin.entry, [], { serviceName: "Kobrixa plugin " + plugin.id });
+      assert.equal(actual, nativeChild);
+      return Promise.resolve(transport);
+    },
+    observe: async (identity) => {
+      assert.equal(identity.pid, 42);
+      await new Promise((r) => (resolveProbe = r));
+      assert.equal(listener, true);
+      return identity;
+    },
+    timeoutMs: 1000,
+  });
+  assert.equal(utility.fork, original);
+  (await observed.started).onMessage();
+  await Promise.resolve();
+  resolveProbe();
+  assert.equal((await observed.observation).pid, 42);
+  assert.equal(calls.length, 1);
+});
+test("installed PID observation timeout is explicit without blocking transport", async () => {
+  const { observeUtilityLaunch } = await import("./sensor-lab-installed-artifacts.mjs");
+  const utility = { fork: () => ({ pid: 42 }) };
+  const plugin = { entry: "/leaf/main.cjs", id: "kobrixa.device-ev3" };
+  const observed = observeUtilityLaunch({
+    utility,
+    plugin,
+    launch: () => {
+      utility.fork(plugin.entry, [], { serviceName: "Kobrixa plugin " + plugin.id });
+      return Promise.resolve("transport");
+    },
+    observe: () => new Promise(() => {}),
+    timeoutMs: 10,
+  });
+  const failure = assert.rejects(observed.observation, /Installed process observation timed out/);
+  assert.equal(await observed.started, "transport");
+  await failure;
+});
+test("installed PID observation rejects missing or foreign service without inventing identity", async () => {
+  const { observeUtilityLaunch } = await import("./sensor-lab-installed-artifacts.mjs");
+  for (const serviceName of [undefined, "wrong"]) {
+    const utility = { fork: () => ({ pid: 42 }) },
+      original = utility.fork,
+      plugin = { entry: "/leaf/main.cjs", id: "kobrixa.device-ev3" };
+    const observed = observeUtilityLaunch({
+      utility,
+      plugin,
+      launch: () => {
+        if (serviceName) utility.fork(plugin.entry, [], { serviceName });
+        return Promise.resolve("transport");
+      },
+      observe: () => assert.fail(),
+    });
+    await assert.rejects(observed.observation);
+    assert.equal(await observed.started, "transport");
+    assert.equal(utility.fork, original);
+  }
+});
