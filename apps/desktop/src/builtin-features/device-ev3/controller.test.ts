@@ -375,3 +375,88 @@ it.each(["empty", "initializing", "unknown", "error", "ready"] as const)(
     ).toEqual(["input:0", state === "unknown" ? "unsupported" : state, "Unavailable", "", "0"]);
   },
 );
+
+it.each([
+  [{}, false, false],
+  [{ transport: "wifi" }, true, false],
+  [{ "wifi-address": "192.168.1.2" }, true, false],
+  [{ port: "input:1" }, false, true],
+] as const)(
+  "E6: form delta %j invalidates only its dependent rows",
+  async (change, connectionChanged, portChanged) => {
+    let deliver!: (event: unknown) => void;
+    const binding = {
+      contributionId: "kobrixa.device-ev3.panel",
+      kind: "panel",
+      panelInstance: "panel",
+      generation: 1,
+      uiResourceGeneration: 1,
+      hostEpoch: "host",
+      processEpoch: "process",
+    };
+    const original = { transport: "usb", "wifi-address": "", port: "input:0" };
+    const controller = new DeviceController({
+      ui: {
+        subscribe: async (_p: unknown, listener: (event: unknown) => void) => {
+          deliver = listener;
+          return ok({ subscriptionId: "ui" });
+        },
+        state: async () => ok({ visible: false, form: original, formRevision: 1 }),
+      },
+    } as never) as unknown as {
+      instances(b: unknown[]): Promise<void>;
+      views: Map<
+        string,
+        {
+          form: Record<string, unknown>;
+          formRevision: number;
+          candidates: unknown[];
+          modes: unknown[];
+          revisions: Map<string, number>;
+          discovery: number;
+          modeIdentity: string;
+          dirty: boolean;
+          phase: string;
+        }
+      >;
+    };
+    await controller.instances([binding]);
+    const view = [...controller.views.values()][0]!;
+    view.candidates = [{ candidateId: "original" }];
+    view.modes = [{ key: "original" }];
+    view.revisions = new Map([
+      ["candidates", 11],
+      ["modes", 12],
+    ]);
+    view.discovery = 7;
+    view.modeIdentity = "session:1:input:0";
+    view.dirty = false;
+    view.phase = "Choose";
+    const candidates = view.candidates,
+      modes = view.modes;
+    deliver({
+      kind: "ui.form",
+      data: { binding, revision: 2, values: { ...original, ...change } },
+    });
+    expect(view.formRevision).toBe(2);
+    expect(view.discovery).toBe(connectionChanged ? 8 : 7);
+    expect(view.candidates).toEqual(connectionChanged ? [] : candidates);
+    expect(view.modes).toEqual(portChanged ? [] : modes);
+    expect(view.revisions.get("candidates")).toBe(connectionChanged ? undefined : 11);
+    expect(view.revisions.get("modes")).toBe(portChanged ? undefined : 12);
+    expect(view.modeIdentity).toBe(portChanged ? "" : "session:1:input:0");
+    expect(view.dirty).toBe(connectionChanged || portChanged);
+    if (!connectionChanged) expect(view.phase).toBe("Choose");
+    const accepted = structuredClone(view.form);
+    deliver({
+      kind: "ui.form",
+      data: {
+        binding,
+        revision: 1,
+        values: { transport: "wifi", port: "input:3", "wifi-address": "old" },
+      },
+    });
+    expect(view.form).toEqual(accepted);
+    expect(view.formRevision).toBe(2);
+  },
+);

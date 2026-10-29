@@ -179,22 +179,35 @@ export class DeviceController {
         initial?.revision === e.data.revision && initial.value === e.data.values.transport;
       if (initialized) delete v.initialTransportPatch;
       if (e.data.revision <= v.formRevision) return;
-      const previous = v.form.transport;
+      const previous = v.form;
+      const connectionChanged =
+        previous.transport !== e.data.values.transport ||
+        previous["wifi-address"] !== e.data.values["wifi-address"];
+      const portChanged = previous.port !== e.data.values.port;
       v.formRevision = e.data.revision;
       v.form = { ...e.data.values };
       if (
         !initialized &&
-        previous !== v.form.transport &&
+        previous.transport !== v.form.transport &&
         (v.form.transport === "usb" || v.form.transport === "wifi")
       ) {
         v.transportIntent = { revision: v.formRevision, value: v.form.transport };
         this.background(this.saveTransport(v));
       }
-      v.discovery++;
-      v.candidates = [];
-      v.modes = [];
-      v.phase = "Discover explicitly / 請主動搜尋";
-      v.dirty = true;
+      // Generic action admission synchronizes the form even when its values are
+      // unchanged. That revision is current, but it does not retire published rows.
+      if (connectionChanged) {
+        v.discovery++;
+        v.candidates = [];
+        v.revisions.delete("candidates");
+        v.phase = "Discover explicitly / 請主動搜尋";
+      }
+      if (portChanged) {
+        v.modes = [];
+        v.modeIdentity = "";
+        v.revisions.delete("modes");
+      }
+      if (connectionChanged || portChanged) v.dirty = true;
     }
   }
   private async instances(bindings: UiBinding[]): Promise<void> {
@@ -842,6 +855,7 @@ export class DeviceController {
           if (
             !current() ||
             identity !== this.sessionKey ||
+            port !== v.form.port ||
             queried.sourceRevision !== sources.sourceRevision
           )
             return answer();

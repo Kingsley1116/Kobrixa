@@ -6,11 +6,13 @@ import {
   RpcPeer,
   canonicalDatasetV2Bytes,
   type UiStateSnapshot,
+  type UiResourceV2,
   type UiEventEnvelopeV2,
   type DatasetRowV2,
   type SettingsSnapshot,
   type SettingsRequestMap,
 } from "@kobrixa/plugin-protocol";
+import { UiStateRegistry } from "@kobrixa/plugin-runtime";
 import { runPlugin } from "@kobrixa/plugin-sdk";
 import { createDevicePlugin } from "../../../../../plugins/device-ev3/src/controller.js";
 import panel from "../../../../../plugins/device-ev3/ui/panel.json";
@@ -109,25 +111,29 @@ async function setup(
   const plugin = await runPlugin(createDevicePlugin(), { channel: b, exit: vi.fn() });
   bindEventChannel(plugin, principal.owner);
   const off = attachDeviceRpc({ peer: host, principal: () => principal, broker });
-  const binding = {
-    contributionId: "kobrixa.device-ev3.panel",
-    kind: "panel" as const,
-    panelInstance: randomUUID(),
-    generation: 1,
-    uiResourceGeneration: 1,
-    hostEpoch: ID,
-    processEpoch: ID,
-  };
-  const state: UiStateSnapshot = {
-    binding,
-    revision: 0,
-    formRevision: 0,
-    visible: true,
-    valid: true,
-    locale: "en",
-    form: { transport: "usb", "wifi-address": "", port: "input:0" },
-    data: Object.fromEntries(Object.entries(panel.data).map(([k, v]) => [k, v.initial])),
-  };
+  // Real generic form synchronization, with fixture UI/settings wire handlers below.
+  const forms = new UiStateRegistry({ current: () => true, supportedResourceVersions: [2] });
+  const opened = await forms.open({
+    owner: {
+      sourceKey: principal.owner.sourceKey,
+      pluginId: principal.owner.pluginId,
+      uiResourceGeneration: 1,
+    },
+    scope: { hostEpoch: ID, workbenchInstance: ID },
+    id: "kobrixa.device-ev3.panel",
+    version: 2,
+    resource: panel as UiResourceV2,
+    initialVisible: true,
+    activateInitialized: async () => ({
+      owner: principal.owner,
+      peer: host,
+      requirements: [],
+      principal: () => principal,
+    }),
+  });
+  if (!opened.ok) throw new Error("Fixture form open failed");
+  const state: UiStateSnapshot = opened.value;
+  const binding = state.binding;
   const uiSubs = new Map<string, { sequence: number; binding: boolean }>();
   const external = new Set<string>();
   let settings: SettingsSnapshot = {
@@ -193,6 +199,9 @@ async function setup(
     expect(p.baseFormRevision).toBe(state.formRevision);
     Object.assign(state.form, p.set);
     state.formRevision++;
+    expect(forms.setForm(principal.owner, binding, state.formRevision, state.form, true).ok).toBe(
+      true,
+    );
     if (options.formPatchEvents)
       for (const [subscriptionId, sub] of uiSubs) {
         if (sub.binding)
@@ -323,7 +332,25 @@ async function setup(
   const form = (set: Record<string, string>) => {
     Object.assign(state.form, set);
     state.formRevision++;
+    expect(forms.setForm(principal.owner, binding, state.formRevision, state.form, true).ok).toBe(
+      true,
+    );
     event("ui.form");
+  };
+  let editSequence = 0;
+  const syncInvoke = (name: string, args: Record<string, string | number | null> = {}) => {
+    const synced = forms.syncForm(principal.owner, {
+      binding,
+      baseFormRevision: state.formRevision,
+      editSequence: ++editSequence,
+      form: structuredClone(state.form),
+    });
+    if (!synced.ok) throw new Error("Actual generic form sync failed");
+    state.formRevision = synced.value.formRevision;
+    state.form = synced.value.form;
+    // Same ordering as native host: ui.form delivery before command/invoke.
+    event("ui.form");
+    return invoke(name, args);
   };
   let closed = false;
   const close = async () => {
@@ -351,6 +378,7 @@ async function setup(
     rows,
     metadata,
     invoke,
+    syncInvoke,
     form,
     event,
     external,
@@ -651,4 +679,61 @@ it("fix1: hide fences a pending transport read before any settings publication",
   await new Promise((resolve) => setTimeout(resolve, 30));
   expect(f.updateSettings).not.toHaveBeenCalled();
   expect(f.settings().values.find((v) => v.key === "connectionMode")?.value).toBe("usb");
+});
+
+it("E6: actual unchanged form sync before candidate command retains exact row identity", async () => {
+  const f = await setup({ usb: true });
+  await f.syncInvoke("discover");
+  await vi.waitFor(() => expect(f.rows.get("candidates")?.length).toBe(1), { timeout: 2500 });
+  const row = f.rows.get("candidates")![0]!;
+  const dataset = f.metadata.get("candidates")!.revision;
+  const revision = f.state.formRevision;
+  await f.syncInvoke("candidate", { key: row.key, version: row.version, dataset });
+  expect(f.state.formRevision).toBe(revision + 1);
+  expect(f.provider.calls.filter((x) => x === "connect")).toHaveLength(1);
+  await f.syncInvoke("candidate", { key: row.key, version: row.version, dataset });
+  expect(f.provider.calls.filter((x) => x === "connect")).toHaveLength(1);
+});
+it("E6: actual unchanged form sync before mode command retains source/row identity", async () => {
+  const f = await setup({ modes: true });
+  const write = vi.spyOn(f.provider, "setInputMode");
+  f.form({ transport: "wifi", "wifi-address": "192.168.1.2" });
+  await f.syncInvoke("connect");
+  await vi.waitFor(() => expect(f.state.data["session-id"]).not.toBeNull(), { timeout: 2500 });
+  await f.syncInvoke("modes");
+  await vi.waitFor(() => expect(f.rows.get("modes")?.length).toBe(1), { timeout: 2500 });
+  const row = f.rows.get("modes")![0]!;
+  const dataset = f.metadata.get("modes")!.revision;
+  await f.syncInvoke("mode", { key: row.key, version: row.version, dataset });
+  expect(write).toHaveBeenCalledOnce();
+  await f.syncInvoke("mode", { key: row.key, version: row.version, dataset });
+  expect(write).toHaveBeenCalledOnce();
+});
+it.each([{ transport: "wifi" }, { "wifi-address": "192.168.1.2" }])(
+  "E6: changed connection draft %j rejects the previously published candidate",
+  async (change) => {
+    const f = await setup({ usb: true });
+    await f.syncInvoke("discover");
+    await vi.waitFor(() => expect(f.rows.get("candidates")?.length).toBe(1), { timeout: 2500 });
+    const row = f.rows.get("candidates")![0]!;
+    const dataset = f.metadata.get("candidates")!.revision;
+    f.form(change);
+    await f.syncInvoke("candidate", { key: row.key, version: row.version, dataset });
+    expect(f.provider.calls).not.toContain("connect");
+  },
+);
+it("E6: changed port invalidates a published mode even after returning to the original port", async () => {
+  const f = await setup({ modes: true });
+  const write = vi.spyOn(f.provider, "setInputMode");
+  f.form({ transport: "wifi", "wifi-address": "192.168.1.2" });
+  await f.syncInvoke("connect");
+  await vi.waitFor(() => expect(f.state.data["session-id"]).not.toBeNull(), { timeout: 2500 });
+  await f.syncInvoke("modes");
+  await vi.waitFor(() => expect(f.rows.get("modes")?.length).toBe(1), { timeout: 2500 });
+  const row = f.rows.get("modes")![0]!;
+  const dataset = f.metadata.get("modes")!.revision;
+  f.form({ port: "input:1" });
+  f.form({ port: "input:0" });
+  await f.syncInvoke("mode", { key: row.key, version: row.version, dataset });
+  expect(write).not.toHaveBeenCalled();
 });
