@@ -12,6 +12,7 @@ import {
   lstat,
 } from "node:fs/promises";
 import path from "node:path";
+import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn, execFileSync } from "node:child_process";
@@ -871,7 +872,7 @@ async function main(args) {
   const directory =
     args[0] === "--run-built"
       ? await realpath(args[1])
-      : await realpath(await mkdtemp("/private/tmp/kobrixa-device-public-"));
+      : await realpath(await mkdtemp(path.join(tmpdir(), "kobrixa-device-public-")));
   console.log(`Device public artifacts: ${directory}`);
   const identity =
     args[0] === "--run-built"
