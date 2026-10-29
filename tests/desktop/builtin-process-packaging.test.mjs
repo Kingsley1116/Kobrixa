@@ -8,7 +8,6 @@ import { EventEmitter } from "node:events";
 import { runInNewContext } from "node:vm";
 import {
   observeInstalledWorkers,
-  observeWorkerDebuggers,
   collectWorkerTimeline,
   installProbe,
   verifyLeaf,
@@ -431,53 +430,4 @@ test("serialized inspector probe persists early exit even when main cannot be qu
   assert.equal(electron.utilityProcess.fork, originalFork);
   assert.throws(() => collectWorkerTimeline("KOBRIXA_INSTALLED_WORKER {bad}"));
   assert.throws(() => collectWorkerTimeline(output, [{ ...rows[0], worker: 999 }]));
-});
-
-test("worker debugger observer releases only reported waits and retains the response", async () => {
-  const listeners = new Map(),
-    calls = [],
-    receipt = {};
-  const main = {
-    on(name, callback) {
-      listeners.set(name, callback);
-      return () => listeners.delete(name);
-    },
-    async send(method, params) {
-      calls.push({ method, params });
-    },
-  };
-  const stop = await observeWorkerDebuggers(main, receipt);
-  assert.deepEqual(calls, [
-    { method: "NodeWorker.enable", params: { waitForDebuggerOnStart: false } },
-  ]);
-  listeners.get("NodeWorker.attachedToWorker")({ sessionId: "running", waitingForDebugger: false });
-  assert.equal(calls.length, 2);
-  assert.equal(JSON.parse(calls[1].params.message).method, "Debugger.enable");
-  listeners.get("NodeWorker.attachedToWorker")({ sessionId: "paused", waitingForDebugger: true });
-  await Promise.resolve();
-  assert.equal(calls[3].params.sessionId, "paused");
-  assert.deepEqual(JSON.parse(calls[3].params.message), {
-    id: 1,
-    method: "Runtime.runIfWaitingForDebugger",
-  });
-  listeners.get("NodeWorker.receivedMessageFromWorker")({
-    sessionId: "paused",
-    message: JSON.stringify({ id: 1, result: {} }),
-  });
-  listeners.get("NodeWorker.receivedMessageFromWorker")({
-    sessionId: "running",
-    message: JSON.stringify({
-      method: "Debugger.paused",
-      params: { reason: "Break on start", callFrames: [] },
-    }),
-  });
-  await Promise.resolve();
-  assert.equal(calls.at(-1).params.sessionId, "running");
-  assert.equal(JSON.parse(calls.at(-1).params.message).method, "Debugger.resume");
-  assert.equal(receipt.workerDebuggers[0].pauses[0].reason, "Break on start");
-  await stop();
-  assert.equal(listeners.size, 0);
-  assert.equal(receipt.workerDebuggers[0].releaseSent, undefined);
-  assert.equal(receipt.workerDebuggers[1].releaseSent, true);
-  assert.deepEqual(receipt.workerDebuggers[1].releaseResponse, { id: 1, result: {} });
 });

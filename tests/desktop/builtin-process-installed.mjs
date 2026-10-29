@@ -118,7 +118,7 @@ export async function verifyLeaf(directory, pluginId) {
   return index;
 }
 
-// Serialized into the already-paused main inspector frame; no product code changes.
+// Serialized into the main inspector before app readiness; no product code changes.
 export function observeInstalledWorkers(threads, emit, clock) {
   const original = threads.Worker;
   const timeline = [];
@@ -211,81 +211,6 @@ export function collectWorkerTimeline(output, prior = []) {
     rows.set(row.sequence, row);
   }
   return [...rows.values()].sort((a, b) => a.sequence - b.sequence);
-}
-
-// Observe inherited debugger waits without changing Worker options or product code.
-export async function observeWorkerDebuggers(main, receipt) {
-  const sessions = new Map();
-  const pending = new Set();
-  receipt.workerDebuggers = [];
-  const send = (row, id, method) => {
-    const request = main
-      .send("NodeWorker.sendMessageToWorker", {
-        sessionId: row.sessionId,
-        message: JSON.stringify({ id, method }),
-      })
-      .catch((error) => {
-        row.debuggerError = errorRecord(error);
-      });
-    pending.add(request);
-    void request.finally(() => pending.delete(request));
-    return request;
-  };
-  const offMessage = main.on("NodeWorker.receivedMessageFromWorker", ({ sessionId, message }) => {
-    const row = sessions.get(sessionId);
-    if (!row) return;
-    const parsed = JSON.parse(message);
-    if (parsed.id === 1) row.releaseResponse = parsed;
-    if (parsed.id === 3) row.resumeResponse = parsed;
-    if (parsed.method === "Debugger.paused") {
-      row.pauses ??= [];
-      row.pauses.push({
-        at: Date.now(),
-        reason: parsed.params.reason,
-        frames: parsed.params.callFrames.map((frame) => ({
-          functionName: frame.functionName,
-          url: frame.url,
-          location: frame.location,
-        })),
-      });
-      void send(row, 3, "Debugger.resume");
-    }
-  });
-  const offAttach = main.on("NodeWorker.attachedToWorker", (event) => {
-    const row = { ...event, at: Date.now() };
-    receipt.workerDebuggers.push(row);
-    sessions.set(event.sessionId, row);
-    void send(row, 2, "Debugger.enable");
-    if (event.waitingForDebugger) {
-      const request = main
-        .send("NodeWorker.sendMessageToWorker", {
-          sessionId: event.sessionId,
-          message: JSON.stringify({ id: 1, method: "Runtime.runIfWaitingForDebugger" }),
-        })
-        .then(
-          () => {
-            row.releaseSent = true;
-          },
-          (error) => {
-            row.releaseError = errorRecord(error);
-          },
-        );
-      pending.add(request);
-      void request.finally(() => pending.delete(request));
-    }
-  });
-  try {
-    await main.send("NodeWorker.enable", { waitForDebuggerOnStart: false });
-  } catch (error) {
-    offAttach();
-    offMessage();
-    throw error;
-  }
-  return async () => {
-    offAttach();
-    offMessage();
-    await Promise.all(pending);
-  };
 }
 
 // Inspector-only observation: call and return the original fork without changing
@@ -496,10 +421,20 @@ async function launchProduct(config, receipt, check) {
         nodeIntegration: false,
         contextIsolation: true,
       });
-    assert.equal(
-      (await renderer.js("window.kobrixa.device.getPreferences()")).usbAutoReconnect,
-      false,
-    );
+    receipt.pendingPreferenceReads = 0;
+    receipt.preferences = await alive(async () => {
+      const result = await renderer.js(`window.kobrixa.device.getPreferences().then(
+        preferences => ({ preferences }), error => {
+          if (String(error).includes("Device settings are not admitted.")) return { pending: true };
+          throw error;
+        })`);
+      if (result.pending) {
+        receipt.pendingPreferenceReads++;
+        return null;
+      }
+      return result.preferences;
+    });
+    assert.equal(receipt.preferences.usbAutoReconnect, false);
     if (isolated) {
       receipt.isolation = await main.js(`(async () => {
         const require = __installedProbe.require;
