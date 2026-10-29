@@ -41,7 +41,9 @@ export async function legacyFixtures(directory, options = {}) {
     assert.ok(!file.split("/").includes("..") && !path.isAbsolute(file));
     const content = execFileSync("git", ["show", `${sha}:${file}`], {
       cwd: root,
-      maxBuffer: 8 * 1024 * 1024,
+      // API 1.8 committed schema is 10,459,664 bytes; retain a bounded
+      // extraction buffer large enough for the actual preserved source blob.
+      maxBuffer: 16 * 1024 * 1024,
     });
     const target = path.join(snapshot, file);
     await mkdir(path.dirname(target), { recursive: true });
