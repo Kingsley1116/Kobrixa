@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, it, vi } from "vitest";
@@ -14,11 +14,11 @@ function ticket(bytes: Uint8Array, id: string = randomUUID(), expectedRevision: 
     target: { kind: "record", id, expectedRevision }, metadata: { kind: "record", deleted: false,
       record: { id, revision: "r_" + randomUUID().replaceAll("-", ""), kind: "lab.samples", schemaVersion: 1, label: "Lab", mediaType: "application/octet-stream", byteLength: bytes.length, sha256: hash(bytes), createdAt: 1, updatedAt: 1, checkpoint: "none", interrupted: false } } };
 }
-async function setup(fault: (point: PersistenceFaultPoint) => Promise<void> = async () => {}) {
+async function setup(fault: (point: PersistenceFaultPoint) => Promise<void> = async () => {}, directorySyncSupported?: boolean) {
   const root = await mkdtemp(path.join(tmpdir(), "atomic-")); let now = 0;
-  const fs = await createNodePersistenceFs(root, { hostEpoch: owner.hostEpoch, assertHeld() {} }, { now: () => now, fault });
+  const fs = await createNodePersistenceFs(root, { hostEpoch: owner.hostEpoch, assertHeld() {} }, { now: () => now, fault, ...(directorySyncSupported === undefined ? {} : { directorySyncSupported }) });
   const store = new AtomicStore(fs); await store.initialize();
-  return { fs, store, advance: (n: number) => { now += n; }, close: async () => { await store.dispose(); await rm(root, { recursive: true, force: true }); } };
+  return { root, fs, store, advance: (n: number) => { now += n; }, close: async () => { await store.dispose(); await rm(root, { recursive: true, force: true }); } };
 }
 async function stage(s: AtomicStore, t: PublicationTicket, bytes: Uint8Array) {
   await s.reserve(t, bytes.length);
@@ -661,3 +661,119 @@ it("does not retain unaddressable empty or single-page list snapshots",async()=>
     for(let i=0;i<20;i++){const result=await env.store.list(owner,{limit:64});expect(result.entries).toHaveLength(1);expect(result.nextCursor).toBeUndefined();}
   }finally{await env.close();}
 });
+
+// Real adapter + AtomicStore evidence; no public router or real disk exhaustion claim.
+for (const mode of ["short", "zero", "ENOSPC", "EDQUOT", "EACCES", "EROFS", "dir-ENOTSUP", "dir-EIO", "unsupported-policy"] as const) {
+  it(`B2 adapter evidence: ${mode} preserves exact head, quota and fresh-epoch readback`, async () => {
+    const env = await setup(undefined, mode !== "unsupported-policy");
+    const trace: Array<Record<string, unknown>> = [];
+    const proof: Record<string, unknown> = { mode, platform: process.platform, root: env.root, trace, complete: false };
+    const originalWrite = env.fs.write.bind(env.fs), originalDir = env.fs.directorySync.bind(env.fs);
+    const originalRename = env.fs.atomicReplace.bind(env.fs);
+    let fresh: AtomicStore | undefined;
+    let armed = false, writes = 0, injected = false;
+    const oldBytes = Buffer.from("original immutable payload"), nextBytes = Buffer.from("replacement payload has exact complete bytes");
+    proof.inputBytes = { old: oldBytes.toString("base64"), next: nextBytes.toString("base64") };
+    try {
+      const first = ticket(oldBytes); await stage(env.store, first, oldBytes);
+      const old = await env.store.publish(first); expect(old.disposition).toBe("committed");
+      expect(first.target.kind).toBe("record");
+      const id = first.target.kind === "record" ? first.target.id : "";
+      const ns = await Namespace.open(env.fs, owner.sourceKey), loc = await ns.location(first.target);
+      const beforeHead = await readFile(env.fs.name(loc.head));
+      const oldPin = await env.store.open(owner, id, old.receipt!.revision);
+      await env.store.close(owner, oldPin);
+      const next = ticket(nextBytes, id, old.receipt!.revision);
+      proof.tickets = { first, next }; proof.oldReceipt = old;
+      proof.beforeHead = { bytes: beforeHead.toString("base64"), sha256: hash(beforeHead) };
+      await env.store.reserve(next, nextBytes.length);
+      env.fs.atomicReplace = async (from, to) => {
+        trace.push({ operation: "rename", from: env.fs.name(from), to: env.fs.name(to) });
+        return originalRename(from, to);
+      };
+      env.fs.write = async (fd, offset, bytes) => {
+        if (!armed) return originalWrite(fd, offset, bytes);
+        writes++;
+        if (mode === "short") {
+          const written = await originalWrite(fd, offset, bytes.subarray(0, 3));
+          trace.push({ operation: "write-short", offset, requested: bytes.length, written }); return written;
+        }
+        if (mode === "zero" || ["ENOSPC", "EDQUOT", "EACCES", "EROFS"].includes(mode)) {
+          if (writes === 1) {
+            const written = await originalWrite(fd, offset, bytes.subarray(0, 3));
+            trace.push({ operation: "write-prefix", offset, requested: bytes.length, written }); return written;
+          }
+          injected = true; trace.push({ operation: "write-injected", offset, requested: bytes.length, code: mode });
+          if (mode === "zero") return 0;
+          throw Object.assign(new Error("injected write"), { code: mode });
+        }
+        return originalWrite(fd, offset, bytes);
+      };
+      env.fs.directorySync = async name => {
+        if (armed && mode.startsWith("dir-") && name === env.fs.name(loc.objects)) {
+          injected = true; trace.push({ operation: "directory-sync-injected", name, code: mode.slice(4) });
+          throw Object.assign(new Error("injected directory sync"), { code: mode.slice(4) });
+        }
+        return originalDir(name);
+      };
+      armed = true;
+      let result: Awaited<ReturnType<AtomicStore["publish"]>> | undefined;
+      let failure: unknown;
+      try {
+        await env.store.append(next, 0, nextBytes); await env.store.seal(next, nextBytes.length, hash(nextBytes));
+        result = await env.store.publish(next);
+      } catch (error) { failure = error; }
+      armed = false;
+      proof.outcome = result ?? null;
+      proof.error = failure instanceof Error ? { name: failure.name, message: failure.message, code: (failure as NodeJS.ErrnoException).code } : null;
+      proof.beforeCleanupQuota = env.store.quota.snapshot(owner.sourceKey);
+      const success = mode === "short" || mode === "unsupported-policy";
+      if (success) {
+        expect(failure).toBeUndefined(); expect(result?.disposition).toBe("committed");
+        expect(result?.receipt?.durability).toBe(mode === "unsupported-policy" ? "file-sync-only" : "file-and-directory-sync");
+        if (mode === "short") expect(trace.filter(row => row.operation === "write-short").length).toBeGreaterThan(1);
+      } else {
+        expect(injected).toBe(true); expect(failure).toBeInstanceOf(Error); expect(result).toBeUndefined();
+        if (mode === "zero") expect((failure as Error).message).toBe("io");
+        else expect((failure as NodeJS.ErrnoException).code).toBe(mode.replace("dir-", ""));
+        expect(trace.filter(row => row.operation === "rename" && row.to === env.fs.name(loc.head))).toEqual([]);
+        expect(await readFile(env.fs.name(loc.head))).toEqual(beforeHead);
+        expect(env.store.quota.snapshot(owner.sourceKey).reservedBytes).toBe(nextBytes.length);
+        expect(await env.store.abort(next)).toBe("aborted");
+      }
+      const expected = success ? nextBytes : oldBytes;
+      const expectedReceipt = success ? result!.receipt! : old.receipt!;
+      const meta = await env.store.stat(owner, id);
+      expect(meta.revision).toBe(expectedReceipt.revision); expect(meta.sha256).toBe(hash(expected));
+      const head = await readFile(env.fs.name(loc.head));
+      expect(JSON.parse(head.toString()).receipt).toEqual(expectedReceipt);
+      proof.afterHead = { bytes: head.toString("base64"), sha256: hash(head) };
+      proof.expectedReceipt = expectedReceipt;
+      proof.afterCleanupQuota = env.store.quota.snapshot(owner.sourceKey);
+      expect(proof.afterCleanupQuota).toMatchObject({ committedBytes: expected.length, reservedBytes: 0, recordCount: 1, writeSlotsAvailable: 2 });
+      await env.store.dispose();
+      const freshOwner = { ...owner, hostEpoch: randomUUID(), processEpoch: randomUUID() };
+      const reopenedFs = await createNodePersistenceFs(env.root, { hostEpoch: freshOwner.hostEpoch, assertHeld() {} }, { now: () => 0, directorySyncSupported: mode !== "unsupported-policy" });
+      fresh = new AtomicStore(reopenedFs); await fresh.initialize();
+      await expect(fresh.read(freshOwner, oldPin, 0, 1)).rejects.toThrow("stale");
+      expect(await fresh.stat(freshOwner, id)).toEqual(meta);
+      const pin = await fresh.open(freshOwner, id, meta.revision);
+      const bytes = await fresh.read(freshOwner, pin, 0, expected.length);
+      expect(Buffer.from(bytes)).toEqual(expected); expect(hash(bytes)).toBe(meta.sha256);
+      await fresh.close(freshOwner, pin);
+      expect(await readFile(env.fs.name(loc.head))).toEqual(head);
+      proof.reopened = { owner: freshOwner, meta, data: Buffer.from(bytes).toString("base64"), sha256: hash(bytes), quota: fresh.quota.snapshot(owner.sourceKey) };
+      expect(fresh.quota.snapshot(owner.sourceKey)).toMatchObject({ committedBytes: expected.length, reservedBytes: 0, recordCount: 1, writeSlotsAvailable: 2 });
+      proof.complete = true;
+    } catch (error) {
+      proof.assertionFailure = error instanceof Error ? { message: error.message, stack: error.stack } : String(error); throw error;
+    } finally {
+      armed = false; env.fs.write = originalWrite; env.fs.directorySync = originalDir; env.fs.atomicReplace = originalRename;
+      const disposed = await Promise.allSettled([fresh?.dispose(), env.store.dispose()]);
+      proof.cleanup = disposed.map(result => result.status === "fulfilled" ? { status: result.status } : { status: result.status, error: String(result.reason) });
+      await writeFile(path.join(env.root, "adapter-evidence.json"), JSON.stringify(proof, null, 2));
+      console.info("B2_ADAPTER_EVIDENCE", env.root);
+      expect(disposed.every(result => result.status === "fulfilled")).toBe(true); // Intentionally retain old/new bytes and failures.
+    }
+  });
+}

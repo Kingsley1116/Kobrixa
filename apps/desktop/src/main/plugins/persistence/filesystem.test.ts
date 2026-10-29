@@ -2,7 +2,7 @@ import { mkdtemp, rm, symlink, link, writeFile, lstat, readFile, rename, realpat
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { createNodePersistenceFs, writeAll, classifyFsError, type StorePath } from "./filesystem.js";
+import { createNodePersistenceFs, writeAll, classifyFsError, type StorePath, NodePersistenceFs } from "./filesystem.js";
 const roots: string[] = [];
 const profile = { hostEpoch: "00000000-0000-4000-8000-000000000001", assertHeld() {} };
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
@@ -73,3 +73,59 @@ it("rechecks the primary capability after asynchronous rename preflight",async()
   try {await expect(fs.atomicReplace(from,to)).rejects.toThrow("not-primary");}
   finally{held=true;fs.profile.assertHeld=()=>{};}
 });
+
+// B2-N07/N11 adapter subproof. Injected syscall results, never real disk exhaustion.
+it("B2 adapter evidence: real descriptor short writes then zero progress retain exact bytes", async () => {
+  const { root, fs } = await setup();
+  roots.splice(roots.indexOf(root), 1); // Retain raw evidence even if an assertion fails.
+  const trace: Array<Record<string, unknown>> = [];
+  const file = fs.path("short-write.bin"), fd = await fs.open(file, "create-exclusive");
+  const original = fs.write.bind(fs);
+  const bytes = Buffer.from("positive short writes preserve every byte");
+  let closed = false;
+  try {
+    fs.write = async (handle, offset, data) => {
+      const written = await original(handle, offset, data.subarray(0, 3));
+      trace.push({ operation: "write", offset, requested: data.length, written }); return written;
+    };
+    await writeAll(fs, fd, 0, bytes);
+    expect(trace.length).toBeGreaterThan(1);
+    expect(trace.map(row => row.offset)).toEqual(Array.from({ length: Math.ceil(bytes.length / 3) }, (_, i) => i * 3));
+    fs.write = async (_handle, offset, data) => {
+      trace.push({ operation: "write-zero", offset, requested: data.length, written: 0 }); return 0;
+    };
+    await expect(writeAll(fs, fd, bytes.length, Buffer.from("not written"))).rejects.toThrow("io");
+    await fs.sync(fd); await fs.close(fd); closed = true;
+    const actual = await readFile(fs.name(file)); expect(actual).toEqual(bytes);
+    trace.push({ operation: "disk-readback", bytes: actual.length, sha256: createHash("sha256").update(actual).digest("hex") });
+    fs.write = original;
+    await expect(fs.write(fd, 0, bytes)).rejects.toThrow("stale");
+  } finally {
+    fs.write = original;
+    if (!closed) await fs.close(fd);
+    await writeFile(path.join(root, "adapter-evidence.json"), JSON.stringify({ platform: process.platform, trace }, null, 2));
+    console.info("B2_ADAPTER_EVIDENCE", root);
+  }
+});
+for (const code of ["ENOTSUP", "EIO"] as const) {
+  it(`B2 adapter evidence: explicit unsupported policy versus propagated ${code}`, async () => {
+    const { root, fs } = await setup(); roots.splice(roots.indexOf(root), 1);
+    const trace: Array<Record<string, unknown>> = [];
+    const unsupported = new NodePersistenceFs(fs.root, profile, { directorySyncSupported: false });
+    const supported = new NodePersistenceFs(fs.root, profile, { directorySyncSupported: true });
+    const error = Object.assign(new Error("injected directory sync"), { code });
+    unsupported.directorySync = async () => { trace.push({ adapter: "unsupported", code }); throw error; };
+    supported.directorySync = async name => { trace.push({ adapter: "supported", name, code }); throw error; };
+    try {
+      await unsupported.syncDirectory(unsupported.path());
+      expect(unsupported.durability).toBe("file-sync-only"); expect(trace).toEqual([]);
+      await expect(supported.syncDirectory(supported.path())).rejects.toBe(error);
+      expect(trace).toHaveLength(1);
+      expect(supported.durability).toBe("file-and-directory-sync");
+      expect(classifyFsError(error)).toBe(code === "ENOTSUP" ? "unsupported-filesystem" : "io");
+    } finally {
+      await writeFile(path.join(root, "adapter-evidence.json"), JSON.stringify({ platform: process.platform, policy: "explicit; no error-triggered downgrade", trace }, null, 2));
+      console.info("B2_ADAPTER_EVIDENCE", root);
+    }
+  });
+}
