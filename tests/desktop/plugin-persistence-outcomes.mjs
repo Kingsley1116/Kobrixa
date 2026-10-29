@@ -1,3 +1,4 @@
+import { verifyCompatibility } from "./plugin-persistence-compatibility.ts";
 import assert from "node:assert/strict";
 // Shared T7 manifest and X-T1 outcome oracle. Passing this pure oracle does not
 // establish live provenance; producers and the outside controller retain that evidence.
@@ -528,16 +529,11 @@ export function assertFoundationOutcome(id, e, { serialized = false } = {}) {
       samples(e, "uiRevokeMs", 50, 100);
       return;
     case "compatibility":
-      same(e, {
-        apiVersions: ["1.4.0", "1.5.0", "1.6.0", "1.7.0"],
-        schemasEqual: true,
-        secondGenerationDrift: false,
-        legacyExecutePreserved: true,
-        legacyInitializePreserved: true,
-        drainSentBelow17: 0,
-        pythonExecuted: true,
-        publicApi18Published: false,
-      });
+      assert.deepEqual(
+        e.checks,
+        verifyCompatibility(e.compatibility),
+        "Compatibility summary must match original observations",
+      );
       return;
     case "installed":
       same(e, {

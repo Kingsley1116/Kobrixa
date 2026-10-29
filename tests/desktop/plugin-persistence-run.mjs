@@ -1,3 +1,4 @@
+import { approvedHost, pins, versions } from "./plugin-persistence-compatibility.ts";
 import { assertOptionalPhaseReceipt } from "./plugin-persistence-optional-off.ts";
 import assert from "node:assert/strict";
 import {
@@ -68,7 +69,12 @@ export async function preflight(receiptPath = process.env.PERSISTENCE_HANDOFFS) 
     path.join(root, "packages/plugin-protocol/src/limits.ts"),
     "utf8",
   );
-  if (!/1\.7\.0/.test(protocol)) blockers.push("P170: public API 1.7.0 publication not attached");
+  const hostVersion = /PLUGIN_API_VERSION = "([^"]+)"/.exec(protocol)?.[1];
+  try {
+    approvedHost(hostVersion);
+  } catch {
+    blockers.push("Unapproved/missing host API publication");
+  }
   let handoffs;
   if (!receiptPath)
     blockers.push(
@@ -657,7 +663,7 @@ async function launchCase(electron, entry, configFile, reportFile, config) {
         }),
       reportFailure: (failure) => console.error(JSON.stringify(failure)),
     },
-    config.case === "sealed-ttl" ? { timeoutMs: 120000 } : undefined,
+    ["sealed-ttl", "compatibility"].includes(config.case) ? { timeoutMs: 120000 } : undefined,
   );
 }
 export function selectFoundationCases({ referencesOnly = false, caseId } = {}) {
@@ -674,6 +680,7 @@ export function selectFoundationCases({ referencesOnly = false, caseId } = {}) {
       "action-replay",
       "renderer-loss",
       "all-optional-off",
+      "compatibility",
     ].includes(caseId)
   )
     return [caseId];
@@ -708,6 +715,69 @@ export async function runFoundationEvidence({ referencesOnly = false, caseId } =
     ),
     selectedCases.some((id) => id === "action-replay" || id === "renderer-loss"),
   );
+  let compatibility;
+  if (selectedCases.includes("compatibility")) {
+    const { legacyFixtures } = await import("./declarative-ui-legacy-fixtures.mjs");
+    const currentCommit = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: root,
+      encoding: "utf8",
+    }).trim();
+    const hostVersion = /PLUGIN_API_VERSION = "([^"]+)"/.exec(
+      await readFile(path.join(root, "packages/plugin-protocol/src/limits.ts"), "utf8"),
+    )?.[1];
+    approvedHost(hostVersion);
+    compatibility = { hostVersion, currentCommit, sources: [], cases: [], artifacts: [] };
+    for (const [slot, revision] of [...pins, currentCommit].entries()) {
+      const target = path.join(buildRoot, `compatibility-${slot}`);
+      await mkdir(target);
+      const result = await legacyFixtures(target, {
+        revision,
+        sdkVersion: versions[slot] ?? hostVersion,
+        slot,
+      });
+      compatibility.python ??= result.python;
+      assert.equal(compatibility.python, result.python);
+      compatibility.sources.push(...result.sources);
+      compatibility.cases.push(...result.provenance.cases);
+      for (const file of result.artifacts) {
+        const absolute = path.join(target, file);
+        compatibility.artifacts.push({ path: absolute, sha256: digest(await readFile(absolute)) });
+      }
+    }
+    const generations = [];
+    for (const generation of [1, 2]) {
+      const serializer = path.join(buildRoot, `schema-${generation}.cjs`);
+      await build({
+        stdin: {
+          contents: `import {serializeJsonSchema} from ${JSON.stringify(path.join(root, "packages/plugin-protocol/src/json-schema.ts"))}; process.stdout.write(serializeJsonSchema());`,
+          resolveDir: root,
+        },
+        outfile: serializer,
+        bundle: true,
+        platform: "node",
+        format: "cjs",
+      });
+      const bytes = execFileSync(process.execPath, [serializer], {
+        encoding: "utf8",
+        maxBuffer: 16 * 1024 * 1024,
+      });
+      await writeFile(path.join(buildRoot, `schema-${generation}.json`), bytes, { flag: "wx" });
+      generations.push(bytes);
+    }
+    compatibility.schema = {
+      first: generations[0],
+      second: generations[1],
+      protocol: await readFile(
+        path.join(root, "packages/plugin-protocol/schema/plugin-protocol.schema.json"),
+        "utf8",
+      ),
+      python: await readFile(
+        path.join(root, "sdks/python/kobrixa/plugin-protocol.schema.json"),
+        "utf8",
+      ),
+    };
+    assert.ok(Object.values(compatibility.schema).every((value) => value === generations[0]));
+  }
   const alias = {
     "@kobrixa/plugin-protocol": path.join(root, "packages/plugin-protocol/src/index.ts"),
     "@kobrixa/plugin-runtime": path.join(root, "packages/plugin-runtime/src/index.ts"),
@@ -785,6 +855,7 @@ app.exit(code);
       await readFile(entry),
       await readFile(workerEntry),
       Buffer.from(renderer.receiptSha256),
+      Buffer.from(JSON.stringify(compatibility ?? null)),
       await readFile(
         path.join(buildRoot, "plugins/acceptance-builtin-recording/resource-index.json"),
       ),
@@ -810,6 +881,7 @@ app.exit(code);
       configFile = path.join(directory, `${id}.json`);
     const config = {
       case: id,
+      ...(compatibility ? { compatibility } : {}),
       profile,
       profileId: randomUUID(),
       runId: randomUUID(),
@@ -889,6 +961,13 @@ app.exit(code);
     }
     await writeFile(configFile, JSON.stringify(config));
     const receipt = await launchCase(electron, entry, configFile, report, config);
+    if (compatibility) {
+      const observedConfig = { ...receipt.evidence.compatibility };
+      delete observedConfig.rows;
+      assert.deepEqual(observedConfig, compatibility, "Original controller artifact configuration");
+      for (const file of compatibility.artifacts)
+        assert.equal(digest(await readFile(file.path)), file.sha256, file.path);
+    }
     verifyRunReceipt(receipt, {
       runId: config.runId,
       case: id,

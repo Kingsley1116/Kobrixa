@@ -1,3 +1,9 @@
+import {
+  pins,
+  versions,
+  sha,
+  verifyCompatibility,
+} from "../../plugin-persistence-compatibility.ts";
 // Synthetic values for pure oracle unit tests only. Never write these as acceptance evidence.
 const handle = (number) => `10000000-0000-4000-8000-${String(number).padStart(12, "0")}`;
 const owner = {
@@ -220,5 +226,122 @@ export function outcomeOracleFixture(id) {
     },
   };
   Object.assign(evidence.checks, extra[id]);
+  if (id === "compatibility") {
+    evidence.compatibility = compatibilityOracleFixture();
+    evidence.checks = verifyCompatibility(evidence.compatibility);
+  }
   return evidence;
+}
+
+// Synthetic transport rows for negative oracle tests ONLY; never a native receipt.
+export function compatibilityOracleFixture(hostVersion = "1.8.0") {
+  const currentCommit = "a".repeat(40);
+  const bytes = JSON.stringify({
+    $id: `https://kobrixa.com/schemas/plugin-protocol/${hostVersion}.json`,
+  });
+  const raw = {
+    hostVersion,
+    currentCommit,
+    schema: { first: bytes, second: bytes, protocol: bytes, python: bytes },
+    cases: [],
+    rows: [],
+  };
+  let sequence = 0;
+  for (const [slot, version] of [...versions, hostVersion].entries())
+    for (const language of ["js", "py"]) {
+      const id = `acceptance.compat-${slot}-${language}`;
+      const schemaSha256 = sha(version);
+      raw.cases.push({
+        id,
+        sdk: version,
+        slot,
+        language,
+        commit: pins[slot] ?? currentCommit,
+        schemaSha256,
+        sourceHashes: { source: sha(id) },
+      });
+      for (const generation of [1, 2]) {
+        const identity = {
+          sourceKey: `dev:${id}`,
+          pluginId: id,
+          generation,
+          hostEpoch: handle(1),
+          processEpoch: handle(100 + raw.rows.length),
+        };
+        const row = {
+          caseId: id,
+          generation,
+          owner: identity,
+          launch: ++sequence,
+          boot: {
+            pid: 1000 + raw.rows.length,
+            sequence: ++sequence,
+            schemaId: `https://kobrixa.com/schemas/plugin-protocol/${version}.json`,
+            schemaSha256,
+          },
+          wire: [],
+          output: [],
+        };
+        const pair = (method, params, result) => {
+          const requestId = row.wire.length + 1;
+          row.wire.push({
+            sequence: ++sequence,
+            direction: "host",
+            message: { jsonrpc: "2.0", id: requestId, method, params },
+          });
+          row.wire.push({
+            sequence: ++sequence,
+            direction: "plugin",
+            message: { jsonrpc: "2.0", id: requestId, result },
+          });
+        };
+        const capable = Number(version.split(".")[1]) >= 7;
+        pair(
+          "initialize",
+          {
+            apiVersion: hostVersion,
+            pluginId: id,
+            locale: "en",
+            grantedPermissions: capable ? ["storage.read", "storage.write"] : [],
+          },
+          {
+            apiVersion: version,
+            sdk: {
+              name: language === "js" ? "@kobrixa/plugin-sdk" : "kobrixa-plugin-sdk",
+              version: "0.1.0",
+            },
+          },
+        );
+        pair("command/execute", { command: `${id}.legacy` }, null);
+        row.output.push({ sequence: ++sequence, line: `UI_LEGACY_EXECUTED:${id}` });
+        if (capable) {
+          pair(
+            "storage/drain",
+            {
+              token: handle(30),
+              reason: "disable",
+              checkpoints: [{ checkpoint: handle(31), record: { id: handle(32) } }],
+              writes: [],
+              remainingMs: 1000,
+            },
+            { ok: true, value: { status: "submitted", writes: [handle(33)] } },
+          );
+          row.drain = {
+            offer: { owner: identity, token: handle(30) },
+            report: {
+              state: "saved",
+              blocker: false,
+              pendingSettings: false,
+              records: [{ id: handle(32), final: true }],
+              errors: [],
+            },
+            sequence: ++sequence,
+          };
+        }
+        pair("shutdown", {}, null);
+        row.exit = { code: 0, sequence: ++sequence };
+        raw.rows.push(row);
+      }
+    }
+  return raw;
 }

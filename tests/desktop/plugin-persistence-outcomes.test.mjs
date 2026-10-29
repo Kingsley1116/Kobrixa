@@ -207,3 +207,10 @@ test("unknown-publication summaries require outside raw proof", () => {
     /Missing unknown-publication observations/,
   );
 });
+
+test("compatibility requires original trace and derives current publication", () => {
+  const fixture = outcomeOracleFixture("compatibility");
+  assert.equal(fixture.checks.publicApi18Published, true);
+  delete fixture.compatibility;
+  assert.throws(() => assertFoundationOutcome("compatibility", fixture));
+});

@@ -1,3 +1,5 @@
+import { compatibilityObserver } from "./plugin-persistence-compatibility.js";
+import type { Wire as CompatibilityWire } from "./plugin-persistence-compatibility.js";
 // @ts-expect-error Node's pure oracle entry imports the test-local TypeScript source.
 import * as optionalOffCase from "./plugin-persistence-optional-off.ts";
 import type { Wire as OptionalWire } from "./plugin-persistence-optional-off.js";
@@ -37,6 +39,7 @@ export type FoundationCase =
 import type { ContentionObservation, ContentionForm } from "./plugin-persistence-contention.js";
 
 export type CaseEvidence = {
+  compatibility?: CompatibilityWire;
   optionalPhase?: OptionalWire;
   optionalOff?: OptionalWire;
   contention?: ContentionObservation;
@@ -961,6 +964,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
       "action-replay",
       "renderer-loss",
       "all-optional-off",
+      "compatibility",
     ].includes(config.case)
   )
     throw new Error(
@@ -1037,6 +1041,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             .UserPersistenceActions.prototype,
         )
       : undefined;
+  const compatibility = config.case === "compatibility" ? compatibilityObserver() : undefined;
   let optionalPolicy: OptionalWire | undefined;
   let window: InstanceType<typeof BrowserWindow> | undefined;
   let fixture: FoundationFixture | undefined;
@@ -1340,7 +1345,16 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           },
           plugins: {
             launcher: (hooks) => {
-              const launch = createDesktopLauncher(hooks);
+              const launch = createDesktopLauncher({
+                ...hooks,
+                onOutput(plugin, line) {
+                  hooks.onOutput?.(plugin, line);
+                  const row = compatibility?.rows.find(
+                    (r) => r.owner.processEpoch === plugin.channelOwner?.processEpoch,
+                  );
+                  if (row) compatibility!.output(row, line);
+                },
+              });
               return async (plugin) => {
                 optional?.event("launch", {
                   owner: plugin.channelOwner,
@@ -1348,12 +1362,21 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                 });
                 if (plugin.channelOwner)
                   rendererLaunches.push({ owner: structuredClone(plugin.channelOwner), at: now() });
-                return launch(plugin);
+                const row =
+                  compatibility && plugin.id.startsWith("acceptance.compat-") && plugin.channelOwner
+                    ? compatibility.begin(plugin.channelOwner)
+                    : undefined;
+                const child = await launch(plugin);
+                return row ? compatibility!.attach(row, child) : child;
               };
             },
             userData,
             builtins,
-            commandLine: { developmentDirectories: [], safeMode: false },
+            commandLine: {
+              developmentDirectories: config.compatibility?.sources ?? [],
+              safeMode: false,
+              ...(config.compatibility ? { python: config.compatibility.python } : {}),
+            },
             locale: "en",
             dialogs: {
               confirmDeveloperMode: async () => true,
@@ -1679,7 +1702,8 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           );
           await handles.runtime.ready(context.owner, new AbortController().signal);
         };
-        for (const role of optional ? [] : ["recording", "settings"]) await activateRole(role);
+        for (const role of optional || compatibility ? [] : ["recording", "settings"])
+          await activateRole(role);
         const select = (role: string): LiveConsumer => {
           const sourceKey = `builtin:acceptance.ui-${role}`;
           const rows = handles
@@ -1698,9 +1722,10 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           assert.equal(principal.owner.hostEpoch, profile.hostEpoch);
           return { principal: row.context.principal, child: row.process };
         };
-        const referenceConsumers = optional
-          ? undefined
-          : { recording: select("recording"), settings: select("settings") };
+        const referenceConsumers =
+          optional || compatibility
+            ? undefined
+            : { recording: select("recording"), settings: select("settings") };
         const input: LifecycleCaseInput = {
           now,
           broker: live.foundation.broker,
@@ -1718,13 +1743,13 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             return referenceConsumers.settings;
           },
         };
-        const consumerExits = (optional ? [] : [input.recording, input.settings]).map(
-          (consumer) => {
-            const observed = latch<ProcessExit>();
-            off.push(consumer.child.onExit((exit) => observed.resolve(exit)));
-            return observed.promise;
-          },
-        );
+        const consumerExits = (
+          optional || compatibility ? [] : [input.recording, input.settings]
+        ).map((consumer) => {
+          const observed = latch<ProcessExit>();
+          off.push(consumer.child.onExit((exit) => observed.resolve(exit)));
+          return observed.promise;
+        });
         const unavailable = (id: FoundationCase) => async (): Promise<CaseEvidence> => {
           throw new Error(`BLOCKED: ${id} observation-table producer is not implemented`);
         };
@@ -2087,7 +2112,10 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             }),
           "import-restart": unavailable("import-restart"),
           "storage-ui-pressure": unavailable("storage-ui-pressure"),
-          compatibility: unavailable("compatibility"),
+          compatibility: async () => {
+            assert.ok(compatibility && config.compatibility);
+            return compatibility.run(config.compatibility, live.plugins, handles.host.participant);
+          },
           installed: unavailable("installed"),
         };
         assert.deepEqual(Object.keys(producers).sort(), [...FOUNDATION_CASES].sort());
