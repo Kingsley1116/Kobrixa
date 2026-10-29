@@ -109,8 +109,6 @@ import { RemoteFilesController } from "./device/remote-files.js";
 import { BatteryStatus } from "./device/battery-status.js";
 import { MonitorController } from "./device/monitor-controller.js";
 import { MonitorWorkspace } from "./device/monitor-workspace.js";
-import { SensorLabController } from "./device/sensor-lab-controller.js";
-import { RecordingStatus } from "./device/recording-status.js";
 import { CollabStore } from "./collab/store.js";
 import { applyMinimalDiff, canShareFile, CollabFileSyncManager } from "./collab/file-sync.js";
 import { preserveRoom } from "./collab/preserve-room.js";
@@ -337,7 +335,6 @@ export function App(): React.JSX.Element {
       }),
   );
   const remoteState = useSyncExternalStore(remoteFiles.subscribe, remoteFiles.getSnapshot);
-  const [sensorLab] = useState(() => new SensorLabController(window.kobrixa.sensorLab));
   const [monitorView, setMonitorView] = useState<"readings" | "lab">("readings");
   const [collab] = useState(
     () =>
@@ -417,12 +414,10 @@ export function App(): React.JSX.Element {
     [controller, controlNotice],
   );
   useEffect(() => {
-    void sensorLab.initialize();
     return () => {
-      sensorLab.dispose();
       void monitor.dispose().catch(() => {});
     };
-  }, [sensorLab, monitor]);
+  }, [monitor]);
   const [deviceOverlay, setDeviceOverlay] = useState(false);
   useEffect(() => {
     remoteFiles.setSession(execution.session?.id, execution.deployed?.path);
@@ -4097,7 +4092,8 @@ export function App(): React.JSX.Element {
               }}
               monitor={
                 <MonitorWorkspace
-                  lab={sensorLab}
+                  plugins={pluginUi.session}
+                  onOpenTools={() => settingsStore.set("rightPanel", "plugins")}
                   view={monitorView}
                   onView={setMonitorView}
                   controller={monitor}
@@ -4608,15 +4604,6 @@ export function App(): React.JSX.Element {
           {locked ? t.phases[execution.phase] : checking ? t.checking : status}
         </span>
         <div className="status-group status-details">
-          <RecordingStatus
-            controller={sensorLab}
-            locale={locale}
-            onOpen={() => {
-              setDeviceOpen(true);
-              setToolTab("monitor");
-              setMonitorView("lab");
-            }}
-          />
           {active && !settingsActive && (
             <>
               <CursorPosition store={cursorStore} lineLabel={t.line} columnLabel={t.column} />
