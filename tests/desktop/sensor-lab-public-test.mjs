@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
+import { readFile } from "node:fs/promises";
 import { verifyLabReceipt, verifyLabParity } from "./sensor-lab-public-run.mjs";
 
 // Oracle UNIT fixture only. Never used by the native producer or emitted as native evidence.
@@ -758,3 +759,123 @@ for (const [name, mutate] of [
     mutate(r);
     assert.throws(() => verifyLabParity(r));
   });
+
+// Exercise the actual native row-action driver body with controlled observations.
+// These are sequencing regressions, not native receipts or host endpoint substitutes.
+async function rowActionDriver() {
+  const source = await readFile(new URL("./sensor-lab-public-main.ts", import.meta.url), "utf8");
+  const body = source.match(
+    /const rowAction = async \(dataset: string, id: string, label: string, name: string\) => \{([\s\S]*?)\n {8}\};\n {8}const finalRecords/,
+  );
+  assert.ok(body, "actual row-action driver remains identifiable");
+  return new (Object.getPrototypeOf(async function () {}).constructor)(
+    "click",
+    "until",
+    "exchanges",
+    "success",
+    "sequence",
+    "dataset",
+    "id",
+    "label",
+    "name",
+    "js",
+    "const object = value => value;\n" + body[1],
+  );
+}
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+test("D7 deletion waits for command success, trusted Close, and actual modal removal", async () => {
+  const drive = await rowActionDriver();
+  const command = deferred(),
+    closure = deferred(),
+    waiting = deferred();
+  const calls = [];
+  let successful = false,
+    open = true,
+    finished = false;
+  const run = drive(
+    async (selector, label) => {
+      calls.push([selector, label]);
+    },
+    async (observe, label) => {
+      if (label === "delete-profiles") await command.promise;
+      else {
+        waiting.resolve();
+        await closure.promise;
+      }
+      assert.equal(await observe(), true, label);
+    },
+    () =>
+      successful
+        ? [
+            {
+              request: {
+                sequence: 11,
+                message: { params: { command: "kobrixa.sensor-lab.delete-profiles" } },
+              },
+            },
+          ]
+        : [],
+    () => true,
+    10,
+    "profiles",
+    "record",
+    "Delete",
+    "delete-profiles",
+    async (source) => {
+      assert.equal(source, `!document.querySelector('[role="dialog"]')`);
+      return !open;
+    },
+  ).then(() => {
+    finished = true;
+    waiting.resolve();
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(finished, false);
+  assert.equal(
+    calls.some(([, label]) => label === "Close"),
+    false,
+  );
+  successful = true;
+  command.resolve();
+  await waiting.promise;
+  assert.deepEqual(calls.at(-1), ['[role="dialog"] button', "Close"]);
+  assert.equal(finished, false, "RPC success and Close submission do not prove DOM removal");
+  open = false;
+  closure.resolve();
+  await run;
+  assert.equal(finished, true);
+});
+test("D7 deletion cannot continue when the modal remains after Close", async () => {
+  const drive = await rowActionDriver();
+  await assert.rejects(
+    drive(
+      async () => {},
+      async (observe, label) => {
+        assert.equal(await observe(), true, label);
+      },
+      () => [
+        {
+          request: {
+            sequence: 11,
+            message: { params: { command: "kobrixa.sensor-lab.delete-profiles" } },
+          },
+        },
+      ],
+      () => true,
+      10,
+      "profiles",
+      "record",
+      "Delete",
+      "delete-profiles",
+      async () => false,
+    ),
+    /dialog closed/,
+  );
+});

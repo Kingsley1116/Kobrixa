@@ -686,6 +686,15 @@ export function runNativeLab(): void {
               ),
             name,
           );
+          if (label === "Delete") {
+            // Confirmation dispatches a command; the generic modal stays open until Close.
+            // A successful plugin reply is not evidence that its backdrop is gone.
+            await click('[role="dialog"] button', "Close");
+            await until(
+              () => js(`!document.querySelector('[role="dialog"]')`),
+              `${name} dialog closed`,
+            );
+          }
         };
         const finalRecords = () =>
           exchanges("storage/commitWrite")
