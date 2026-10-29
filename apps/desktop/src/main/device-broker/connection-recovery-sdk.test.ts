@@ -1,15 +1,15 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { createMemoryChannelPair, RpcPeer } from "@kobrixa/plugin-protocol";
-import { createDeviceBroker } from "../../../apps/desktop/src/main/device-broker/broker-port.js";
+import { createDeviceBroker } from "./broker-port.js";
 import {
   operationHarness,
   pluginPrincipal,
   ID,
-} from "../../../apps/desktop/src/main/device-broker/fake-provider.js";
-import { attachDeviceRpc } from "../../../apps/desktop/src/main/device-broker/rpc-router.js";
-import { bindEventChannel } from "./events.js";
-import { createDevicesClient } from "./devices.js";
-import { createCoreActionLedger } from "../../../apps/desktop/src/main/plugins/core-recovery.js";
+} from "./fake-provider.js";
+import { attachDeviceRpc } from "./rpc-router.js";
+import { bindEventChannel } from "../../../../../packages/plugin-sdk-js/src/events.js";
+import { createDevicesClient } from "../../../../../packages/plugin-sdk-js/src/devices.js";
+import { createCoreActionLedger } from "../plugins/core-recovery.js";
 const cleanup: Array<() => void> = [];
 afterEach(() => {
   cleanup
