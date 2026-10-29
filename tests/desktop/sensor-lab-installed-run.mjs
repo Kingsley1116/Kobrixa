@@ -51,6 +51,10 @@ export async function auditPayload(artifact, dependencies = process.env.KOBRIXA_
 export async function buildInstalled(directory, artifact) {
   assert.ok(path.isAbsolute(artifact));
   const index = await verifyLeaf(artifact);
+  // The current product supplies EV3 provider policy through its optional source.
+  // Preserve that real packaged dependency; never force a disabled provider on.
+  const providerArtifact = path.join(path.dirname(artifact), "device-ev3");
+  const providerIndex = await verifyLeaf(providerArtifact, "kobrixa.device-ev3");
   const require = createRequire(import.meta.url);
   const { build } = createRequire(require.resolve("vitest/package.json"))("esbuild");
   const payloadAudit = await auditPayload(artifact);
@@ -126,6 +130,11 @@ export async function buildInstalled(directory, artifact) {
   const leaf = path.join(directory, "plugins/sensor-lab");
   const files = index.files;
   await copyInstalledLeaf(artifact, leaf, pluginId);
+  await copyInstalledLeaf(
+    providerArtifact,
+    path.join(directory, "plugins/device-ev3"),
+    "kobrixa.device-ev3",
+  );
   await vite.build({
     configLoader: "runner",
     cacheDir: path.join(directory, "vite-cache"),
@@ -165,6 +174,8 @@ export async function buildInstalled(directory, artifact) {
     "preload.cjs",
     ...files.map((f) => `plugins/sensor-lab/${f.path}`),
     "plugins/sensor-lab/resource-index.json",
+    ...providerIndex.files.map((f) => `plugins/device-ev3/${f.path}`),
+    "plugins/device-ev3/resource-index.json",
     ...(await readdir(path.join(directory, "renderer"), { recursive: true }))
       .filter((f) => /\.(html|js|css)$/.test(f))
       .map((f) => `renderer/${f}`),
@@ -175,6 +186,15 @@ export async function buildInstalled(directory, artifact) {
   const identity = {
     root,
     claim: "installed-payload acceptance host, not unmodified packaged product",
+    productDependencies: [
+      {
+        pluginId: "kobrixa.device-ev3",
+        path: providerArtifact,
+        leaf: "plugins/device-ev3",
+        index: providerIndex,
+        indexSha256: digest(await readFile(path.join(providerArtifact, "resource-index.json"))),
+      },
+    ],
     productArtifact: {
       path: artifact,
       index,
@@ -532,6 +552,20 @@ export async function runInstalled(directory, options = labInstalledOptions) {
     digest(await readFile(path.join(directory, leafPath, "resource-index.json"))),
     identity.productArtifact.indexSha256,
   );
+  if (slug === "sensor-lab") {
+    assert.equal(identity.productDependencies?.length, 1, "Lab requires original provider payload");
+    const dependency = identity.productDependencies[0];
+    assert.equal(dependency.pluginId, "kobrixa.device-ev3");
+    assert.equal(dependency.leaf, "plugins/device-ev3");
+    assert.deepEqual(
+      await verifyLeaf(path.join(directory, dependency.leaf), dependency.pluginId),
+      dependency.index,
+    );
+    assert.equal(
+      digest(await readFile(path.join(directory, dependency.leaf, "resource-index.json"))),
+      dependency.indexSha256,
+    );
+  }
   const receipts = [];
   for (const scenario of ["healthy", "absent", "missing-resource", "tampered"]) {
     const runRoot = path.join(directory, scenario);
