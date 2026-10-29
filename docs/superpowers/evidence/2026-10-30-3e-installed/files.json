@@ -1,0 +1,74 @@
+[
+  {
+    "file": "installed.json.gz",
+    "bytes": 69623,
+    "sha256": "93838612a1e7b6ad378f75e2a12faa337e1845ae31a27ba6b82433f1a1b0b539",
+    "gzipSha256": "dec5c1448df5f3af50c7e58278c2ef0edf9f7359221a4fe34bcad2a04f4b3ca1"
+  },
+  {
+    "file": "artifact-identity.json.gz",
+    "bytes": 66622,
+    "sha256": "fff3ef2176754a4be1e4aafa38ad7ee3200e2ce1f31c7c0186dbbb2b41d69f7c",
+    "gzipSha256": "522a705a77e0b010e846332e1e20af4cb0d6e2fa8236d5ea71841a3bd7a3193b"
+  },
+  {
+    "file": "payload-audit.json.gz",
+    "bytes": 717,
+    "sha256": "82af5b73b4ddefd5a82a4a665ed1fd567b81bab8aaf7c73522cdb4c9ab4ef094",
+    "gzipSha256": "ed21c68731a6134a457d9b192345bd04c62c07313f65eaf24d382c4174b2424f"
+  },
+  {
+    "file": "fixtures/device-settings.json.gz",
+    "bytes": 150,
+    "sha256": "553ab2afd29715572eac89446541e284bbae61e8a07417feadc97b6cdeb70d62",
+    "gzipSha256": "338f2c74f70789b90e6023feda90d7322919c56cace8beeffdbf2bb79461120a"
+  },
+  {
+    "file": "healthy/producer.json.gz",
+    "bytes": 762190,
+    "sha256": "bfb51e3f54369e3ead56811eb3c39126c393265f3f8600b89a21d6d068a6321f",
+    "gzipSha256": "9d16b09fe4e57abd48532f745d3b09b4c6378bdbcad7f1f56541ded8984777d4"
+  },
+  {
+    "file": "healthy/native.log.gz",
+    "bytes": 1378,
+    "sha256": "cd6ee0448a3a3db9023e9dd7bdd8a8ffa0d6101e41b05c8f31c779e2958eccfe",
+    "gzipSha256": "316cd681af27858ddac6d542fd97e11962d5f9f0a09a5e9a2efb466e0c326dc6"
+  },
+  {
+    "file": "absent/producer.json.gz",
+    "bytes": 3132,
+    "sha256": "bf8f8d25b8c2dd2042a548e6a6d997ce3e2aa4c62877d7e78dba2ba4162fe2e7",
+    "gzipSha256": "721bbf0852ba834c982af5ddfae24d8751d9e16884fc5c9e0c943278e4fb18ce"
+  },
+  {
+    "file": "absent/native.log.gz",
+    "bytes": 1378,
+    "sha256": "4901d4a57b2c34134902cbb69e89365c15627a7221cb5c3aa0918b3dfe3dbc57",
+    "gzipSha256": "3dc31c806c96f35de4870e74187c7bdb53482ba748382b32badfd2c7e4c4f86a"
+  },
+  {
+    "file": "missing-resource/producer.json.gz",
+    "bytes": 3144,
+    "sha256": "6cc1872ffed99f6cf617b252ed25cb11d9336293f6baf14899d5dda84937d7c6",
+    "gzipSha256": "7e1a45d20ac02ff92e6d759ce564d57d00697130af120e7d77abd4dc9cc5606b"
+  },
+  {
+    "file": "missing-resource/native.log.gz",
+    "bytes": 1378,
+    "sha256": "ed02284fd3aff6d409569f081adc1c6ed0d665e1784ad9707c618cd9fd7fcfdd",
+    "gzipSha256": "24f1291fd1048010a9f481d80b2e12f726808026b0d340fa8054bb8b96ac251f"
+  },
+  {
+    "file": "tampered/producer.json.gz",
+    "bytes": 3136,
+    "sha256": "1155c7c980afabd852b17b881e049abc3d0b343bd915de8256c739ac6b39769c",
+    "gzipSha256": "2bb41a9eec30c42248c8499fb6449312c38807af27255a5a7f1c2f56507bcc96"
+  },
+  {
+    "file": "tampered/native.log.gz",
+    "bytes": 1378,
+    "sha256": "9c2c713c1146cd5bb26938d9e3023124b3ec4d7f595f0d23fc1c69b521c418ad",
+    "gzipSha256": "19d81129b0d71ac5c094187b6fad1ac32351e7b9e1cb264efb2ee8ce73d224fc"
+  }
+]
