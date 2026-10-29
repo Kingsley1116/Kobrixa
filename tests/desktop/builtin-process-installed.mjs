@@ -349,8 +349,7 @@ async function launchProduct(config, receipt, check) {
     renderer,
     monitor,
     monitoring = false,
-    monitorError,
-    stopWorkerDebuggers;
+    monitorError;
   let output = "";
   let ended = false,
     failure,
@@ -452,8 +451,9 @@ async function launchProduct(config, receipt, check) {
     if (installed.exceptionDetails) throw Error(JSON.stringify(installed.exceptionDetails));
     assert.equal(installed.result.value, true);
     receipt.originalForkObserved = true;
-    stopWorkerDebuggers = await observeWorkerDebuggers(main, receipt);
     await main.send("Debugger.resume");
+    await main.send("Debugger.disable");
+    receipt.mainDebuggerDisabledAfterProbe = true;
     const browserUrl = await alive(
       () => output.match(/DevTools listening on (ws:\/\/[^\s]+)/)?.[1],
     );
@@ -558,7 +558,6 @@ async function launchProduct(config, receipt, check) {
         cleanupErrors.push(errorRecord(error));
       }
     }
-    await stopWorkerDebuggers?.();
     for (const client of clients) client.close();
     try {
       if (!ended && child?.pid) {
