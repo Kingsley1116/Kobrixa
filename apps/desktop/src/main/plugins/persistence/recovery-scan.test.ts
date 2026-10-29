@@ -219,3 +219,73 @@ it("unresolved ordinary first-create retains exact evidence across unavailable s
   expect(await f.nextFs.exists(f.ns.path("staging",f.attempt.id,"sealed.json"))).toBe(true);
  }finally{await rm(f.root,{recursive:true,force:true});}
 });
+
+it("two consecutive prepublish crashes finish half quarantine and retain both 8 MiB payloads",async()=>{
+ const f=await preHeadImport();try {
+  const original=structuredClone(f.attempt),planned=structuredClone(f.planned);
+  const replace=f.nextFs.atomicReplace.bind(f.nextFs);let interrupted=false;
+  f.nextFs.atomicReplace=async(from,to)=>{await replace(from,to);if(!interrupted && f.nextFs.name(to).endsWith(".prepublish.bin")){interrupted=true;throw Error("half-quarantine");}};
+  await expect(scanNamespace(f.ns,f.nextOwner.hostEpoch)).rejects.toThrow("half-quarantine");
+  f.nextFs.atomicReplace=replace;
+  const oldCandidate=f.ns.path(...f.loc.parts,`head.${f.attempt.id}.tmp`);
+  expect(await f.nextFs.exists(oldCandidate)).toBe(true);
+  const reopened=new AtomicStore(f.nextFs);await reopened.initialize();
+  const fresh=await reopened.admitImport(f.nextOwner,f.planId,"first");
+  expect(fresh.id).not.toBe(f.attempt.id);expect(fresh.target).toEqual(f.attempt.target);
+  await expect(reopened.reserve(f.attempt,f.bytes.length)).rejects.toThrow("stale");
+  await reopened.reserve(fresh,f.bytes.length);await reopened.tagImport(fresh,f.tag);
+  for(let offset=0;offset<f.bytes.length;offset+=262144)await reopened.append(fresh,offset,f.bytes.subarray(offset,offset+262144));
+  await reopened.seal(fresh,f.bytes.length,f.tag.sourceSha256);
+  const secondSnapshot=path.join(f.root,"second-snapshot");
+  const fault=f.nextFs.fault.bind(f.nextFs);
+  f.nextFs.fault=async(point,...args)=>{
+    if(point==="before-publish") {
+      await cp(path.join(f.snapshot,"plugins"),path.join(secondSnapshot,"plugins"),{recursive:true});
+      throw Error("second-prepublish-process-loss");
+    }
+    return fault(point,...args);
+  };
+  await expect(reopened.publish(fresh)).rejects.toThrow("second-prepublish-process-loss");
+  f.nextFs.fault=fault;await reopened.dispose();
+  const owner={...f.nextOwner,hostEpoch:randomUUID(),processEpoch:randomUUID()};
+  const fs=await createNodePersistenceFs(secondSnapshot,{hostEpoch:owner.hostEpoch,assertHeld(){}});
+  const ns=await Namespace.open(fs,owner.sourceKey),loc=await ns.location(fresh.target);
+  const store=new AtomicStore(fs);await store.initialize();
+  for(let n=0;n<2;n++) {
+    const scan=await scanNamespace(ns,owner.hostEpoch);
+    expect(scan.problems).toEqual([]);expect(scan.totals.temporary).toBe(16777216);expect(scan.totals.committed).toBe(0);
+    expect(await ns.head(loc)).toBeNull();expect((await store.list(owner,{limit:64})).entries).toEqual([]);
+  }
+  for(const ticket of [f.attempt,fresh]) {
+    expect(await fs.exists(ns.path(...loc.parts,`head.${ticket.id}.tmp`))).toBe(false);
+    const payload=await fs.bytes(ns.path("quarantine",`${ticket.id}.prepublish.bin`),8388608);
+    expect(createHash("sha256").update(payload).digest("hex")).toBe(f.tag.sourceSha256);
+    const head=JSON.parse(Buffer.from(await fs.bytes(ns.path("quarantine",`${ticket.id}.prepublish-head`),8192)).toString());
+    expect(head.receipt.commitId).toBe(ticket.id);expect(head.metadata).toEqual(ticket.metadata);
+    await expect(store.reserve(ticket,f.bytes.length)).rejects.toThrow("stale");
+  }
+  expect(await store.reconcileImport(fresh)).toEqual({disposition:"not-committed"});
+  expect(await store.reconcileImport(f.planned)).toEqual({disposition:"not-committed"});
+  expect(f.attempt).toEqual(original);expect(f.planned).toEqual(planned);
+  await store.dispose();
+ }finally{await rm(f.root,{recursive:true,force:true});}
+});
+
+for(const alteration of ["foreign-payload","occupied-head-destination","extra-candidate","foreign-journal"] as const)it(`half quarantine fails closed for ${alteration}`,async()=>{
+ const f=await preHeadImport();try {
+  const replace=f.nextFs.atomicReplace.bind(f.nextFs);let interrupted=false;
+  f.nextFs.atomicReplace=async(from,to)=>{await replace(from,to);if(!interrupted && f.nextFs.name(to).endsWith(".prepublish.bin")){interrupted=true;throw Error("half-quarantine");}};
+  await expect(scanNamespace(f.ns,f.nextOwner.hostEpoch)).rejects.toThrow("half-quarantine");f.nextFs.atomicReplace=replace;
+  const candidate=f.ns.path(...f.loc.parts,`head.${f.attempt.id}.tmp`),payload=f.ns.path("quarantine",`${f.attempt.id}.prepublish.bin`),destination=f.ns.path("quarantine",`${f.attempt.id}.prepublish-head`);
+  if(alteration==="foreign-payload")await writeFile(f.nextFs.name(payload),Buffer.alloc(f.bytes.length,13));
+  if(alteration==="occupied-head-destination")await f.ns.writeNew(destination,{foreign:true});
+  if(alteration==="extra-candidate")await f.ns.writeNew(f.ns.path(...f.loc.parts,`head.${randomUUID()}.tmp`),JSON.parse(Buffer.from(await f.nextFs.bytes(candidate,8192)).toString()));
+  if(alteration==="foreign-journal") {
+    const raw=JSON.parse(Buffer.from(await f.nextFs.bytes(candidate,8192)).toString());raw.importTag.itemKey="foreign";
+    await writeFile(f.nextFs.name(candidate),JSON.stringify(raw));
+  }
+  const inventory=async()=>Promise.all((await f.ns.inventory()).filter(file=>file.relative.startsWith("records/") || file.relative.startsWith("quarantine/") || file.relative.startsWith(`staging/${f.attempt.id}/`)).map(async file=>({name:file.relative,sha:createHash("sha256").update(await f.nextFs.bytes(file.path,8388608)).digest("hex")})));
+  const before=await inventory();await expect(new AtomicStore(f.nextFs).initialize()).rejects.toThrow("recovery-blocked");
+  expect(await inventory()).toEqual(before);expect(await f.ns.head(f.loc)).toBeNull();
+ }finally{await rm(f.root,{recursive:true,force:true});}
+});

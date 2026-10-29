@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { receiptSchema } from "../../../../../../packages/plugin-protocol/src/persistence-validation.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { StorePath } from "./filesystem.js";
 import { type Namespace, parseHead, liveRecord, publicationTicketSchema, sameImportValue, type DiskHead, importDocumentSchema } from "./namespace.js";
 import { parseNonceDocument, parseBarrierDocument } from "./import-sources.js";
@@ -36,7 +36,7 @@ async function quarantinePendingImportCandidate(ns:Namespace,loc:Awaited<ReturnT
       candidate.target.id!==loc.parts[1] || candidate.metadata.kind!=="record" || candidate.metadata.deleted ||
       !candidate.importTag || candidates[0]!.name!==`head.${candidate.receipt.commitId}.tmp`)return false;
   const objects=await fs.entries(loc.objects,4096);
-  if(objects.length!==1 || objects[0]!.directory || objects[0]!.name!==candidate.object)return false;
+  if(objects.length>1 || (objects.length===1 && (objects[0]!.directory || objects[0]!.name!==candidate.object)))return false;
   const journalLoc=await ns.location({kind:"import",key:candidate.importTag.importId});
   const journalHead=await ns.head(journalLoc);
   if(!journalHead || journalHead.target.kind!=="import" || journalHead.target.key!==candidate.importTag.importId)return false;
@@ -51,13 +51,29 @@ async function quarantinePendingImportCandidate(ns:Namespace,loc:Awaited<ReturnT
       attempt.id!==candidate.receipt.commitId || !sameImportValue(attempt.target,candidate.target) ||
       !sameImportValue(attempt.metadata,candidate.metadata) || !sameImportValue(item.tag,candidate.importTag) ||
       item.byteLength!==candidate.byteLength || item.mappedSha256!==candidate.sha256)return false;
-  await ns.verify(loc,candidate);
   // Preserve all bytes while freeing the fixed planned revision for a fresh attempt.
   // A crash between the moves leaves no published head and cannot replay payload.
   const objectEvidence=ns.path("quarantine",`${candidate.receipt.commitId}.prepublish.bin`);
   const headEvidence=ns.path("quarantine",`${candidate.receipt.commitId}.prepublish-head`);
-  if(await fs.exists(objectEvidence) || await fs.exists(headEvidence))throw new Error("corrupt");
-  await fs.atomicReplace(ns.object(loc,candidate),objectEvidence);
+  if(await fs.exists(headEvidence))throw new Error("corrupt");
+  if(objects.length===0) {
+    // Resume only the half-move authorized by this exact still-pending journal.
+    // Never treat an arbitrary quarantine file as a resumable write or overwrite it.
+    if(!await fs.exists(objectEvidence))return false;
+    if(await fs.size(objectEvidence)!==candidate.byteLength)throw new Error("corrupt");
+    const fd=await fs.open(objectEvidence,"read"),hash=createHash("sha256");let offset=0;
+    try {
+      while(offset<candidate.byteLength) {
+        const bytes=await fs.read(fd,offset,Math.min(262144,candidate.byteLength-offset));
+        if(!bytes.length)throw new Error("corrupt");hash.update(bytes);offset+=bytes.length;
+      }
+      if(hash.digest("hex")!==candidate.sha256)throw new Error("corrupt");
+    }finally{await fs.close(fd);}
+  }else {
+    if(await fs.exists(objectEvidence))throw new Error("corrupt");
+    await ns.verify(loc,candidate);
+    await fs.atomicReplace(ns.object(loc,candidate),objectEvidence);
+  }
   await fs.syncDirectory(ns.path("quarantine"));await fs.syncDirectory(loc.objects);
   await fs.atomicReplace(ns.path(...loc.parts,candidates[0]!.name),headEvidence);
   await fs.syncDirectory(ns.path("quarantine"));await fs.syncDirectory(loc.directory);
@@ -81,8 +97,10 @@ export async function scanNamespace(ns: Namespace, hostEpoch: string): Promise<N
       head = previous; result.problems.push("rollback-interrupted");
     }
     if (!head) {
-      if (await fs.exists(loc.objects) && (await fs.entries(loc.objects, 4096)).length &&
-          !await quarantinePendingImportCandidate(ns,loc)) {
+      const objectsRemain=await fs.exists(loc.objects) && (await fs.entries(loc.objects,4096)).length>0;
+      const candidateRemains=loc.parts[0]==="records" && (await fs.entries(loc.directory,4096))
+        .some(e=>!e.directory && /^head\.[0-9a-f-]{36}\.tmp$/.test(e.name));
+      if ((objectsRemain || candidateRemains) && !await quarantinePendingImportCandidate(ns,loc)) {
         result.problems.push("corrupt"); unresolved.add(fs.name(loc.directory));
       }
       continue;
