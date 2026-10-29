@@ -1,5 +1,15 @@
 import assert from "node:assert/strict";
-import { cp, mkdir, mkdtemp, readFile, readdir, realpath, writeFile, rm } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  writeFile,
+  rm,
+  lstat,
+} from "node:fs/promises";
 import path from "node:path";
 import { isBuiltin, createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -447,6 +457,36 @@ export const labInstalledOptions = Object.freeze({
   missingResource: "ui/panel.json",
   verify: verifyInstalledReceipt,
 });
+export async function prepareScenarioProfile(
+  directory,
+  runRoot,
+  identity,
+  options = labInstalledOptions,
+) {
+  const profile = path.join(runRoot, "profile");
+  await mkdir(profile); // Never overwrite or copy a previously consumed profile.
+  if (options.slug !== "device-ev3") {
+    assert.equal(options.profileFixture, undefined);
+    return;
+  }
+  const allowed = { path: "fixtures/device-settings.json", target: "device-settings.json" };
+  assert.deepEqual(options.profileFixture, allowed);
+  assert.ok(identity.profileFixture, "Device scenario requires immutable original fixture");
+  assert.deepEqual(
+    { path: identity.profileFixture.path, target: identity.profileFixture.target },
+    allowed,
+  );
+  const expected = identity.artifactHashes[allowed.path];
+  assert.match(expected, /^[a-f0-9]{64}$/);
+  assert.equal(identity.profileFixture.sha256, expected);
+  const source = path.join(directory, allowed.path),
+    stat = await lstat(source);
+  assert.ok(stat.isFile() && !stat.isSymbolicLink() && stat.size <= 65536);
+  const bytes = await readFile(source);
+  assert.equal(digest(bytes), expected);
+  await writeFile(path.join(profile, allowed.target), bytes, { flag: "wx" });
+  assert.equal(digest(await readFile(path.join(profile, allowed.target))), expected);
+}
 export async function runInstalled(directory, options = labInstalledOptions) {
   const { pluginId, slug, switchPrefix, missingResource, verify } = options;
   assert.ok(["sensor-lab", "device-ev3"].includes(slug));
@@ -498,7 +538,7 @@ export async function runInstalled(directory, options = labInstalledOptions) {
     await mkdir(runRoot); // No profile replay or overwritten evidence.
     for (const name of ["main.cjs", "preload.cjs", "persistence-worker.cjs", "renderer", "plugins"])
       await cp(path.join(directory, name), path.join(runRoot, name), { recursive: true });
-    await mkdir(path.join(runRoot, "profile"));
+    await prepareScenarioProfile(directory, runRoot, identity, options);
     const privateTmp = path.join(runRoot, "t");
     await mkdir(privateTmp);
     if (scenario === "absent") await rm(path.join(runRoot, leafPath, "main.cjs"));
@@ -615,6 +655,12 @@ export async function runInstalled(directory, options = labInstalledOptions) {
     assert.deepEqual(survivors, []);
     const report = JSON.parse(await readFile(path.join(runRoot, "producer.json"), "utf8"));
     assert.equal(report.scenario, scenario);
+    if (options.profileFixture)
+      assert.equal(
+        digest(await readFile(path.join(runRoot, "profile", options.profileFixture.target))),
+        identity.profileFixture.sha256,
+        "Original fixture bytes changed",
+      );
     assert.deepEqual(report.checkpoints.isolation.probes, identity.probes);
     for (const launch of report.launches) {
       assert.equal(launch.entry, path.join(runRoot, leafPath, "main.cjs"));
@@ -625,6 +671,7 @@ export async function runInstalled(directory, options = labInstalledOptions) {
     }
     receipts.push({
       scenario,
+      ...(options.profileFixture ? { profileFixtureSha256: identity.profileFixture.sha256 } : {}),
       verified: verify(report),
       producerSha256: digest(await readFile(path.join(runRoot, "producer.json"))),
     });

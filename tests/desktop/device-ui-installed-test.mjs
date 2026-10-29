@@ -69,3 +69,64 @@ test("device configuration selects production leaf and declared settings negativ
   assert.equal(deviceInstalledOptions.missingResource, "settings/preferences.json");
   assert.equal(deviceInstalledOptions.switchPrefix, "device");
 });
+
+test("device scenarios copy only immutable declared original fixture, never a consumed profile", async (t) => {
+  const { mkdtemp, mkdir, writeFile, readFile, rm, readdir } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const path = await import("node:path");
+  const { prepareDeviceProfileFixture } = await import("./device-ui-installed-run.mjs");
+  const { prepareScenarioProfile, labInstalledOptions } =
+    await import("./sensor-lab-installed-run.mjs");
+  const { legacyDevice } = await import("./device-ui-public-run.mjs");
+  const root = await mkdtemp(path.join(tmpdir(), "e6-seed-unit-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const identity = { artifactHashes: {} };
+  await prepareDeviceProfileFixture(root, identity);
+  await mkdir(path.join(root, "profile"));
+  await writeFile(
+    path.join(root, "profile/device-settings.json"),
+    "consumed profile must not copy",
+  );
+  for (const name of ["healthy", "absent", "missing-resource", "tampered"]) {
+    const target = path.join(root, name);
+    await mkdir(target);
+    await prepareScenarioProfile(root, target, identity, deviceInstalledOptions);
+    assert.deepEqual(await readdir(path.join(target, "profile")), ["device-settings.json"]);
+    assert.equal(
+      await readFile(path.join(target, "profile/device-settings.json"), "utf8"),
+      JSON.stringify(legacyDevice),
+    );
+    await assert.rejects(prepareScenarioProfile(root, target, identity, deviceInstalledOptions));
+  }
+  const lab = path.join(root, "lab");
+  await mkdir(lab);
+  await prepareScenarioProfile(root, lab, {}, labInstalledOptions);
+  assert.deepEqual(await readdir(path.join(lab, "profile")), []);
+  await writeFile(path.join(root, "fixtures/device-settings.json"), "tampered");
+  const bad = path.join(root, "bad");
+  await mkdir(bad);
+  await assert.rejects(prepareScenarioProfile(root, bad, identity, deviceInstalledOptions));
+});
+test("device scenario refuses missing or foreign fixture metadata", async (t) => {
+  const { mkdtemp, mkdir, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const path = await import("node:path");
+  const { prepareScenarioProfile } = await import("./sensor-lab-installed-run.mjs");
+  const root = await mkdtemp(path.join(tmpdir(), "e6-seed-metadata-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const [i, identity] of [
+    { artifactHashes: {} },
+    {
+      artifactHashes: {},
+      profileFixture: {
+        path: "profile/device-settings.json",
+        target: "device-settings.json",
+        sha256: "x",
+      },
+    },
+  ].entries()) {
+    const target = path.join(root, String(i));
+    await mkdir(target);
+    await assert.rejects(prepareScenarioProfile(root, target, identity, deviceInstalledOptions));
+  }
+});

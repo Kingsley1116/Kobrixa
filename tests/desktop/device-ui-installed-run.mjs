@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { buildDevice, verifyDeviceReceipt } from "./device-ui-public-run.mjs";
+import { buildDevice, verifyDeviceReceipt, legacyDevice } from "./device-ui-public-run.mjs";
 import { verifyLeaf, digest } from "./sensor-lab-installed-artifacts.mjs";
 import { auditPayload, finishInstalledBuild, runInstalled } from "./sensor-lab-installed-run.mjs";
 const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -48,13 +48,27 @@ export const deviceInstalledOptions = Object.freeze({
   switchPrefix: "device",
   missingResource: "settings/preferences.json",
   verify: verifyInstalledDeviceReceipt,
+  profileFixture: Object.freeze({
+    path: "fixtures/device-settings.json",
+    target: "device-settings.json",
+  }),
 });
+export async function prepareDeviceProfileFixture(directory, identity) {
+  const fixture = deviceInstalledOptions.profileFixture;
+  await mkdir(path.join(directory, "fixtures"), { recursive: true });
+  const bytes = Buffer.from(JSON.stringify(legacyDevice));
+  await writeFile(path.join(directory, fixture.path), bytes, { flag: "wx" });
+  const sha256 = digest(bytes);
+  identity.artifactHashes[fixture.path] = sha256;
+  identity.profileFixture = { ...fixture, sha256 };
+}
 export async function prepareInstalledDevice(directory, artifact) {
   assert.ok(path.isAbsolute(artifact));
   const index = await verifyLeaf(artifact, pluginId);
   const dependencies = process.env.KOBRIXA_E6_DEPS ?? root;
   const audit = await auditPayload(artifact, dependencies);
   const identity = await buildDevice(directory, { productionLeaf: artifact });
+  await prepareDeviceProfileFixture(directory, identity);
   await writeFile(
     path.join(directory, "payload-audit.json"),
     JSON.stringify(audit.metafile, null, 2),
