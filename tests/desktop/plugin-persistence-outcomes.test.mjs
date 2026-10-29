@@ -1,7 +1,3 @@
-import "./plugin-persistence-optional-off.test.mjs";
-import "./plugin-persistence-renderer-loss.test.mjs";
-import "./plugin-persistence-sealed-ttl.test.mjs";
-import "./plugin-persistence-action-replay.test.mjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -36,12 +32,54 @@ test("ordinary test commands retain the pure oracle gate independently of native
   const { scripts } = JSON.parse(
     await readFile(new URL("../../package.json", import.meta.url), "utf8"),
   );
-  assert.equal(
-    scripts["test:persistence:oracles"],
-    "node --test tests/desktop/plugin-persistence-outcomes.test.mjs tests/desktop/plugin-persistence-contention.test.mjs tests/desktop/plugin-persistence-suspend.test.mjs tests/desktop/plugin-persistence-disconnect.test.mjs tests/desktop/plugin-persistence-unknown.test.mjs",
+  const requiredPersistence = [
+    "outcomes",
+    "contention",
+    "suspend",
+    "disconnect",
+    "unknown",
+    "action-replay",
+    "renderer-loss",
+    "optional-off",
+    "sealed-ttl",
+  ].map((name) => `tests/desktop/plugin-persistence-${name}.test.mjs`);
+  const oracleFiles = scripts["test:persistence:oracles"].split(" ");
+  assert.deepEqual(oracleFiles.slice(0, 2), ["node", "--test"]);
+  assert.deepEqual(
+    oracleFiles.slice(2).sort(),
+    requiredPersistence.sort(),
+    "Exact pure B2 suite; no native/evidence runner or duplicate",
   );
-  for (const name of ["test", "test:desktop", "test:ci"])
-    assert.ok(scripts[name].includes("pnpm test:persistence:oracles"), name);
+  const feature = scripts["test:feature-oracles"];
+  assert.ok(feature.startsWith("node -e "));
+  assert.ok(feature.includes("process.env.KOBRIXA_TEST_PYTHON"));
+  assert.ok(feature.includes("['--test', ...process.argv.slice(1)]"));
+  const requiredFeatures = [
+    "motor-test-public.test.mjs",
+    "sensor-lab-public-test.mjs",
+    "sensor-lab-stdio-test.mjs",
+    "sensor-lab-installed-test.mjs",
+    "device-ui-public-test.mjs",
+    "device-ui-stdio-test.mjs",
+    "device-ui-installed-test.mjs",
+  ].map((name) => `tests/desktop/${name}`);
+  assert.deepEqual(
+    feature
+      .split(" ")
+      .filter((token) => token.startsWith("tests/"))
+      .sort(),
+    requiredFeatures.sort(),
+    "Only reviewed pure C/D/E suites, excluding mixed native-evidence boundary suite",
+  );
+  for (const name of ["test", "test:desktop", "test:ci"]) {
+    const commands = scripts[name].split(" && ");
+    for (const gate of ["test:persistence:oracles", "test:feature-oracles"])
+      assert.equal(
+        commands.filter((command) => command === `pnpm ${gate}`).length,
+        1,
+        `${name}: ${gate}`,
+      );
+  }
 });
 
 for (const id of FOUNDATION_CASES) {

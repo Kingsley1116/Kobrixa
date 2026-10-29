@@ -302,7 +302,7 @@ test("contention oracle requires both owners, live conflicts and the actual losi
 
 test("contention can be selected alone without opening the unfinished full matrix", () => {
   assert.deepEqual(selectFoundationCases({ caseId: "contention" }), ["contention"]);
-  assert.throws(() => selectFoundationCases(), /ten observation-table producers/);
+  assert.throws(() => selectFoundationCases(), /BLOCKED: remaining observation-table producers/);
   assert.deepEqual(selectFoundationCases({ caseId: "suspend-wake" }), ["suspend-wake"]);
   assert.throws(
     () => selectFoundationCases({ referencesOnly: true, caseId: "contention" }),
