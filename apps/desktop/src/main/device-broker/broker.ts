@@ -541,7 +541,7 @@ export function createBroker(
   };
   const forgetUsb = (
     id: string,
-    state: "cancelled" | "exhausted" | null = "cancelled",
+    state: "cancelled" | "exhausted" | "unavailable" | null = "cancelled",
     reason: Extract<ConnectionRecovery, { phase: "cancelled" }>["reason"] = "authority-lost",
   ) => {
     const row = lostUsb.get(id);
@@ -549,7 +549,7 @@ export function createBroker(
     if (row.timer) clearTimeout(row.timer);
     row.timer = null;
     lostUsb.delete(id);
-    if (state === "cancelled") void cancelEpisode(row, reason);
+    if (state === "cancelled" || state === "unavailable") void cancelEpisode(row, reason);
     else {
       row.control.abort();
       if (state === "exhausted") publishRecovery(row, { phase: "retry-exhausted" });
@@ -602,8 +602,11 @@ export function createBroker(
     row.policy = policy;
     if (!row.policy.usbAutoReconnect || !usbLive(row)) {
       const initial = row.attempts === 0;
-      forgetUsb(id, "cancelled", !row.policy.usbAutoReconnect ? "policy" : "authority-lost");
-      if (initial) recoveryState(id, "unavailable");
+      forgetUsb(
+        id,
+        initial ? "unavailable" : "cancelled",
+        !row.policy.usbAutoReconnect ? "policy" : "authority-lost",
+      );
       return;
     }
     if (policy.usbRetryLimit !== "unlimited" && row.attempts >= policy.usbRetryLimit) {
@@ -1815,6 +1818,9 @@ export function createBroker(
           current.snapshot.state = "disconnected";
           revision++;
           changed();
+          // The retained automatic-recovery contract is USB-only. Wi-Fi loss
+          // already published the ordinary disconnected state above.
+          if (current.snapshot.transport !== "usb") return;
           let lossPolicy: ReturnType<Options["connectionPolicy"]> | null = null;
           try {
             lossPolicy = Object.freeze({ ...input.connectionPolicy() });
@@ -1846,7 +1852,7 @@ export function createBroker(
           latestEpisode = row;
           if (!lossPolicy) {
             void cancelEpisode(row, "policy");
-            recoveryState(id, "cancelled");
+            recoveryState(id, "unavailable");
             return;
           }
           if (
