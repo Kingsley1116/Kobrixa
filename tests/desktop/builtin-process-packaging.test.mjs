@@ -451,11 +451,12 @@ test("worker debugger observer releases only reported waits and retains the resp
     { method: "NodeWorker.enable", params: { waitForDebuggerOnStart: false } },
   ]);
   listeners.get("NodeWorker.attachedToWorker")({ sessionId: "running", waitingForDebugger: false });
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
+  assert.equal(JSON.parse(calls[1].params.message).method, "Debugger.enable");
   listeners.get("NodeWorker.attachedToWorker")({ sessionId: "paused", waitingForDebugger: true });
   await Promise.resolve();
-  assert.equal(calls[1].params.sessionId, "paused");
-  assert.deepEqual(JSON.parse(calls[1].params.message), {
+  assert.equal(calls[3].params.sessionId, "paused");
+  assert.deepEqual(JSON.parse(calls[3].params.message), {
     id: 1,
     method: "Runtime.runIfWaitingForDebugger",
   });
@@ -463,6 +464,17 @@ test("worker debugger observer releases only reported waits and retains the resp
     sessionId: "paused",
     message: JSON.stringify({ id: 1, result: {} }),
   });
+  listeners.get("NodeWorker.receivedMessageFromWorker")({
+    sessionId: "running",
+    message: JSON.stringify({
+      method: "Debugger.paused",
+      params: { reason: "Break on start", callFrames: [] },
+    }),
+  });
+  await Promise.resolve();
+  assert.equal(calls.at(-1).params.sessionId, "running");
+  assert.equal(JSON.parse(calls.at(-1).params.message).method, "Debugger.resume");
+  assert.equal(receipt.workerDebuggers[0].pauses[0].reason, "Break on start");
   await stop();
   assert.equal(listeners.size, 0);
   assert.equal(receipt.workerDebuggers[0].releaseSent, undefined);

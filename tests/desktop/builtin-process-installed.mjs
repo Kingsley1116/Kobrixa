@@ -218,16 +218,44 @@ export async function observeWorkerDebuggers(main, receipt) {
   const sessions = new Map();
   const pending = new Set();
   receipt.workerDebuggers = [];
+  const send = (row, id, method) => {
+    const request = main
+      .send("NodeWorker.sendMessageToWorker", {
+        sessionId: row.sessionId,
+        message: JSON.stringify({ id, method }),
+      })
+      .catch((error) => {
+        row.debuggerError = errorRecord(error);
+      });
+    pending.add(request);
+    void request.finally(() => pending.delete(request));
+    return request;
+  };
   const offMessage = main.on("NodeWorker.receivedMessageFromWorker", ({ sessionId, message }) => {
     const row = sessions.get(sessionId);
     if (!row) return;
     const parsed = JSON.parse(message);
     if (parsed.id === 1) row.releaseResponse = parsed;
+    if (parsed.id === 3) row.resumeResponse = parsed;
+    if (parsed.method === "Debugger.paused") {
+      row.pauses ??= [];
+      row.pauses.push({
+        at: Date.now(),
+        reason: parsed.params.reason,
+        frames: parsed.params.callFrames.map((frame) => ({
+          functionName: frame.functionName,
+          url: frame.url,
+          location: frame.location,
+        })),
+      });
+      void send(row, 3, "Debugger.resume");
+    }
   });
   const offAttach = main.on("NodeWorker.attachedToWorker", (event) => {
     const row = { ...event, at: Date.now() };
     receipt.workerDebuggers.push(row);
     sessions.set(event.sessionId, row);
+    void send(row, 2, "Debugger.enable");
     if (event.waitingForDebugger) {
       const request = main
         .send("NodeWorker.sendMessageToWorker", {
