@@ -8,6 +8,7 @@ import { EventEmitter } from "node:events";
 import { runInNewContext } from "node:vm";
 import {
   observeInstalledWorkers,
+  observeWorkerDebuggers,
   collectWorkerTimeline,
   installProbe,
   verifyLeaf,
@@ -430,4 +431,41 @@ test("serialized inspector probe persists early exit even when main cannot be qu
   assert.equal(electron.utilityProcess.fork, originalFork);
   assert.throws(() => collectWorkerTimeline("KOBRIXA_INSTALLED_WORKER {bad}"));
   assert.throws(() => collectWorkerTimeline(output, [{ ...rows[0], worker: 999 }]));
+});
+
+test("worker debugger observer releases only reported waits and retains the response", async () => {
+  const listeners = new Map(),
+    calls = [],
+    receipt = {};
+  const main = {
+    on(name, callback) {
+      listeners.set(name, callback);
+      return () => listeners.delete(name);
+    },
+    async send(method, params) {
+      calls.push({ method, params });
+    },
+  };
+  const stop = await observeWorkerDebuggers(main, receipt);
+  assert.deepEqual(calls, [
+    { method: "NodeWorker.enable", params: { waitForDebuggerOnStart: false } },
+  ]);
+  listeners.get("NodeWorker.attachedToWorker")({ sessionId: "running", waitingForDebugger: false });
+  assert.equal(calls.length, 1);
+  listeners.get("NodeWorker.attachedToWorker")({ sessionId: "paused", waitingForDebugger: true });
+  await Promise.resolve();
+  assert.equal(calls[1].params.sessionId, "paused");
+  assert.deepEqual(JSON.parse(calls[1].params.message), {
+    id: 1,
+    method: "Runtime.runIfWaitingForDebugger",
+  });
+  listeners.get("NodeWorker.receivedMessageFromWorker")({
+    sessionId: "paused",
+    message: JSON.stringify({ id: 1, result: {} }),
+  });
+  await stop();
+  assert.equal(listeners.size, 0);
+  assert.equal(receipt.workerDebuggers[0].releaseSent, undefined);
+  assert.equal(receipt.workerDebuggers[1].releaseSent, true);
+  assert.deepEqual(receipt.workerDebuggers[1].releaseResponse, { id: 1, result: {} });
 });

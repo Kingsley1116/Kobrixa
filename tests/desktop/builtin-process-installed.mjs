@@ -213,6 +213,53 @@ export function collectWorkerTimeline(output, prior = []) {
   return [...rows.values()].sort((a, b) => a.sequence - b.sequence);
 }
 
+// Observe inherited debugger waits without changing Worker options or product code.
+export async function observeWorkerDebuggers(main, receipt) {
+  const sessions = new Map();
+  const pending = new Set();
+  receipt.workerDebuggers = [];
+  const offMessage = main.on("NodeWorker.receivedMessageFromWorker", ({ sessionId, message }) => {
+    const row = sessions.get(sessionId);
+    if (!row) return;
+    const parsed = JSON.parse(message);
+    if (parsed.id === 1) row.releaseResponse = parsed;
+  });
+  const offAttach = main.on("NodeWorker.attachedToWorker", (event) => {
+    const row = { ...event, at: Date.now() };
+    receipt.workerDebuggers.push(row);
+    sessions.set(event.sessionId, row);
+    if (event.waitingForDebugger) {
+      const request = main
+        .send("NodeWorker.sendMessageToWorker", {
+          sessionId: event.sessionId,
+          message: JSON.stringify({ id: 1, method: "Runtime.runIfWaitingForDebugger" }),
+        })
+        .then(
+          () => {
+            row.releaseSent = true;
+          },
+          (error) => {
+            row.releaseError = errorRecord(error);
+          },
+        );
+      pending.add(request);
+      void request.finally(() => pending.delete(request));
+    }
+  });
+  try {
+    await main.send("NodeWorker.enable", { waitForDebuggerOnStart: false });
+  } catch (error) {
+    offAttach();
+    offMessage();
+    throw error;
+  }
+  return async () => {
+    offAttach();
+    offMessage();
+    await Promise.all(pending);
+  };
+}
+
 // Inspector-only observation: call and return the original fork without changing
 // arguments, services, channels, or product policy. Exit records survive app quit.
 export const installProbe = `(() => {
@@ -274,7 +321,8 @@ async function launchProduct(config, receipt, check) {
     renderer,
     monitor,
     monitoring = false,
-    monitorError;
+    monitorError,
+    stopWorkerDebuggers;
   let output = "";
   let ended = false,
     failure,
@@ -376,6 +424,7 @@ async function launchProduct(config, receipt, check) {
     if (installed.exceptionDetails) throw Error(JSON.stringify(installed.exceptionDetails));
     assert.equal(installed.result.value, true);
     receipt.originalForkObserved = true;
+    stopWorkerDebuggers = await observeWorkerDebuggers(main, receipt);
     await main.send("Debugger.resume");
     const browserUrl = await alive(
       () => output.match(/DevTools listening on (ws:\/\/[^\s]+)/)?.[1],
@@ -481,6 +530,7 @@ async function launchProduct(config, receipt, check) {
         cleanupErrors.push(errorRecord(error));
       }
     }
+    await stopWorkerDebuggers?.();
     for (const client of clients) client.close();
     try {
       if (!ended && child?.pid) {

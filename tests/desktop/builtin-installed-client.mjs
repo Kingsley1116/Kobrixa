@@ -88,6 +88,12 @@ export async function connect(url) {
     });
   return {
     send,
+    on(method, receive) {
+      const listeners = events.get(method) ?? new Set();
+      events.set(method, listeners);
+      listeners.add(receive);
+      return () => listeners.delete(receive);
+    },
     event(method) {
       return new Promise((resolve, reject) => {
         const listeners = events.get(method) ?? new Set();
