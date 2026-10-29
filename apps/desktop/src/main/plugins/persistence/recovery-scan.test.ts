@@ -84,7 +84,7 @@ it("classifies a recovered import metadata candidate before cleaning staging",as
 import { cp, writeFile } from "node:fs/promises";
 import { importIdFor } from "./import-sources.js";
 import type { PublicationTicket } from "./engine-port.js";
-async function preHeadImport() {
+async function preHeadImport(ordinary=false) {
   const root=await mkdtemp(path.join(tmpdir(),"pre-head-import-"));
   const snapshot=path.join(root,"snapshot");
   let copying=false;
@@ -99,17 +99,24 @@ async function preHeadImport() {
   const bytes=Buffer.alloc(8388608,42),sha=createHash("sha256").update(bytes).digest("hex"),id=randomUUID();
   const planned:PublicationTicket={id:randomUUID(),owner,deadlineMonotonicMs:10000,target:{kind:"record",id,expectedRevision:null},metadata:{kind:"record",deleted:false,record:{id,revision:"r_"+randomUUID().replaceAll("-",""),kind:"test.synthetic",schemaVersion:1,label:"import",mediaType:"application/octet-stream",byteLength:bytes.length,sha256:sha,createdAt:1,updatedAt:1,checkpoint:"none",interrupted:false}}};
   const descriptorId="test.synthetic.files",planId=importIdFor(descriptorId,owner.sourceKey),tag={importId:planId,itemKey:"first",sourceSha256:sha};
-  await store.planImport(owner,{formatVersion:1,id:planId,descriptorId,mappingVersion:1,targetSourceKey:owner.sourceKey,preferencesEvidence:null,items:[{key:"first",sourceFormat:1,sourceSha256:sha,mappedSha256:sha,byteLength:bytes.length,ticket:planned,tag}]});
-  const attempt=await store.admitImport(owner,planId,"first");
-  await store.reserve(attempt,bytes.length);await store.tagImport(attempt,tag);
+  if(!ordinary)await store.planImport(owner,{formatVersion:1,id:planId,descriptorId,mappingVersion:1,targetSourceKey:owner.sourceKey,preferencesEvidence:null,items:[{key:"first",sourceFormat:1,sourceSha256:sha,mappedSha256:sha,byteLength:bytes.length,ticket:planned,tag}]});
+  const attempt=ordinary?planned:await store.admitImport(owner,planId,"first");
+  await store.reserve(attempt,bytes.length);if(!ordinary)await store.tagImport(attempt,tag);
   for(let offset=0;offset<bytes.length;offset+=262144)await store.append(attempt,offset,bytes.subarray(offset,offset+262144));
-  await store.seal(attempt,bytes.length,sha);copying=true;
+  await store.seal(attempt,bytes.length,sha);
+  let safeAttempt:PublicationTicket|undefined;
+  if(ordinary && planned.metadata.kind==="record") {
+    const safeId=randomUUID(),safeBytes=Buffer.from("abc"),safeHash=createHash("sha256").update(safeBytes).digest("hex");
+    safeAttempt={...planned,id:randomUUID(),target:{kind:"record",id:safeId,expectedRevision:null},metadata:{kind:"record",deleted:false,record:{...planned.metadata.record,id:safeId,revision:"r_"+randomUUID().replaceAll("-",""),byteLength:3,sha256:safeHash}}};
+    await store.reserve(safeAttempt,3);await store.append(safeAttempt,0,safeBytes);await store.seal(safeAttempt,3,safeHash);
+  }
+  copying=true;
   await expect(store.publish(attempt)).rejects.toThrow("simulated-process-loss");
   await store.dispose();
   const nextOwner={...owner,hostEpoch:randomUUID(),processEpoch:randomUUID()};
   const nextFs=await createNodePersistenceFs(snapshot,{hostEpoch:nextOwner.hostEpoch,assertHeld(){}},{now:()=>0});
   const ns=await Namespace.open(nextFs,owner.sourceKey),loc=await ns.location(attempt.target);
-  return {root,snapshot,nextFs,ns,loc,planned,attempt,nextOwner,planId,tag,bytes};
+  return {root,snapshot,nextFs,ns,loc,planned,attempt,nextOwner,planId,tag,bytes,safeAttempt};
 }
 it("pre-head import restart preserves unpublished evidence, reconciles not committed and admits only a fresh attempt",async()=>{
  const f=await preHeadImport();try {
@@ -181,5 +188,34 @@ for(const edge of [".prepublish.bin",".prepublish-head"])it(`pre-head import qua
   const store=new AtomicStore(f.nextFs);await store.initialize();
   expect(await store.reconcileImport(f.attempt)).toEqual({disposition:"not-committed"});
   await store.dispose();
+ }finally{await rm(f.root,{recursive:true,force:true});}
+});
+
+
+it("unresolved ordinary first-create retains exact evidence across unavailable startups while safe old staging is cleaned",async()=>{
+ const f=await preHeadImport(true);try {
+  // This independent sealed write was made through the actual engine before the snapshot.
+  expect(f.safeAttempt).toBeDefined();
+  const safeDir=f.ns.path("staging",f.safeAttempt!.id);
+  const evidence=async()=>{
+    const files=(await f.ns.inventory()).filter(file=>file.relative.startsWith(`staging/${f.attempt.id}/`) || file.relative.startsWith(`records/${f.attempt.target.kind==="record"?f.attempt.target.id:""}/`));
+    return Promise.all(files.sort((a,b)=>a.relative.localeCompare(b.relative)).map(async file=>({name:file.relative,bytes:file.bytes,sha256:createHash("sha256").update(await f.nextFs.bytes(file.path,8388608)).digest("hex")})));
+  };
+  const before=await evidence();
+  expect(before.some(e=>e.name.endsWith("intent.json"))).toBe(true);
+  expect(before.some(e=>e.name.endsWith("sealed.json"))).toBe(true);
+  for(let n=0;n<3;n++) {
+    const fs=await createNodePersistenceFs(f.snapshot,{hostEpoch:randomUUID(),assertHeld(){}});
+    await expect(new AtomicStore(fs).initialize()).rejects.toThrow("recovery-blocked");
+    expect(await evidence()).toEqual(before);
+    expect(await f.ns.head(f.loc)).toBeNull();
+    expect(await f.nextFs.entries(f.ns.path("quarantine"),4096)).toEqual([]);
+    expect(await f.nextFs.exists(safeDir)).toBe(false);
+  }
+  // Already-erased evidence is not recreated and does not grant recovery authority.
+  await f.nextFs.unlink(f.ns.path("staging",f.attempt.id,"intent.json"));
+  await expect(new AtomicStore(f.nextFs).initialize()).rejects.toThrow("recovery-blocked");
+  expect(await f.nextFs.exists(f.ns.path("staging",f.attempt.id,"intent.json"))).toBe(false);
+  expect(await f.nextFs.exists(f.ns.path("staging",f.attempt.id,"sealed.json"))).toBe(true);
  }finally{await rm(f.root,{recursive:true,force:true});}
 });

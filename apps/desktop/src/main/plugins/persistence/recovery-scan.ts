@@ -68,10 +68,11 @@ export async function scanNamespace(ns: Namespace, hostEpoch: string): Promise<N
   const result: NamespaceScan = { heads: [], problems: [], totals: { committed: 0, records: 0, metadata: 0, temporary: 0 } };
   await ns.inventory(); // Bound traversal and reject unsafe aliases before any repair.
   const payloads = new Set<string>(), retained = new Set<string>();
+  const unresolved = new Set<string>();
   for (const loc of await ns.locations()) {
     let head: DiskHead | null = null;
     try { head = await ns.head(loc); if (head) await ns.verify(loc, head); }
-    catch (e) { if (!contentError(e)) throw e; head = null; result.problems.push("corrupt"); }
+    catch (e) { if (!contentError(e)) throw e; head = null; result.problems.push("corrupt"); unresolved.add(fs.name(loc.directory)); }
     if (!head && await fs.exists(loc.previous)) {
       const previous = parseHead(await fs.bytes(loc.previous, 8192)); await ns.verify(loc, previous);
       if (await fs.exists(loc.head)) await ns.quarantine(loc.head);
@@ -81,7 +82,9 @@ export async function scanNamespace(ns: Namespace, hostEpoch: string): Promise<N
     }
     if (!head) {
       if (await fs.exists(loc.objects) && (await fs.entries(loc.objects, 4096)).length &&
-          !await quarantinePendingImportCandidate(ns,loc)) result.problems.push("corrupt");
+          !await quarantinePendingImportCandidate(ns,loc)) {
+        result.problems.push("corrupt"); unresolved.add(fs.name(loc.directory));
+      }
       continue;
     }
     if(head.metadata.kind!=="record") {
@@ -143,6 +146,10 @@ export async function scanNamespace(ns: Namespace, hostEpoch: string): Promise<N
       // Retain bounded metadata association under the existing metadata quota. Never promote payload.tmp.
       continue;
     }
+    // Unavailable records still need their original intent/seal evidence. Epoch
+    // retirement is not authority to erase an unresolved publication's provenance.
+    if (checkedTicket.target.kind==="record" &&
+        unresolved.has(fs.name((await ns.location(checkedTicket.target)).directory))) continue;
     if (value.ticket.owner.hostEpoch !== hostEpoch) {
       for (const name of ["payload.tmp", "sealed.json", "import-tag.json", "publication.json", "intent.json"]) {
         const p = ns.path("staging", entry.name, name);
