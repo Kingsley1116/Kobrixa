@@ -828,3 +828,63 @@ test("complete preference sequence requires three distinct headless hosts and no
     assert.throws(() => assertPreferenceSequence(bad));
   }
 });
+
+for (const message of [
+  "stale",
+  "Invalid preference scope",
+  "Error invoking remote method 'persistence:legacy-preferences-submit': Error: Invalid preference scope",
+  "Error invoking remote method 'persistence:legacy-preferences-submit': Error: stale",
+])
+  test(`old-scope capture accepts only the expected guard: ${message}`, async () => {
+    const f = captureFixture(),
+      old = documents().raw.raw,
+      calls = [];
+    const issue = f.api.challenge;
+    f.api.challenge = async () => {
+      calls.push("challenge");
+      return issue();
+    };
+    f.api.submit = async (snapshot) => {
+      calls.push(snapshot.nonce === old.nonce ? "old" : "new");
+      if (snapshot.nonce === old.nonce) throw new Error(message);
+      return { state: "accepted" };
+    };
+    await preferenceCapture(f.api, f.storage).capture(old);
+    assert.deepEqual(calls, ["old", "challenge", "new"]);
+    const rows = ipc(f.raw, true);
+    rows[1].error = String(new Error(message));
+    assertCaptureIpc(rows, f.raw, true);
+  });
+for (const message of [
+  "I/O error",
+  "transport closed",
+  "stale transport failure",
+  "Invalid preference scope: backend unavailable",
+  "Error invoking remote method 'other-channel': Error: Invalid preference scope",
+  "Error invoking remote method 'persistence:legacy-preferences-submit': Error: EIO",
+])
+  test(`unrelated old-submit failure is not accepted: ${message}`, async () => {
+    const f = captureFixture(),
+      old = documents().raw.raw,
+      error = new Error(message);
+    let challenges = 0,
+      submissions = 0;
+    f.api.challenge = async () => {
+      challenges++;
+      throw Error("must not challenge");
+    };
+    f.api.submit = async () => {
+      submissions++;
+      throw error;
+    };
+    await assert.rejects(
+      () => preferenceCapture(f.api, f.storage).capture(old),
+      (e) => e === error,
+    );
+    assert.equal(submissions, 1);
+    assert.equal(challenges, 0);
+    assert.equal(f.reads(), 0);
+    const rows = ipc(f.raw, true);
+    rows[1].error = String(error);
+    assert.throws(() => assertCaptureIpc(rows, f.raw, true));
+  });

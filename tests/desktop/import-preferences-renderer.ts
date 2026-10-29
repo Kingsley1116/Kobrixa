@@ -5,6 +5,16 @@ import type {
 
 export const ORIGINAL_PREFERENCE =
   '{"formatVersion":1,"value":"original preference bytes — unchanged"}';
+/** Only documented old-scope guard failures, optionally wrapped by this Electron IPC. */
+export function isPreferenceScopeRejection(error: unknown): boolean {
+  let message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  if (message.startsWith("Error: ")) message = message.slice(7);
+  const prefix = "Error invoking remote method 'persistence:legacy-preferences-submit': ";
+  if (message.startsWith(prefix)) message = message.slice(prefix.length);
+  if (message.startsWith("Error: ")) message = message.slice(7);
+  return message === "stale" || message === "Invalid preference scope";
+}
+
 /** Fixture only. The injected API at runtime is the unmodified production preload. */
 export function preferenceCapture(
   api: LegacyPreferencesApi,
@@ -30,7 +40,7 @@ export function preferenceCapture(
           try {
             await api.submit(oldSnapshot);
           } catch (error) {
-            if (!/stale/i.test(String(error))) throw error;
+            if (!isPreferenceScopeRejection(error)) throw error;
             rejected = true;
           }
           if (!rejected) throw Error("old window nonce unexpectedly accepted");

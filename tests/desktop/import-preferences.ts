@@ -1,3 +1,4 @@
+import { isPreferenceScopeRejection } from "./import-preferences-renderer.js";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import type {
@@ -390,7 +391,7 @@ export function assertCaptureIpc(rows: Wire[], d: Wire, stale: boolean) {
       (r) =>
         r.stage === "error" &&
         r.channel === "persistence:legacy-preferences-submit" &&
-        /stale/i.test(r.error),
+        isPreferenceScopeRejection(r.error),
     );
     assert.ok(rejection);
     const old = requests.find((r) => r.requestId === rejection.requestId);
