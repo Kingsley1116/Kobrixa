@@ -147,6 +147,13 @@ it("keeps native unpack and feature payload unpack in the same packaging rule", 
       slug: "sensor-lab",
       pluginId: "kobrixa.sensor-lab",
     },
+    {
+      entry: "../../plugins/device-ev3/src/main.ts",
+      config: "vite.plugin-device.config.ts",
+      target: "main",
+      slug: "device-ev3",
+      pluginId: "kobrixa.device-ev3",
+    },
   ]);
   expect(builtinProcessBuilds(false)).toEqual(DELIVERED_BUILTIN_PROCESS_BUILDS);
   expect(() => builtinProcessBuilds(true)).toThrow("conflicts with the delivered motor payload");
@@ -349,6 +356,54 @@ it("builds the actual registered motor entry into an isolated validated product 
   expect(sources[3]).toMatchObject({
     kind: "builtin",
     policy: "optional",
+    manifest: payload.manifest,
+    resources: payload.resources,
+    launch: { packageRoot: payload.root },
+  });
+});
+
+it("builds the real EV3 entry with public SDK and indexed settings/v2 resources", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "kobrixa-device-build-"));
+  roots.push(root);
+  const { default: config } = await import("../../vite.plugin-device.config.js");
+  const output = path.join(root, "plugins/device-ev3");
+  await build({
+    ...config,
+    configFile: false,
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    logLevel: "silent",
+    build: { ...config.build, outDir: output },
+  });
+  const payload = await validateBuiltinLeaf(output, "kobrixa.device-ev3");
+  expect(payload.index.files.map((file) => file.path)).toEqual([
+    "kobrixa-plugin.json",
+    "main.cjs",
+    "settings/preferences.json",
+    "ui/panel.json",
+  ]);
+  const code = await readFile(path.join(output, "main.cjs"), "utf8");
+  expect(code).not.toMatch(/\brequire\(["']@kobrixa\//);
+  const map = JSON.parse(await readFile(path.join(output, "main.cjs.map"), "utf8")) as {
+    sources: string[];
+  };
+  expect(map.sources.some((source) => source.includes("plugins/device-ev3/src/main.ts"))).toBe(
+    true,
+  );
+  expect(map.sources.some((source) => source.includes("packages/plugin-sdk-js/src/index.ts"))).toBe(
+    true,
+  );
+  expect(map.sources.some((source) => source.includes("apps/desktop/src/"))).toBe(false);
+  const sources = await assembleBuiltinPluginSources({
+    packaged: false,
+    appPath: "/unused",
+    buildRoot: root,
+  });
+  const matching = sources.filter(
+    (source) =>
+      source.kind === "builtin" && (source.manifest as { id?: string }).id === "kobrixa.device-ev3",
+  );
+  expect(matching).toHaveLength(1);
+  expect(matching[0]).toMatchObject({
     manifest: payload.manifest,
     resources: payload.resources,
     launch: { packageRoot: payload.root },

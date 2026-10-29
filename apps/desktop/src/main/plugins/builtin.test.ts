@@ -1094,7 +1094,15 @@ async function motorPayload(packaged: boolean) {
     leaf,
     "kobrixa.motor-test",
   );
-  return { root, input, leaf };
+  const deviceLeaf = path.join(path.dirname(leaf), "device-ev3");
+  await mkdir(deviceLeaf, { recursive: true });
+  await writeFile(path.join(deviceLeaf, "main.cjs"), "'use strict';\n");
+  await emitResourceIndex(
+    new URL("plugins/device-ev3", repository).pathname,
+    deviceLeaf,
+    "kobrixa.device-ev3",
+  );
+  return { root, input, leaf, deviceLeaf };
 }
 
 it.each([false, true])(
@@ -1103,7 +1111,7 @@ it.each([false, true])(
     const h = await motorPayload(packaged);
     try {
       const sources = await assembleBuiltinPluginSources(h.input);
-      expect(sources.slice(0, 3)).toEqual(BUILTIN_PLUGIN_SOURCES);
+      expect(sources.slice(0, 2)).toEqual(BUILTIN_PLUGIN_SOURCES.slice(0, 2));
       expect(BUILTIN_PLUGIN_SOURCES).toHaveLength(3);
       const source = sources[3]!;
       if (source.kind !== "builtin") throw new Error("Expected shipped motor");
@@ -1402,6 +1410,70 @@ it.each([false, true])(
             (candidate.manifest as { id?: string }).id === "kobrixa.motor-test",
         ),
       ).toMatchObject({ launch: { pluginId: "kobrixa.motor-test" } });
+    } finally {
+      await rm(h.root, { recursive: true, force: true });
+    }
+  },
+);
+
+it.each([false, true])(
+  "replaces the provider source with one validated device feature, packaged=%s",
+  async (packaged) => {
+    const h = await motorPayload(packaged);
+    try {
+      const sources = await assembleBuiltinPluginSources(h.input);
+      const devices = sources.filter(
+        (source) => source.kind === "builtin" && (source.manifest as { id?: string }).id === "kobrixa.device-ev3",
+      );
+      expect(devices).toHaveLength(1);
+      const device = devices[0]!;
+      if (device.kind !== "builtin") throw new Error("Expected builtin device");
+      expect(device.launch).toMatchObject({
+        packageRoot: h.deviceLeaf,
+        sourceKey: "builtin:kobrixa.device-ev3",
+      });
+      expect(Object.keys(device.resources).sort()).toEqual([
+        "settings/preferences.json",
+        "ui/panel.json",
+      ]);
+      const manifest = pluginManifestSchema.parse(device.manifest);
+      expect(manifest.runtime).toEqual({ kind: "node", entry: "main.cjs" });
+      expect(manifest.contributes?.deviceProviders).toEqual(
+        pluginManifestSchema.parse(BUILTIN_PLUGIN_SOURCES[2]!.manifest).contributes!
+          .deviceProviders,
+      );
+      const launcher = vi.fn();
+      const manager = await PluginManager.create({
+        sources,
+        launcher,
+        safeMode: false,
+        locale: "en",
+        store: {
+          load: async () => ({ disabled: new Set(), legacyDisabledIds: new Set() }),
+          save: async () => {},
+        },
+      });
+      try {
+        expect(manager.state().plugins.find((row) => row.id === manifest.id)).toMatchObject({
+          status: "enabled",
+          running: false,
+        });
+        expect(
+          manager.builtinSourceEligibility!().filter((row) => row.pluginId === manifest.id),
+        ).toMatchObject([{ eligible: true, providerIds: [manifest.id] }]);
+        expect(launcher).not.toHaveBeenCalled();
+      } finally {
+        await manager.shutdown();
+      }
+      await writeFile(path.join(h.deviceLeaf, "main.cjs"), "tampered");
+      const corrupt = (await assembleBuiltinPluginSources(h.input)).filter(
+        (source) => source.kind === "builtin" && (source.manifest as { id?: string }).id === manifest.id,
+      );
+      expect(corrupt).toHaveLength(1);
+      expect(corrupt[0]).toMatchObject({ payloadUnavailable: true, resources: {} });
+      const loaded = await loadPlugins(corrupt, { disabled: new Set(), safeMode: false });
+      expect(loaded[0]).toMatchObject({ status: "invalid" });
+      expect(loaded[0]?.manifest?.contributes?.deviceProviders).toBeUndefined();
     } finally {
       await rm(h.root, { recursive: true, force: true });
     }

@@ -84,7 +84,7 @@ import { ProjectTree, type ProjectTreeHandle } from "./workspace/project-tree.js
 import { ExecutionController, filesToSave } from "./execution/execution.js";
 import { Welcome } from "./workbench/welcome.js";
 import { Toolbar } from "./workbench/toolbar.js";
-import { DevicePanel } from "./device/device-panel.js";
+import { DevicePanel, DevicePreferenceCaptureNotice } from "./device/device-panel.js";
 import { BottomPanel } from "./workbench/bottom-panel.js";
 import { isModalOpen, subscribeModals } from "./components/modal.js";
 import { pluginUiWindow, settingsStore, useSettings } from "./settings/settings-state.js";
@@ -171,6 +171,23 @@ type HistoryReview = {
 export function App(): React.JSX.Element {
   const { runtime: staticLanguages, snapshot: staticLanguageState } = useStaticLanguages();
   const pluginUi = pluginUiWindow();
+  const deviceMigration = useSyncExternalStore(
+    pluginUi.deviceMigration.subscribe,
+    pluginUi.deviceMigration.getSnapshot,
+  );
+  const openDeviceTools = () => {
+    const entry = pluginUi.session.catalog
+      .getSnapshot()
+      .entries.find(
+        (item) =>
+          item.kind === "panel" &&
+          item.pluginId === "kobrixa.device-ev3" &&
+          item.availability === "available",
+      );
+    if (entry) pluginUi.session.select(entry);
+    settingsStore.set("rightPanel", "plugins");
+    void pluginUi.deviceMigration.retry();
+  };
   const recoveryRequest = useSyncExternalStore(
     pluginUi.session.subscribe,
     pluginUi.session.getRecoveryRequest,
@@ -445,7 +462,7 @@ export function App(): React.JSX.Element {
   }, [batteryState.low]);
   useEffect(() => window.kobrixa.device.onEvent(remoteFiles.onEvent), [remoteFiles]);
   const setConnectionMode = (mode: Settings["connectionMode"]) =>
-    settingsStore.set("connectionMode", mode);
+    deviceMigration === "inactive" && settingsStore.set("connectionMode", mode);
   const connectionModeRef = useRef(connectionMode);
   connectionModeRef.current = connectionMode;
   const [projectBusy, setProjectBusy] = useState(false);
@@ -3124,7 +3141,11 @@ export function App(): React.JSX.Element {
       const previous = controller.getSnapshot().session?.id;
       void controller.connect(address).then(() => {
         const session = controller.getSnapshot().session;
-        if (session?.transport === "wifi" && session.id !== previous)
+        if (
+          deviceMigration === "inactive" &&
+          session?.transport === "wifi" &&
+          session.id !== previous
+        )
           settingsStore.rememberAddress(address);
       });
     }
@@ -3170,6 +3191,7 @@ export function App(): React.JSX.Element {
 
   const settingsPage = (
     <SettingsPanel
+      externalDevicePreferences={deviceMigration !== "inactive"}
       filePreferences={filePreferences}
       reducedMotion={reducedMotion}
       settings={settings}
@@ -4079,6 +4101,12 @@ export function App(): React.JSX.Element {
             className="right-pane-content plugin-pane"
             hidden={rightPanel !== "plugins" || settingsActive}
           >
+            {deviceMigration === "pending" && (
+              <DevicePreferenceCaptureNotice
+                locale={locale}
+                retry={() => void pluginUi.deviceMigration.retry()}
+              />
+            )}
             <PluginToolsPane
               session={pluginUi.session}
               locale={locale}
@@ -4103,7 +4131,12 @@ export function App(): React.JSX.Element {
                   controller={monitor}
                   locale={locale}
                   sessionId={execution.session?.id}
-                  active={toolTab === "monitor" && !updatePreparing}
+                  active={
+                    rightPanel === "ev3" &&
+                    !settingsActive &&
+                    toolTab === "monitor" &&
+                    !updatePreparing
+                  }
                   locked={updatePreparing || controller.locked}
                   controlNotice={controlNotice}
                   onConnect={() => setToolTab("connection")}
@@ -4121,6 +4154,9 @@ export function App(): React.JSX.Element {
                     </p>
                   )}
                   <DevicePanel
+                    {...(deviceMigration !== "inactive"
+                      ? { onOpenConnectionTools: openDeviceTools }
+                      : {})}
                     t={t}
                     locale={locale}
                     state={execution}

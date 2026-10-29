@@ -557,3 +557,17 @@ it("mounted typed choice keeps the conflicting dotted-key draft until explicit r
     controls.destroy();
   }
 });
+
+it("external device settings remove frozen legacy writers while keeping unrelated settings", async () => {
+  vi.mocked(window.kobrixa.device.getPreferences).mockClear();
+  await act(async () => render({ externalDevicePreferences: true }));
+  await search("connection");
+  expect(container.querySelector("#setting-connectionMode")).toBeNull();
+  expect(container.querySelector("#setting-rememberWifiAddress")).toBeNull();
+  expect(container.querySelector("#setting-usbAutoReconnect")).toBeNull();
+  expect(window.kobrixa.device.getPreferences).not.toHaveBeenCalled();
+  expect(patch).not.toHaveBeenCalled();
+  await search("word wrap");
+  await click("#setting-wordWrap");
+  expect(values.wordWrap).toBe(true);
+});

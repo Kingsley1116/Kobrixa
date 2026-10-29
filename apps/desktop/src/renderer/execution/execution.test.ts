@@ -854,3 +854,122 @@ it("F17 core Disconnect keeps the session until stop/save/disconnect acknowledge
   expect(controller.getSnapshot().error?.detail).toContain("unconfirmed");
   expect(controller.locked).toBe(false);
 });
+
+function publicCatalog(
+  revision: number,
+  cause: Extract<DeviceEvent, { type: "session-catalog" }>["cause"] = "connected",
+  id: string | null = "public-session",
+): Extract<DeviceEvent, { type: "session-catalog" }> {
+  return {
+    type: "session-catalog",
+    hostEpoch: "host",
+    revision,
+    cause,
+    origin: "plugin",
+    session: id
+      ? {
+          sessionId: id,
+          providerId: "kobrixa.device-ev3",
+          providerGeneration: 1,
+          revision: 1,
+          name: "Public EV3",
+          transport: "wifi",
+          capabilities: ["connection.v1"],
+          state: "connected",
+          foreground: "none",
+          recording: false,
+          sourceRevision: 1,
+        }
+      : null,
+  };
+}
+it("E5 resumes exactly one current explicit pending Run from a public connection", async () => {
+  const h = setup();
+  await h.controller.run(h.request);
+  h.emitDevice(publicCatalog(1));
+  await vi.waitFor(() => expect(h.calls).toEqual(["save", "build", "deploy", "run"]));
+  h.emitDevice(publicCatalog(2));
+  await Promise.resolve();
+  expect(h.calls).toEqual(["save", "build", "deploy", "run"]);
+  expect(h.controller.getSnapshot().session?.id).toBe("public-session");
+});
+it.each(["cancel", "authority", "workspace", "detach"])(
+  "E5 %s before the queued adoption continuation prevents automatic Run",
+  async (reason) => {
+    const h = setup();
+    await h.controller.run(h.request);
+    h.emitDevice(publicCatalog(1));
+    if (reason === "cancel") h.controller.cancelWaiting();
+    if (reason === "authority") {
+      h.controller.setDeviceControlBlocked(true);
+      h.controller.setDeviceControlBlocked(false);
+    }
+    if (reason === "workspace") {
+      h.controller.setWorkspace("other");
+      h.controller.setWorkspace("w1");
+    }
+    if (reason === "detach") {
+      const detach = h.controller.attach();
+      detach();
+    }
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(h.calls).toEqual([]);
+  },
+);
+it.each(["authority", "workspace", "cancel"])(
+  "E5 %s during resumed save cannot later deploy or run after returning",
+  async (reason) => {
+    const h = setup();
+    const saved = deferred<void>();
+    h.request.saveAll.mockImplementation(() => saved.promise);
+    await h.controller.run(h.request);
+    h.emitDevice(publicCatalog(1));
+    await Promise.resolve();
+    if (reason === "authority") {
+      h.controller.setDeviceControlBlocked(true);
+      h.controller.setDeviceControlBlocked(false);
+    }
+    if (reason === "workspace") {
+      h.controller.setWorkspace("other");
+      h.controller.setWorkspace("w1");
+    }
+    if (reason === "cancel") h.controller.cancelWaiting();
+    saved.resolve();
+    await vi.waitFor(() => expect(h.controller.getSnapshot().phase).toBe("idle"));
+    expect(h.calls).toEqual([]);
+  },
+);
+it("E5 bootstrap snapshots and recovered sessions adopt for display without replaying pending work", async () => {
+  for (const cause of ["snapshot", "recovered"] as const) {
+    const h = setup();
+    await h.controller.run(h.request);
+    h.emitDevice(publicCatalog(1, cause));
+    await Promise.resolve();
+    expect(h.calls).toEqual([]);
+    expect(h.controller.getSnapshot().session?.id).toBe("public-session");
+    expect(h.controller.locked).toBe(false);
+  }
+});
+it("E5 disconnected/newer catalog and foreign epoch fence late adoption", async () => {
+  const h = setup();
+  await h.controller.run(h.request);
+  h.emitDevice(publicCatalog(2, "changed", null));
+  h.emitDevice(publicCatalog(1));
+  h.emitDevice({ ...publicCatalog(99), hostEpoch: "old-host" });
+  await Promise.resolve();
+  expect(h.controller.getSnapshot().session).toBeUndefined();
+  expect(h.calls).toEqual([]);
+});
+it("E5 legacy promise-owned connect does not double-adopt or double-run", async () => {
+  const h = setup();
+  const connected = deferred<string>();
+  h.api.device.connect.mockReturnValueOnce(connected.promise);
+  await h.controller.run(h.request);
+  const work = h.controller.connect(usb);
+  h.emitDevice(publicCatalog(1, "connected", "s1"));
+  expect(h.controller.getSnapshot().session).toBeUndefined();
+  connected.resolve("s1");
+  await work;
+  expect(h.calls).toEqual(["save", "build", "deploy", "run"]);
+});

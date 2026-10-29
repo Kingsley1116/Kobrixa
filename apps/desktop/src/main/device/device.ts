@@ -87,6 +87,7 @@ export class DeviceService {
     private renderer: () => WebContents | undefined,
     private preferences = new DevicePreferencesStore(),
     private legacy?: LegacyDeviceServices,
+    private authoritativePreferences?: () => DevicePreferences,
   ) {
     if (legacy) this.observe(legacy.device);
   }
@@ -94,6 +95,11 @@ export class DeviceService {
     device.subscribe((event) => {
       this.send(event);
     });
+  }
+  /** Existing renderer-ready handshake replays state, never connection intent. */
+  publishSessionCatalog(): void {
+    const snapshot = this.legacy?.device.sessionCatalog();
+    if (snapshot) this.send(snapshot);
   }
   private reportError(error: unknown): void {
     const failure = normalizeDeviceError(error, "connection");
@@ -138,8 +144,19 @@ export class DeviceService {
   descriptor(id: string): DeviceDescriptor {
     return this.ports.device.descriptor(id);
   }
-  getPreferences = (): DevicePreferences => this.preferences.get();
+  getPreferences = (): DevicePreferences => {
+    if (!this.authoritativePreferences) return this.preferences.get();
+    try {
+      return { ...this.authoritativePreferences() };
+    } catch (error) {
+      throw normalizeDeviceError(error, "connection");
+    }
+  };
   setPreferences(patch: Partial<DevicePreferences>): Promise<DevicePreferences> {
+    if (this.authoritativePreferences)
+      return Promise.reject(
+        new DeviceOperationError("permission", "Use the contributed device settings form."),
+      );
     return this.preferences.set(patch, () => {});
   }
   setBeforeDisconnect(stop: (id: string) => Promise<void>): void {

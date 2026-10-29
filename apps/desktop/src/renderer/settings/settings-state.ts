@@ -1,3 +1,5 @@
+import { createDevicePreferencesMigration } from "./legacy-preferences-bridge.js";
+import type { LegacyPreferencesApi } from "../../shared/plugin-persistence.js";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { applyAppearance, SettingsStore } from "./settings.js";
 import { resolveTheme } from "./theme.js";
@@ -41,16 +43,55 @@ export interface PluginUiWindow {
   readonly session: RendererSession;
   readonly recovery: CoreRecoveryPort;
   readonly ready: Promise<void>;
+  deviceMigration: {
+    getSnapshot(): "inactive" | "pending" | "captured";
+    subscribe(listener: () => void): () => void;
+    retry(): Promise<void>;
+  };
   gate(name: "settings" | "modal", blocked: boolean): void;
   dispose(): void;
 }
 
 export function createPluginUiWindow(input: {
+  legacyPreferences?: LegacyPreferencesApi;
   bridge: PluginUiBridge;
   recovery: CoreRecoveryPort;
   settings: SettingsStore;
   storage: Pick<Storage, "getItem" | "setItem">;
 }): PluginUiWindow {
+  // Freeze before host.start can publish an interactive catalog or issue a challenge.
+  const migration = input.legacyPreferences
+    ? createDevicePreferencesMigration({
+        api: input.legacyPreferences,
+        settings: input.settings,
+        storage: () => input.storage,
+      })
+    : undefined;
+  let migrationState: "inactive" | "pending" | "captured" = migration ? "pending" : "inactive";
+  const migrationListeners = new Set<() => void>();
+  const deviceMigration = {
+    getSnapshot: () => migrationState,
+    subscribe(listener: () => void) {
+      migrationListeners.add(listener);
+      return () => {
+        migrationListeners.delete(listener);
+      };
+    },
+    async retry(): Promise<void> {
+      if (!migration || disposed) return;
+      try {
+        const result = await migration.retry();
+        if (disposed) return;
+        const next = result === "pending" ? "pending" : "captured";
+        if (next !== migrationState) {
+          migrationState = next;
+          for (const listener of [...migrationListeners]) listener();
+        }
+      } catch {
+        /* Window retirement rejects retained observers. */
+      }
+    },
+  };
   const host = createPluginUiRendererHost(input);
   const session = rendererSession(host);
   const gates = new Set<string>();
@@ -75,6 +116,18 @@ export function createPluginUiWindow(input: {
       // Layout persistence is optional; never persist commands, drafts or runtime bindings.
     }
   });
+  let migrationCatalog = "";
+  const offMigrationCatalog = session.catalog.subscribe(() => {
+    const catalog = session.catalog.getSnapshot();
+    if (catalog.phase !== "ready") return;
+    const identity = JSON.stringify(
+      catalog.entries.filter((entry) => entry.pluginId === "kobrixa.device-ev3"),
+    );
+    if (identity === migrationCatalog) return;
+    migrationCatalog = identity;
+    void deviceMigration.retry();
+  });
+  void deviceMigration.retry();
   const ready = host.start().then(() => {
     if (disposed) return;
     try {
@@ -107,6 +160,7 @@ export function createPluginUiWindow(input: {
     session,
     recovery: input.recovery,
     ready,
+    deviceMigration,
     gate(name, blocked) {
       if (disposed) return;
       const old = gates.has(name);
@@ -117,6 +171,9 @@ export function createPluginUiWindow(input: {
     dispose() {
       if (disposed) return;
       disposed = true;
+      migration?.dispose();
+      offMigrationCatalog();
+      migrationListeners.clear();
       offTransition();
       offSelection();
       host.dispose();
@@ -128,6 +185,7 @@ let uiWindow: PluginUiWindow | undefined;
 export function pluginUiWindow(): PluginUiWindow {
   if (uiWindow) return uiWindow;
   const owner = createPluginUiWindow({
+    legacyPreferences: window.kobrixa.plugins.legacyPreferences,
     bridge: window.kobrixa.plugins.ui,
     recovery: window.kobrixa.plugins.recovery,
     settings: settingsStore,

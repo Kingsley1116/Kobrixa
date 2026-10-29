@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { DevicePreferences } from "../../shared/device-preferences.js";
 
-export function useDevicePreferences() {
+export function useDevicePreferences(enabled = true) {
   const [value, setValue] = useState<DevicePreferences>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
@@ -10,6 +10,7 @@ export function useDevicePreferences() {
   const mounted = useRef(false);
   const generation = useRef(0);
   const load = () => {
+    if (!enabled) return;
     const request = ++generation.current;
     const current = () => mounted.current && request === generation.current;
     setError(false);
@@ -32,14 +33,14 @@ export function useDevicePreferences() {
   };
   useEffect(() => {
     mounted.current = true;
-    load();
+    if (enabled) load();
     return () => {
       mounted.current = false;
       generation.current++;
     };
-  }, []);
+  }, [enabled]);
   const change = async (patch: Partial<DevicePreferences>) => {
-    if (inFlight.current) return;
+    if (!enabled || inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
     setError(false);

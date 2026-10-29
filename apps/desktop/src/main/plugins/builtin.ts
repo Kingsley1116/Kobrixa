@@ -54,9 +54,15 @@ export async function assembleBuiltinPluginSources(input: {
   buildRoot: string;
 }): Promise<readonly PluginSource[]> {
   const sources: PluginSource[] = [...BUILTIN_PLUGIN_SOURCES];
+  const install = (pluginId: string, source: PluginSource) => {
+    const index = sources.findIndex((entry) => entry.kind === "builtin" && (entry.manifest as { id?: string }).id === pluginId);
+    if (index < 0) sources.push(source);
+    else sources[index] = source;
+  };
   for (const feature of [
     { slug: "motor-test", en: "Motor test", zh: "馬達測試" },
     { slug: "sensor-lab", en: "Sensor Lab", zh: "感測器實驗室" },
+    { slug: "device-ev3", en: "EV3 device", zh: "EV3 裝置" },
   ]) {
     const pluginId = `kobrixa.${feature.slug}`;
     try {
@@ -67,10 +73,10 @@ export async function assembleBuiltinPluginSources(input: {
         sourceKey: `builtin:${pluginId}`,
       });
       const { manifest, resources } = await validateBuiltinLeaf(launch.packageRoot, pluginId);
-      sources.push({ kind: "builtin", policy: "optional", manifest, resources, launch });
+      install(pluginId, { kind: "builtin", policy: "optional", manifest, resources, launch });
     } catch {
       // Host-only pre-read failure; no error text or physical paths cross this boundary.
-      sources.push({
+      install(pluginId, {
         kind: "builtin",
         policy: "optional",
         payloadUnavailable: true,

@@ -2942,3 +2942,103 @@ it("policy becoming unavailable at the waiting callback cannot reject the timer'
     vi.useRealTimers();
   }
 });
+
+import {
+  observeBrokerSessions,
+  readBrokerSessionCatalog,
+  type BrokerSessionCatalog,
+} from "./broker.js";
+it("E5 main-only catalog observes committed sessions without owner admission or native work", async () => {
+  const h = setup();
+  const seen: BrokerSessionCatalog[] = [];
+  const off = observeBrokerSessions(h.broker, (s) => seen.push(s));
+  expect(h.provider.calls).toEqual([]);
+  expect(seen).toHaveLength(1);
+  expect(readBrokerSessionCatalog(h.broker)?.session).toBeNull();
+  const connected = await h.broker.request(
+    pluginPrincipal(),
+    "devices/connect",
+    { target: { kind: "wifi-address", providerId: h.provider.id, address: "192.168.1.2" } },
+    signal(),
+  );
+  if (!connected.ok) throw Error(connected.error.message);
+  expect(seen.at(-1)).toMatchObject({
+    cause: "connected",
+    origin: "plugin",
+    session: { sessionId: connected.value.session.sessionId, state: "connected" },
+  });
+  const calls = [...h.provider.calls];
+  const copy = readBrokerSessionCatalog(h.broker)!;
+  copy.session!.name = "mutated";
+  expect(readBrokerSessionCatalog(h.broker)?.session?.name).not.toBe("mutated");
+  expect(h.provider.calls).toEqual(calls);
+  const revision = seen.at(-1)!.revision;
+  off();
+  await h.broker.request(
+    pluginPrincipal(),
+    "devices/disconnect",
+    { sessionId: connected.value.session.sessionId },
+    signal(),
+  );
+  expect(seen.at(-1)!.revision).toBe(revision);
+  expect(readBrokerSessionCatalog(h.broker)?.session).toBeNull();
+});
+it("E5 a throwing catalog observer cannot block adoption or disconnection", async () => {
+  const h = setup();
+  const off = observeBrokerSessions(h.broker, (s) => {
+    if (s.cause !== "snapshot") throw Error("observer");
+  });
+  const result = await h.broker.request(
+    pluginPrincipal(),
+    "devices/connect",
+    { target: { kind: "wifi-address", providerId: h.provider.id, address: "192.168.1.2" } },
+    signal(),
+  );
+  expect(result.ok).toBe(true);
+  if (result.ok)
+    expect(
+      (
+        await h.broker.request(
+          pluginPrincipal(),
+          "devices/disconnect",
+          { sessionId: result.value.session.sessionId },
+          signal(),
+        )
+      ).ok,
+    ).toBe(true);
+  off();
+});
+
+it("E5 initializing native handles remain absent from the main session projection", async () => {
+  const h = setup();
+  let release!: () => void, entered!: () => void;
+  const waiting = new Promise<void>((r) => {
+    release = r;
+  });
+  const started = new Promise<void>((r) => {
+    entered = r;
+  });
+  const original = h.provider.sources.bind(h.provider);
+  h.provider.sources = async (...args) => {
+    entered();
+    await waiting;
+    return original(...args);
+  };
+  const seen: BrokerSessionCatalog[] = [];
+  const off = observeBrokerSessions(h.broker, (s) => seen.push(s));
+  const connecting = h.broker.request(
+    pluginPrincipal(),
+    "devices/connect",
+    { target: { kind: "wifi-address", providerId: h.provider.id, address: "192.168.1.2" } },
+    signal(),
+  );
+  await started;
+  expect(readBrokerSessionCatalog(h.broker)?.session).toBeNull();
+  expect(seen.every((s) => s.session === null)).toBe(true);
+  release();
+  const result = await connecting;
+  expect(result.ok).toBe(true);
+  expect(seen.at(-1)?.cause).toBe("connected");
+  off();
+  await h.unregister.retirement!.retire();
+});

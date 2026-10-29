@@ -84,6 +84,43 @@ const lifecycleListeners = new WeakMap<
   DeviceBrokerPort,
   Set<(event: BrokerLifecycleEvent) => void>
 >();
+export type BrokerSessionCatalog = {
+  hostEpoch: string;
+  revision: number;
+  cause: "snapshot" | "changed" | "connected" | "recovered" | "lost";
+  origin: "core" | "plugin" | "recovery";
+  session: DeviceSessionSnapshot | null;
+};
+const sessionCatalogs = new WeakMap<
+  DeviceBrokerPort,
+  {
+    read(): BrokerSessionCatalog;
+    listeners: Set<(snapshot: BrokerSessionCatalog) => void>;
+  }
+>();
+/** Main-only, read-only projection. Does not acquire a principal, owner, sampler or native handle. */
+export function readBrokerSessionCatalog(
+  broker: DeviceBrokerPort,
+): BrokerSessionCatalog | undefined {
+  return sessionCatalogs.get(broker)?.read();
+}
+export function observeBrokerSessions(
+  broker: DeviceBrokerPort,
+  listener: (snapshot: BrokerSessionCatalog) => void,
+): () => void {
+  const entry = sessionCatalogs.get(broker);
+  if (!entry) return () => {};
+  entry.listeners.add(listener);
+  try {
+    listener(entry.read());
+  } catch {
+    entry.listeners.delete(listener);
+    throw new Error("Session observer failed.");
+  }
+  return () => {
+    entry.listeners.delete(listener);
+  };
+}
 const recoverySessions = new WeakMap<DeviceBrokerPort, () => DeviceSessionSnapshot[]>();
 /** Main-only recovery observation; never grants session ownership or starts device work. */
 export function readDeviceRecoverySessions(broker: DeviceBrokerPort): DeviceSessionSnapshot[] {
@@ -399,7 +436,34 @@ export function createBroker(
   const connectionLane = new ExchangeLane(input.now);
   let retainedConnection: ConnectionCustody | null = null;
   const coreTelemetry = new CoreTelemetryLedger(input.now);
-  const changed = (sourcesChanged = false) => {
+  let catalogRevision = 0;
+  let sessionOrigin: BrokerSessionCatalog["origin"] = "core";
+  const sessionObservers = new Set<(snapshot: BrokerSessionCatalog) => void>();
+  const sessionCatalog = (
+    cause: BrokerSessionCatalog["cause"] = "snapshot",
+  ): BrokerSessionCatalog => ({
+    hostEpoch: input.profile.hostEpoch,
+    revision: catalogRevision,
+    cause,
+    origin: sessionOrigin,
+    session: session && !session.initialization ? sessionSnapshot(session) : null,
+  });
+  let publishedSession: string | undefined = JSON.stringify(null);
+  const changed = (sourcesChanged = false, cause: BrokerSessionCatalog["cause"] = "changed") => {
+    catalogRevision++;
+    // Synchronous publication updates host adapters before any power/window callback.
+    const snapshot = sessionCatalog(cause);
+    const identity = JSON.stringify(snapshot.session);
+    // Discovery/provider catalog churn is not a disconnected session transition.
+    if (cause !== "changed" || identity !== publishedSession) {
+      publishedSession = identity;
+      for (const listener of [...sessionObservers])
+        try {
+          listener(structuredClone(snapshot));
+        } catch {
+          /* Observers never block cleanup. */
+        }
+    }
     for (const row of [...subscriptions.values()])
       if (row.params.topic === "catalog" || row.params.topic === "session")
         row.notify(sourcesChanged);
@@ -687,7 +751,13 @@ export function createBroker(
   };
   const getSession = (principal: Principal, id: string, admission = true): Session => {
     const current = session;
-    if (!current || current.snapshot.sessionId !== id || !current.users.has(ownerKey(principal)))
+    if (!current || current.snapshot.sessionId !== id) return stale();
+    // A real host binding may act on a public session after current authority
+    // validation. Observation itself never enrolls an owner or grants I/O.
+    if (
+      !current.users.has(ownerKey(principal)) &&
+      (principal.kind !== "core" || !validCore(principal, current))
+    )
       return stale();
     if (admission) {
       assertPrincipal(principal);
@@ -926,7 +996,7 @@ export function createBroker(
       });
     if (reason === "disconnected" && current.snapshot.transport === "usb" && !recoveryFollows)
       recoveryState(current.snapshot.sessionId, "unavailable");
-    changed();
+    changed(false, reason === "disconnected" ? "lost" : "changed");
     coreReservations.endSession(current.snapshot.sessionId, reason, true);
     const ended = reservations.endSession(current.snapshot.sessionId, reason, true);
     const promises = operations.stopSession(current.snapshot.sessionId);
@@ -1666,6 +1736,8 @@ export function createBroker(
             if (held.closed) return Promise.resolve(true);
             if (cleanup) return cleanup;
             held.attempted = true;
+            // Closing the handle cannot settle an earlier uncertain transport exchange.
+            const priorQuarantine = acquired?.lane.quarantined ?? false;
             cleanup = (async () => {
               let confirmed = false;
               try {
@@ -1698,7 +1770,7 @@ export function createBroker(
                       held.closed = true;
                       if (acquired) {
                         acquired.connectionClosed = true;
-                        acquired.lane.quarantined = false;
+                        acquired.lane.quarantined = priorQuarantine;
                         acquired.snapshot.state = "disconnected";
                       }
                       if (retainedConnection === held) retainedConnection = null;
@@ -1718,7 +1790,7 @@ export function createBroker(
               held.closed = confirmed;
               if (acquired) {
                 acquired.connectionClosed = confirmed;
-                acquired.lane.quarantined = !confirmed;
+                acquired.lane.quarantined = priorQuarantine || !confirmed;
                 acquired.snapshot.state = confirmed ? "disconnected" : "quarantined";
               }
               if (confirmed && retainedConnection === held) retainedConnection = null;
@@ -1781,6 +1853,16 @@ export function createBroker(
                 ctx.work.assertContinuation("connect"),
               ).work,
             );
+            // Preserve the provider's failure before an admission withdrawal can
+            // replace it with a cancellation. Native close is not transport proof.
+            if (
+              outcome.error &&
+              (outcome.dispatch === "unknown" ||
+                outcome.stopConfirmation === "unconfirmed" ||
+                outcome.error.reason === "provider-failure" ||
+                outcome.error.reason === "provider-contract")
+            )
+              current.lane.quarantined = true;
             ctx.work.assertContinuation("connect");
             if (
               outcome.error?.reason === "provider-disabled" &&
@@ -1817,7 +1899,7 @@ export function createBroker(
           // read fails (including a previously quiesced session).
           current.snapshot.state = "disconnected";
           revision++;
-          changed();
+          changed(false, "lost");
           // The retained automatic-recovery contract is USB-only. Wi-Fi loss
           // already published the ordinary disconnected state above.
           if (current.snapshot.transport !== "usb") return;
@@ -1878,8 +1960,9 @@ export function createBroker(
         retainedConnection = null;
         custody = undefined;
         if (!recoveryAdopt && latestEpisode) clearRecovery();
+        sessionOrigin = principal.kind;
         revision++;
-        changed();
+        changed(false, recoveryAdopt ? "recovered" : "connected");
         return { session: structuredClone(snapshot) };
       } catch (error) {
         if (custody && !custody.closed) await custody.close();
@@ -3184,6 +3267,13 @@ export function createBroker(
     offAuthority();
     offPolicy?.();
   };
+  sessionCatalogs.set(broker, {
+    listeners: sessionObservers,
+    read() {
+      input.profile.assertHeld();
+      return structuredClone(sessionCatalog());
+    },
+  });
   lifecycleListeners.set(broker, lifecycle);
   recoverySessions.set(broker, () => {
     input.profile.assertHeld();

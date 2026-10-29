@@ -1,3 +1,4 @@
+import type { DeviceSessionSnapshot } from "@kobrixa/plugin-protocol";
 import type { LanguageStatus, LanguageStatusEvent } from "./language-services.js";
 import type { LanguageFeatureRequest, LanguageFeatureReply } from "./language-query.js";
 import type { FilePreferences } from "./file-preferences.js";
@@ -165,6 +166,15 @@ export interface FileBatchSnapshot extends FileBatchRef {
   progress?: { transferred: number; total: number } | undefined;
 }
 export type DeviceEvent =
+  | {
+      /** Host-only committed broker projection; observation is not permission to run. */
+      type: "session-catalog";
+      hostEpoch: string;
+      revision: number;
+      cause: "snapshot" | "changed" | "connected" | "recovered" | "lost";
+      origin: "core" | "plugin" | "recovery";
+      session: DeviceSessionSnapshot | null;
+    }
   | {
       type: "usb-recovery";
       state: "waiting" | "connecting" | "cancelled" | "unavailable" | "exhausted";

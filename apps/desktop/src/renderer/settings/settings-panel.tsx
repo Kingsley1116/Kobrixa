@@ -321,9 +321,11 @@ export function SettingsPanel({
   reducedMotion,
   filePreferences,
   legacyDescriptorId,
+  externalDevicePreferences = false,
   contributedSettings,
 }: {
   legacyDescriptorId?: string;
+  externalDevicePreferences?: boolean;
   contributedSettings?: { sourceKey: string; resourceDigest: Sha256; scope: CoreWindowScope };
   filePreferences: FilePreferencesState;
   updates: UpdateState | undefined;
@@ -356,7 +358,7 @@ export function SettingsPanel({
   const [query, setQuery] = useState("");
   const [modified, setModified] = useState(false);
   const [defaults] = useState(() => defaultSettings(navigator.language));
-  const device = useDevicePreferences();
+  const device = useDevicePreferences(!externalDevicePreferences);
   const [updateSaving, setUpdateSaving] = useState(false);
   const [updateError, setUpdateError] = useState(false);
   const updateFlight = useRef(false);
@@ -408,7 +410,15 @@ export function SettingsPanel({
     content.current?.scrollTo({ top: 0 });
   }, [category, query, modified]);
   const entries = filterSettings(context, query, modified).filter(
-    (entry) => category === "all" || entry.category === category,
+    (entry) =>
+      (category === "all" || entry.category === category) &&
+      (!externalDevicePreferences ||
+        (entry.source !== "device" &&
+          ![
+            "kobrixa.connectionMode",
+            "kobrixa.rememberWifiAddress",
+            "kobrixa.lastWifiAddress",
+          ].includes(entry.id))),
   );
   const searching = Boolean(query.trim() || modified);
   const labelValue = (entry: SettingDefinition, value: string | number | boolean | null) =>
@@ -561,6 +571,23 @@ export function SettingsPanel({
         )}
       </header>
       {saveError && <SettingsError locale={settings.locale} onRetry={onRetry} />}
+      {externalDevicePreferences && category === "device" && (
+        <p role="status">
+          {local(
+            "裝置與連線偏好已移至插件設定。",
+            "Device and connection preferences are in plugin settings.",
+          )}
+          <button
+            onClick={() => {
+              setCategory("plugins");
+              setQuery("");
+              setModified(false);
+            }}
+          >
+            {local("開啟插件設定", "Open plugin settings")}
+          </button>
+        </p>
+      )}
       {device.error && (
         <div role="alert" className="settings-save-error">
           <span>

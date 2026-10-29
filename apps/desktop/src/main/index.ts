@@ -1,4 +1,4 @@
-import { loadDevicePreferences } from "./device/preferences.js";
+import { DevicePreferencesStore } from "./device/preferences.js";
 import { createUpdateService } from "./updates/runtime.js";
 import { UpdateOperationGate, type UpdateService } from "./updates/service.js";
 import { attachKeyboard } from "./window/keyboard.js";
@@ -41,6 +41,7 @@ import {
   desktopLifecycle,
   desktopUi,
   desktopDeviceAccess,
+  desktopDeviceSettings,
   createWindowRetirementHandler,
   createLegacyActionAdmission,
   trustedDeviceActions,
@@ -56,7 +57,11 @@ import {
   CoreRecovery,
   createRecoveryEntries,
 } from "./plugins/core-recovery.js";
-import { createLegacyDevice, createLegacyMonitorFeed } from "./device-broker/legacy-device.js";
+import {
+  createLegacyDevice,
+  createLegacyMonitorFeed,
+  createSessionPowerLifecycle,
+} from "./device-broker/legacy-device.js";
 import { LegacyFiles } from "./device-broker/legacy-files.js";
 import type { CoreWindowScope, Principal } from "@kobrixa/plugin-runtime";
 import type { Permission, ResourceOwner } from "@kobrixa/plugin-protocol";
@@ -220,7 +225,10 @@ const primary = startPrimary(
     const now = () => performance.now();
     const operationGate = new UpdateOperationGate(() => updates);
     const workbenchState: { current?: WorkbenchLifecycle } = {};
-    const preferences = await loadDevicePreferences(app.getPath("userData"));
+    // The retired IPC writer starts empty and performs no startup file I/O.
+    // Only the admitted migration mapper may read/validate the original file;
+    // this store supplies the writer barrier, never authoritative preferences.
+    const preferences = new DevicePreferencesStore();
     const journal = createJournal(createJournalFilesystem(app.getPath("userData")), profile);
     const currentCorePrincipal = () => {
       if (!mainWindow || mainWindow.isDestroyed()) throw new Error("No current workbench.");
@@ -273,15 +281,10 @@ const primary = startPrimary(
       }
       return { kind: "plugin", owner, authorityContext: null };
     };
-    const connectionPolicy = () => {
-      const value = preferences.get();
-      return {
-        wifiConnectTimeoutMs: value.wifiConnectTimeout,
-        wifiHandshakeTimeoutMs: value.wifiHandshakeTimeout,
-        usbAutoReconnect: value.usbAutoReconnect,
-        usbRetryInterval: value.usbRetryInterval,
-        usbRetryLimit: value.usbRetryLimit,
-      };
+    // composeDesktopMain replaces this with the migration-gated authoritative reader.
+    // Until attachment, no legacy/default policy can authorize optional I/O.
+    const connectionPolicy = (): never => {
+      throw new Error("Device settings are not attached.");
     };
     const reportCleanupError = (error: unknown) => {
       console.error("Device cleanup blocked.", error);
@@ -290,6 +293,11 @@ const primary = startPrimary(
     // never re-enable the old writer (including before an import is resumed).
     const legacyLabService: { current?: SensorLabService } = {};
     const pendingComposition = composeDesktopMain({
+      legacyDeviceWriter: {
+        sourceKey: "builtin:kobrixa.device-ev3",
+        freezeAdmission: () => preferences.freezeAdmission(),
+        settled: () => preferences.settleMigration(),
+      },
       legacyLabWriter: {
         sourceKey: "builtin:kobrixa.sensor-lab",
         freezeAdmission() {
@@ -466,7 +474,29 @@ const primary = startPrimary(
       language.cancel();
       builds.cancelAll();
     });
-    const devices = new DeviceService(builds, renderer, preferences);
+    const deviceSettings = desktopDeviceSettings(composition);
+    const devices = new DeviceService(builds, renderer, preferences, undefined, () => {
+      const snapshot = deviceSettings.getSnapshot();
+      if (snapshot.state !== "ready") throw new Error(snapshot.problem);
+      // Preserve the existing six-field IPC shape; renderer-only preferences stay private
+      // to the contributed settings resource. Core deploy reads this same committed view.
+      const {
+        skipUnchangedAssets,
+        usbAutoReconnect,
+        usbRetryInterval,
+        usbRetryLimit,
+        wifiConnectTimeout,
+        wifiHandshakeTimeout,
+      } = snapshot.values;
+      return {
+        skipUnchangedAssets,
+        usbAutoReconnect,
+        usbRetryInterval,
+        usbRetryLimit,
+        wifiConnectTimeout,
+        wifiHandshakeTimeout,
+      };
+    });
     const send = (channel: string, value: unknown) => {
       const target = renderer();
       if (target && !target.isDestroyed()) target.send(channel, value);
@@ -605,13 +635,19 @@ const primary = startPrimary(
         },
       ),
     );
+    const powerSessions = createSessionPowerLifecycle({
+      sessionIds: () => legacy.sessionIds(),
+      suspend: (id) => coordinator.suspend(id),
+      resume: (id) => coordinator.resume(id),
+    });
     powerMonitor.on("suspend", () => {
       ui.intent.dispose();
-      for (const id of legacy.sessionIds()) void coordinator.suspend(id).catch(reportCleanupError);
+      void powerSessions.suspend().catch(reportCleanupError);
       void sensorLab.suspend().catch(reportCleanupError);
     });
     powerMonitor.on("resume", () => {
-      for (const id of legacy.sessionIds()) void coordinator.resume(id).catch(reportCleanupError);
+      // Resume only the original suspended receipts, never a newly connected replacement.
+      void powerSessions.resume().catch(reportCleanupError);
     });
     // Legacy storage initializes only on an explicit legacy request, never during startup.
     const collab = await createCollabService(app.getPath("userData"), collabServerUrl);
@@ -656,6 +692,7 @@ const primary = startPrimary(
       },
       () => {
         rendererCanFlush = true;
+        devices.publishSessionCatalog();
       },
       { monitor, lab: sensorLab, motors },
       [
