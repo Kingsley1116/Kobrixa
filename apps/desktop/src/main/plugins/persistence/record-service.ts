@@ -61,6 +61,28 @@ type List = {
   bytes: number;
   closed: boolean;
 };
+/** Missing IDs are indistinguishable from foreign IDs at the public boundary.
+ * Keep the worker's internal not-found classification for reconciliation callers.
+ */
+async function publicRecordAccess<T>(
+  resource: "storage-read" | "storage-write",
+  access: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await access();
+  } catch (error) {
+    if (error instanceof PersistenceFault) {
+      const { code, detail } = error.result.error;
+      if (
+        code === "PLUGIN_E_STORAGE_IO" &&
+        detail?.kind === "persistence" &&
+        detail.reason === "not-found"
+      )
+        stale(resource);
+    }
+    throw error;
+  }
+}
 export function createRecordService(
   deps: RecordDependencies & {
     /** Host-only admission for an existing frozen final grant, never normal writes. */
@@ -208,7 +230,10 @@ export function createRecordService(
     admitting.set(owner.sourceKey, (admitting.get(owner.sourceKey) ?? 0) + 1);
     let admitted = true;
     try {
-      const old = input.target.mode === "replace" ? await deps.read.stat(owner, id) : null;
+      const old =
+        input.target.mode === "replace"
+          ? await publicRecordAccess("storage-write", () => deps.read.stat(owner, id))
+          : null;
       if (old && input.target.mode === "replace" && old.revision !== input.target.expectedRevision)
         conflict("revision-mismatch");
       const checkpoint = deps.checkpoint.authorize(owner, input, input.drainToken);
@@ -409,7 +434,9 @@ export function createRecordService(
     },
     "storage/stat": async (owner, p) => ({
       ok: true,
-      value: { record: await deps.read.stat(owner, p.id) },
+      value: {
+        record: await publicRecordAccess("storage-read", () => deps.read.stat(owner, p.id)),
+      },
     }),
     "storage/list": async (owner, p) => {
       const page = (list: List, index: number) => {
@@ -508,11 +535,13 @@ export function createRecordService(
         limit("storage-read");
       opening.set(owner.sourceKey, (opening.get(owner.sourceKey) ?? 0) + 1);
       try {
-        const record = await deps.read.stat(owner, p.id);
+        const record = await publicRecordAccess("storage-read", () => deps.read.stat(owner, p.id));
         if (record.revision !== p.expectedRevision) conflict("revision-mismatch");
         if (record.schemaVersion !== p.schemaVersion)
           throw new PersistenceFault("PLUGIN_E_STORAGE_VERSION", "schema-mismatch");
-        const pin = await deps.read.open(owner, p.id, p.expectedRevision);
+        const pin = await publicRecordAccess("storage-read", () =>
+          deps.read.open(owner, p.id, p.expectedRevision),
+        );
         const handle = randomUUID(),
           now = deps.now();
         reads.set(handle, {
@@ -580,7 +609,9 @@ export function createRecordService(
       let attempt = pending;
       if (!attempt) {
         try {
-          const record = await deps.read.stat(owner, p.id);
+          const record = await publicRecordAccess("storage-write", () =>
+            deps.read.stat(owner, p.id),
+          );
           if (record.revision !== p.expectedRevision) conflict("revision-mismatch");
           if (signal.aborted || !deps.live(owner)) stale();
           const ticket: PublicationTicket = {

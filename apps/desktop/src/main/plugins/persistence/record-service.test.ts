@@ -752,3 +752,166 @@ it("a concurrent delete never reconciles or aborts an original deletion still se
   release();
   expect(await original).toMatchObject({ ok: true, value: { deleted: true } });
 });
+
+const publicIdMethods = [
+  "storage/stat",
+  "storage/openRead",
+  "storage/beginWrite",
+  "storage/delete",
+] as const;
+type PublicIdMethod = (typeof publicIdMethods)[number];
+function requestRecordId(
+  f: ReturnType<typeof fixture>,
+  method: PublicIdMethod,
+  id: string,
+  revision: string,
+) {
+  switch (method) {
+    case "storage/stat":
+      return f.service.request(p, method, { id }, signal());
+    case "storage/openRead":
+      return f.service.request(
+        p,
+        method,
+        { id, expectedRevision: revision, schemaVersion: 1 },
+        signal(),
+      );
+    case "storage/delete":
+      return f.service.request(p, method, { id, expectedRevision: revision }, signal());
+    case "storage/beginWrite":
+      return f.service.request(
+        p,
+        method,
+        {
+          ...input(Buffer.from("replacement")),
+          target: { mode: "replace", id, expectedRevision: revision },
+        },
+        signal(),
+      );
+  }
+}
+it.each(publicIdMethods)(
+  "public ID boundary: %s treats foreign and missing IDs identically without admitting work",
+  async (method) => {
+    const f = fixture(),
+      foreign = fixture();
+    const owned = await f.complete(Buffer.from("owned"));
+    const other = await foreign.complete(Buffer.from("foreign"));
+    const stat = f.deps.read.stat;
+    f.deps.read.stat = vi.fn(async (actualOwner, id) => {
+      expect(actualOwner).toEqual(owner);
+      // The worker's namespace-scoped stat preserves this typed internal failure.
+      if (!f.records.has(id)) throw new PersistenceFault("PLUGIN_E_STORAGE_IO", "not-found");
+      return stat(actualOwner, id);
+    });
+    f.deps.read.open = vi.fn(f.deps.read.open);
+    const before = await f.deps.evidence.quota(owner);
+    f.reserve.mockClear();
+    f.publish.mockClear();
+    const missing = "00000000-0000-4000-8000-000000000099";
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const unknown = await requestRecordId(f, method, missing, other.record.revision);
+      const denied = await requestRecordId(f, method, other.record.id, other.record.revision);
+      expect(denied).toEqual(unknown);
+      expect(denied).toMatchObject({
+        ok: false,
+        error: {
+          code: "PLUGIN_E_STALE_RESOURCE",
+          detail: {
+            kind: "resource",
+            reason: "stale",
+            resource:
+              method === "storage/stat" || method === "storage/openRead"
+                ? "storage-read"
+                : "storage-write",
+          },
+        },
+      });
+    }
+    expect(f.deps.read.stat).toHaveBeenCalledTimes(10);
+    expect(f.deps.read.open).not.toHaveBeenCalled();
+    expect(f.reserve).not.toHaveBeenCalled();
+    expect(f.publish).not.toHaveBeenCalled();
+    expect(await f.deps.evidence.quota(owner)).toEqual(before);
+    expect(f.records.get(owned.record.id)).toEqual(owned.record);
+    expect(foreign.records.get(other.record.id)).toEqual(other.record);
+    // An own record remains usable after repeated failures; admission/read slots did not leak.
+    expect(await requestRecordId(f, method, owned.record.id, owned.record.revision)).toMatchObject({
+      ok: true,
+    });
+    await f.service.close();
+  },
+);
+it("public ID boundary: deletion after stat gives stale and releases every opening slot", async () => {
+  const f = fixture(),
+    record = (await f.complete(Buffer.from("owned"))).record;
+  const open = f.deps.read.open;
+  f.deps.read.open = vi.fn(async () => {
+    throw new PersistenceFault("PLUGIN_E_STORAGE_IO", "not-found");
+  });
+  for (let attempt = 0; attempt < 5; attempt++)
+    expect(await requestRecordId(f, "storage/openRead", record.id, record.revision)).toMatchObject({
+      ok: false,
+      error: {
+        code: "PLUGIN_E_STALE_RESOURCE",
+        detail: { kind: "resource", reason: "stale", resource: "storage-read" },
+      },
+    });
+  expect(f.pins.size).toBe(0);
+  f.deps.read.open = open;
+  expect(await requestRecordId(f, "storage/openRead", record.id, record.revision)).toMatchObject({
+    ok: true,
+  });
+  await f.service.close();
+  expect(f.pins.size).toBe(0);
+});
+const unchangedIdFaults = [
+  new PersistenceFault("PLUGIN_E_STORAGE_IO", "io"),
+  new PersistenceFault("PLUGIN_E_STORAGE_IO", "permission"),
+  new PersistenceFault("PLUGIN_E_STORAGE_IO", "corrupt"),
+  new PersistenceFault("PLUGIN_E_STORAGE_VERSION", "schema-mismatch"),
+  new Error("not-found"),
+];
+it.each(unchangedIdFaults)(
+  "public ID boundary: preserves other typed errors and does not match raw error text (%#)",
+  async (error) => {
+    const f = fixture();
+    f.deps.read.stat = async () => {
+      throw error;
+    };
+    const expected =
+      error instanceof PersistenceFault
+        ? error.result
+        : new PersistenceFault("PLUGIN_E_STORAGE_IO", "io").result;
+    for (const method of publicIdMethods)
+      expect(
+        await requestRecordId(
+          f,
+          method,
+          "00000000-0000-4000-8000-000000000099",
+          "r_" + "0".repeat(32),
+        ),
+      ).toEqual(expected);
+    expect(f.reserve).not.toHaveBeenCalled();
+    expect(f.publish).not.toHaveBeenCalled();
+  },
+);
+it("public ID boundary: own revision conflicts and real open I/O errors remain unchanged", async () => {
+  const f = fixture(),
+    record = (await f.complete(Buffer.from("owned"))).record;
+  for (const method of ["storage/openRead", "storage/beginWrite", "storage/delete"] as const)
+    expect(await requestRecordId(f, method, record.id, "r_" + "0".repeat(32))).toMatchObject({
+      ok: false,
+      error: {
+        code: "PLUGIN_E_STORAGE_CONFLICT",
+        detail: { reason: "revision-mismatch" },
+      },
+    });
+  const fault = new PersistenceFault("PLUGIN_E_STORAGE_IO", "io");
+  f.deps.read.open = async () => {
+    throw fault;
+  };
+  expect(await requestRecordId(f, "storage/openRead", record.id, record.revision)).toEqual(
+    fault.result,
+  );
+});
