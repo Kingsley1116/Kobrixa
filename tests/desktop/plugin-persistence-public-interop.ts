@@ -5,6 +5,7 @@ import path from "node:path";
 import { gunzipSync } from "node:zlib";
 import type { PluginProcess } from "@kobrixa/plugin-runtime";
 import type { ResourceOwner } from "@kobrixa/plugin-protocol";
+import { storageRequestSchemas } from "@kobrixa/plugin-protocol";
 import {
   approvedHost,
   verifyCompatibility,
@@ -257,8 +258,57 @@ export function verifyInteropRecords(row: InteropConsumer, other: InteropConsume
   assert.equal(records.length, 2);
   assert.equal(new Set(records.map((r) => r.id)).size, 2);
   assert.deepEqual(verified.data.records, records);
-  assert.deepEqual(verified.data.quota, created.data.quota);
+  const quotaPairs = interopPairs(row, "storage/quota");
+  assert.equal(quotaPairs.length, 2, "Original before/after public quotas");
+  const before = quotaPairs[0]!,
+    after = quotaPairs[1]!;
+  assert.ok(before.response.sequence < created.sequence);
+  assert.ok(
+    created.sequence < after.request.sequence && after.response.sequence < verified.sequence,
+  );
+  for (const pair of quotaPairs) storageRequestSchemas["storage/quota"].result.parse(pair.result);
+  assert.deepEqual(business(before), created.data.quota);
+  assert.deepEqual(business(after), verified.data.quota);
+  assert.notEqual(row.owner.sourceKey, other.owner.sourceKey);
   const foreign = one(interopOutputs(other, "records"), "Foreign records").data;
+  // The first consumer's baseline precedes the other consumer's two creates.
+  // Count each original successful publication once, never its duplicate receipt.
+  let foreignGrowth = 0;
+  for (const record of foreign.records as Wire[]) {
+    const begin = one(
+      interopPairs(other, "storage/beginWrite").filter(
+        (p) => p.params.target.mode === "create" && business(p).id === record.id,
+      ),
+      "Foreign original create",
+    );
+    const commits = interopPairs(other, "storage/commitWrite").filter(
+      (p) => p.params.write === business(begin).write,
+    );
+    assert.equal(commits.length, 2, "Original and idempotent foreign commit");
+    const committed = commits[0]!;
+    assert.deepEqual(business(committed).record, record);
+    assert.deepEqual(business(commits[1]!).receipt, business(committed).receipt);
+    assert.ok(begin.response.sequence < committed.request.sequence);
+    assert.ok(
+      committed.response.sequence < after.request.sequence,
+      "Foreign create settled before verification",
+    );
+    if (committed.response.sequence > before.response.sequence) {
+      assert.ok(
+        begin.request.sequence > before.response.sequence,
+        "No foreign reservation crosses quota baseline",
+      );
+      foreignGrowth += record.byteLength;
+    } else assert.ok(committed.response.sequence < before.request.sequence);
+  }
+  assert.deepEqual(
+    verified.data.quota,
+    {
+      ...created.data.quota,
+      hostAvailableBytes: created.data.quota.hostAvailableBytes - foreignGrowth,
+    },
+    "Own quota invariants and exact foreign committed-byte delta",
+  );
   for (const method of ["storage/openRead", "storage/readChunk"]) {
     const denied = one(
       interopPairs(row, method).filter((p) =>

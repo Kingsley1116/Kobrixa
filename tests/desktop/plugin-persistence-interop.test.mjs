@@ -1104,7 +1104,19 @@ function publicInteropUnitTrace() {
       checkpoint: "none",
     })),
   );
-  const quota = { committedBytes: 524362, reservedBytes: 0, recordCount: 2 };
+  const quota = (owners) => ({
+    committedBytes: 524362,
+    reservedBytes: 0,
+    recordCount: 2,
+    reservedCreates: 0,
+    pinnedBytes: 0,
+    temporaryBytes: 0,
+    sourceLimitBytes: 536870912,
+    sourceLimitRecords: 256,
+    hostAvailableBytes: 1073741824 - owners * 524362,
+    writeSlotsAvailable: 2,
+    exportSlotsAvailable: 1,
+  });
   const readRecord = (r, record, index, label) => {
     const handle = `${r.owner.pluginId}-read-${label}-${index}`;
     rpc(
@@ -1198,7 +1210,8 @@ function publicInteropUnitTrace() {
     rpc(r, "storage/list", { limit: 1 }, ok({ entries: [records[i][0]], nextCursor: "page2" }));
     rpc(r, "storage/list", { limit: 1, cursor: "page2" }, ok({ entries: [records[i][1]] }));
     rpc(r, "storage/openRead", { id: records[i][0].id }, ok({ read: `held-${i}` }));
-    output(r, "records", { records: records[i], read: `held-${i}`, quota });
+    rpc(r, "storage/quota", {}, ok(quota(i + 1)));
+    output(r, "records", { records: records[i], read: `held-${i}`, quota: quota(i + 1) });
   }
   for (const [i, r] of consumers.entries()) {
     const foreign = 1 - i;
@@ -1210,7 +1223,8 @@ function publicInteropUnitTrace() {
       denied("PLUGIN_E_STALE_RESOURCE"),
     );
     for (const [index, record] of records[i].entries()) readRecord(r, record, index, "after");
-    output(r, "verified", { records: records[i], quota });
+    rpc(r, "storage/quota", {}, ok(quota(2)));
+    output(r, "verified", { records: records[i], quota: quota(2) });
     rpc(r, "storage/closeRead", { read: `held-${i}` }, ok({}));
     for (const removed of [true, false])
       rpc(r, "events/unsubscribe", { subscriptionId: `sub-${i}` }, ok({ removed }));
@@ -1576,4 +1590,39 @@ test("public interop phase2: current raw envelope cannot bypass receipt or legac
     () => verifyPublicInterop(f.consumers, f.identity),
     "Actual 1.8 wire cannot be relabeled historical 1.7",
   );
+});
+
+test("public interop phase2: full two-owner quotas account for only intervening foreign creates", () => {
+  const f = publicInteropUnitTrace();
+  const js = interopPairs(f.consumers[0], "storage/quota").map((p) => p.result.value);
+  const py = interopPairs(f.consumers[1], "storage/quota").map((p) => p.result.value);
+  assert.equal(js[0].hostAvailableBytes - js[1].hostAvailableBytes, 524362);
+  assert.deepEqual(py[0], py[1]);
+  assert.equal(verifyPublicInterop(f.consumers, f.identity).fullStage3Pass, false);
+});
+function changeVerifiedQuota(f, field, delta) {
+  const row = f.consumers[0];
+  interopPairs(row, "storage/quota")[1].result.value[field] += delta;
+  const output = row.output.find((r) => r.line.includes('"phase":"verified"'));
+  const parsed = JSON.parse(output.line.slice("PUBLIC_INTEROP:".length));
+  parsed.data.quota[field] += delta;
+  output.line = "PUBLIC_INTEROP:" + JSON.stringify(parsed);
+}
+for (const [field, delta] of [
+  ["committedBytes", 1],
+  ["reservedBytes", 1],
+  ["recordCount", 1],
+  ["hostAvailableBytes", -1],
+])
+  test(`public interop phase2: rejects unexpected quota movement ${field}`, () => {
+    const f = publicInteropUnitTrace();
+    changeVerifiedQuota(f, field, delta);
+    assert.throws(() => verifyPublicInterop(f.consumers, f.identity));
+  });
+test("public interop phase2: quota summary requires original public quota response", () => {
+  const f = publicInteropUnitTrace(),
+    row = f.consumers[0];
+  const pair = interopPairs(row, "storage/quota")[1];
+  row.wire = row.wire.filter((w) => w !== pair.request && w !== pair.response);
+  assert.throws(() => verifyPublicInterop(f.consumers, f.identity));
 });
