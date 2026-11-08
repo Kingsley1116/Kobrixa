@@ -210,7 +210,10 @@ class Firmware {
         if (typeof offset !== "number") throw new Error("Expected a constant branch offset");
         if (opcode === 0x70 ? left !== right : left <= right) ip += offset;
       } else if (opcode !== 0x02) throw new Error(`Unexpected direct opcode ${opcode}`);
-      else expect(read8()).toBe(1);
+      else {
+        expect(read8()).toBe(1);
+        this.status = 64;
+      }
     }
     expect(ip).toBe(payload.length);
     return buffer;

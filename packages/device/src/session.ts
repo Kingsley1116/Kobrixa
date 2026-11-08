@@ -12,11 +12,10 @@ import { normalizeRemotePath } from "./path.js";
 import { readInputModes, readMonitor, setInputMode } from "./monitor.js";
 import type { DeviceInputModes, DeviceMonitorSnapshot } from "./monitor-types.js";
 import * as motor from "./motor.js";
+import { startProgram, stopProgram } from "./program.js";
 import type { MotorHelperStatus, MotorTestReading } from "./motor-types.js";
 
 const SYSTEM_COMMAND_REPLY = 0x01;
-const DIRECT_COMMAND_REPLY = 0x00;
-const DIRECT_COMMAND_NO_REPLY = 0x80;
 const DIRECT_REPLY = 0x02;
 const DIRECT_REPLY_ERROR = 0x04;
 const BEGIN_DOWNLOAD = 0x92;
@@ -416,20 +415,13 @@ export class EV3DeviceSession implements DeviceSession {
   }
 
   run(remotePath: string, signal: AbortSignal): Promise<void> {
-    return this.exclusive(async () => {
-      const target = normalizeRemotePath(remotePath);
-      const bytecode = [0xc0, 0x08, 0x01, ...lcs(target), 0x60, 0x64, 0x03, 0x01, 0x60, 0x64, 0x00];
-      await this.connection.transmit(
-        Uint8Array.from([DIRECT_COMMAND_NO_REPLY, 0x08, 0x00, ...bytecode]),
-        signal,
-      );
-    });
+    return this.exclusive(() =>
+      startProgram(this.connection, normalizeRemotePath(remotePath), signal),
+    );
   }
 
   stop(_programName?: string, signal = new AbortController().signal): Promise<void> {
-    return this.exclusive(() =>
-      this.direct(Uint8Array.from([DIRECT_COMMAND_REPLY, 0x00, 0x00, 0x02, 0x01]), signal),
-    );
+    return this.exclusive(() => stopProgram(this.connection, signal));
   }
 
   delete(remotePath: string, signal: AbortSignal): Promise<void> {

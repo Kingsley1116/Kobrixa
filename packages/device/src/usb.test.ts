@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HidConnection } from "./usb.js";
+import { HidConnection, trimHidReply } from "./usb.js";
 import { frameMessage } from "./framing.js";
 import { EV3DeviceSession } from "./session.js";
 
@@ -97,7 +97,7 @@ describe("continuous USB reader", () => {
     expect(lost).not.toHaveBeenCalled();
   });
 
-  it("reports failed no-reply writes as connection loss", async () => {
+  it("reports failed program control writes as connection loss", async () => {
     const h = setup();
     h.device.write.mockImplementation(() => {
       throw new Error("could not write");
@@ -109,4 +109,79 @@ describe("continuous USB reader", () => {
     ).rejects.toMatchObject({ category: "connection" });
     expect(lost).toHaveBeenCalledOnce();
   });
+});
+
+describe("USB reply framing", () => {
+  it.each([255, 256, 257, 512, 768])(
+    "preserves a %i-byte declared frame with or without a report ID",
+    (length) => {
+      const payload = new Uint8Array(length - 2);
+      payload[0] = 2;
+      const frame = frameMessage(42, payload);
+      for (const prefix of [false, true]) {
+        const report = new Uint8Array(1024 + Number(prefix));
+        report.set(frame, Number(prefix));
+        expect(trimHidReply(report, 42)).toEqual(frame);
+        expect(trimHidReply(report)).toEqual(frame);
+      }
+    },
+  );
+
+  it("uses the counter to disambiguate plausible prefixed and unprefixed headers", () => {
+    // Both offsets have a valid length and direct reply type.
+    const report = new Uint8Array(1025);
+    report.set([0, 3, 3, 1, 2, 2]);
+    expect(() => trimHidReply(report)).toThrow("Ambiguous");
+    expect(trimHidReply(report, 0x0103)).toEqual(report.slice(0, 770));
+    expect(trimHidReply(report, 0x0201)).toEqual(report.slice(1, 774));
+  });
+
+  it("rejects a report even when both layouts match the counter", () => {
+    const report = new Uint8Array(1025);
+    report.set([0, 3, 3, 3, 3, 2]);
+    expect(() => trimHidReply(report, 0x0303)).toThrow("Ambiguous");
+  });
+
+  it.each([
+    Uint8Array.of(0, 0),
+    Uint8Array.of(3, 0, 1, 0, 0),
+    Uint8Array.of(20, 0, 1, 0, 2),
+    Uint8Array.of(3, 0, 1, 0, 3),
+    frameMessage(2, Uint8Array.of(2)),
+  ])("rejects malformed, truncated and mismatched replies", (report) => {
+    expect(() => trimHidReply(report, 1)).toThrow("Malformed or mismatched");
+  });
+
+  it("retires the HID handle on invalid input without throwing from the data callback", async () => {
+    const h = setup();
+    const lost = vi.fn();
+    h.session.onDisconnect(lost);
+    const pending = h.connection.exchange(Uint8Array.of(0), new AbortController().signal);
+    const rejected = expect(pending).rejects.toMatchObject({ category: "protocol" });
+    await Promise.resolve();
+    expect(() => h.device.emit("data", frameMessage(99, Uint8Array.of(2)))).not.toThrow();
+    await rejected;
+    expect(lost).toHaveBeenCalledOnce();
+    expect(h.device.close).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])(
+    "receives boundary replies through the HID reader (report ID: %s)",
+    async (prefix) => {
+      const h = setup();
+      const payload = new Uint8Array(254);
+      payload[0] = 2;
+      h.device.write.mockImplementation((frame) => {
+        const counter = frame[3]! | (frame[4]! << 8);
+        const report = new Uint8Array(1024 + Number(prefix));
+        report.set(frameMessage(counter, payload), Number(prefix));
+        h.device.emit("data", report);
+        return frame.length;
+      });
+      await expect(
+        h.connection.exchange(Uint8Array.of(0), new AbortController().signal),
+      ).resolves.toEqual(payload);
+      await h.session.disconnect();
+    },
+  );
 });
