@@ -16,9 +16,9 @@ import {
   readings,
   recoveryText,
 } from "../../../../../plugins/device-ev3/src/presentation.js";
-import manifestRaw from "../../../../../plugins/device-ev3/kobrixa-plugin.json";
-import panel from "../../../../../plugins/device-ev3/ui/panel.json";
-import prefs from "../../../../../plugins/device-ev3/settings/preferences.json";
+import manifestRaw from "../../../../../plugins/device-ev3/kobrixa-plugin.json" with { type: "json" };
+import panel from "../../../../../plugins/device-ev3/ui/panel.json" with { type: "json" };
+import prefs from "../../../../../plugins/device-ev3/settings/preferences.json" with { type: "json" };
 const id = "00000000-0000-4000-8000-000000000001";
 const session: DeviceSessionSnapshot = {
   sessionId: id,

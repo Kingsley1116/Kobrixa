@@ -241,6 +241,7 @@ export function setup(): RecorderFixture {
   };
   const devices: PluginContext["devices"] = {
     recording,
+    connectionRecovery: { read: vi.fn(unsupported) },
     session: vi.fn(async () =>
       ok({
         session: {

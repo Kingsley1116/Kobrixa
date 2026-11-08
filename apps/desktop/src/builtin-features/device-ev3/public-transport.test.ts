@@ -15,8 +15,8 @@ import {
 import { UiStateRegistry } from "@kobrixa/plugin-runtime";
 import { runPlugin } from "@kobrixa/plugin-sdk";
 import { createDevicePlugin } from "../../../../../plugins/device-ev3/src/controller.js";
-import panel from "../../../../../plugins/device-ev3/ui/panel.json";
-import prefs from "../../../../../plugins/device-ev3/settings/preferences.json";
+import panel from "../../../../../plugins/device-ev3/ui/panel.json" with { type: "json" };
+import prefs from "../../../../../plugins/device-ev3/settings/preferences.json" with { type: "json" };
 import { createDeviceBroker } from "../../main/device-broker/broker-port.js";
 import { operationHarness, pluginPrincipal, ID } from "../../main/device-broker/fake-provider.js";
 import { attachDeviceRpc } from "../../main/device-broker/rpc-router.js";

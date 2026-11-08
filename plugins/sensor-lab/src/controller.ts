@@ -20,7 +20,6 @@ import {
   type RecordMeta,
   type DatasetV2,
   type ReadSnapshot,
-  type DeviceEvent,
   type DeviceSubscriptionParams,
 } from "@kobrixa/plugin-protocol";
 import manifest from "../kobrixa-plugin.json";
@@ -471,7 +470,7 @@ export class LabController {
           const sub = value(
             await this.context.devices.subscribe(
               w.params,
-              (event: DeviceEvent) => {
+              (event) => {
                 if (!this.observationAlive(w) || delivery !== w.delivery) return;
                 if (event.kind === "events.resyncRequired") {
                   this.terminalObservations(event.data.affected, w);

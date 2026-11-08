@@ -1423,7 +1423,9 @@ it.each([false, true])(
     try {
       const sources = await assembleBuiltinPluginSources(h.input);
       const devices = sources.filter(
-        (source) => source.kind === "builtin" && (source.manifest as { id?: string }).id === "kobrixa.device-ev3",
+        (source) =>
+          source.kind === "builtin" &&
+          (source.manifest as { id?: string }).id === "kobrixa.device-ev3",
       );
       expect(devices).toHaveLength(1);
       const device = devices[0]!;
@@ -1438,9 +1440,10 @@ it.each([false, true])(
       ]);
       const manifest = pluginManifestSchema.parse(device.manifest);
       expect(manifest.runtime).toEqual({ kind: "node", entry: "main.cjs" });
+      const provider = BUILTIN_PLUGIN_SOURCES[2]!;
+      if (provider.kind !== "builtin") throw new Error("Expected builtin provider");
       expect(manifest.contributes?.deviceProviders).toEqual(
-        pluginManifestSchema.parse(BUILTIN_PLUGIN_SOURCES[2]!.manifest).contributes!
-          .deviceProviders,
+        pluginManifestSchema.parse(provider.manifest).contributes!.deviceProviders,
       );
       const launcher = vi.fn();
       const manager = await PluginManager.create({
@@ -1467,7 +1470,8 @@ it.each([false, true])(
       }
       await writeFile(path.join(h.deviceLeaf, "main.cjs"), "tampered");
       const corrupt = (await assembleBuiltinPluginSources(h.input)).filter(
-        (source) => source.kind === "builtin" && (source.manifest as { id?: string }).id === manifest.id,
+        (source) =>
+          source.kind === "builtin" && (source.manifest as { id?: string }).id === manifest.id,
       );
       expect(corrupt).toHaveLength(1);
       expect(corrupt[0]).toMatchObject({ payloadUnavailable: true, resources: {} });
