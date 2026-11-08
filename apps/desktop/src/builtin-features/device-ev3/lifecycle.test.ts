@@ -77,7 +77,13 @@ function fixture(autoReconnect = false) {
     broker,
     principal: () => principal,
     disconnect: async () => {},
-    stop: async () => {},
+    stop: async (sessionId) => {
+      const result = await broker.stopCurrentDevice({
+        sessionId,
+        action: { actionToken: ID, scope: { hostEpoch: ID, workbenchInstance: ID } },
+      });
+      if (!result.ok) throw new Error(result.error.message);
+    },
     feed: { subscribe: async () => async () => {} },
   });
   const service = new DeviceService(
@@ -88,7 +94,8 @@ function fixture(autoReconnect = false) {
   );
   let listener: (e: BuildEvent) => void = () => {};
   const save = vi.fn(async () => {});
-  const deploy = vi.fn(service.deploy.bind(service)),
+  const stop = vi.fn(service.stop.bind(service)),
+    deploy = vi.fn(service.deploy.bind(service)),
     run = vi.fn(service.run.bind(service));
   const execution = new ExecutionController({
     build: {
@@ -124,7 +131,7 @@ function fixture(autoReconnect = false) {
         return "b1";
       },
     },
-    device: { onEvent: service.subscribe.bind(service), deploy, run },
+    device: { onEvent: service.subscribe.bind(service), stop, deploy, run },
   } as unknown as KobrixaApi);
   const detach = execution.attach();
   execution.setWorkspace("workspace");
@@ -148,6 +155,7 @@ function fixture(autoReconnect = false) {
     service,
     execution,
     save,
+    stop,
     deploy,
     run,
     connect,
@@ -160,6 +168,16 @@ function fixture(autoReconnect = false) {
 }
 it("E5 real public broker connection adopts through LegacyDevice and DeviceService and executes one pending Run", async () => {
   const f = fixture();
+  let confirmStop!: () => void;
+  const stopReply = new Promise<void>((resolve) => {
+    confirmStop = resolve;
+  });
+  const stopAndReadback = f.provider.stopAndReadback.bind(f.provider);
+  vi.spyOn(f.provider, "stopAndReadback").mockImplementation(async (...args) => {
+    const result = await stopAndReadback(...args);
+    await stopReply;
+    return result;
+  });
   try {
     await f.execution.run(f.request);
     const observed = vi.fn();
@@ -173,16 +191,29 @@ it("E5 real public broker connection adopts through LegacyDevice and DeviceServi
     expect(observed).toHaveBeenCalledOnce();
     expect(f.legacy.sessionIds()).toEqual([id]);
     expect(f.legacy.descriptor(id).id).toBe(id);
+    await vi.waitFor(() => expect(f.provider.stopAndReadback).toHaveBeenCalledOnce());
+    expect(f.execution.getSnapshot().phase).toBe("stopping");
+    expect(f.deploy).not.toHaveBeenCalled();
+    expect(f.run).not.toHaveBeenCalled();
+    confirmStop();
     await vi.waitFor(() => {
       expect(f.execution.getSnapshot().error).toBeUndefined();
       expect(f.run).toHaveBeenCalledOnce();
     });
     expect(f.deploy).toHaveBeenCalledWith(id, "b1", "/robot");
+    expect(f.stop).toHaveBeenCalledExactlyOnceWith(id);
+    expect(f.stop).toHaveBeenCalledBefore(f.deploy);
+    expect(f.deploy).toHaveBeenCalledBefore(f.run);
+    expect(f.provider.calls.filter((call) => call === "stop" || call === "run")).toEqual([
+      "stop",
+      "run",
+    ]);
     expect(f.provider.calls).toContain("run");
     f.service.publishSessionCatalog();
     await Promise.resolve();
     expect(f.run).toHaveBeenCalledOnce();
   } finally {
+    confirmStop();
     await f.close();
   }
 });
@@ -204,6 +235,7 @@ it.each(["cancel", "authority", "workspace"])(
       await f.connect();
       await Promise.resolve();
       expect(f.save).not.toHaveBeenCalled();
+      expect(f.stop).not.toHaveBeenCalled();
       expect(f.deploy).not.toHaveBeenCalled();
       expect(f.run).not.toHaveBeenCalled();
     } finally {
@@ -267,8 +299,12 @@ it("E5 discovery while awaiting a device preserves explicit pending intent", asy
       { providerId: f.provider.id },
       new AbortController().signal,
     );
-    await f.connect();
+    const id = await f.connect();
     await vi.waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+    expect(f.execution.getSnapshot().error).toBeUndefined();
+    expect(f.stop).toHaveBeenCalledExactlyOnceWith(id);
+    expect(f.stop).toHaveBeenCalledBefore(f.deploy);
+    expect(f.deploy).toHaveBeenCalledBefore(f.run);
   } finally {
     await f.close();
   }
@@ -292,6 +328,10 @@ it("E5 public USB recovery adopts replacement without replay and preserves once-
     const old = await f.connect();
     await vi.advanceTimersByTimeAsync(0);
     expect(f.run).toHaveBeenCalledOnce();
+    expect(f.execution.getSnapshot().error).toBeUndefined();
+    expect(f.stop).toHaveBeenCalledExactlyOnceWith(old);
+    expect(f.stop).toHaveBeenCalledBefore(f.deploy);
+    expect(f.deploy).toHaveBeenCalledBefore(f.run);
     const teardown = vi.fn(async () => {});
     f.service.setBeforeDisconnect(teardown);
     f.provider.lose();
@@ -300,6 +340,8 @@ it("E5 public USB recovery adopts replacement without replay and preserves once-
     expect(f.execution.getSnapshot().session?.id).toBeDefined();
     expect(f.execution.getSnapshot().session?.id).not.toBe(old);
     expect(f.run).toHaveBeenCalledOnce();
+    expect(f.stop).toHaveBeenCalledOnce();
+    expect(f.deploy).toHaveBeenCalledOnce();
     expect(teardown).not.toHaveBeenCalled();
   } finally {
     await f.close();
