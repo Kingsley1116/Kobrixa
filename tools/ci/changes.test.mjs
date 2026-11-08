@@ -27,7 +27,7 @@ test("P160 scripts include actual transport, browser and maximum-load runners", 
   );
   assert.equal(
     scripts["test:declarative-ui"],
-    "node --test tests/desktop/declarative-ui-*.test.mjs tests/desktop/builtin-process-*.test.mjs",
+    "node --experimental-transform-types --import ./tests/desktop/persistence-source-loader.mjs --test tests/desktop/declarative-ui-*.test.mjs tests/desktop/builtin-process-*.test.mjs",
   );
   for (const name of ["test", "test:ci", "test:desktop"])
     assert.ok(scripts[name].includes("pnpm test:declarative-ui"), name);

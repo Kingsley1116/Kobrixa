@@ -28,7 +28,7 @@ export type Message =
   | Phase
   | "built"
   | "uploaded"
-  | "runSent"
+  | "runStarted"
   | "stopped"
   | "deleted"
   | "connected"
@@ -606,6 +606,9 @@ export class ExecutionController {
         this.assertCurrent(generation);
         admission?.();
         if (run && version.path && version.deploy === "ev3") {
+          if (this.controlBlocked) throw new Error(DEVICE_CONTROL_DENIED);
+          await this.stopVersion(generation);
+          admission?.();
           await this.deploy(version, generation);
           this.assertCurrent(generation);
           admission?.();
@@ -751,7 +754,7 @@ export class ExecutionController {
     this.phase("running");
     await this.api.device.run(session.id, deployed.path);
     this.assertCurrent(generation);
-    this.log("runSent");
+    this.log("runStarted");
   }
   async upload(): Promise<void> {
     const version = this.snapshot.successfulBuild;
@@ -780,16 +783,15 @@ export class ExecutionController {
   async stop(): Promise<void> {
     const session = this.state.session;
     if (this.locked || !session) return;
-    await this.perform(
-      async (generation) => {
-        this.phase("stopping");
-        await this.api.device.stop(session.id);
-        this.assertCurrent(generation);
-        this.log("stopped");
-      },
-      this.workspaceId,
-      true,
-    );
+    await this.perform((generation) => this.stopVersion(generation), this.workspaceId, true);
+  }
+  private async stopVersion(generation: number): Promise<void> {
+    const session = this.state.session;
+    if (!session) throw new Error("EV3 disconnected.");
+    this.phase("stopping");
+    await this.api.device.stop(session.id);
+    this.assertCurrent(generation);
+    this.log("stopped");
   }
   async deleteDeployed(): Promise<void> {
     const { session, deployed } = this.state;

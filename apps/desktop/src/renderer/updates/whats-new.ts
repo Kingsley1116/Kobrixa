@@ -6,6 +6,23 @@ export interface WhatsNewEntry {
 
 export const WHATS_NEW: readonly WhatsNewEntry[] = [
   {
+    version: "1.0.1-beta.2",
+    items: [
+      {
+        zh: "F5 會在建置成功後停止並確認舊程式，再上傳及確認新版啟動；活動紀錄分別顯示上傳完成與已確認啟動。",
+        en: "After a successful build, F5 confirms the previous program has stopped, uploads the new version and confirms startup. The activity log distinguishes upload completion from confirmed startup.",
+      },
+      {
+        zh: "修正 USB 回覆長度為 256 倍數時可能解碼失敗的問題，並在載入失敗、啟動遭拒或逾時時明確回報。",
+        en: "Fixed USB reply decoding at lengths that are multiples of 256, with explicit errors for load failures, rejected starts and timeouts.",
+      },
+      {
+        zh: "更新桌面執行環境與編輯器元件。本次 EV3 修正已通過自動化回歸測試；20 次實機連續部署驗收仍待完成。",
+        en: "Updated the desktop runtime and editor components. Automated regression tests cover the EV3 fixes; the 20-deployment physical EV3 acceptance check is still pending.",
+      },
+    ],
+  },
+  {
     version: "1.0.1-beta.1",
     items: [
       {

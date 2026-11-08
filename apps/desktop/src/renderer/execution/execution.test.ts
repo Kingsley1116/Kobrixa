@@ -108,7 +108,9 @@ function setup() {
       run: vi.fn(async () => {
         calls.push("run");
       }),
-      stop: vi.fn(async () => {}),
+      stop: vi.fn(async () => {
+        calls.push("stop");
+      }),
       delete: vi.fn(async () => {}),
     },
     workspace: {} as KobrixaApi["workspace"],
@@ -222,12 +224,93 @@ describe("execution flow", () => {
     const h = setup();
     await h.controller.connect(usb);
     await h.controller.run(h.request);
-    expect(h.calls).toEqual(["save", "build", "deploy", "run"]);
+    expect(h.calls).toEqual(["save", "build", "stop", "deploy", "run"]);
     expect(h.api.build.start).toHaveBeenCalledWith("w1", {});
     expect(h.api.device.deploy).toHaveBeenCalledWith("s1", "b1", "/robot");
     expect(h.api.device.run).toHaveBeenCalledWith("s1", "/robot/demo.rbf");
-    expect(h.controller.getSnapshot().logs.at(-1)?.message).toBe("runSent");
+    expect(h.controller.getSnapshot().logs.at(-1)?.message).toBe("runStarted");
     expect(h.controller.locked).toBe(false);
+  });
+  it("waits for a confirmed stop before uploading and ignores another F5", async () => {
+    const h = setup(),
+      stopped = deferred<void>();
+    await h.controller.connect(usb);
+    h.api.device.stop.mockImplementationOnce(() => stopped.promise);
+    const run = h.controller.run(h.request);
+    await vi.waitFor(() => expect(h.controller.getSnapshot().phase).toBe("stopping"));
+    expect(h.api.device.deploy).not.toHaveBeenCalled();
+    expect(h.api.device.run).not.toHaveBeenCalled();
+    await h.controller.run(h.request);
+    expect(h.api.build.start).toHaveBeenCalledOnce();
+    stopped.resolve();
+    await run;
+    expect(h.api.device.stop).toHaveBeenCalledOnce();
+    expect(h.api.device.deploy).toHaveBeenCalledOnce();
+    expect(h.api.device.run).toHaveBeenCalledOnce();
+  });
+  it("keeps stop failures separate from upload failures", async () => {
+    const h = setup();
+    await h.controller.connect(usb);
+    h.api.device.stop.mockRejectedValueOnce(new Error("Stop was not confirmed"));
+    await h.controller.run(h.request);
+    expect(h.api.device.deploy).not.toHaveBeenCalled();
+    expect(h.api.device.run).not.toHaveBeenCalled();
+    expect(h.controller.getSnapshot().error).toEqual({
+      phase: "stopping",
+      detail: "Stop was not confirmed",
+    });
+    expect(h.controller.locked).toBe(false);
+  });
+  it("does not claim startup success when an uploaded program cannot start", async () => {
+    const h = setup();
+    await h.controller.connect(usb);
+    h.api.device.run.mockRejectedValueOnce(new Error("EV3 could not load the uploaded program."));
+    await h.controller.run(h.request);
+    const state = h.controller.getSnapshot();
+    expect(state.error?.phase).toBe("running");
+    expect(state.logs.some((entry) => entry.message === "uploaded")).toBe(true);
+    expect(state.logs.some((entry) => entry.message === "runStarted")).toBe(false);
+    expect(state.deployed?.buildId).toBe("b1");
+    expect(h.api.device.run).toHaveBeenCalledOnce();
+    await h.controller.runDeployed();
+    expect(h.api.device.run).toHaveBeenCalledTimes(2);
+    expect(h.controller.getSnapshot().logs.at(-1)?.message).toBe("runStarted");
+  });
+  it("upload-only does not stop or start a user program", async () => {
+    const h = setup();
+    await h.controller.connect(usb);
+    await h.controller.build(h.request);
+    await h.controller.upload();
+    expect(h.api.device.stop).not.toHaveBeenCalled();
+    expect(h.api.device.run).not.toHaveBeenCalled();
+    expect(h.api.device.deploy).toHaveBeenCalledOnce();
+  });
+  it("does not upload or restart after disconnecting during the stop", async () => {
+    const h = setup(),
+      stopped = deferred<void>();
+    await h.controller.connect(usb);
+    h.api.device.stop.mockImplementationOnce(() => stopped.promise);
+    const run = h.controller.run(h.request);
+    await vi.waitFor(() => expect(h.controller.getSnapshot().phase).toBe("stopping"));
+    h.emitDevice({ type: "state", state: "disconnected", sessionId: "s1" });
+    stopped.resolve();
+    await run;
+    expect(h.api.device.deploy).not.toHaveBeenCalled();
+    expect(h.api.device.run).not.toHaveBeenCalled();
+    expect(h.controller.locked).toBe(false);
+  });
+  it("does not automatically stop after losing collaboration control during build", async () => {
+    const h = setup();
+    await h.controller.connect(usb);
+    h.api.build.start.mockImplementationOnce(async (workspaceId) => {
+      h.controller.setDeviceControlBlocked(true);
+      h.emitBuild({ type: "complete", workspaceId, buildId: "b1", result: success });
+      return "b1";
+    });
+    await h.controller.run(h.request);
+    expect(h.api.device.stop).not.toHaveBeenCalled();
+    expect(h.api.device.deploy).not.toHaveBeenCalled();
+    expect(h.api.device.run).not.toHaveBeenCalled();
   });
   it("waits for connection and resumes only that requested run", async () => {
     const h = setup();
@@ -235,7 +318,7 @@ describe("execution flow", () => {
     expect(h.controller.getSnapshot().phase).toBe("awaitingDevice");
     expect(h.calls).toEqual([]);
     await h.controller.connect(usb);
-    expect(h.calls).toEqual(["save", "build", "deploy", "run"]);
+    expect(h.calls).toEqual(["save", "build", "stop", "deploy", "run"]);
   });
   it("cancels connection intent without starting after a later connection", async () => {
     const h = setup();
@@ -270,6 +353,7 @@ describe("execution flow", () => {
       return "bad";
     });
     await h.controller.run(h.request);
+    expect(h.api.device.stop).not.toHaveBeenCalled();
     expect(h.api.device.deploy).not.toHaveBeenCalled();
     expect(h.controller.getSnapshot().successfulBuild?.buildId).toBe("b1");
     expect(h.controller.getSnapshot().diagnostics).toEqual(failure.diagnostics);
@@ -439,7 +523,7 @@ describe("execution flow", () => {
     h.emitDevice({ type: "state", state: "disconnected", sessionId: "s1" });
     ran.resolve();
     await run;
-    expect(h.controller.getSnapshot().logs.some((entry) => entry.message === "runSent")).toBe(
+    expect(h.controller.getSnapshot().logs.some((entry) => entry.message === "runStarted")).toBe(
       false,
     );
     expect(h.controller.getSnapshot().phase).toBe("error");
@@ -698,6 +782,7 @@ describe("file operation isolation", () => {
     await h.controller.connect(usb);
     await h.controller.run(h.request);
     h.calls.length = 0;
+    h.api.device.stop.mockClear();
     const gate = deferred<void>();
     const work = h.controller.withFiles(() => gate.promise, "upload");
     expect(h.controller.locked).toBe(true);
@@ -760,6 +845,7 @@ it("keeps a successful non-deployable build without a build error", async () => 
   await h.controller.connect(usb);
   await h.controller.upload();
   await h.controller.run(h.request);
+  expect(h.api.device.stop).not.toHaveBeenCalled();
   expect(h.api.device.deploy).not.toHaveBeenCalled();
   expect(h.api.device.run).not.toHaveBeenCalled();
   expect(h.controller.getSnapshot().error).toBeUndefined();
@@ -822,10 +908,10 @@ it("E5 resumes exactly one current explicit pending Run from a public connection
   const h = setup();
   await h.controller.run(h.request);
   h.emitDevice(publicCatalog(1));
-  await vi.waitFor(() => expect(h.calls).toEqual(["save", "build", "deploy", "run"]));
+  await vi.waitFor(() => expect(h.calls).toEqual(["save", "build", "stop", "deploy", "run"]));
   h.emitDevice(publicCatalog(2));
   await Promise.resolve();
-  expect(h.calls).toEqual(["save", "build", "deploy", "run"]);
+  expect(h.calls).toEqual(["save", "build", "stop", "deploy", "run"]);
   expect(h.controller.getSnapshot().session?.id).toBe("public-session");
 });
 it.each(["cancel", "authority", "workspace", "detach"])(
@@ -886,6 +972,36 @@ it("E5 bootstrap snapshots and recovered sessions adopt for display without repl
     expect(h.controller.locked).toBe(false);
   }
 });
+it.each(["authority", "workspace", "cancel", "detach"])(
+  "E5 %s during confirmed stop prevents the resumed Run from deploying",
+  async (reason) => {
+    const h = setup(),
+      stopped = deferred<void>();
+    h.api.device.stop.mockImplementationOnce(() => stopped.promise);
+    await h.controller.run(h.request);
+    h.emitDevice(publicCatalog(1));
+    await vi.waitFor(() => expect(h.controller.getSnapshot().phase).toBe("stopping"));
+    expect(h.api.device.stop).toHaveBeenCalledWith("public-session");
+    if (reason === "authority") {
+      h.controller.setDeviceControlBlocked(true);
+      h.controller.setDeviceControlBlocked(false);
+    }
+    if (reason === "workspace") {
+      h.controller.setWorkspace("other");
+      h.controller.setWorkspace("w1");
+    }
+    if (reason === "cancel") h.controller.cancelWaiting();
+    if (reason === "detach") {
+      const detach = h.controller.attach();
+      detach();
+    }
+    stopped.resolve();
+    await vi.waitFor(() => expect(h.controller.locked).toBe(false));
+    expect(h.api.device.deploy).not.toHaveBeenCalled();
+    expect(h.api.device.run).not.toHaveBeenCalled();
+    expect(h.controller.getSnapshot().logs.at(-1)?.message).toBe("cancelled");
+  },
+);
 it("E5 disconnected/newer catalog and foreign epoch fence late adoption", async () => {
   const h = setup();
   await h.controller.run(h.request);
@@ -906,7 +1022,7 @@ it("E5 legacy promise-owned connect does not double-adopt or double-run", async 
   expect(h.controller.getSnapshot().session).toBeUndefined();
   connected.resolve("s1");
   await work;
-  expect(h.calls).toEqual(["save", "build", "deploy", "run"]);
+  expect(h.calls).toEqual(["save", "build", "stop", "deploy", "run"]);
 });
 
 it("C retirement sends adopted public-session Stop through the retained core API without a project", async () => {
