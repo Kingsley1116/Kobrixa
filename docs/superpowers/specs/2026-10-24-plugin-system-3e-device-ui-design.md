@@ -14,14 +14,14 @@
 
 ## 2. 現況與架構缺口
 
-| 已核對來源 | 現況與應補邊界 |
-| --- | --- |
-| [device-panel](../../../apps/desktop/src/renderer/device/device-panel.tsx)、[execution controller](../../../apps/desktop/src/renderer/execution/execution.ts) | connection 與 build/deploy/version/pending-run 混合；後者拆成相鄰 core 區，feature 不接 `ExecutionState`。 |
-| [monitor-panel](../../../apps/desktop/src/renderer/device/monitor-panel.tsx)、[monitor-controller](../../../apps/desktop/src/renderer/device/monitor-controller.ts) | 私有 monitor DTO、mode cache 與 motor/Lab composition；改 public catalog/frame，保留 freshness、busy、unknown 與 read-only 語意。 |
-| [device-settings](../../../apps/desktop/src/renderer/settings/device-settings.ts)、[device-preferences](../../../apps/desktop/src/shared/device-preferences.ts) | 六偏好現在走私有 get/set；B2 已有通用立即 CAS 表單，尚需實際 resource/import/backend bridge。 |
-| [builtin factory](../../../apps/desktop/src/main/plugins/builtin.ts)、[manager](../../../packages/plugin-runtime/src/manager.ts) | factory 依摘要 `status === enabled` 同步；B2 manager 會將 supervisor failed 投影成 source failed。新增 UI process 後，不能因 UI crash 撤 provider。 |
-| [device schemas](../../../packages/plugin-protocol/src/device-methods.ts)、[types](../../../packages/plugin-protocol/src/device-types.ts) | list/discover/connect/session/read/subscribe/inputModes 已有；USB retry/recovery notice 與取消的完整公開投影尚缺。 |
-| [UI resource](../../../packages/plugin-protocol/src/ui-resource.ts) | v1 已有可信 core disconnect/openRecovery；select options 靜態。動態 candidates/modes 依 D1 的 v2 list/table，不塞 JSON 字串。 |
+| 已核對來源                                                                                                                                                          | 現況與應補邊界                                                                                                                                      |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [device-panel](../../../apps/desktop/src/renderer/device/device-panel.tsx)、[execution controller](../../../apps/desktop/src/renderer/execution/execution.ts)       | connection 與 build/deploy/version/pending-run 混合；後者拆成相鄰 core 區，feature 不接 `ExecutionState`。                                          |
+| [monitor-panel](../../../apps/desktop/src/renderer/device/monitor-panel.tsx)、[monitor-controller](../../../apps/desktop/src/renderer/device/monitor-controller.ts) | 私有 monitor DTO、mode cache 與 motor/Lab composition；改 public catalog/frame，保留 freshness、busy、unknown 與 read-only 語意。                   |
+| [device-settings](../../../apps/desktop/src/renderer/settings/device-settings.ts)、[device-preferences](../../../apps/desktop/src/shared/device-preferences.ts)     | 六偏好現在走私有 get/set；B2 已有通用立即 CAS 表單，尚需實際 resource/import/backend bridge。                                                       |
+| [builtin factory](../../../apps/desktop/src/main/plugins/builtin.ts)、[manager](../../../packages/plugin-runtime/src/manager.ts)                                    | factory 依摘要 `status === enabled` 同步；B2 manager 會將 supervisor failed 投影成 source failed。新增 UI process 後，不能因 UI crash 撤 provider。 |
+| [device schemas](../../../packages/plugin-protocol/src/device-methods.ts)、[types](../../../packages/plugin-protocol/src/device-types.ts)                           | list/discover/connect/session/read/subscribe/inputModes 已有；USB retry/recovery notice 與取消的完整公開投影尚缺。                                  |
+| [UI resource](../../../packages/plugin-protocol/src/ui-resource.ts)                                                                                                 | v1 已有可信 core disconnect/openRecovery；select options 靜態。動態 candidates/modes 依 D1 的 v2 list/table，不塞 JSON 字串。                       |
 
 所有新增 host port 名稱只作責任描述，正式型別／exports 由原 owner 定案。3E 不自行創造已發布的 API 1.8；完成版 manifest 為 `^1.8.0`，沿用 3D 唯一版本批次、不另升 minor。
 
@@ -35,34 +35,34 @@ source disable 先 gate 新工作，經 coordinator stop/readback、end/drain/sa
 
 ### 2.2 正式依賴與 blockers
 
-| 項目 | Owner／完成門檻 |
-| --- | --- |
-| source eligibility 與 provider teardown 次序 | H-R（B1 runtime）＋H-D/3A；補 source 與 process 分離 port、crash/disable/replacement fixtures，不能以摘要推斷。 |
-| authoritative preferences 讀取與 commit 通知 | B2/H-D 定義 host-only namespace port；給 provider/backend 的 reader 不假冒 plugin principal、不借 renderer form binding、不呼叫 private RPC。 |
+| 項目                                         | Owner／完成門檻                                                                                                                                                                                                                                              |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| source eligibility 與 provider teardown 次序 | H-R（B1 runtime）＋H-D/3A；補 source 與 process 分離 port、crash/disable/replacement fixtures，不能以摘要推斷。                                                                                                                                              |
+| authoritative preferences 讀取與 commit 通知 | B2/H-D 定義 host-only namespace port；給 provider/backend 的 reader 不假冒 plugin principal、不借 renderer form binding、不呼叫 private RPC。                                                                                                                |
 | Wi-Fi 記住位址的 atomic dependent-field 更新 | B2/H-P/H-D/H-V，**E1 dependent**：一般 contributed form 只提交單欄，現有 schema 沒有相依欄位規則。必須凍結公開可查的相依欄位語意／host 正規化契約，讓 update 與 reset 將 remember=false 及空 lastWifiAddress 放在同一筆 CAS；不可用 commit 後 watcher 清除。 |
-| recovery 公開狀態與取消 | 3A/H-P＋B1/H-V，**D1 dependent**：界定 bounded retry 狀態、notice、host-issued recovery identity、可信取消 action 與 stale rejection；現行 connected/quarantined snapshot 不足，不捏造方法名稱。 |
-| candidates/modes 的 revision 選取 | 3D/H-P/H-V，**D1 dependent**：共用 v2 list/table dataset、row ID/revision、失效/錯誤與雙 SDK；不另造 device-specific table。 |
-| monitor source semantics | 3A/H-P 與 3D D1 共用 EV3 identity vocabulary；核對 ready/empty/unsupported/error、mode label、battery/program 等公開表達，缺失由 owner 補 fixture，不匯入私有 catalog。 |
-| packaging resource inventory | H-K 與 B2/3D：目前 C launcher 的 JSON 宣告枚舉只接受 v1 且漏 settings；必須共用修正 settings/v2 inventory，才可封裝完整 3E。 |
+| recovery 公開狀態與取消                      | 3A/H-P＋B1/H-V，**D1 dependent**：界定 bounded retry 狀態、notice、host-issued recovery identity、可信取消 action 與 stale rejection；現行 connected/quarantined snapshot 不足，不捏造方法名稱。                                                             |
+| candidates/modes 的 revision 選取            | 3D/H-P/H-V，**D1 dependent**：共用 v2 list/table dataset、row ID/revision、失效/錯誤與雙 SDK；不另造 device-specific table。                                                                                                                                 |
+| monitor source semantics                     | 3A/H-P 與 3D D1 共用 EV3 identity vocabulary；核對 ready/empty/unsupported/error、mode label、battery/program 等公開表達，缺失由 owner 補 fixture，不匯入私有 catalog。                                                                                      |
+| packaging resource inventory                 | H-K 與 B2/3D：目前 C launcher 的 JSON 宣告枚舉只接受 v1 且漏 settings；必須共用修正 settings/v2 inventory，才可封裝完整 3E。                                                                                                                                 |
 
 D1 不成立時可準備 parity fixtures，不能發布半套 UI、刪 legacy 或宣稱相依能力 available。公共 limits 的變更一律回 owner 審查並同步 umbrella／版本規則。
 
 ## 3. 行為等價表
 
-| 現有行為 | 新落點與必保留結果 |
-| --- | --- |
-| USB/Wi-Fi 切換、discover、候選選擇 | 公開 `devices.discover({ providerId }, signal?)`，最多 32 candidates；v2 list/table 依 transport 篩選，empty/error/searching 分開，選取綁 discovery revision，失效後重搜。 |
-| Wi-Fi 直接位址、連線錯誤 | 公開 candidate 或 wifi-address target；trim 後依 address schema 驗證，保留 draft/error/retry。UI 不讀 raw HID、native metadata、本機路徑或 transport descriptor。 |
-| 既有連線重用／USB 自動重連 | trusted provider/core 依 committed prefs 與現行 recovery policy 決定；開啟 panel 只讀 catalog，不 discover/connect，不重送 run/upload/motion/recording。重連建立新 session。 |
-| recovery waiting/connecting、取消、retry-exhausted/manual-required | D1 公開 bounded 投影及可信取消；失敗保留 recovery/error，晚到 restored 不得覆寫取消或新 session；部署是否仍有效由 core 驗證、顯示 upload-required。 |
-| pending-run 等待與取消 | 留 core execution 相鄰區；明確先前 Run 的短期意圖由 core 管理，連線後重驗 workspace/authority/cancel。UI open/reload/re-enable 不創造或回復 pending Run。 |
-| Disconnect | v1 core action 的 data-session reference；host quiesce→stop/readback＋end/drain/save→disconnect，顯示進度。feature 不以 `devices.disconnect` 強斷其他 owner；該 API 仍回 busy。 |
-| battery 百分比／電壓、program status | public channel/frame 與 program stopped/running/unknown；缺值顯示 unknown，不能以 null 當 0。core 全域 battery demand 與 UI 共用 broker sampler。 |
-| 四 input／四 output、值／單位／年齡 | catalog＋read/telemetry，最多 38 channels；保留 ready/empty/unsupported/error、busy/waiting/paused、null gaps；foreground file/program 期間不得將舊值標 live。 |
-| input mode query/set | v2 rows 選 mode ID，帶當前 session/source revision；fresh、idle、ready、可切換且無 recording pin 才啟用。host admission 及 consequential step 再驗 authority/locks。 |
-| fresh／read-only | 依 public status/age（fresh 2.5 秒）與可信 authority；失權仍可 read/stop，禁止寫入。UI disabled 不是安全邊界。 |
-| 六項偏好／單欄 reset／失敗重試 | B2 contributed settings 逐欄立即 CAS，無 Apply；成功才發布新值，失敗 draft/error/retry 保留。 |
-| build/deploy/version、remote-files | core execution summary／原 remote-files UI；共用 legacy broker adapter、authority/cancel，feature 不收 private DTO／path，不搬成假公開 UI。 |
+| 現有行為                                                           | 新落點與必保留結果                                                                                                                                                              |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| USB/Wi-Fi 切換、discover、候選選擇                                 | 公開 `devices.discover({ providerId }, signal?)`，最多 32 candidates；v2 list/table 依 transport 篩選，empty/error/searching 分開，選取綁 discovery revision，失效後重搜。      |
+| Wi-Fi 直接位址、連線錯誤                                           | 公開 candidate 或 wifi-address target；trim 後依 address schema 驗證，保留 draft/error/retry。UI 不讀 raw HID、native metadata、本機路徑或 transport descriptor。               |
+| 既有連線重用／USB 自動重連                                         | trusted provider/core 依 committed prefs 與現行 recovery policy 決定；開啟 panel 只讀 catalog，不 discover/connect，不重送 run/upload/motion/recording。重連建立新 session。    |
+| recovery waiting/connecting、取消、retry-exhausted/manual-required | D1 公開 bounded 投影及可信取消；失敗保留 recovery/error，晚到 restored 不得覆寫取消或新 session；部署是否仍有效由 core 驗證、顯示 upload-required。                             |
+| pending-run 等待與取消                                             | 留 core execution 相鄰區；明確先前 Run 的短期意圖由 core 管理，連線後重驗 workspace/authority/cancel。UI open/reload/re-enable 不創造或回復 pending Run。                       |
+| Disconnect                                                         | v1 core action 的 data-session reference；host quiesce→stop/readback＋end/drain/save→disconnect，顯示進度。feature 不以 `devices.disconnect` 強斷其他 owner；該 API 仍回 busy。 |
+| battery 百分比／電壓、program status                               | public channel/frame 與 program stopped/running/unknown；缺值顯示 unknown，不能以 null 當 0。core 全域 battery demand 與 UI 共用 broker sampler。                               |
+| 四 input／四 output、值／單位／年齡                                | catalog＋read/telemetry，最多 38 channels；保留 ready/empty/unsupported/error、busy/waiting/paused、null gaps；foreground file/program 期間不得將舊值標 live。                  |
+| input mode query/set                                               | v2 rows 選 mode ID，帶當前 session/source revision；fresh、idle、ready、可切換且無 recording pin 才啟用。host admission 及 consequential step 再驗 authority/locks。            |
+| fresh／read-only                                                   | 依 public status/age（fresh 2.5 秒）與可信 authority；失權仍可 read/stop，禁止寫入。UI disabled 不是安全邊界。                                                                  |
+| 六項偏好／單欄 reset／失敗重試                                     | B2 contributed settings 逐欄立即 CAS，無 Apply；成功才發布新值，失敗 draft/error/retry 保留。                                                                                   |
+| build/deploy/version、remote-files                                 | core execution summary／原 remote-files UI；共用 legacy broker adapter、authority/cancel，feature 不收 private DTO／path，不搬成假公開 UI。                                     |
 
 pane 為 Plugin tools 內 device-ev3 sibling tab；連線／監測可在同一公開 panel 分區，設定用通用 contributed settings。導覽由 host 管理，不互相呼叫 motor/Lab 私有 controller。
 
@@ -72,14 +72,14 @@ remote control authority 是本機 host 綁定的協作控制權；不代表 gue
 
 六項 canonical 值與選項沿用 shared defaults，resource schemaVersion 1；這是 host-owned namespace，feature 不擁有另一份持久化真相。
 
-| key | default／合法值 |
-| --- | --- |
-| skipUnchangedAssets | true／boolean；core deploy 消費 |
-| usbAutoReconnect | true／boolean |
-| usbRetryInterval | backoff／backoff、1000、2000、5000、10000 ms |
-| usbRetryLimit | unlimited／unlimited、3、5、10 |
-| wifiConnectTimeout | 5000／3000、5000、10000、30000 ms |
-| wifiHandshakeTimeout | 3000／1000、3000、5000、10000 ms |
+| key                  | default／合法值                              |
+| -------------------- | -------------------------------------------- |
+| skipUnchangedAssets  | true／boolean；core deploy 消費              |
+| usbAutoReconnect     | true／boolean                                |
+| usbRetryInterval     | backoff／backoff、1000、2000、5000、10000 ms |
+| usbRetryLimit        | unlimited／unlimited、3、5、10               |
+| wifiConnectTimeout   | 5000／3000、5000、10000、30000 ms            |
+| wifiHandshakeTimeout | 3000／1000、3000、5000、10000 ms             |
 
 renderer 連線偏好另為同 namespace 的 UI 欄位：connectionMode、rememberWifiAddress、lastWifiAddress；不混入上述六項 provider policy。保留原預設、remember=false 清空地址、成功明確連線才記住地址，不保存 candidate/session handles。 這個跨欄原子性尚非既有表單能力；E1 完成前不能宣稱直接套用通用表單已滿足。B2/H-D 持有 `settings-service.ts` 的必要 mutation 接線及直接測試，H-P/H-V 同步公開 resource 語意與表單呈現；所有 SDK update、reset 和表單寫入均須同樣驗證，不能只在 feature process 正規化。
 
@@ -99,16 +99,16 @@ source disabled/safe 時不載 optional resources/mapper、不做 optional names
 
 ## 5. Lifetime、stale 與故障
 
-| 事件 | device UI／provider／其他功能 |
-| --- | --- |
-| panel hide/close | 移除 view subscriptions、取消未完成 view 命令；不 disable provider、不斷線、不結束他人錄製。重開只取新 snapshot。 |
-| UI process crash | 撤自身 owner；provider 存續，其他健康 motor/Lab 依各自生命週期；明確重開才建新 bindings。 |
+| 事件                              | device UI／provider／其他功能                                                                                                                |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| panel hide/close                  | 移除 view subscriptions、取消未完成 view 命令；不 disable provider、不斷線、不結束他人錄製。重開只取新 snapshot。                            |
+| UI process crash                  | 撤自身 owner；provider 存續，其他健康 motor/Lab 依各自生命週期；明確重開才建新 bindings。                                                    |
 | provider disable/loss/replacement | gate、stop/readback、end/save；UI unavailable 並清舊選取/mode cache。健康 consumers 不永久停用、不 retire execution generation，恢復不續錄。 |
-| renderer crash/window destroyed | host retire 受影響 owner、bounded drain 後 process teardown；provider 不因 UI crash 等同 disabled，安全工作由 core 處理。 |
-| suspend/wake | host stop/end/save，wake 不恢復 motion/recording/pending-run；僅解除已釐清 gate。 |
-| safe/all-off/cold start | optional executable/data-only contributions/import/provider 均受抑制；core 管理、fault、checkpoint、停止未確認畫面仍可用。 |
-| second instance | 既有 single-instance lock 聚焦原視窗後退出；不啟動第二 provider/process、不寫 profile。 |
-| shutdown/update | 沿 B1/B2 coordinator，stop/save/journal 失敗阻擋正常完成；timeout 不等於安全或自動 force exit。 |
+| renderer crash/window destroyed   | host retire 受影響 owner、bounded drain 後 process teardown；provider 不因 UI crash 等同 disabled，安全工作由 core 處理。                    |
+| suspend/wake                      | host stop/end/save，wake 不恢復 motion/recording/pending-run；僅解除已釐清 gate。                                                            |
+| safe/all-off/cold start           | optional executable/data-only contributions/import/provider 均受抑制；core 管理、fault、checkpoint、停止未確認畫面仍可用。                   |
+| second instance                   | 既有 single-instance lock 聚焦原視窗後退出；不啟動第二 provider/process、不寫 profile。                                                      |
+| shutdown/update                   | 沿 B1/B2 coordinator，stop/save/journal 失敗阻擋正常完成；timeout 不等於安全或自動 force exit。                                              |
 
 所有 async 結果核對 source eligibility revision、execution/resource generation、process epoch、panel instance、session ID/sourceRevision；只接受遞增 sequence。session/provider loss 清空 actionable handles；可保留標記過期的最後值，不可授權 mode write。event gap 重取 snapshot，late discover/connect/mode/patch 不復活舊 session。
 
@@ -125,7 +125,6 @@ headless 或 cold safe 無 session 時只顯示未確認與可行復原，不偷
 UI process 的 source graph、bundle metadata/content、公開 RPC trace 三證須無 desktop-private imports、React/Electron API、私有 DTO/IPC、direct fs/network/USB。provider native dependencies 只在 main 安裝布局驗證，不能以 UI bundle 啟動成功代替。
 
 完整 replacement 的 public transport、import/restart、installed 與 parity 證據到位後才撤舊 mount/consumer；逐符號核對仍服務 core 的 device IPC/preload/DTO，不刪整個 namespace。MANUAL 未完成列待驗，不能核銷 umbrella 例外或 Stage 3 gate。
-
 
 ### EV3 zero-value input observation clarification (2026-10-30)
 

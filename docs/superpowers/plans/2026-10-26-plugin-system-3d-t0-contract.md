@@ -8,13 +8,13 @@
 
 工作樹 `plugin-3d/Kobrixa` 的乾淨起點為 `e66f1f1`（merge integration `31a581054ea0159192e0b1699ed9321ea316127b`）。不追蹤同時進行的 B2 sealed-TTL writer；本契約不裁定其 retention 修補。
 
-| 已讀基準／保留證據 | 可支持的結論 | 不能推出的結論 |
-| --- | --- | --- |
-| 模型 `8c8878b`、差分 `1612829`、雙語 compiler/VM `7788a44`；[D0 receipt](../evidence/2026-10-24-3d-model-parity.md) | 六組 97 tests 的歷史 scoped receipt；原生 schema/CSV/chart/cursor 與 calibration code oracle | Lab process、live public EV3 mapping、UIv2、migration 或 installed 已完成 |
-| 3C producer `4c86f0a531f5cb60f7f7249b1ae8008bd43938a8`；保留 commit `66773e5`；[native/installed receipt](../evidence/2026-10-24-3c-native-installed/README.md) | 真 public product transport 77 reports；macOS installed 4/4 | 此 macOS run 的 source denial（明列 unrun）、實體 EV3、所有平台 |
-| 3C producer `dbccbc2f4be23676e6ba49ca07a33e6be87718d5`；保留 commit `16da3e7`；[Linux isolation receipt](../evidence/2026-10-24-3c-linux-installed/README.md) | Linux arm64 原 product 4/4、Landlock/source denial，限定該 artifact/environment | macOS source denial、人工 GUI、Lab installed、legacy aggregate exit |
-| B2 producer `89a1bbc`，oracle `9189992`；[standalone evidence](../evidence/2026-10-26-3b2-action-replay/README.md) | 已保留 action replay／recovery 組成的具名證據 | 所有 B2 producer/import/interop/load/installed gate |
-| integration producer `045df65c5d295c8526bb72f7fb8a94db072abbd9`；receipt `31a5810`；[integration evidence](../evidence/2026-10-26-stage3-action-integration/README.md) | 真 action replay、278 focused tests/typecheck/static-language native 的歷史 receipt | 最新 D 的 full suite、D1 owner 確認、P160/P170/X-T1 或 Stage 3 close |
+| 已讀基準／保留證據                                                                                                                                                     | 可支持的結論                                                                                 | 不能推出的結論                                                            |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| 模型 `8c8878b`、差分 `1612829`、雙語 compiler/VM `7788a44`；[D0 receipt](../evidence/2026-10-24-3d-model-parity.md)                                                    | 六組 97 tests 的歷史 scoped receipt；原生 schema/CSV/chart/cursor 與 calibration code oracle | Lab process、live public EV3 mapping、UIv2、migration 或 installed 已完成 |
+| 3C producer `4c86f0a531f5cb60f7f7249b1ae8008bd43938a8`；保留 commit `66773e5`；[native/installed receipt](../evidence/2026-10-24-3c-native-installed/README.md)        | 真 public product transport 77 reports；macOS installed 4/4                                  | 此 macOS run 的 source denial（明列 unrun）、實體 EV3、所有平台           |
+| 3C producer `dbccbc2f4be23676e6ba49ca07a33e6be87718d5`；保留 commit `16da3e7`；[Linux isolation receipt](../evidence/2026-10-24-3c-linux-installed/README.md)          | Linux arm64 原 product 4/4、Landlock/source denial，限定該 artifact/environment              | macOS source denial、人工 GUI、Lab installed、legacy aggregate exit       |
+| B2 producer `89a1bbc`，oracle `9189992`；[standalone evidence](../evidence/2026-10-26-3b2-action-replay/README.md)                                                     | 已保留 action replay／recovery 組成的具名證據                                                | 所有 B2 producer/import/interop/load/installed gate                       |
+| integration producer `045df65c5d295c8526bb72f7fb8a94db072abbd9`；receipt `31a5810`；[integration evidence](../evidence/2026-10-26-stage3-action-integration/README.md) | 真 action replay、278 focused tests/typecheck/static-language native 的歷史 receipt          | 最新 D 的 full suite、D1 owner 確認、P160/P170/X-T1 或 Stage 3 close      |
 
 3C「尚無 actual public/installed proof」已過時；有上述具名證據。**aggregate P160/P170/X-T1 仍 open**，按[local integration ruling](2026-10-23-stage-3-local-integration-handoff.md)只能做未發布的 local assembly/design。formal D1 仍需 H-P/H-R/H-V/H-D/H-K 明確接受此契約、foundation handoff／gate disposition、共同 fixtures。此文件沒有代簽 owner、MANUAL 或出版 gate。
 
@@ -40,43 +40,81 @@ D2 候選新增檔案固定為 `ui-v2-resource.ts`、`ui-v2-data.ts`、`ui-v2-me
 type DataRef = { scope: "data"; key: LocalId };
 type Command = { command: Id; arguments: ArgumentBindings }; // static scalar refs
 // event 的欄位名由 host 加入 arguments；不得與 static arguments 同名。
-type RowCommand = Command & { rowKeyArg: LocalId; rowVersionArg: LocalId;
-  datasetRevisionArg: LocalId };
-type CursorCommand = Command & { timeArg: LocalId; presentationArg: LocalId;
-  readings: { dataset: LocalId; series: LocalId; rawKey: LocalId; valueKey: LocalId }[] };
+type RowCommand = Command & {
+  rowKeyArg: LocalId;
+  rowVersionArg: LocalId;
+  datasetRevisionArg: LocalId;
+};
+type CursorCommand = Command & {
+  timeArg: LocalId;
+  presentationArg: LocalId;
+  readings: { dataset: LocalId; series: LocalId; rawKey: LocalId; valueKey: LocalId }[];
+};
 type DatasetDeclaration =
   | { kind: "chart"; series: { id: LocalId; label: Text }[] }
-  | { kind: "table"; columns: { id: LocalId; label: Text;
-      value: "string" | "number" | "boolean" }[] }
-  | { kind: "list"; columns: { id: LocalId; label: Text;
-      value: "string" | "number" | "boolean" }[] }
+  | {
+      kind: "table";
+      columns: { id: LocalId; label: Text; value: "string" | "number" | "boolean" }[];
+    }
+  | {
+      kind: "list";
+      columns: { id: LocalId; label: Text; value: "string" | "number" | "boolean" }[];
+    }
   | { kind: "code" };
-type ActionV2 = UiAction
+type ActionV2 =
+  | UiAction
   | { kind: "core"; action: "stopRecording"; reservation: DataRef }
   | { kind: "view"; action: "openDialog" | "closeDialog"; dialogId: LocalId };
 type NewNode =
-  | { type: "lineChart"; label: Text; dataset: LocalId;
-      cursorGroup: LocalId; timeView: "default" | "inspect"; onCursor: CursorCommand }
+  | {
+      type: "lineChart";
+      label: Text;
+      dataset: LocalId;
+      cursorGroup: LocalId;
+      timeView: "default" | "inspect";
+      onCursor: CursorCommand;
+    }
   | { type: "table"; label: Text; dataset: LocalId; onSelect?: RowCommand }
-  | { type: "list"; label: Text; dataset: LocalId;
-      actions: { id: LocalId; label: Text; action:
-        | { kind: "command"; command: RowCommand }
-        | { kind: "view"; action: "openDialog"; dialogId: LocalId } }[] }
+  | {
+      type: "list";
+      label: Text;
+      dataset: LocalId;
+      actions: {
+        id: LocalId;
+        label: Text;
+        action:
+          | { kind: "command"; command: RowCommand }
+          | { kind: "view"; action: "openDialog"; dialogId: LocalId };
+      }[];
+    }
   | { type: "code"; label: Text; dataset: LocalId; copy: Command }
-  | { type: "dialog"; label: Text; children: LocalId[];
-      confirm?: { label: Text; command: RowCommand; dataset: LocalId } };
-type UiNodeV2 = Exclude<UiNodeV1, UiNodeBase & { type: "action" }>
-  | (UiNodeBase & { type: "action"; label: Text; action: ActionV2;
-      variant: "normal" | "primary" | "danger" })
+  | {
+      type: "dialog";
+      label: Text;
+      children: LocalId[];
+      confirm?: { label: Text; command: RowCommand; dataset: LocalId };
+    };
+type UiNodeV2 =
+  | Exclude<UiNodeV1, UiNodeBase & { type: "action" }>
+  | (UiNodeBase & {
+      type: "action";
+      label: Text;
+      action: ActionV2;
+      variant: "normal" | "primary" | "danger";
+    })
   | (UiNodeBase & NewNode);
 type PanelResourceV2 = Omit<PanelResourceV1, "nodes"> & {
-  nodes: UiNodeV2[]; datasets: Record<LocalId, DatasetDeclaration>;
+  nodes: UiNodeV2[];
+  datasets: Record<LocalId, DatasetDeclaration>;
   presentationKey: LocalId;
 };
 type StatusResourceV2 = StatusResourceV1 & {
-  actions: { id: LocalId; label: Text; action:
-    | { kind: "core"; action: "openPanel"; panelId: Id }
-    | { kind: "core"; action: "stopRecording"; reservation: DataRef }
+  actions: {
+    id: LocalId;
+    label: Text;
+    action:
+      | { kind: "core"; action: "openPanel"; panelId: Id }
+      | { kind: "core"; action: "stopRecording"; reservation: DataRef };
   }[];
 };
 ```
@@ -98,15 +136,25 @@ type StatusResourceV2 = StatusResourceV1 & {
 
 ```ts
 type Point = [series: number, run: number, time: number, value: number];
-type Series = { id: LocalId; unit: string; range: [number, number];
+type Series = {
+  id: LocalId;
+  unit: string;
+  range: [number, number];
   extrema: [[number, number], [number, number]] | null;
-  fullPointCount: number; omittedPoints: number; omittedRuns: number };
+  fullPointCount: number;
+  omittedPoints: number;
+  omittedRuns: number;
+};
 type Row = { key: string; version: string | null; cells: Scalar[] };
 type TimeDomain = [from: number, to: number]; // finite milliseconds, from=0, to>=1000
 type TimeView = "full" | "recent60s";
-type Header = { kind: "chart"; timeDomain: TimeDomain; view: TimeView; series: Series[] }
-  | { kind: "table" } | { kind: "list" } | { kind: "code" };
-type Chunk = { kind: "chart"; entries: Point[] }
+type Header =
+  | { kind: "chart"; timeDomain: TimeDomain; view: TimeView; series: Series[] }
+  | { kind: "table" }
+  | { kind: "list" }
+  | { kind: "code" };
+type Chunk =
+  | { kind: "chart"; entries: Point[] }
   | { kind: "table"; entries: Row[] }
   | { kind: "list"; entries: Row[] }
   | { kind: "code"; entries: string[] };
@@ -130,16 +178,16 @@ row.key 是非空 ≤128 code points 字串，不解釋為 path；version null �
 
 **唯一 digest/byte 定義**：dataset bytes 為 UTF-8 的 compact JSON `[header,entries]`，無 BOM/空白/newline。物件鍵順序固定為上述型別書寫順序，points 是 tuple、rows 是 key/version/cells；字串照 ECMAScript JSON.stringify escaping（Unicode 原字元、不做 normalization；control/quote/backslash escape），number 用 ECMAScript shortest round-trip JSON number，-0 正規化成 0。SDK helper 正規化重建物件後算 bytes/SHA-256；host 依 typed 值重建相同 bytes。Python **不能直接用預設 json.dumps**（空白、ensure_ascii、1.0/exponent 不同），D2 需同一數值規則與跨語言 byte vectors。最大 long-double、subnormal、-0、臺/emoji、引號/控制字元各有 golden hash；未完成不能稱雙 SDK conformance。
 
-| 計量 | 候選 hard cap／規則 |
-| --- | --- |
-| dataset / panel committed | 各 ≤524,288 canonical bytes；panel 8 個合計同 cap |
-| source / host committed | ≤2,097,152 / 8,388,608 bytes |
-| receiving | 每 panel 1；每 source 合計 ≤524,288；host ≤2,097,152；begin 先 reserve 宣告 bytes |
-| header / entry | canonical header ≤16,384 bytes；單 entry ≤8,192 bytes（code entry 另有 1,024 cp） |
-| chunk / read page | ≤256 entries 且 typed chunk/result ≤49,152 bytes；complete JSON-RPC frame ≤65,536 bytes；RPC id 限既有協議合法值且 envelope 也實測 |
-| transfer TTL | created+10,000ms、last accepted progress+5,000ms 先到；重送、read、commit failure 不續期 |
-| rate / queue | patch+commit 共用每 panel 10/s、4 pending；沿用 event 64KiB/queue256KiB/source32 subscriptions；control 8 slots/16KiB 獨立 |
-| old/final receipt retention | transfer terminal receipt 每 panel ≤4、至 created+30s；只保存 digest/revision/result，不留整個 payload |
+| 計量                        | 候選 hard cap／規則                                                                                                                |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| dataset / panel committed   | 各 ≤524,288 canonical bytes；panel 8 個合計同 cap                                                                                  |
+| source / host committed     | ≤2,097,152 / 8,388,608 bytes                                                                                                       |
+| receiving                   | 每 panel 1；每 source 合計 ≤524,288；host ≤2,097,152；begin 先 reserve 宣告 bytes                                                  |
+| header / entry              | canonical header ≤16,384 bytes；單 entry ≤8,192 bytes（code entry 另有 1,024 cp）                                                  |
+| chunk / read page           | ≤256 entries 且 typed chunk/result ≤49,152 bytes；complete JSON-RPC frame ≤65,536 bytes；RPC id 限既有協議合法值且 envelope 也實測 |
+| transfer TTL                | created+10,000ms、last accepted progress+5,000ms 先到；重送、read、commit failure 不續期                                           |
+| rate / queue                | patch+commit 共用每 panel 10/s、4 pending；沿用 event 64KiB/queue256KiB/source32 subscriptions；control 8 slots/16KiB 獨立         |
+| old/final receipt retention | transfer terminal receipt 每 panel ≤4、至 created+30s；只保存 digest/revision/result，不留整個 payload                             |
 
 begin 必須按新 snapshot 全額預留 receiving，且驗「所有現存 committed 加上該 dataset 新舊差額」不超 committed cap；commit 再查一遍。host 只保留一份 committed、一道 staging，commit 轉移 ownership，禁止永久第三份 parsed/canonical cache；JS object heap/RSS 不等於 bytes，D4 另測。read 不建立歷史 revision pin：revision 改變即 stale，client 丟棄部分讀取重新開始。renderer 每 binding 至多一份 committed 加一份有界 assembling，dialog 共用 store；其 bytes 亦需驗、close 清空。
 
@@ -147,13 +195,13 @@ begin 必須按新 snapshot 全額預留 receiving，且驗「所有現存 commi
 
 共用 `B = {binding: UiBinding; dataset: LocalId}`。host 用原 channel principal＋完整 binding 查 current owner/resource；不得以 supplied dataset/transfer UUID 授權。所有方法僅 ready、共同協商 v2、已註冊且存在的 panel binding；不建立面板。status 不可使用 data plane。
 
-| RPC | params（都包含 B） | success value |
-| --- | --- | --- |
-| `ui/dataBegin` | `{baseRevision: Counter, presentation: Counter, header: Header, entryCount: Counter, byteLength: Counter, sha256: Sha256}` | `{transfer: Handle, nextOffset: 0, remainingMs: number}` |
-| `ui/dataChunk` | `{transfer: Handle, offset: Counter, chunk: Chunk}` | `{nextOffset: Counter, remainingMs: number}` |
-| `ui/dataCommit` | `{transfer: Handle}` | `{revision: Counter, presentation: Counter, byteLength: Counter, sha256: Sha256}` |
-| `ui/dataAbort` | `{transfer: Handle}` | `{aborted: boolean}` |
-| `ui/dataRead` | `{revision: Counter, offset: Counter, limit: number}` | `{revision: Counter, presentation: Counter, header: Header, chunk: Chunk, nextOffset: Counter, done: boolean, byteLength: Counter, sha256: Sha256}` |
+| RPC             | params（都包含 B）                                                                                                         | success value                                                                                                                                       |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ui/dataBegin`  | `{baseRevision: Counter, presentation: Counter, header: Header, entryCount: Counter, byteLength: Counter, sha256: Sha256}` | `{transfer: Handle, nextOffset: 0, remainingMs: number}`                                                                                            |
+| `ui/dataChunk`  | `{transfer: Handle, offset: Counter, chunk: Chunk}`                                                                        | `{nextOffset: Counter, remainingMs: number}`                                                                                                        |
+| `ui/dataCommit` | `{transfer: Handle}`                                                                                                       | `{revision: Counter, presentation: Counter, byteLength: Counter, sha256: Sha256}`                                                                   |
+| `ui/dataAbort`  | `{transfer: Handle}`                                                                                                       | `{aborted: boolean}`                                                                                                                                |
+| `ui/dataRead`   | `{revision: Counter, offset: Counter, limit: number}`                                                                      | `{revision: Counter, presentation: Counter, header: Header, chunk: Chunk, nextOffset: Counter, done: boolean, byteLength: Counter, sha256: Sha256}` |
 
 offset/count 是 **entry index，不是 byte offset**；read offset不可大於entryCount，否則offset錯誤；limit 1..256，byte budget 可提早截頁但至少回一 entry（EOF 可空）。每頁重複 header，保守 49,152 bytes 整 result 上限，遇 budget 邊界減 entries。entry/header caps 確保能前進。空 dataset 的 read 是 offset0/done true/空 entries。
 
@@ -170,7 +218,7 @@ interface UiDataClient {
   begin(params: DataBeginParams, signal?: AbortSignal): Promise<DataResult<DataBeginValue>>;
   chunk(params: DataChunkParams, signal?: AbortSignal): Promise<DataResult<DataChunkValue>>;
   commit(params: DataCommitParams, signal?: AbortSignal): Promise<DataResult<DataCommitValue>>;
-  abort(params: DataAbortParams, signal?: AbortSignal): Promise<DataResult<{aborted:boolean}>>;
+  abort(params: DataAbortParams, signal?: AbortSignal): Promise<DataResult<{ aborted: boolean }>>;
   read(params: DataReadParams, signal?: AbortSignal): Promise<DataResult<DataReadValue>>;
   snapshot(binding: UiBinding, signal?: AbortSignal): Promise<DataResult<DataSnapshotValue>>;
 }
@@ -181,9 +229,21 @@ interface UiDataClient {
 `DataResult<T>` 是新的 `BusinessResult<T, UiDataDetail | PermissionErrorDetail, PluginErrorCodeV170>` alias（現有 code 名可重用，但新 detail 是 v2 only）：
 
 ```ts
-type UiDataDetail = { kind: "ui-data"; reason:
-  "schema" | "reference" | "revision" | "offset" | "checksum" |
-  "expired" | "stale" | "quota" | "rate" | "queue" | "version" };
+type UiDataDetail = {
+  kind: "ui-data";
+  reason:
+    | "schema"
+    | "reference"
+    | "revision"
+    | "offset"
+    | "checksum"
+    | "expired"
+    | "stale"
+    | "quota"
+    | "rate"
+    | "queue"
+    | "version";
+};
 ```
 
 固定映射：malformed request/非finite/未知欄位→RPC invalidParams；合法結構但 dataset/header/row 引用或內容錯→PLUGIN_E_UI_RESOURCE/schema或reference；bytes/hash不符→同code/checksum；CAS→PLUGIN_E_STALE_RESOURCE/revision；unknown/wrong-owner/revoked→同code/stale，caller 自己過期 handle 可用 expired；out-of-order offset→PLUGIN_E_UI_RESOURCE/offset；quota/rate/queue→PLUGIN_E_RESOURCE_LIMIT/同reason；未協商→PLUGIN_E_UI_VERSION/version；欠 ui.panels→PLUGIN_E_PERMISSION_DENIED/既有 permission detail。錯誤無 path/資料值，不使用 persistence-specific conflict/quota code。D2 需擴展 method result/event/schema registry 與雙 SDK，不修改 v1 result parser 讓舊 session 接受新 detail。
@@ -200,11 +260,11 @@ type UiDataDetail = { kind: "ui-data"; reason:
 
 候選正式公開 provider ID `kobrixa.device-ev3` 的以下語意，不改 `ChannelDefinition` wire shape。證據來源是 merged `main/device-providers/ev3/catalog.ts`，**尚待 3A/H-P 採納公開承諾**；feature 不可 import 該私有檔案。
 
-| public tuple | pure adapter 輸出給 legacy code generator |
-| --- | --- |
-| kind=input，portId 精確 `input:0`..`input:3`，typeId `ev3:N` canonical decimal N=1..124，modeId `mode:0`..`mode:7`，component0..7 | kind=input、port0..3、type=N、mode0..7、channel=component、unit 原樣 |
-| kind=output-angle，portId 精確 `output:0`..`output:3`，typeId `ev3:7`或`ev3:8`，modeId=null，component0，unit=deg | kind=output、port0..3、type7/8、mode0、channel0、unit=deg；僅 code generator 轉為字母 A..D |
-| 其他 provider、battery、非 canonical 數字、null input mode、未知 type/port | explicit unsupported；不 parseInt 猜測、不接私有 catalog |
+| public tuple                                                                                                                      | pure adapter 輸出給 legacy code generator                                                  |
+| --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| kind=input，portId 精確 `input:0`..`input:3`，typeId `ev3:N` canonical decimal N=1..124，modeId `mode:0`..`mode:7`，component0..7 | kind=input、port0..3、type=N、mode0..7、channel=component、unit 原樣                       |
+| kind=output-angle，portId 精確 `output:0`..`output:3`，typeId `ev3:7`或`ev3:8`，modeId=null，component0，unit=deg                 | kind=output、port0..3、type7/8、mode0、channel0、unit=deg；僅 code generator 轉為字母 A..D |
+| 其他 provider、battery、非 canonical 數字、null input mode、未知 type/port                                                        | explicit unsupported；不 parseInt 猜測、不接私有 catalog                                   |
 
 此 local 候選固定 merged provider 的數字 vocabulary：`output:0→port0→Motor.GetCount("A")`，依序至 `output:3→port3→Motor.GetCount("D")`；`output:A`..`output:D` 不是 wire alias，必須拒絕。依據為 `main/device-providers/ev3/catalog.ts` 的 `output:${p.port}` 與 numeric monitor ports；轉字母沿用純 generator 的 `String.fromCharCode(65 + source.port)`，不改 provider wire。D2 fixtures 覆蓋四個 numeric ports及拒絕letter/noncanonical ports。
 
@@ -232,16 +292,16 @@ D6 應建兩個 allowlisted descriptors（候選 ID `kobrixa.sensor-lab.recordin
 
 public `ReservationSnapshot.reason` 與 model `StopReason` 不同；另外保留原 reservation snapshot、end monotonic timestamp、drain reason，不能在 schema2 payload 塞未宣告 keys。
 
-| host reason | payload／projection reason |
-| --- | --- |
-| active | 無 terminal reason，不能 final |
-| released | manual；僅該 reservation release 前已鎖定 feature deadline/count原因才為 limit |
-| limit | limit |
-| source-changed | source-changed |
-| disconnected / core-disconnect | disconnected |
-| suspended | suspend |
-| overflow / renderer-lost | interrupted |
-| retired | 預設 interrupted；同 owner 本次 host drain 明確 shutdown/update 時才分別 close/update |
+| host reason                    | payload／projection reason                                                            |
+| ------------------------------ | ------------------------------------------------------------------------------------- |
+| active                         | 無 terminal reason，不能 final                                                        |
+| released                       | manual；僅該 reservation release 前已鎖定 feature deadline/count原因才為 limit        |
+| limit                          | limit                                                                                 |
+| source-changed                 | source-changed                                                                        |
+| disconnected / core-disconnect | disconnected                                                                          |
+| suspended                      | suspend                                                                               |
+| overflow / renderer-lost       | interrupted                                                                           |
+| retired                        | 預設 interrupted；同 owner 本次 host drain 明確 shutdown/update 時才分別 close/update |
 
 shutdown/update 是 **drain lifecycle reason，不是 reservation enum**。其他非released終態優先於 feature limit，renderer-lost/overflow 不因一般 shutdown 訊號改成正常close。30分鐘 timer與3,600 frames上限都在 release 前按原 reservation 固定；舊 timer 不可改新 recording；沒有新 frame仍按單調deadline停止。程序崩潰後只採 durable checkpoint/host interrupted證據，不能猜未保存的 limit。所有 final 仍讀到固定 lastSequence、去重 firstSequence，再由唯一 drain 協調 checkpoint CAS，不另設 feature finalizer。
 
@@ -259,25 +319,54 @@ shutdown/update 是 **drain lifecycle reason，不是 reservation enum**。其�
 本次實際執行的 standalone Node recipe（物件插入順序即 canonical順序；不載入product）：
 
 ```js
-const bytes = x => Buffer.byteLength(JSON.stringify(x), "utf8");
-const header = {kind:"chart", timeDomain:[0,1800000], view:"full",
-  series:[0,1].map(i => ({id:`s${i}`, unit:"deg", range:[-100,100],
-    extrema:[[0,-100],[500,100]], fullPointCount:3600,
-    omittedPoints:2800, omittedRuns:0}))};
-const entries = Array.from({length:1600}, (_,i) =>
-  [Math.floor(i/800),0,(i%800)*500,i%2?100:-100]);
-const rows = (n,cell) => Array.from({length:50}, (_,i) => ({key:`row-${i}`,
-  version:"00000000-0000-4000-8000-000000000001", cells:Array(n).fill(cell)}));
-const chart = bytes([header,entries]);
-const table = cell => bytes([{kind:"table"},rows(8,cell)]);
-const list = cell => bytes([{kind:"list"},rows(3,cell)]);
-const code = bytes([{kind:"code"},Array(16).fill("界".repeat(1024))]);
-const total = cell => 4*chart + table(cell) + 2*list(cell) + code;
-console.log({chart, fourCharts:4*chart, table:table("臺".repeat(200)),
-  list:list("臺".repeat(200)), code, reject:total("臺".repeat(200)),
-  fit:total("value"), maxRow:bytes(rows(8,"臺".repeat(200))[49]),
-  codeEntry:bytes("界".repeat(1024)), oversizeChunk:bytes({kind:"chart",entries}),
-  chunks:Math.ceil(entries.length/256)});
+const bytes = (x) => Buffer.byteLength(JSON.stringify(x), "utf8");
+const header = {
+  kind: "chart",
+  timeDomain: [0, 1800000],
+  view: "full",
+  series: [0, 1].map((i) => ({
+    id: `s${i}`,
+    unit: "deg",
+    range: [-100, 100],
+    extrema: [
+      [0, -100],
+      [500, 100],
+    ],
+    fullPointCount: 3600,
+    omittedPoints: 2800,
+    omittedRuns: 0,
+  })),
+};
+const entries = Array.from({ length: 1600 }, (_, i) => [
+  Math.floor(i / 800),
+  0,
+  (i % 800) * 500,
+  i % 2 ? 100 : -100,
+]);
+const rows = (n, cell) =>
+  Array.from({ length: 50 }, (_, i) => ({
+    key: `row-${i}`,
+    version: "00000000-0000-4000-8000-000000000001",
+    cells: Array(n).fill(cell),
+  }));
+const chart = bytes([header, entries]);
+const table = (cell) => bytes([{ kind: "table" }, rows(8, cell)]);
+const list = (cell) => bytes([{ kind: "list" }, rows(3, cell)]);
+const code = bytes([{ kind: "code" }, Array(16).fill("界".repeat(1024))]);
+const total = (cell) => 4 * chart + table(cell) + 2 * list(cell) + code;
+console.log({
+  chart,
+  fourCharts: 4 * chart,
+  table: table("臺".repeat(200)),
+  list: list("臺".repeat(200)),
+  code,
+  reject: total("臺".repeat(200)),
+  fit: total("value"),
+  maxRow: bytes(rows(8, "臺".repeat(200))[49]),
+  codeEntry: bytes("界".repeat(1024)),
+  oversizeChunk: bytes({ kind: "chart", entries }),
+  chunks: Math.ceil(entries.length / 256),
+});
 ```
 
 D2 要把上列 recipe 落成 shared TS/Python/schema fixtures，補 canonical SHA golden vectors及所有 limit−1/limit/limit+1，不以本文件數字取代實作測試。必須有 exact524,288-byte合法整體、524,289拒絕；49,152/49,153 page；1,024/1,025 code entry；8/9 datasets、800/801 points、50/51 rows、duplicate keys、stale base、offset replay、checksum、timeout、cross-owner/process/resource generation、doublecommit、hidden/closed late result、status同owner/foreign/已ended/失權。schema/reference錯誤保持舊snapshot，control不可被dataset queue餓死。

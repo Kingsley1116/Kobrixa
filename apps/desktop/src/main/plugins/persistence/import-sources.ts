@@ -91,9 +91,7 @@ export interface LegacySourceResolver {
     maxBytes: number;
   }): Promise<{ nextOffset: number; done: boolean }>;
   releaseMapped(mapped: Handle): Promise<void>;
-  inventory(
-    descriptorId: string,
-  ): Promise<{
+  inventory(descriptorId: string): Promise<{
     state: "present" | "absent" | "blocked";
     entries: readonly LegacySourceItem[];
     devicePreferencesEvidence?: DevicePreferencesEvidence;

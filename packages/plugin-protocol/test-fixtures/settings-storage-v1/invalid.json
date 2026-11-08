@@ -300,18 +300,337 @@
         "persistedSha256": null
       }
     },
-    {"id": "p170-publication: source spoof", "schema": "settings/read", "phase": "params", "input": {"schemaVersion": 1, "sourceKey": "builtin:foreign"}, "valid": false, "expected": {"numericCode": -32602, "businessCode": null, "reason": null, "permission": null, "lifetime": null, "persistedSha256": null}},
-    {"id": "p170-publication: boolean is not version", "schema": "settings/read", "phase": "params", "input": {"schemaVersion": true}, "valid": false, "expected": {"numericCode": -32602, "businessCode": null, "reason": null, "permission": null, "lifetime": null, "persistedSha256": null}},
-    {"id": "p170-publication: unsafe offset", "schema": "storage/readChunk", "phase": "params", "input": {"read": "11111111-1111-4111-8111-111111111111", "offset": 9007199254740992, "maxBytes": 1}, "valid": false, "expected": {"numericCode": -32602, "businessCode": null, "reason": null, "permission": null, "lifetime": null, "persistedSha256": null}},
-    {"id": "p170-publication: invocation id is not copy params", "schema": "ui/copyText", "phase": "params", "input": {"invocationId": "11111111-1111-4111-8111-111111111111", "text": "Synthetic"}, "valid": false, "expected": {"numericCode": -32602, "businessCode": null, "reason": null, "permission": null, "lifetime": null, "persistedSha256": null}},
-    {"id": "p170-publication: plugin cannot report saved", "schema": "storage/drain", "phase": "result", "input": {"ok": true, "value": {"status": "saved", "writes": []}}, "valid": false, "expected": {"numericCode": null, "businessCode": null, "reason": null, "permission": null, "lifetime": null, "persistedSha256": null}},
-    {"id": "p170-publication: record over maximum", "schema": "storage/beginWrite", "phase": "params", "input": {"target": {"mode": "create"}, "kind": "test.fixture", "schemaVersion": 1, "label": "Large", "mediaType": "application/octet-stream", "byteLength": 8388609, "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, "valid": false, "expected": {"numericCode": -32602, "businessCode": null, "reason": null, "permission": null, "lifetime": null, "persistedSha256": null}},
-    {"id": "dependent-missing", "schema": "settingsResourceV1", "phase": "resource", "input": {"schemaVersion": 1, "title": {"en": "Dependent"}, "fields": [{"key": "remember", "label": {"en": "Remember"}, "type": "boolean", "default": false}, {"key": "address", "label": {"en": "Address"}, "type": "string", "default": "", "minLength": 0, "maxLength": 45, "maxBytes": 180, "resetWhen": {"key": "missing", "equals": false}}]}, "valid": false, "expected": {"numericCode": null, "businessCode": "PLUGIN_E_SETTINGS_SCHEMA", "reason": "invalid-resource", "permission": null, "lifetime": null, "persistedSha256": null}},
-    {"id": "dependent-self", "schema": "settingsResourceV1", "phase": "resource", "input": {"schemaVersion": 1, "title": {"en": "Dependent"}, "fields": [{"key": "remember", "label": {"en": "Remember"}, "type": "boolean", "default": false}, {"key": "address", "label": {"en": "Address"}, "type": "string", "default": "", "minLength": 0, "maxLength": 45, "maxBytes": 180, "resetWhen": {"key": "address", "equals": false}}]}, "valid": false, "expected": {"numericCode": null, "businessCode": "PLUGIN_E_SETTINGS_SCHEMA", "reason": "invalid-resource", "permission": null, "lifetime": null, "persistedSha256": null}},
-    {"id": "dependent-not-boolean", "schema": "settingsResourceV1", "phase": "resource", "input": {"schemaVersion": 1, "title": {"en": "Dependent"}, "fields": [{"key": "remember", "label": {"en": "Remember"}, "type": "boolean", "default": false}, {"key": "address", "label": {"en": "Address"}, "type": "string", "default": "", "minLength": 0, "maxLength": 45, "maxBytes": 180, "resetWhen": {"key": "remember", "equals": 0}}]}, "valid": false, "expected": {"numericCode": null, "businessCode": "PLUGIN_E_SETTINGS_SCHEMA", "reason": "invalid-resource", "permission": null, "lifetime": null, "persistedSha256": null}},
-    {"id": "dependent-extra", "schema": "settingsResourceV1", "phase": "resource", "input": {"schemaVersion": 1, "title": {"en": "Dependent"}, "fields": [{"key": "remember", "label": {"en": "Remember"}, "type": "boolean", "default": false}, {"key": "address", "label": {"en": "Address"}, "type": "string", "default": "", "minLength": 0, "maxLength": 45, "maxBytes": 180, "resetWhen": {"key": "remember", "equals": false, "extra": true}}]}, "valid": false, "expected": {"numericCode": null, "businessCode": "PLUGIN_E_SETTINGS_SCHEMA", "reason": "invalid-resource", "permission": null, "lifetime": null, "persistedSha256": null}},
-    {"id": "dependent-null", "schema": "settingsResourceV1", "phase": "resource", "input": {"schemaVersion": 1, "title": {"en": "Dependent"}, "fields": [{"key": "remember", "label": {"en": "Remember"}, "type": "boolean", "default": false}, {"key": "address", "label": {"en": "Address"}, "type": "string", "default": "", "minLength": 0, "maxLength": 45, "maxBytes": 180, "resetWhen": null}]}, "valid": false, "expected": {"numericCode": null, "businessCode": "PLUGIN_E_SETTINGS_SCHEMA", "reason": "invalid-resource", "permission": null, "lifetime": null, "persistedSha256": null}},
-    {"id": "dependent-chain", "schema": "settingsResourceV1", "phase": "resource", "input": {"schemaVersion": 1, "title": {"en": "Dependent"}, "fields": [{"key": "remember", "label": {"en": "Remember"}, "type": "boolean", "default": false, "resetWhen": {"key": "third", "equals": false}}, {"key": "address", "label": {"en": "Address"}, "type": "string", "default": "", "minLength": 0, "maxLength": 45, "maxBytes": 180, "resetWhen": {"key": "remember", "equals": false}}, {"key": "third", "type": "boolean", "label": {"en": "Third"}, "default": false}]}, "valid": false, "expected": {"numericCode": null, "businessCode": "PLUGIN_E_SETTINGS_SCHEMA", "reason": "invalid-resource", "permission": null, "lifetime": null, "persistedSha256": null}},
-    {"id": "dependent-controller-type", "schema": "settingsResourceV1", "phase": "resource", "input": {"schemaVersion": 1, "title": {"en": "Dependent"}, "fields": [{"key": "remember", "label": {"en": "Remember"}, "type": "enum", "default": "false", "options": [{"value": "false", "label": {"en": "False"}}]}, {"key": "address", "label": {"en": "Address"}, "type": "string", "default": "", "minLength": 0, "maxLength": 45, "maxBytes": 180, "resetWhen": {"key": "remember", "equals": false}}]}, "valid": false, "expected": {"numericCode": null, "businessCode": "PLUGIN_E_SETTINGS_SCHEMA", "reason": "invalid-resource", "permission": null, "lifetime": null, "persistedSha256": null}}
-]
+    {
+      "id": "p170-publication: source spoof",
+      "schema": "settings/read",
+      "phase": "params",
+      "input": { "schemaVersion": 1, "sourceKey": "builtin:foreign" },
+      "valid": false,
+      "expected": {
+        "numericCode": -32602,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "p170-publication: boolean is not version",
+      "schema": "settings/read",
+      "phase": "params",
+      "input": { "schemaVersion": true },
+      "valid": false,
+      "expected": {
+        "numericCode": -32602,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "p170-publication: unsafe offset",
+      "schema": "storage/readChunk",
+      "phase": "params",
+      "input": {
+        "read": "11111111-1111-4111-8111-111111111111",
+        "offset": 9007199254740992,
+        "maxBytes": 1
+      },
+      "valid": false,
+      "expected": {
+        "numericCode": -32602,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "p170-publication: invocation id is not copy params",
+      "schema": "ui/copyText",
+      "phase": "params",
+      "input": { "invocationId": "11111111-1111-4111-8111-111111111111", "text": "Synthetic" },
+      "valid": false,
+      "expected": {
+        "numericCode": -32602,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "p170-publication: plugin cannot report saved",
+      "schema": "storage/drain",
+      "phase": "result",
+      "input": { "ok": true, "value": { "status": "saved", "writes": [] } },
+      "valid": false,
+      "expected": {
+        "numericCode": null,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "p170-publication: record over maximum",
+      "schema": "storage/beginWrite",
+      "phase": "params",
+      "input": {
+        "target": { "mode": "create" },
+        "kind": "test.fixture",
+        "schemaVersion": 1,
+        "label": "Large",
+        "mediaType": "application/octet-stream",
+        "byteLength": 8388609,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "valid": false,
+      "expected": {
+        "numericCode": -32602,
+        "businessCode": null,
+        "reason": null,
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "dependent-missing",
+      "schema": "settingsResourceV1",
+      "phase": "resource",
+      "input": {
+        "schemaVersion": 1,
+        "title": { "en": "Dependent" },
+        "fields": [
+          { "key": "remember", "label": { "en": "Remember" }, "type": "boolean", "default": false },
+          {
+            "key": "address",
+            "label": { "en": "Address" },
+            "type": "string",
+            "default": "",
+            "minLength": 0,
+            "maxLength": 45,
+            "maxBytes": 180,
+            "resetWhen": { "key": "missing", "equals": false }
+          }
+        ]
+      },
+      "valid": false,
+      "expected": {
+        "numericCode": null,
+        "businessCode": "PLUGIN_E_SETTINGS_SCHEMA",
+        "reason": "invalid-resource",
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "dependent-self",
+      "schema": "settingsResourceV1",
+      "phase": "resource",
+      "input": {
+        "schemaVersion": 1,
+        "title": { "en": "Dependent" },
+        "fields": [
+          { "key": "remember", "label": { "en": "Remember" }, "type": "boolean", "default": false },
+          {
+            "key": "address",
+            "label": { "en": "Address" },
+            "type": "string",
+            "default": "",
+            "minLength": 0,
+            "maxLength": 45,
+            "maxBytes": 180,
+            "resetWhen": { "key": "address", "equals": false }
+          }
+        ]
+      },
+      "valid": false,
+      "expected": {
+        "numericCode": null,
+        "businessCode": "PLUGIN_E_SETTINGS_SCHEMA",
+        "reason": "invalid-resource",
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "dependent-not-boolean",
+      "schema": "settingsResourceV1",
+      "phase": "resource",
+      "input": {
+        "schemaVersion": 1,
+        "title": { "en": "Dependent" },
+        "fields": [
+          { "key": "remember", "label": { "en": "Remember" }, "type": "boolean", "default": false },
+          {
+            "key": "address",
+            "label": { "en": "Address" },
+            "type": "string",
+            "default": "",
+            "minLength": 0,
+            "maxLength": 45,
+            "maxBytes": 180,
+            "resetWhen": { "key": "remember", "equals": 0 }
+          }
+        ]
+      },
+      "valid": false,
+      "expected": {
+        "numericCode": null,
+        "businessCode": "PLUGIN_E_SETTINGS_SCHEMA",
+        "reason": "invalid-resource",
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "dependent-extra",
+      "schema": "settingsResourceV1",
+      "phase": "resource",
+      "input": {
+        "schemaVersion": 1,
+        "title": { "en": "Dependent" },
+        "fields": [
+          { "key": "remember", "label": { "en": "Remember" }, "type": "boolean", "default": false },
+          {
+            "key": "address",
+            "label": { "en": "Address" },
+            "type": "string",
+            "default": "",
+            "minLength": 0,
+            "maxLength": 45,
+            "maxBytes": 180,
+            "resetWhen": { "key": "remember", "equals": false, "extra": true }
+          }
+        ]
+      },
+      "valid": false,
+      "expected": {
+        "numericCode": null,
+        "businessCode": "PLUGIN_E_SETTINGS_SCHEMA",
+        "reason": "invalid-resource",
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "dependent-null",
+      "schema": "settingsResourceV1",
+      "phase": "resource",
+      "input": {
+        "schemaVersion": 1,
+        "title": { "en": "Dependent" },
+        "fields": [
+          { "key": "remember", "label": { "en": "Remember" }, "type": "boolean", "default": false },
+          {
+            "key": "address",
+            "label": { "en": "Address" },
+            "type": "string",
+            "default": "",
+            "minLength": 0,
+            "maxLength": 45,
+            "maxBytes": 180,
+            "resetWhen": null
+          }
+        ]
+      },
+      "valid": false,
+      "expected": {
+        "numericCode": null,
+        "businessCode": "PLUGIN_E_SETTINGS_SCHEMA",
+        "reason": "invalid-resource",
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "dependent-chain",
+      "schema": "settingsResourceV1",
+      "phase": "resource",
+      "input": {
+        "schemaVersion": 1,
+        "title": { "en": "Dependent" },
+        "fields": [
+          {
+            "key": "remember",
+            "label": { "en": "Remember" },
+            "type": "boolean",
+            "default": false,
+            "resetWhen": { "key": "third", "equals": false }
+          },
+          {
+            "key": "address",
+            "label": { "en": "Address" },
+            "type": "string",
+            "default": "",
+            "minLength": 0,
+            "maxLength": 45,
+            "maxBytes": 180,
+            "resetWhen": { "key": "remember", "equals": false }
+          },
+          { "key": "third", "type": "boolean", "label": { "en": "Third" }, "default": false }
+        ]
+      },
+      "valid": false,
+      "expected": {
+        "numericCode": null,
+        "businessCode": "PLUGIN_E_SETTINGS_SCHEMA",
+        "reason": "invalid-resource",
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    },
+    {
+      "id": "dependent-controller-type",
+      "schema": "settingsResourceV1",
+      "phase": "resource",
+      "input": {
+        "schemaVersion": 1,
+        "title": { "en": "Dependent" },
+        "fields": [
+          {
+            "key": "remember",
+            "label": { "en": "Remember" },
+            "type": "enum",
+            "default": "false",
+            "options": [{ "value": "false", "label": { "en": "False" } }]
+          },
+          {
+            "key": "address",
+            "label": { "en": "Address" },
+            "type": "string",
+            "default": "",
+            "minLength": 0,
+            "maxLength": 45,
+            "maxBytes": 180,
+            "resetWhen": { "key": "remember", "equals": false }
+          }
+        ]
+      },
+      "valid": false,
+      "expected": {
+        "numericCode": null,
+        "businessCode": "PLUGIN_E_SETTINGS_SCHEMA",
+        "reason": "invalid-resource",
+        "permission": null,
+        "lifetime": null,
+        "persistedSha256": null
+      }
+    }
+  ]
 }

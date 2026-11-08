@@ -14,14 +14,14 @@
 
 以下路徑是未來實作的允許集；未列路徑不自動獲准。generated artifacts 寫入既有 build output／臨時 evidence directory，不手改 bundle／index。若需額外檔案，先由 controller 調整此表。
 
-| slice | 唯一 write set | 交付／界線 |
-| --- | --- | --- |
-| T1 pure model | `plugins/motor-test/src/model.ts`、`plugins/motor-test/src/model.test.ts`、`plugins/motor-test/vitest.config.ts`、`plugins/motor-test/tsconfig.json` | 參數／defaults／DTO mapping／progress／結果文案模型；不 import desktop、無 I/O |
-| T2 resources | `plugins/motor-test/kobrixa-plugin.json`、`plugins/motor-test/panel.json`、`plugins/motor-test/status.json`、`plugins/motor-test/resources.test.ts` | API ^1.6、UI v1、25 fields 四群組、bilingual、公開 commands／core Stop；不改 renderer |
-| T3 public process | `plugins/motor-test/src/main.ts`、`plugins/motor-test/src/feature.ts`、`plugins/motor-test/src/feature.test.ts` | SDK ready／commands／selection／prepare-once-start-once／query／stop／observation cleanup；不改 SDK／protocol |
-| T4 acceptance authoring | `tests/desktop/motor-test-public.test.mjs`、`tests/desktop/motor-test-public-main.ts`、`tests/desktop/motor-test-public-renderer.tsx`、`tests/desktop/motor-test-public-run.mjs`、`tests/desktop/motor-test-boundaries.test.mjs`、`tests/desktop/motor-test-smoke.mjs` | 真實 SDK＋host compose、generic renderer native runner、依賴 audit、既有 smoke replacement；test-only provider 可控故障，不做 feature facade |
-| T5 docs／manual | `docs/en/motor-test.md`、`docs/zh-TW/motor-test.md`、`tests/hardware/motor-test.md` | 插件工具 pane、選取／開關／停止／safe mode／不重播；人工清單與 evidence 欄位，無虛構結果 |
-| T6 controller integration | 見下列閉合集 | packaging／composition、實際 acceptance、parity 後 legacy removal、證據索引；不碰 B2／3D／3E feature |
+| slice                     | 唯一 write set                                                                                                                                                                                                                                                         | 交付／界線                                                                                                                                   |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| T1 pure model             | `plugins/motor-test/src/model.ts`、`plugins/motor-test/src/model.test.ts`、`plugins/motor-test/vitest.config.ts`、`plugins/motor-test/tsconfig.json`                                                                                                                   | 參數／defaults／DTO mapping／progress／結果文案模型；不 import desktop、無 I/O                                                               |
+| T2 resources              | `plugins/motor-test/kobrixa-plugin.json`、`plugins/motor-test/panel.json`、`plugins/motor-test/status.json`、`plugins/motor-test/resources.test.ts`                                                                                                                    | API ^1.6、UI v1、25 fields 四群組、bilingual、公開 commands／core Stop；不改 renderer                                                        |
+| T3 public process         | `plugins/motor-test/src/main.ts`、`plugins/motor-test/src/feature.ts`、`plugins/motor-test/src/feature.test.ts`                                                                                                                                                        | SDK ready／commands／selection／prepare-once-start-once／query／stop／observation cleanup；不改 SDK／protocol                                |
+| T4 acceptance authoring   | `tests/desktop/motor-test-public.test.mjs`、`tests/desktop/motor-test-public-main.ts`、`tests/desktop/motor-test-public-renderer.tsx`、`tests/desktop/motor-test-public-run.mjs`、`tests/desktop/motor-test-boundaries.test.mjs`、`tests/desktop/motor-test-smoke.mjs` | 真實 SDK＋host compose、generic renderer native runner、依賴 audit、既有 smoke replacement；test-only provider 可控故障，不做 feature facade |
+| T5 docs／manual           | `docs/en/motor-test.md`、`docs/zh-TW/motor-test.md`、`tests/hardware/motor-test.md`                                                                                                                                                                                    | 插件工具 pane、選取／開關／停止／safe mode／不重播；人工清單與 evidence 欄位，無虛構結果                                                     |
+| T6 controller integration | 見下列閉合集                                                                                                                                                                                                                                                           | packaging／composition、實際 acceptance、parity 後 legacy removal、證據索引；不碰 B2／3D／3E feature                                         |
 
 T6 閉合 write set：
 
@@ -88,18 +88,18 @@ B1 C-G1 owner 的預期 amendment set（獨立 gate，非 T1–T6 默許修改�
 
 ## 9. 整合驗證清單（均未執行）
 
-| 層次 | 精確入口／必要觀察 |
-| --- | --- |
-| feature | `pnpm exec vitest run --config plugins/motor-test/vitest.config.ts`；T1–T3 和 resource fixtures |
-| 現有 public 合約回歸 | `pnpm test:device-broker`、`pnpm test:declarative-ui`；SDK／runtime／desktop affected tests 以 root Vitest 跑實際檔案，不把未列入 project 的 tests 當已跑 |
-| Type／lint | `pnpm check:desktop`、`pnpm exec tsc -p plugins/motor-test/tsconfig.json --noEmit`；feature files 另由自身 TS 設定檢查，不能只依 desktop tsconfig 排除後宣稱通過 |
-| public compose／boundary | `node --test tests/desktop/motor-test-public.test.mjs tests/desktop/motor-test-boundaries.test.mjs`；actual SDK trace、public-only bundle proof |
-| real renderer native | `node tests/desktop/motor-test-public-run.mjs`；T4 matrix／視窗／key／pointer、停止不確認與 drafts；generic browser/mock renderer 結果分列 |
-| 既有 motor smoke 替換 | `pnpm test:desktop:smoke`；實際跑更新後 checkMotorTests，全部 skip／其他 smoke failure 仍原樣記錄，不能記全套 PASS |
-| release payload | `node --test tests/desktop/builtin-process-packaging.test.mjs tools/release/desktop-packaging.test.mjs`；沿 shared build path 且不是 fixture motor |
-| installed product | `pnpm test:desktop:packaged`；installed runner 載入真實 motor；checkout 不可用、離線、無外部 Node、cwd 非 repo；所有 payload path/hash、toggle/re-enable、quit、missing/tampered resource fail-closed，不 fallback source |
-| provider／core 保護 | 受影響的 broker、EV3 motion、core recovery、shutdown／updates、legacy Lab regression；無新並行鎖／無 orphan lease／subscription／process，正常 close 不能隱藏 unconfirmed |
-| MANUAL | T5 實體 USB／Wi-Fi 與乾淨安裝 gates；維持 UNRUN，直到有人附具名實測 artifact evidence |
+| 層次                     | 精確入口／必要觀察                                                                                                                                                                                                        |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| feature                  | `pnpm exec vitest run --config plugins/motor-test/vitest.config.ts`；T1–T3 和 resource fixtures                                                                                                                           |
+| 現有 public 合約回歸     | `pnpm test:device-broker`、`pnpm test:declarative-ui`；SDK／runtime／desktop affected tests 以 root Vitest 跑實際檔案，不把未列入 project 的 tests 當已跑                                                                 |
+| Type／lint               | `pnpm check:desktop`、`pnpm exec tsc -p plugins/motor-test/tsconfig.json --noEmit`；feature files 另由自身 TS 設定檢查，不能只依 desktop tsconfig 排除後宣稱通過                                                          |
+| public compose／boundary | `node --test tests/desktop/motor-test-public.test.mjs tests/desktop/motor-test-boundaries.test.mjs`；actual SDK trace、public-only bundle proof                                                                           |
+| real renderer native     | `node tests/desktop/motor-test-public-run.mjs`；T4 matrix／視窗／key／pointer、停止不確認與 drafts；generic browser/mock renderer 結果分列                                                                                |
+| 既有 motor smoke 替換    | `pnpm test:desktop:smoke`；實際跑更新後 checkMotorTests，全部 skip／其他 smoke failure 仍原樣記錄，不能記全套 PASS                                                                                                        |
+| release payload          | `node --test tests/desktop/builtin-process-packaging.test.mjs tools/release/desktop-packaging.test.mjs`；沿 shared build path 且不是 fixture motor                                                                        |
+| installed product        | `pnpm test:desktop:packaged`；installed runner 載入真實 motor；checkout 不可用、離線、無外部 Node、cwd 非 repo；所有 payload path/hash、toggle/re-enable、quit、missing/tampered resource fail-closed，不 fallback source |
+| provider／core 保護      | 受影響的 broker、EV3 motion、core recovery、shutdown／updates、legacy Lab regression；無新並行鎖／無 orphan lease／subscription／process，正常 close 不能隱藏 unconfirmed                                                 |
+| MANUAL                   | T5 實體 USB／Wi-Fi 與乾淨安裝 gates；維持 UNRUN，直到有人附具名實測 artifact evidence                                                                                                                                     |
 
 建置沿既有工具執行，不新增 install 流程。若現有 build command 自帶 install 步驟，controller 記錄該既有行為及環境，不能在此文件階段執行；缺環境即標未跑。精確 native invocation flags 依 reviewed P160 harness／新 T4 runner 實際介面固定，不能用 units pass 冒稱 native evidence。
 

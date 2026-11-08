@@ -12,14 +12,14 @@
 
 ## 2. 實際來源與責任
 
-| 現有來源 | 3C 使用方式 |
-| --- | --- |
-| `packages/plugin-sdk-js/src/{index,commands,devices,ui,events}.ts` | `definePlugin/runPlugin`、`activate/ready/deactivate`、`registerContext`、公開 devices／UI subscriptions／patch；不自行建立 transport |
-| `packages/plugin-protocol/src/{device-types,device-methods,ui-resource,ui-types,ui-limits}.ts` | 使用正式 DTO／schema；不複製私有 `MotorTestState` |
-| `renderer/device/motor-test-controls.tsx`、`motor-test-controller.ts`、`shared/motor-test.ts`（均在 `apps/desktop/src/`） | 歷史表單、defaults、progress、per-port drafts、release／forced stop parity 參照；feature 不匯入 |
-| `apps/desktop/src/main/device-providers/ev3/motion.ts`、`main/device-broker/` | 保留 broker admission、共享鎖、preflight、有限 pulse／helper、安全停止與 journal |
-| `apps/desktop/src/main/index.ts` 的 `new MotorTestService` | 目前 legacy façade 未供 motion scope、拒絕 starts；舊 smoke fixture 不能充當目前產品 native parity 證據 |
-| `tests/desktop/motor-test-smoke.mjs` | 現有 inline cards／private service smoke；必須以公開產品路徑替換，其「切 pane timed 繼續」斷言須反轉並增加競態 |
+| 現有來源                                                                                                                  | 3C 使用方式                                                                                                                           |
+| ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/plugin-sdk-js/src/{index,commands,devices,ui,events}.ts`                                                        | `definePlugin/runPlugin`、`activate/ready/deactivate`、`registerContext`、公開 devices／UI subscriptions／patch；不自行建立 transport |
+| `packages/plugin-protocol/src/{device-types,device-methods,ui-resource,ui-types,ui-limits}.ts`                            | 使用正式 DTO／schema；不複製私有 `MotorTestState`                                                                                     |
+| `renderer/device/motor-test-controls.tsx`、`motor-test-controller.ts`、`shared/motor-test.ts`（均在 `apps/desktop/src/`） | 歷史表單、defaults、progress、per-port drafts、release／forced stop parity 參照；feature 不匯入                                       |
+| `apps/desktop/src/main/device-providers/ev3/motion.ts`、`main/device-broker/`                                             | 保留 broker admission、共享鎖、preflight、有限 pulse／helper、安全停止與 journal                                                      |
+| `apps/desktop/src/main/index.ts` 的 `new MotorTestService`                                                                | 目前 legacy façade 未供 motion scope、拒絕 starts；舊 smoke fixture 不能充當目前產品 native parity 證據                               |
+| `tests/desktop/motor-test-smoke.mjs`                                                                                      | 現有 inline cards／private service smoke；必須以公開產品路徑替換，其「切 pane timed 繼續」斷言須反轉並增加競態                        |
 
 安全排程全留 host／provider：100 ms host challenge cadence、350 ms panel／gesture lease、固定 operation／exchange／stop budgets、400 ms 以內有限 jog pulse、jog／angle 10 秒 movement 上限。插件不得 timer 續租、補發 pulse、延長 deadline 或直接管理 helper。host 停頓時的 firmware bounds 不等於 readback 已確認。
 
@@ -42,16 +42,16 @@ UI v1 不支援動態 choice options 或 patch field draft；不用新能力補�
 
 ## 4. 表單與結果 parity
 
-| 項目 | frozen 契約與行為 |
-| --- | --- |
-| defaults（每 port） | power 20、seconds 1、degrees 90、direction +1、brake true、jog |
-| power／direction／brake | 整數 1–100、`1/-1`、boolean；jog 方向取實際 hold 按鈕 |
-| timed | seconds finite 0.1–5，轉 `Math.round(seconds * 1000)` 為整數 100–5000 ms；不發多餘 degrees |
-| angle | 整數 1–3600；公開 mode 為 `relative-angle`，不發 durationMs |
-| validation | 空白／null 阻擋 start；range／格式錯誤有 field message；非作用模式欄位不阻擋。host 初驗＋handler 快照重驗；Stop／release 不受 invalid form 阻擋 |
-| admission | 最新 session／actuator ready、finiteMotion、context authority、host motion scope；busy／recording／program／stale／unsupported 原因依公開結果呈現，不先改設備狀態解鎖 |
-| progress | timed＝elapsed/duration；angle＝abs(displacement)/degrees；jog＝elapsed/10000；clamp 0–1，null 讀值顯示無讀值，不冒充 0° |
-| 結果 | 保留 preparing/running/stopping/completed/stopped/timeout/failed/unconfirmed，另顯示 stage；`movement`、`dispatch`、`stopRequested`、`stopConfirmation` 分開呈現 |
+| 項目                    | frozen 契約與行為                                                                                                                                                     |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| defaults（每 port）     | power 20、seconds 1、degrees 90、direction +1、brake true、jog                                                                                                        |
+| power／direction／brake | 整數 1–100、`1/-1`、boolean；jog 方向取實際 hold 按鈕                                                                                                                 |
+| timed                   | seconds finite 0.1–5，轉 `Math.round(seconds * 1000)` 為整數 100–5000 ms；不發多餘 degrees                                                                            |
+| angle                   | 整數 1–3600；公開 mode 為 `relative-angle`，不發 durationMs                                                                                                           |
+| validation              | 空白／null 阻擋 start；range／格式錯誤有 field message；非作用模式欄位不阻擋。host 初驗＋handler 快照重驗；Stop／release 不受 invalid form 阻擋                       |
+| admission               | 最新 session／actuator ready、finiteMotion、context authority、host motion scope；busy／recording／program／stale／unsupported 原因依公開結果呈現，不先改設備狀態解鎖 |
+| progress                | timed＝elapsed/duration；angle＝abs(displacement)/degrees；jog＝elapsed/10000；clamp 0–1，null 讀值顯示無讀值，不冒充 0°                                              |
+| 結果                    | 保留 preparing/running/stopping/completed/stopped/timeout/failed/unconfirmed，另顯示 stage；`movement`、`dispatch`、`stopRequested`、`stopConfirmation` 分開呈現      |
 
 `timeout` 或 RPC exception 不能推導已停止；只有 broker snapshot 的 confirmation 才能宣稱停止已確認。`brakeRequired` 優先於表單 coast。`PLUGIN_E_DEVICE_BUSY/AUTHORITY/UNAVAILABLE/OPERATION/STOP_UNCONFIRMED` 與原 detail 原樣分類，另有 UI／transport failure 文案，不創造新 codes。
 
@@ -68,19 +68,19 @@ UI v1 不支援動態 choice options 或 patch field draft；不用新能力補�
 
 ## 6. lifecycle 必驗矩陣
 
-| 事件 | 產品行為與安全責任 |
-| --- | --- |
-| hold release | 原 gesture 結束，configured stop；cancel／pointer-cancel／form-change／action disabled 改 brake，不需等待 begin handler 返回 |
-| hide／收合／切 sibling tab／切其他 pane／CSS hidden | 所有模式撤 scope／續租並 stop/readback，含 start 未回覆；恢復可見不恢復原動作 |
-| panel close | 銷毀 binding 前 stop；late patches／commands 無效，core 保留 uncertainty；草稿獨立於 operation（§8） |
-| blur／window hide／minimize／document hidden／destroyed | host 撤權＋stop，不靠 React cleanup；destroyed／renderer loss 依 umbrella retire owner |
-| authority loss／viewer／未同步／offline | 拒絕新 motion；已受理於每個 await boundary 擋下一寫入並要求停止；允許 query／stop，不能只測 disabled button |
-| motor disable／plugin kill | host 先阻擋 admission、stop、withdraw UI／commands、bounded shutdown；重啟新 generation，不 replay |
-| provider disable／拔線／失聯 | 新操作 unavailable，host cleanup／readback；未確認 quarantine／core fault。motor 不被永久連帶停用，provider 恢復不連線／續作 |
-| suspend／resume | suspend 要求 stop；未確認保留 core。wake 先對帳，不延長原期限、不自動續作 |
-| app close／update／force exit | 先撤權再 bounded stop；正常 close 未確認保留 blocker，force exit 留 journal uncertainty，不宣稱實體已停 |
-| safe mode／全部 optional disabled | 啟動前抑制 feature／provider／panel restore；core management／recovery／stop view 保留，無自動 connect／enable |
-| second instance | 聚焦既有視窗後退出，不生 process／operation、不重播；既有撤權狀態仍有效 |
+| 事件                                                    | 產品行為與安全責任                                                                                                           |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| hold release                                            | 原 gesture 結束，configured stop；cancel／pointer-cancel／form-change／action disabled 改 brake，不需等待 begin handler 返回 |
+| hide／收合／切 sibling tab／切其他 pane／CSS hidden     | 所有模式撤 scope／續租並 stop/readback，含 start 未回覆；恢復可見不恢復原動作                                                |
+| panel close                                             | 銷毀 binding 前 stop；late patches／commands 無效，core 保留 uncertainty；草稿獨立於 operation（§8）                         |
+| blur／window hide／minimize／document hidden／destroyed | host 撤權＋stop，不靠 React cleanup；destroyed／renderer loss 依 umbrella retire owner                                       |
+| authority loss／viewer／未同步／offline                 | 拒絕新 motion；已受理於每個 await boundary 擋下一寫入並要求停止；允許 query／stop，不能只測 disabled button                  |
+| motor disable／plugin kill                              | host 先阻擋 admission、stop、withdraw UI／commands、bounded shutdown；重啟新 generation，不 replay                           |
+| provider disable／拔線／失聯                            | 新操作 unavailable，host cleanup／readback；未確認 quarantine／core fault。motor 不被永久連帶停用，provider 恢復不連線／續作 |
+| suspend／resume                                         | suspend 要求 stop；未確認保留 core。wake 先對帳，不延長原期限、不自動續作                                                    |
+| app close／update／force exit                           | 先撤權再 bounded stop；正常 close 未確認保留 blocker，force exit 留 journal uncertainty，不宣稱實體已停                      |
+| safe mode／全部 optional disabled                       | 啟動前抑制 feature／provider／panel restore；core management／recovery／stop view 保留，無自動 connect／enable               |
+| second instance                                         | 聚焦既有視窗後退出，不生 process／operation、不重播；既有撤權狀態仍有效                                                      |
 
 motor／Lab／device provider 三個一般使用者開關各自獨立且持久保存，不需 developer mode；必要 compiler 政策不變。optional-only crash 不新增 safe-mode lock；renderer unresponsive／第三方風險遵循既有鎖定規則。健康 process 在一般 hide／suspend／provider loss 可存續；renderer loss 後須明確 open 才啟動新 generation。
 

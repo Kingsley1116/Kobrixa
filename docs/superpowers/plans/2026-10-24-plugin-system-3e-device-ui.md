@@ -10,17 +10,17 @@ shared stage3 目前只有 3A。B2 `871e581`、C `4c86f0a`、D `f822f3c` 是唯�
 
 下表是未來 E 任務的封閉 write sets；prefix 展開後皆相對 repo root，花括號僅列有限檔名，沒有目錄萬用授權。`S`＝`apps/desktop/src`；`P`＝`S/main/plugins/persistence`；`F`＝`plugins/device-ev3`；`T`＝`S/builtin-features/device-ev3`。新增 helper 只限表列，跨功能問題先回 owner，不擴成第二套基礎設施。
 
-| Set | Owner | 精確路徑（新增亦列入） |
-| --- | --- | --- |
-| W0 | controller | 本 design 與本 plan 兩檔；E0/E1 receipt 與最終 evidence index 直接記入本 plan |
-| WR | H-R | `packages/plugin-runtime/src/{manager.ts,manager.test.ts,index.ts,builtin-source-port.ts,builtin-source-port.test.ts}`；新 port 僅供 source eligibility 與同步，正式名稱於 E1 固定 |
-| WP | H-D/B2 | `P/{device-settings-import.ts,device-settings-import.test.ts,device-preferences-port.ts,device-preferences-port.test.ts,host-port.ts,host-port.test.ts,settings-service.ts,settings-service.test.ts,worker.ts,worker.test.ts}`；`S/main/device/{preferences.ts,preferences.test.ts}` |
-| WF | F-E | `F/kobrixa-plugin.json`、`F/src/{main.ts,controller.ts,presentation.ts}`、`F/ui/panel.json`、`F/settings/preferences.json`；`T/{parity-fixtures.ts,parity.test.ts,controller.test.ts,public-transport.test.ts,private-dependency.test.ts}` |
-| WI | H-D | `S/main/{index.ts,ipc.ts,ipc.test.ts}`、`S/main/plugins/{builtin.ts,builtin.test.ts}`、`S/main/device/{device.ts,device.test.ts}`、`S/preload/{index.ts,index.test.ts}`、`S/shared/{api.ts,device-preferences.ts}` |
-| WV | H-V | `S/renderer/{app.tsx,execution/execution.ts,execution/execution.test.ts,device/device-panel.tsx,device/monitor-panel.tsx,device/monitor-controller.ts,device/monitor-controller.test.ts,device/monitor-workspace.tsx,settings/device-settings.ts,settings/settings.ts,settings/settings.test.ts,settings/settings-catalog.ts,settings/settings-catalog.test.ts,settings/settings-panel.tsx,settings/settings-panel.test.ts}` |
-| WK | H-K | `S/main/plugins/{builtin-launch.ts,builtin-launch.test.ts,launchers.ts,launchers.test.ts}`、`apps/desktop/{vite.plugin-device.config.ts,vite.plugin.config.ts,forge.config.ts}`；`tests/desktop/{device-ui-smoke.mjs,device-ui-installed-smoke.mjs}` |
-| WX | H-D/H-V 逐檔交接 | `T/{lifecycle.test.ts,import-integration.test.ts,provider-preferences.test.ts}`、`tests/desktop/fixtures/device-ui-public/{consumer.ts,consumer.py,kobrixa-plugin.json}` |
-| WD | controller/docs owner | `docs/en/{architecture.md,device-support.md,plugin-devices.md,roadmap.md}`、`docs/zh-TW/{architecture.md,device-support.md,plugin-devices.md,roadmap.md}`、`docs/superpowers/specs/2026-10-17-plugin-system-stage-3-design.md`、`tests/hardware/device-ui.md`、W0 |
+| Set | Owner                 | 精確路徑（新增亦列入）                                                                                                                                                                                                                                                                                                                                                                                                       |
+| --- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| W0  | controller            | 本 design 與本 plan 兩檔；E0/E1 receipt 與最終 evidence index 直接記入本 plan                                                                                                                                                                                                                                                                                                                                                |
+| WR  | H-R                   | `packages/plugin-runtime/src/{manager.ts,manager.test.ts,index.ts,builtin-source-port.ts,builtin-source-port.test.ts}`；新 port 僅供 source eligibility 與同步，正式名稱於 E1 固定                                                                                                                                                                                                                                           |
+| WP  | H-D/B2                | `P/{device-settings-import.ts,device-settings-import.test.ts,device-preferences-port.ts,device-preferences-port.test.ts,host-port.ts,host-port.test.ts,settings-service.ts,settings-service.test.ts,worker.ts,worker.test.ts}`；`S/main/device/{preferences.ts,preferences.test.ts}`                                                                                                                                         |
+| WF  | F-E                   | `F/kobrixa-plugin.json`、`F/src/{main.ts,controller.ts,presentation.ts}`、`F/ui/panel.json`、`F/settings/preferences.json`；`T/{parity-fixtures.ts,parity.test.ts,controller.test.ts,public-transport.test.ts,private-dependency.test.ts}`                                                                                                                                                                                   |
+| WI  | H-D                   | `S/main/{index.ts,ipc.ts,ipc.test.ts}`、`S/main/plugins/{builtin.ts,builtin.test.ts}`、`S/main/device/{device.ts,device.test.ts}`、`S/preload/{index.ts,index.test.ts}`、`S/shared/{api.ts,device-preferences.ts}`                                                                                                                                                                                                           |
+| WV  | H-V                   | `S/renderer/{app.tsx,execution/execution.ts,execution/execution.test.ts,device/device-panel.tsx,device/monitor-panel.tsx,device/monitor-controller.ts,device/monitor-controller.test.ts,device/monitor-workspace.tsx,settings/device-settings.ts,settings/settings.ts,settings/settings.test.ts,settings/settings-catalog.ts,settings/settings-catalog.test.ts,settings/settings-panel.tsx,settings/settings-panel.test.ts}` |
+| WK  | H-K                   | `S/main/plugins/{builtin-launch.ts,builtin-launch.test.ts,launchers.ts,launchers.test.ts}`、`apps/desktop/{vite.plugin-device.config.ts,vite.plugin.config.ts,forge.config.ts}`；`tests/desktop/{device-ui-smoke.mjs,device-ui-installed-smoke.mjs}`                                                                                                                                                                         |
+| WX  | H-D/H-V 逐檔交接      | `T/{lifecycle.test.ts,import-integration.test.ts,provider-preferences.test.ts}`、`tests/desktop/fixtures/device-ui-public/{consumer.ts,consumer.py,kobrixa-plugin.json}`                                                                                                                                                                                                                                                     |
+| WD  | controller/docs owner | `docs/en/{architecture.md,device-support.md,plugin-devices.md,roadmap.md}`、`docs/zh-TW/{architecture.md,device-support.md,plugin-devices.md,roadmap.md}`、`docs/superpowers/specs/2026-10-17-plugin-system-stage-3-design.md`、`tests/hardware/device-ui.md`、W0                                                                                                                                                            |
 
 H-P 的 recovery／v2／SDK/schema 變更屬原契約 owner 的 D1 批次，不在上述 E write sets；E1 須記其已審 exact diff paths/receipt，未交付即 blocked。若任務需未列檔案，先在 W0 審查增補明確路徑與 owner，不以「直接 tests」或「相關檔案」擴權。
 
@@ -96,41 +96,41 @@ source-free installed：離線、無 checkout/外部 Node、實際產品 entry�
 
 以下全部待執行；未來命令以整合基準 package scripts 為準：targeted unit/integration→公開 transport→產品 package/installed smoke→MANUAL。每步保留實際命令、exit code、log/artifact hash；本次不安裝依賴、不跑測試/native。
 
-| 情境 | 自動化注入與必要判定 | MANUAL |
-| --- | --- | --- |
-| all-off／逐一開關 | 三個 optional 獨立持久；compiler/core 管理正常，無 provider/process/import 自啟 | 一般模式不需 developer mode |
-| second instance | 第二程序只聚焦退出，無 profile 寫入／第二 provider | 既有錄製不重建，視窗 blur 安全行為 |
-| UI crash／renderer freeze/crash | provider eligibility 分離；owner retirement、晚訊息拒絕、main safety 不等 cleanup | 故障提示、恢復入口、無操作重播 |
-| provider loss／USB 拔除／Wi-Fi timeout | 新工作 gate、end/save、健康 consumer 存續、session cache 清除 | 真 EV3 重連/retry-limit/cancel/notice |
-| settings/import/disk-full | 原檔保留、CAS/reset/failed draft、unknown 對帳、barrier 重入 | 匯入/重試說明與值等價 |
-| Disconnect／close/update／suspend | stop/save/journal failure 均 block；期限不當成功，wake 不續作 | motor 停止觀察、Lab 最後 committed 資料 |
-| safe/cold/headless recovery | optional-only crash 不鎖；renderer/第三方風險遵原 lock；無 optional I/O/autolaunch | 無 session 保留 unconfirmed，明確復原 |
-| authority／遠端合作 | host/editor/viewer、失權於 await、unsynced、跨 owner 偽造、read/stop 保留 | grant/reclaim/offline；guest 不取得遠端 USB |
-| hardware／monitor 仲裁 | fake provider modes/pin/program/files gaps/battery-null/freshness | USB/Wi-Fi 四通道、電量/電壓/program/modes、最大錄製與 motor 互斥 |
-| installed/native/resources | source-free、missing/hash/unsupported version/native load fail、無 fallback/orphan | 各實交 OS/arch；en/zh-TW、明暗、320px、125%、鍵盤/focus/讀屏 |
+| 情境                                   | 自動化注入與必要判定                                                               | MANUAL                                                           |
+| -------------------------------------- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| all-off／逐一開關                      | 三個 optional 獨立持久；compiler/core 管理正常，無 provider/process/import 自啟    | 一般模式不需 developer mode                                      |
+| second instance                        | 第二程序只聚焦退出，無 profile 寫入／第二 provider                                 | 既有錄製不重建，視窗 blur 安全行為                               |
+| UI crash／renderer freeze/crash        | provider eligibility 分離；owner retirement、晚訊息拒絕、main safety 不等 cleanup  | 故障提示、恢復入口、無操作重播                                   |
+| provider loss／USB 拔除／Wi-Fi timeout | 新工作 gate、end/save、健康 consumer 存續、session cache 清除                      | 真 EV3 重連/retry-limit/cancel/notice                            |
+| settings/import/disk-full              | 原檔保留、CAS/reset/failed draft、unknown 對帳、barrier 重入                       | 匯入/重試說明與值等價                                            |
+| Disconnect／close/update／suspend      | stop/save/journal failure 均 block；期限不當成功，wake 不續作                      | motor 停止觀察、Lab 最後 committed 資料                          |
+| safe/cold/headless recovery            | optional-only crash 不鎖；renderer/第三方風險遵原 lock；無 optional I/O/autolaunch | 無 session 保留 unconfirmed，明確復原                            |
+| authority／遠端合作                    | host/editor/viewer、失權於 await、unsynced、跨 owner 偽造、read/stop 保留          | grant/reclaim/offline；guest 不取得遠端 USB                      |
+| hardware／monitor 仲裁                 | fake provider modes/pin/program/files gaps/battery-null/freshness                  | USB/Wi-Fi 四通道、電量/電壓/program/modes、最大錄製與 motor 互斥 |
+| installed/native/resources             | source-free、missing/hash/unsupported version/native load fail、無 fallback/orphan | 各實交 OS/arch；en/zh-TW、明暗、320px、125%、鍵盤/focus/讀屏     |
 
 ## 4. S3-01–16 證據索引（2026-10-30 更新，未結案）
 
 下表連結已提交的原始證據；每份 receipt 的來源 commit、dirty 狀態、環境、替代邊界及未驗項仍有效。舊 commit 的通過結果不自動等於最終整合 artifact 通過。I＝implementation；A＝automated；M＝MANUAL。沒有把既有 stage2 人工項改成完成。
 
-| Criterion | 已有證據 | 尚待完成／保留例外 |
-| --- | --- | --- |
-| S3-01：版本／雙 SDK | [E 整合與完整 desktop 回歸](../evidence/2026-10-30-3e-integration/README.md)；已實作 API 1.8 | 最終版本／schema／SDK conformance 彙整，不能用 desktop 回歸代替 |
-| S3-02：公開雙 transport | [D Python stdio](../evidence/2026-10-26-3d-python-stdio/README.md)、[D 公開 Lab](../evidence/2026-10-26-3d-public-lab/README.md)、[E JS](../evidence/2026-10-30-3e-public-device/README.md)、[E Python](../evidence/2026-10-30-3e-python-stdio/README.md) | 剩餘取消、timeout、故障矩陣須各自證明；跨版本 SDK 相容性正在補齊 |
-| S3-03：公開-only feature | [C 移除後 native](../evidence/2026-10-30-3c-retirement/README.md)、[C 原始完整產品](../evidence/2026-10-30-3c-installed-retirement/README.md) | D legacy exit 進行中；D/E 最終 source／bundle／trace 核對 |
-| S3-04：motor 垂直路徑 | [C 移除後 77 native cases](../evidence/2026-10-30-3c-retirement/README.md) | D/E 最終整合重建；硬體 M 不由 fake provider 代簽 |
-| S3-05：共用 broker | [foundation retirement／release／disconnect](../evidence/2026-10-24-stage3-foundation-integration/README.md)、[E core session 整合](../evidence/2026-10-30-3e-integration/README.md) | 真實設備仲裁及剩餘 fault rows；保留 core adapters |
-| S3-06：authority | [48 native motion races](../evidence/2026-10-23-3b1-native-motion/README.md)、[disabled-source core authority](../evidence/2026-10-26-stage3-disabled-core/README.md) | 合作 UI 持權轉移／offline 人工驗證；collaboration UI 保留例外 |
-| S3-07：有界 UI／events | [B1 最大負載](../evidence/2026-10-23-3b1-ui-load/README.md)、[SDK backpressure](../evidence/2026-10-23-3b1-sdk-backpressure/README.md) | D v2 圖表／資料集最大負載及最終 artifact 延遲／RSS；B1 數據不代簽 v2 |
-| S3-08：Lab | [公開 Lab native](../evidence/2026-10-26-3d-public-lab/README.md)、[Linux installed Lab](../evidence/2026-10-26-3d-installed-linux/README.md)、[D7 操作及真實重啟](../evidence/2026-10-30-3d-parity-restart/README.md) | D8 legacy exit、D9b 重建、剩餘 lifecycle/fault 與人工驗證 |
-| S3-09：settings／storage | [sealed TTL](../evidence/2026-10-26-3b2-sealed-ttl/README.md)、[E 九欄移轉及真實重啟](../evidence/2026-10-30-3e-restart/README.md)、[D 移轉重啟](../evidence/2026-10-30-3d-parity-restart/README.md) | B2 N01–29/P170 彙整、50×8 MiB 匯入與負載；原檔保留 |
-| S3-10：lifecycle／開關 | [all optional off 冷啟動](../evidence/2026-10-26-3b2-all-optional-off/README.md)、[renderer loss／explicit restart](../evidence/2026-10-26-3b2-renderer-loss/README.md) | §4.7 全列索引、second-instance／cold-safe 最終整合與一般使用者 UI |
-| S3-11：stop／save／quit | [suspend/wake coordinator](../evidence/2026-10-24-3b2-suspend/README.md)、[action replay 整合](../evidence/2026-10-26-stage3-action-integration/README.md) | 真 OS suspend、產品 quit/update／save-failure 完整矩陣；timeout 不當完成 |
-| S3-12：source-free installed | [C 移除後完整原始產品](../evidence/2026-10-30-3c-installed-retirement/README.md)、[D Linux payload](../evidence/2026-10-26-3d-installed-linux/README.md)、[E 原始 payload](../evidence/2026-10-30-3e-installed/README.md) | D 最終移除 legacy 後重建及 second-instance；D/E payload receipts 是 acceptance host，不等同完整 app |
-| S3-13：motor 硬體 | C/3A 自動注入只作輔助 | USB／Wi-Fi motion／stop／kill／拔線實體觀察待驗 |
-| S3-14：Lab／monitor 硬體 | D/E fake provider 與軟體回歸 | 四通道、長錄、CSV、remote-files、合作及真設備互斥待驗 |
-| S3-15：平台／可及性 | 已有 Linux arm64 receipts；[Mac installed 隔離阻塞](../evidence/2026-10-26-3d-installed-mac-blocked/README.md) | 實交 OS/arch、雙語／明暗／320px／125%／鍵盤／讀屏；未測不能外推 |
-| S3-16：文件／例外帳 | [E 雙語文件與證據界線](../evidence/2026-10-30-3e-integration/README.md) | legacy caller 最終清單、各 owner 收尾及手動驗收結果；Stage3 保持未結案 |
+| Criterion                    | 已有證據                                                                                                                                                                                                                                                  | 尚待完成／保留例外                                                                                  |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| S3-01：版本／雙 SDK          | [E 整合與完整 desktop 回歸](../evidence/2026-10-30-3e-integration/README.md)；已實作 API 1.8                                                                                                                                                              | 最終版本／schema／SDK conformance 彙整，不能用 desktop 回歸代替                                     |
+| S3-02：公開雙 transport      | [D Python stdio](../evidence/2026-10-26-3d-python-stdio/README.md)、[D 公開 Lab](../evidence/2026-10-26-3d-public-lab/README.md)、[E JS](../evidence/2026-10-30-3e-public-device/README.md)、[E Python](../evidence/2026-10-30-3e-python-stdio/README.md) | 剩餘取消、timeout、故障矩陣須各自證明；跨版本 SDK 相容性正在補齊                                    |
+| S3-03：公開-only feature     | [C 移除後 native](../evidence/2026-10-30-3c-retirement/README.md)、[C 原始完整產品](../evidence/2026-10-30-3c-installed-retirement/README.md)                                                                                                             | D legacy exit 進行中；D/E 最終 source／bundle／trace 核對                                           |
+| S3-04：motor 垂直路徑        | [C 移除後 77 native cases](../evidence/2026-10-30-3c-retirement/README.md)                                                                                                                                                                                | D/E 最終整合重建；硬體 M 不由 fake provider 代簽                                                    |
+| S3-05：共用 broker           | [foundation retirement／release／disconnect](../evidence/2026-10-24-stage3-foundation-integration/README.md)、[E core session 整合](../evidence/2026-10-30-3e-integration/README.md)                                                                      | 真實設備仲裁及剩餘 fault rows；保留 core adapters                                                   |
+| S3-06：authority             | [48 native motion races](../evidence/2026-10-23-3b1-native-motion/README.md)、[disabled-source core authority](../evidence/2026-10-26-stage3-disabled-core/README.md)                                                                                     | 合作 UI 持權轉移／offline 人工驗證；collaboration UI 保留例外                                       |
+| S3-07：有界 UI／events       | [B1 最大負載](../evidence/2026-10-23-3b1-ui-load/README.md)、[SDK backpressure](../evidence/2026-10-23-3b1-sdk-backpressure/README.md)                                                                                                                    | D v2 圖表／資料集最大負載及最終 artifact 延遲／RSS；B1 數據不代簽 v2                                |
+| S3-08：Lab                   | [公開 Lab native](../evidence/2026-10-26-3d-public-lab/README.md)、[Linux installed Lab](../evidence/2026-10-26-3d-installed-linux/README.md)、[D7 操作及真實重啟](../evidence/2026-10-30-3d-parity-restart/README.md)                                    | D8 legacy exit、D9b 重建、剩餘 lifecycle/fault 與人工驗證                                           |
+| S3-09：settings／storage     | [sealed TTL](../evidence/2026-10-26-3b2-sealed-ttl/README.md)、[E 九欄移轉及真實重啟](../evidence/2026-10-30-3e-restart/README.md)、[D 移轉重啟](../evidence/2026-10-30-3d-parity-restart/README.md)                                                      | B2 N01–29/P170 彙整、50×8 MiB 匯入與負載；原檔保留                                                  |
+| S3-10：lifecycle／開關       | [all optional off 冷啟動](../evidence/2026-10-26-3b2-all-optional-off/README.md)、[renderer loss／explicit restart](../evidence/2026-10-26-3b2-renderer-loss/README.md)                                                                                   | §4.7 全列索引、second-instance／cold-safe 最終整合與一般使用者 UI                                   |
+| S3-11：stop／save／quit      | [suspend/wake coordinator](../evidence/2026-10-24-3b2-suspend/README.md)、[action replay 整合](../evidence/2026-10-26-stage3-action-integration/README.md)                                                                                                | 真 OS suspend、產品 quit/update／save-failure 完整矩陣；timeout 不當完成                            |
+| S3-12：source-free installed | [C 移除後完整原始產品](../evidence/2026-10-30-3c-installed-retirement/README.md)、[D Linux payload](../evidence/2026-10-26-3d-installed-linux/README.md)、[E 原始 payload](../evidence/2026-10-30-3e-installed/README.md)                                 | D 最終移除 legacy 後重建及 second-instance；D/E payload receipts 是 acceptance host，不等同完整 app |
+| S3-13：motor 硬體            | C/3A 自動注入只作輔助                                                                                                                                                                                                                                     | USB／Wi-Fi motion／stop／kill／拔線實體觀察待驗                                                     |
+| S3-14：Lab／monitor 硬體     | D/E fake provider 與軟體回歸                                                                                                                                                                                                                              | 四通道、長錄、CSV、remote-files、合作及真設備互斥待驗                                               |
+| S3-15：平台／可及性          | 已有 Linux arm64 receipts；[Mac installed 隔離阻塞](../evidence/2026-10-26-3d-installed-mac-blocked/README.md)                                                                                                                                            | 實交 OS/arch、雙語／明暗／320px／125%／鍵盤／讀屏；未測不能外推                                     |
+| S3-16：文件／例外帳          | [E 雙語文件與證據界線](../evidence/2026-10-30-3e-integration/README.md)                                                                                                                                                                                   | legacy caller 最終清單、各 owner 收尾及手動驗收結果；Stage3 保持未結案                              |
 
 順序為 E0→E1→E2/E3（paths 序列）→E4→E5→E6→E7→E8；D1 blocker 未解可停在 fixtures，不削減完成目標。最後只在所有必要 I/A/M 有真實證據時提出 closeout；本計畫不宣告 Stage 3 完成，也不授權整合分支或 main 合併。
 
@@ -141,7 +141,6 @@ source-free installed：離線、無 checkout/外部 Node、實際產品 entry�
 獨立複查 PASS；同一 scoped Vitest 命令由實作者與審查者執行，均為 **35 passed / 12 skipped**。12 個 skip 是各 parity 列明列的後續驗證，未算成功。Controller ESLint 通過；未執行完整 desktop typecheck、native 或 installed 測試。使用 sibling 現有 Vitest/Zod 套件及暫存 config，所有 legacy product imports 指向本工作樹；沒有安裝依賴。
 
 覆蓋 pending-run 取消、重連晚回覆、monitor modes/session/busy/unknown 與 timestamp 保留、六偏好 defaults/options、保存失敗後重試及 Wi-Fi 正規化。尚缺 DOM discovery/render、實際 2.5 秒 freshness UI、main broker/coordinator、公開 transport/v2、import/CAS、installed/hardware。此 receipt 不凍結 D1/E1、不宣告新的 device feature 已交付或 Stage 3 完成。
-
 
 ## 6. E2/E3 host integration amendment (2026-10-30)
 
@@ -155,7 +154,6 @@ After a settings receipt notification, cached policy becomes unavailable synchro
 
 Local prerequisite commit `f37d098` contains the original two-source import with one pristine nine-field CAS. Controller independently ran its 23 actual-worker cases. Current additional host/readmission tests are separate uncommitted work pending independent review and actual desktop composition wiring. No complete E2/E3, native, installed or Stage 3 claim is made here.
 
-
 ## 7. Desktop composition and renderer capture handoff (2026-10-30)
 
 Additional exact controller-owned composition paths are `apps/desktop/src/main/plugins/controller.ts`, `controller.test.ts`, and `apps/desktop/src/main/device-broker/lifecycle-coordinator.ts`. The renderer capture owner writes only `apps/desktop/src/renderer/settings/legacy-preferences-bridge.ts` and its `.test.ts`. These extend WI/WV for the existing V170 challenge channel; they introduce no public RPC.
@@ -166,13 +164,11 @@ The per-window `createDevicePreferencesMigration` adapter synchronously freezes 
 
 Actual desktop composition tests cover pristine combined migration, policy unavailable before acceptance, headless metadata reading without feature activation, replay, disable/re-enable, retired challenge rejection, and startup with a disabled source. Full controller regression execution is recorded separately. Main index and renderer startup mounts have not been switched: E4–E6 replacement proof and the later legacy exit remain required. Recovery SDK cross-review found queued-callback retirement and host subscription cleanup defects; those are being fixed separately, and the earlier green existing suites are not a recovery acceptance sign-off.
 
-
 ### Early settings-write race correction
 
 The independent actual-worker composition review reproduced an ordinary contributed-form update creating a target revision before the original migration. That correctly blocked pristine import, but stranded host readiness. The private `PersistenceSourcePort.settingsWriteAllowed(sourceKey)` callback now gates ordinary update/reset/migrate centrally through the shared settings service, including bound forms and public requests. Metadata, read/watch and the original import publication remain usable; unrelated sources keep their existing behavior. Owner/permission/resource/CAS checks remain required.
 
 A second controller regression reproduced withdrawal in the microtask between the async continuation and actual publish. The synchronous mutation fence now also runs next to consequential reserve/append/publish, without another await. Tests demonstrate both initial denial without reserve and abort rather than publication after withdrawal. Related settings suites: **128 passing tests**; the actual desktop composition file: **210 passing tests**, with types/lint passing. These software checks do not constitute the pending product-mount, native or installed acceptance.
-
 
 ### E4–E6 product integration ownership amendment (2026-10-30)
 
@@ -182,13 +178,11 @@ Assembly and migration attachment are a coordinated cutover: a device settings c
 
 Recovery SDK/protocol/broker fixes committed `3190749`; independent review found no remaining actionable findings, 986 JS/protocol +143 Python and455 broker/host tests pass. Exact four JS/two Python retirement regressions were independently rerun. The migration write fence committed `2034502`, including a post-await synchronous admission check (128 settings tests). Actual composition committed `73142dd` (210 controller tests), independently reviewed. Local feature integration `b7eb8ba` consumes D `2ad68c2`; 99 atomic-store/original-import worker tests pass after merge. No hardware, installed-product migration, legacy removal, or Stage3 closeout is claimed.
 
-
 ### E5 retained core session adoption amendment (2026-10-30)
 
 Product cutover review identified an actual missing adapter: public plugin connection bypasses DeviceService.connectWith, while ExecutionController currently accepts connected state only from its own promise. H-D/H-V owns the bounded correction in `apps/desktop/src/main/device-broker/{broker.ts,broker.test.ts,legacy-device.ts,legacy-device.test.ts}`, `apps/desktop/src/renderer/execution/{execution.ts,execution.test.ts}`, and `apps/desktop/src/shared/api.ts` only for a necessary typed host event. `main/device/{device.ts,device.test.ts}` may be adjusted only if this adapter requires it. Snapshot observation is read-only and must not create authority or native work; existing core deploy/files/monitor descriptor lookup must see the same broker session. Pending-run may continue only while its original intent/workspace/authority is current; cancelled intent, recovery, old sessions, and a duplicate promise callback must not run it.
 
 Controller additionally owns `apps/desktop/src/renderer/device/device-panel.test.ts` for retained pending-run cancellation and neutral capture-notice DOM coverage. The old implementations remain for comparison; neither this amendment nor the partial tests authorize legacy removal. Recovery notification compatibility was restored in `9027984` with18legacy/87broker tests and an independent bounded review. Renderer cutover currently has66focused passes, full renderer import typecheck/lint pass; real EV3 entry bundle/resource validation joins assembler evidence (47passes/1existing skip). These are not native installed acceptance.
-
 
 ### P08 nullable observation slot ruling (2026-10-30)
 
@@ -198,20 +192,17 @@ Ready+null may be recorded as an explicit gap under the existing nullable record
 
 Controller write set: `main/device-providers/ev3/{catalog.ts,catalog.test.ts,provider.ts,broker-integration.test.ts}` under desktop src, plus this plan, 3E design and 3A design semantic note. No protocol schema/SDK change. Feature WF owner owns its consumer tests separately; existing Lab null handling will be exercised as regression, not represented as new hardware proof.
 
-
 ### E6 native-public producer ownership (2026-10-30)
 
 H-K/controller may add exactly `tests/desktop/device-ui-public-{run.mjs,main.ts,renderer.tsx,test.mjs}` for the actual production device feature entry, generic renderer/preload/host composition, real process transport, and an independently checked receipt. Existing public/installed helpers may be imported read-only; no parallel launcher, source fallback or pretend passing receipt is permitted. The native producer uses a synthetic provider, so its evidence cannot establish physical EV3 or packaged source-free acceptance. Python stdio and installed producers remain separate required E6 steps. An owner must stop writing and hand off precise paths before execution/review.
 
 The bilingual manual procedure is `tests/hardware/device-ui.md`; every H01–H14 result currently remains NOT RUN. Historical v1 hardware acceptance does not close Stage3 migration acceptance.
 
-
 ### E6 Python producer and current integration receipt (2026-10-30)
 
 The second bounded acceptance writer owns exactly `tests/desktop/device-ui-stdio-{run.mjs,main.ts,test.mjs}` and `tests/desktop/fixtures/device-ui-public/{consumer.py,kobrixa-plugin.json}`. This is a clearly named synthetic Python consumer, not the production EV3 feature or a builtin impersonation. It must use actual Python SDK stdio, host routing and persistence with its own contributed settings/UI namespace. It may generate declared fixture resources in the temporary artifact. Its provider remains synthetic and results cannot establish hardware or source-free production acceptance. Existing Lab stdio/public helpers are read-only references.
 
 P08 committed `5b29c47`, independently reviewed without actionable findings; public feature `03e6d49` has40independently rerun tests with real MessageChannel. Coordinated product adoption/migration/assembler committed `dfae915` after independent scoped source reviews, controller852tests/36files, full main/renderer import typechecks, and47assembler/packaging passes with1existing skip. These receipts supersede earlier statements that these mounts are not yet switched, but do not close E4fullparity, E6native/installed, E7legacyexit, E8manual or Stage3.
-
 
 Checkpoint source/hash/review/test evidence for `dfae915` is archived under [`docs/superpowers/evidence/2026-10-30-3e-integration`](../evidence/2026-10-30-3e-integration/README.md). This exact evidence directory is controller-owned documentation. It records all852integrated tests passing (superseding the earlier75/76P08 interim result),40feature tests,47assembly passes/1existing skip and main/renderer typechecks. Native, installed, hardware, full parity and final closeout remain unclaimed.
 

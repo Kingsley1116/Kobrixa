@@ -1,4 +1,8 @@
-import { publicInteropObserver, producePublicInterop, verifyPublicInterop } from "./plugin-persistence-public-interop.js";
+import {
+  publicInteropObserver,
+  producePublicInterop,
+  verifyPublicInterop,
+} from "./plugin-persistence-public-interop.js";
 import type { Wire } from "./plugin-persistence-import.js";
 import {
   PREFERENCE_CUTS,
@@ -1444,7 +1448,9 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                     plugin.channelOwner
                   )
                     imported.output(plugin.channelOwner, line);
-                  const interopRow = interop?.consumers.find(r => r.owner.processEpoch === plugin.channelOwner?.processEpoch);
+                  const interopRow = interop?.consumers.find(
+                    (r) => r.owner.processEpoch === plugin.channelOwner?.processEpoch,
+                  );
                   if (interopRow) interop!.output(interopRow, line);
                   const row = compatibility?.rows.find(
                     (r) => r.owner.processEpoch === plugin.channelOwner?.processEpoch,
@@ -1463,8 +1469,13 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                   compatibility && plugin.id.startsWith("acceptance.compat-") && plugin.channelOwner
                     ? compatibility.begin(plugin.channelOwner)
                     : undefined;
-                const interopRow = interop && plugin.channelOwner && plugin.id.startsWith("acceptance.interop-")
-                  ? interop.begin(plugin.channelOwner, plugin.id.endsWith("python") ? "stdio" : "message-port") : undefined;
+                const interopRow =
+                  interop && plugin.channelOwner && plugin.id.startsWith("acceptance.interop-")
+                    ? interop.begin(
+                        plugin.channelOwner,
+                        plugin.id.endsWith("python") ? "stdio" : "message-port",
+                      )
+                    : undefined;
                 const child = await launch(plugin);
                 if (interopRow) return interop!.attach(interopRow, child);
                 if (
@@ -1487,9 +1498,14 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             userData,
             builtins,
             commandLine: {
-              developmentDirectories: config.interop?.sources ?? config.compatibility?.sources ?? [],
+              developmentDirectories:
+                config.interop?.sources ?? config.compatibility?.sources ?? [],
               safeMode: false,
-              ...(config.interop ? { python: config.interop.python } : config.compatibility ? { python: config.compatibility.python } : {}),
+              ...(config.interop
+                ? { python: config.interop.python }
+                : config.compatibility
+                  ? { python: config.compatibility.python }
+                  : {}),
             },
             locale: "en",
             dialogs: {
@@ -1510,11 +1526,17 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           report,
         };
         composition = await composeDesktopMain(compositionInput, {
-          ...(["action-replay", "renderer-loss", "all-optional-off", "public-interop"].includes(config.case)
-            ? { nativeActions: interop ? {
-                choose: (name: string) => nativeActions.choose(name),
-                copy: (text: string) => nativeActions.copy(text),
-              } : nativeActions }
+          ...(["action-replay", "renderer-loss", "all-optional-off", "public-interop"].includes(
+            config.case,
+          )
+            ? {
+                nativeActions: interop
+                  ? {
+                      choose: (name: string) => nativeActions.choose(name),
+                      copy: (text: string) => nativeActions.copy(text),
+                    }
+                  : nativeActions,
+              }
             : {}),
           ...(imported
             ? {
@@ -1864,31 +1886,60 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           let ran = false;
           fixture = {
             composition: {
-              profile: handles.profile, journalProfile, persistenceProfile: handles.persistenceProfile,
-              host: handles.host, stage3: live.stage3,
-              get workerCount() { return persistenceWorkerCount(handles.backend); },
-              get reservationListenerCount() { return listeners; },
+              profile: handles.profile,
+              journalProfile,
+              persistenceProfile: handles.persistenceProfile,
+              host: handles.host,
+              stage3: live.stage3,
+              get workerCount() {
+                return persistenceWorkerCount(handles.backend);
+              },
+              get reservationListenerCount() {
+                return listeners;
+              },
             },
             environment: {
-              commit: config.commit, artifact: config.artifact, artifactSha256: config.artifactSha256,
-              os: os.release(), architecture: process.arch, cpu: os.cpus()[0]?.model ?? "unknown",
-              ramBytes: os.totalmem(), filesystem: config.filesystem, node: process.versions.node,
-              electron: process.versions.electron ?? "", memoryMethod: "not-measured-interop", warmCold: "cold",
+              commit: config.commit,
+              artifact: config.artifact,
+              artifactSha256: config.artifactSha256,
+              os: os.release(),
+              architecture: process.arch,
+              cpu: os.cpus()[0]?.model ?? "unknown",
+              ramBytes: os.totalmem(),
+              filesystem: config.filesystem,
+              node: process.versions.node,
+              electron: process.versions.electron ?? "",
+              memoryMethod: "not-measured-interop",
+              warmCold: "cold",
             },
-            close: () => closed ??= (async () => {
-              await live.dispose();
-              for (const snapshot of snapshots()) assertZeroCounters(snapshot);
-              assert.deepEqual(failures, []);
-              for (const unsubscribe of off.splice(0)) unsubscribe();
-              for (const name of ipcNames.splice(0)) ipcMain.removeHandler(name);
-              restoreReservation();
-              win.destroy();
-            })(),
+            close: () =>
+              (closed ??= (async () => {
+                await live.dispose();
+                for (const snapshot of snapshots()) assertZeroCounters(snapshot);
+                assert.deepEqual(failures, []);
+                for (const unsubscribe of off.splice(0)) unsubscribe();
+                for (const name of ipcNames.splice(0)) ipcMain.removeHandler(name);
+                restoreReservation();
+                win.destroy();
+              })()),
             async runCase(id) {
-              assert.equal(id, "public-interop"); assert.equal(ran, false); ran = true;
-              const consumers = await producePublicInterop({ observer: interop, plugins: live.plugins,
-                ui, participant: handles.host.participant, native: nativeActions, directory: userData });
-              return { checks: {}, events: [], samples: {}, publicInterop: { ...config.interop, consumers } };
+              assert.equal(id, "public-interop");
+              assert.equal(ran, false);
+              ran = true;
+              const consumers = await producePublicInterop({
+                observer: interop,
+                plugins: live.plugins,
+                ui,
+                participant: handles.host.participant,
+                native: nativeActions,
+                directory: userData,
+              });
+              return {
+                checks: {},
+                events: [],
+                samples: {},
+                publicInterop: { ...config.interop, consumers },
+              };
             },
             async finishObservation(evidence) {
               verifyPublicInterop(interop.consumers, config.interop.identity);
@@ -2453,7 +2504,10 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           }
           assert.equal(input.host.recovery.snapshot().items.length, 0);
         };
-        const producers: Record<Exclude<FoundationCase, "public-interop">, () => Promise<CaseEvidence>> = {
+        const producers: Record<
+          Exclude<FoundationCase, "public-interop">,
+          () => Promise<CaseEvidence>
+        > = {
           retirement: () => produceRetirement(input),
           "healthy-release": () => produceHealthyRelease(input),
           contention: () =>

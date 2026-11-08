@@ -7,6 +7,7 @@ Order: 3A-T0 → 3B1-T0 → 3B2-T0 on feat/plugin-system-stage-3.
 Published API during freeze: 1.4.0. No new runtime route or provider enabled.
 
 Successor ownership:
+
 - A-T1: protocol device-types, business-result, device-methods, device-limits, events, device-contract.test, device-broker-v1 fixtures.
 - A-T2: device-broker/provider, broker-port, contract.test.
 - A-T3: runtime/device-resources and test; device-broker/journal-port, recovery-port and resource-participant.
@@ -22,6 +23,7 @@ Successor ownership:
 - AM-31 fixture outer format and AM-15 future type projections are frozen; no future runtime registry publication at F.
 
 Required early slices before P150 acceptance:
+
 - D150 (A-T8 with early B1-T5, H-D): real CoreActionLedger, controller/state/session/core-recovery wiring, trusted stop/Disconnect, renewal IPC, and required-policy workspace/compiler fixtures.
 - R150 (B1-T3, H-R): builtin own-property provider rejection, shared errors re-export, channel owner/generation and device participant hooks, optional provider source policy.
 - K150 (B1-T4, H-K): builtin:kobrixa.device-ev3 / kobrixa.device-ev3 allowlist factory and provider-only source registration.
@@ -46,22 +48,22 @@ SHA is recorded by this implementer. No feature preflight is authorized yet.
 
 BM-01 defining modules and single assembly owner:
 
-| Defining module | Frozen exports / next writer |
-| --- | --- |
-| protocol/device-types.ts | Identity, device DTOs, handle/counter schema declarations; A-T1 |
-| protocol/device-methods.ts | DeviceFailureDetail (sole definition), DeviceRequestMap; A-T1 |
-| protocol/business-result.ts, errors.ts | BusinessResult, cumulative type-only errors/resources and failure schema declarations; A-T1 |
-| protocol/events.ts | EventEnvelope, Stage3EventData; A-T1, then stopped H-P handoffs |
-| runtime/device-resources.ts | Principal, journal DTOs, DeviceRecoverySnapshot/DeviceRecoveryPort (sole definitions), lifetimes, DeviceRequirement, CommonEventLedgerPort, channel attachment; A-T3 |
-| runtime/profile-writer-lock.ts | ProfileWriterLock; A-T8 |
-| runtime/core-actions.ts | CoreActionReference, validation, CoreWindowScope and device-current-stop target; B1-T0 forward definition |
-| runtime/builtin-launch.ts | Builtin launch contracts; B1-T0 forward definition |
-| runtime/ui-lifecycle.ts | Stage3RuntimePorts, Stage3HostAttachment, Stage3ChannelContext, Stage3ChannelBinding, UiRuntimeAttachment, OwnerRetirement; B1-T0 forward definition |
-| runtime/ui-subscriptions.ts | UiEventLedgerPort; B1-T0 forward definition |
-| runtime/ui-host-ports.ts | Explicit PluginUiBridge, UiCatalogPort, UiBridgeEvent, FoundationDiagnostics, FoundationCounters, FoundationDiagnosticEvent; B1-T0 forward definition |
-| runtime/persistence-participant.ts | Shared persistence participant types; B2-T0 forward definition |
-| runtime/settings-form-port.ts | SettingsFormBinding, SettingsFormPort, BoundSettingsService, ContributedSettingsForm, SettingsFieldMap; B2-T0 forward definition |
-| runtime/index.ts | **H-R, B2-T0 Step 3 only**: assemble all type-only exports after defining modules exist, then rebuild and check package-root consumers |
+| Defining module                        | Frozen exports / next writer                                                                                                                                         |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| protocol/device-types.ts               | Identity, device DTOs, handle/counter schema declarations; A-T1                                                                                                      |
+| protocol/device-methods.ts             | DeviceFailureDetail (sole definition), DeviceRequestMap; A-T1                                                                                                        |
+| protocol/business-result.ts, errors.ts | BusinessResult, cumulative type-only errors/resources and failure schema declarations; A-T1                                                                          |
+| protocol/events.ts                     | EventEnvelope, Stage3EventData; A-T1, then stopped H-P handoffs                                                                                                      |
+| runtime/device-resources.ts            | Principal, journal DTOs, DeviceRecoverySnapshot/DeviceRecoveryPort (sole definitions), lifetimes, DeviceRequirement, CommonEventLedgerPort, channel attachment; A-T3 |
+| runtime/profile-writer-lock.ts         | ProfileWriterLock; A-T8                                                                                                                                              |
+| runtime/core-actions.ts                | CoreActionReference, validation, CoreWindowScope and device-current-stop target; B1-T0 forward definition                                                            |
+| runtime/builtin-launch.ts              | Builtin launch contracts; B1-T0 forward definition                                                                                                                   |
+| runtime/ui-lifecycle.ts                | Stage3RuntimePorts, Stage3HostAttachment, Stage3ChannelContext, Stage3ChannelBinding, UiRuntimeAttachment, OwnerRetirement; B1-T0 forward definition                 |
+| runtime/ui-subscriptions.ts            | UiEventLedgerPort; B1-T0 forward definition                                                                                                                          |
+| runtime/ui-host-ports.ts               | Explicit PluginUiBridge, UiCatalogPort, UiBridgeEvent, FoundationDiagnostics, FoundationCounters, FoundationDiagnosticEvent; B1-T0 forward definition                |
+| runtime/persistence-participant.ts     | Shared persistence participant types; B2-T0 forward definition                                                                                                       |
+| runtime/settings-form-port.ts          | SettingsFormBinding, SettingsFormPort, BoundSettingsService, ContributedSettingsForm, SettingsFieldMap; B2-T0 forward definition                                     |
+| runtime/index.ts                       | **H-R, B2-T0 Step 3 only**: assemble all type-only exports after defining modules exist, then rebuild and check package-root consumers                               |
 
 All paths above are under `packages/plugin-protocol/src/` or
 `packages/plugin-runtime/src/` as indicated. No A-T0 barrel writer was added.
@@ -108,6 +110,7 @@ Retirement gate: storage 10000 ms parallel with stop 15000 ms plus journal
 Forward persistence imports are resolved only by 3B2-T0 before F.
 
 Successors:
+
 - protocol ui-resource/ui-types/ui-methods/ui-limits/ui-contract and the three UI fixture JSON files: 3B1-T1.
 - runtime ui-host-ports and ui-contract: 3B1-T2.
 - runtime ui-lifecycle/core-actions: 3B1-T3.
@@ -129,34 +132,34 @@ Pre-F parent: `070492916b1baa3712d29c998cdf1801baa5064c`.
 
 F is published by the commit that contains this receipt. Every Step 5 gate, including the integrated `pnpm check:desktop`, passed on 2026-10-20 after the controller resolved two earlier-portion lint defects (see "Integrated F blockers" below). The actual F SHA is recorded in the receipt-only follow-up. The table records successor ownership, which transfers at F.
 
-| Path | Successor |
-|---|---|
-| `packages/plugin-protocol/src/settings.ts` | 3B2-T1 |
-| `packages/plugin-protocol/src/storage.ts` | 3B2-T1 |
-| `packages/plugin-protocol/src/persistence-actions.ts` | 3B2-T1 |
-| `packages/plugin-protocol/src/persistence-validation.ts` | 3B2-T1 |
-| `packages/plugin-protocol/src/persistence-contract.test.ts` | 3B2-T1 |
-| `packages/plugin-protocol/test-fixtures/settings-storage-v1/valid.json` | 3B2-T1 |
-| `packages/plugin-protocol/test-fixtures/settings-storage-v1/invalid.json` | 3B2-T1 |
-| `packages/plugin-protocol/test-fixtures/settings-storage-v1/maximum.json` | 3B2-T1 |
-| `apps/desktop/src/main/plugins/persistence/filesystem.ts` | 3B2-T2 |
-| `apps/desktop/src/main/plugins/persistence/engine-port.ts` | 3B2-T2 |
-| `apps/desktop/src/main/plugins/persistence/contract.test.ts` | 3B2-T2 |
-| `apps/desktop/src/main/plugins/persistence/worker.ts` | 3B2-T2 |
-| `packages/plugin-runtime/src/settings-form-port.ts` | 3B2-T3 |
-| `apps/desktop/src/main/plugins/persistence/settings-service.ts` | 3B2-T3 |
-| `apps/desktop/src/renderer/settings/contributed-settings-form.tsx` | 3B2-T3 |
-| `apps/desktop/src/main/plugins/persistence/record-port.ts` | 3B2-T4 |
-| `packages/plugin-runtime/src/persistence-participant.ts` | 3B2-T5 |
-| `packages/plugin-runtime/src/persistence-participant.test.ts` | 3B2-T5 |
-| `apps/desktop/src/main/plugins/persistence/host-port.ts` | 3B2-T5 |
-| `apps/desktop/src/main/plugins/persistence/actions.ts` | 3B2-T5 |
-| `apps/desktop/src/main/plugins/persistence/recovery-port.ts` | 3B2-T5 |
-| `apps/desktop/src/main/plugins/persistence/import-sources.ts` | 3B2-T6 |
-| `tests/desktop/plugin-persistence-main.ts` | 3B2-T7 |
-| `packages/plugin-protocol/src/index.ts` | H-P |
-| `packages/plugin-runtime/src/index.ts` | H-R |
-| `docs/superpowers/plans/2026-10-17-plugin-system-stage-3-contract-freeze.md` | H-I |
+| Path                                                                         | Successor |
+| ---------------------------------------------------------------------------- | --------- |
+| `packages/plugin-protocol/src/settings.ts`                                   | 3B2-T1    |
+| `packages/plugin-protocol/src/storage.ts`                                    | 3B2-T1    |
+| `packages/plugin-protocol/src/persistence-actions.ts`                        | 3B2-T1    |
+| `packages/plugin-protocol/src/persistence-validation.ts`                     | 3B2-T1    |
+| `packages/plugin-protocol/src/persistence-contract.test.ts`                  | 3B2-T1    |
+| `packages/plugin-protocol/test-fixtures/settings-storage-v1/valid.json`      | 3B2-T1    |
+| `packages/plugin-protocol/test-fixtures/settings-storage-v1/invalid.json`    | 3B2-T1    |
+| `packages/plugin-protocol/test-fixtures/settings-storage-v1/maximum.json`    | 3B2-T1    |
+| `apps/desktop/src/main/plugins/persistence/filesystem.ts`                    | 3B2-T2    |
+| `apps/desktop/src/main/plugins/persistence/engine-port.ts`                   | 3B2-T2    |
+| `apps/desktop/src/main/plugins/persistence/contract.test.ts`                 | 3B2-T2    |
+| `apps/desktop/src/main/plugins/persistence/worker.ts`                        | 3B2-T2    |
+| `packages/plugin-runtime/src/settings-form-port.ts`                          | 3B2-T3    |
+| `apps/desktop/src/main/plugins/persistence/settings-service.ts`              | 3B2-T3    |
+| `apps/desktop/src/renderer/settings/contributed-settings-form.tsx`           | 3B2-T3    |
+| `apps/desktop/src/main/plugins/persistence/record-port.ts`                   | 3B2-T4    |
+| `packages/plugin-runtime/src/persistence-participant.ts`                     | 3B2-T5    |
+| `packages/plugin-runtime/src/persistence-participant.test.ts`                | 3B2-T5    |
+| `apps/desktop/src/main/plugins/persistence/host-port.ts`                     | 3B2-T5    |
+| `apps/desktop/src/main/plugins/persistence/actions.ts`                       | 3B2-T5    |
+| `apps/desktop/src/main/plugins/persistence/recovery-port.ts`                 | 3B2-T5    |
+| `apps/desktop/src/main/plugins/persistence/import-sources.ts`                | 3B2-T6    |
+| `tests/desktop/plugin-persistence-main.ts`                                   | 3B2-T7    |
+| `packages/plugin-protocol/src/index.ts`                                      | H-P       |
+| `packages/plugin-runtime/src/index.ts`                                       | H-R       |
+| `docs/superpowers/plans/2026-10-17-plugin-system-stage-3-contract-freeze.md` | H-I       |
 
 H-R assembled packages/plugin-runtime/src/index.ts once after all three T0 portions: device-resources.ts, profile-writer-lock.ts, core-actions.ts, builtin-launch.ts, ui-lifecycle.ts, ui-subscriptions.ts, ui-host-ports.ts, persistence-participant.ts and settings-form-port.ts. These are type-only exports; no constructors or 1.7 wire registrations were published.
 

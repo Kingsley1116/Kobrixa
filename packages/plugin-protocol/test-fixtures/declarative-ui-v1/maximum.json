@@ -18,16 +18,7 @@
               "id": "root",
               "type": "group",
               "layout": "stack",
-              "children": [
-                "g-0",
-                "g-1",
-                "g-2",
-                "g-3",
-                "g-4",
-                "g-5",
-                "g-6",
-                "g-7"
-              ]
+              "children": ["g-0", "g-1", "g-2", "g-3", "g-4", "g-5", "g-6", "g-7"]
             },
             {
               "id": "g-0",
@@ -2817,9 +2808,7 @@
             "arguments": {}
           }
         ],
-        "panels": [
-          "acme.ui.panel"
-        ]
+        "panels": ["acme.ui.panel"]
       },
       "valid": true,
       "expected": {
@@ -2847,16 +2836,7 @@
               "id": "root",
               "type": "group",
               "layout": "stack",
-              "children": [
-                "g-0",
-                "g-1",
-                "g-2",
-                "g-3",
-                "g-4",
-                "g-5",
-                "g-6",
-                "g-7"
-              ]
+              "children": ["g-0", "g-1", "g-2", "g-3", "g-4", "g-5", "g-6", "g-7"]
             },
             {
               "id": "g-0",
@@ -5657,9 +5637,7 @@
             "arguments": {}
           }
         ],
-        "panels": [
-          "acme.ui.panel"
-        ]
+        "panels": ["acme.ui.panel"]
       },
       "valid": false,
       "expected": {
@@ -5687,57 +5665,43 @@
               "id": "g-0",
               "type": "group",
               "layout": "stack",
-              "children": [
-                "g-1"
-              ]
+              "children": ["g-1"]
             },
             {
               "id": "g-1",
               "type": "group",
               "layout": "stack",
-              "children": [
-                "g-2"
-              ]
+              "children": ["g-2"]
             },
             {
               "id": "g-2",
               "type": "group",
               "layout": "stack",
-              "children": [
-                "g-3"
-              ]
+              "children": ["g-3"]
             },
             {
               "id": "g-3",
               "type": "group",
               "layout": "stack",
-              "children": [
-                "g-4"
-              ]
+              "children": ["g-4"]
             },
             {
               "id": "g-4",
               "type": "group",
               "layout": "stack",
-              "children": [
-                "g-5"
-              ]
+              "children": ["g-5"]
             },
             {
               "id": "g-5",
               "type": "group",
               "layout": "stack",
-              "children": [
-                "g-6"
-              ]
+              "children": ["g-6"]
             },
             {
               "id": "g-6",
               "type": "group",
               "layout": "stack",
-              "children": [
-                "g-7"
-              ]
+              "children": ["g-7"]
             },
             {
               "id": "g-7",
@@ -5764,9 +5728,7 @@
             "arguments": {}
           }
         ],
-        "panels": [
-          "acme.ui.panel"
-        ]
+        "panels": ["acme.ui.panel"]
       },
       "valid": true,
       "expected": {
@@ -5794,65 +5756,49 @@
               "id": "g-0",
               "type": "group",
               "layout": "stack",
-              "children": [
-                "g-1"
-              ]
+              "children": ["g-1"]
             },
             {
               "id": "g-1",
               "type": "group",
               "layout": "stack",
-              "children": [
-                "g-2"
-              ]
+              "children": ["g-2"]
             },
             {
               "id": "g-2",
               "type": "group",
               "layout": "stack",
-              "children": [
-                "g-3"
-              ]
+              "children": ["g-3"]
             },
             {
               "id": "g-3",
               "type": "group",
               "layout": "stack",
-              "children": [
-                "g-4"
-              ]
+              "children": ["g-4"]
             },
             {
               "id": "g-4",
               "type": "group",
               "layout": "stack",
-              "children": [
-                "g-5"
-              ]
+              "children": ["g-5"]
             },
             {
               "id": "g-5",
               "type": "group",
               "layout": "stack",
-              "children": [
-                "g-6"
-              ]
+              "children": ["g-6"]
             },
             {
               "id": "g-6",
               "type": "group",
               "layout": "stack",
-              "children": [
-                "g-7"
-              ]
+              "children": ["g-7"]
             },
             {
               "id": "g-7",
               "type": "group",
               "layout": "stack",
-              "children": [
-                "g-8"
-              ]
+              "children": ["g-8"]
             },
             {
               "id": "g-8",
@@ -5879,9 +5825,7 @@
             "arguments": {}
           }
         ],
-        "panels": [
-          "acme.ui.panel"
-        ]
+        "panels": ["acme.ui.panel"]
       },
       "valid": false,
       "expected": {
@@ -5956,10 +5900,7 @@
             "mode": {
               "schema": {
                 "type": "enum",
-                "values": [
-                  "one",
-                  "two"
-                ],
+                "values": ["one", "two"],
                 "nullable": false
               },
               "initial": "one",
@@ -6168,9 +6109,7 @@
             "arguments": {}
           }
         ],
-        "panels": [
-          "acme.ui.panel"
-        ]
+        "panels": ["acme.ui.panel"]
       },
       "valid": true,
       "expected": {
@@ -6245,10 +6184,7 @@
             "mode": {
               "schema": {
                 "type": "enum",
-                "values": [
-                  "one",
-                  "two"
-                ],
+                "values": ["one", "two"],
                 "nullable": false
               },
               "initial": "one",
@@ -6457,9 +6393,7 @@
             "arguments": {}
           }
         ],
-        "panels": [
-          "acme.ui.panel"
-        ]
+        "panels": ["acme.ui.panel"]
       },
       "valid": false,
       "expected": {
@@ -6534,10 +6468,7 @@
             "mode": {
               "schema": {
                 "type": "enum",
-                "values": [
-                  "one",
-                  "two"
-                ],
+                "values": ["one", "two"],
                 "nullable": false
               },
               "initial": "one",
@@ -6747,9 +6678,7 @@
             "arguments": {}
           }
         ],
-        "panels": [
-          "acme.ui.panel"
-        ]
+        "panels": ["acme.ui.panel"]
       },
       "valid": true,
       "expected": {

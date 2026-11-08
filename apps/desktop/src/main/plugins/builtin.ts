@@ -55,7 +55,9 @@ export async function assembleBuiltinPluginSources(input: {
 }): Promise<readonly PluginSource[]> {
   const sources: PluginSource[] = [...BUILTIN_PLUGIN_SOURCES];
   const install = (pluginId: string, source: PluginSource) => {
-    const index = sources.findIndex((entry) => entry.kind === "builtin" && (entry.manifest as { id?: string }).id === pluginId);
+    const index = sources.findIndex(
+      (entry) => entry.kind === "builtin" && (entry.manifest as { id?: string }).id === pluginId,
+    );
     if (index < 0) sources.push(source);
     else sources[index] = source;
   };

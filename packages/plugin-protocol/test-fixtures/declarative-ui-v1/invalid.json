@@ -65,10 +65,7 @@
             "mode": {
               "schema": {
                 "type": "enum",
-                "values": [
-                  "one",
-                  "two"
-                ],
+                "values": ["one", "two"],
                 "nullable": false
               },
               "initial": "one",
@@ -278,9 +275,7 @@
             "arguments": {}
           }
         ],
-        "panels": [
-          "acme.ui.panel"
-        ]
+        "panels": ["acme.ui.panel"]
       },
       "valid": false,
       "expected": {
@@ -355,10 +350,7 @@
             "mode": {
               "schema": {
                 "type": "enum",
-                "values": [
-                  "one",
-                  "two"
-                ],
+                "values": ["one", "two"],
                 "nullable": false
               },
               "initial": "one",
@@ -569,9 +561,7 @@
             "arguments": {}
           }
         ],
-        "panels": [
-          "acme.ui.panel"
-        ]
+        "panels": ["acme.ui.panel"]
       },
       "valid": false,
       "expected": {
@@ -646,10 +636,7 @@
             "mode": {
               "schema": {
                 "type": "enum",
-                "values": [
-                  "one",
-                  "two"
-                ],
+                "values": ["one", "two"],
                 "nullable": false
               },
               "initial": "one",
@@ -858,9 +845,7 @@
             "arguments": {}
           }
         ],
-        "panels": [
-          "acme.ui.panel"
-        ]
+        "panels": ["acme.ui.panel"]
       },
       "valid": false,
       "expected": {
@@ -935,10 +920,7 @@
             "mode": {
               "schema": {
                 "type": "enum",
-                "values": [
-                  "one",
-                  "two"
-                ],
+                "values": ["one", "two"],
                 "nullable": false
               },
               "initial": "one",
@@ -1149,9 +1131,7 @@
             "arguments": {}
           }
         ],
-        "panels": [
-          "acme.ui.panel"
-        ]
+        "panels": ["acme.ui.panel"]
       },
       "valid": false,
       "expected": {
@@ -1226,10 +1206,7 @@
             "mode": {
               "schema": {
                 "type": "enum",
-                "values": [
-                  "one",
-                  "two"
-                ],
+                "values": ["one", "two"],
                 "nullable": false
               },
               "initial": "one",
@@ -1438,9 +1415,7 @@
             "arguments": {}
           }
         ],
-        "panels": [
-          "acme.ui.panel"
-        ]
+        "panels": ["acme.ui.panel"]
       },
       "valid": false,
       "expected": {
@@ -1515,10 +1490,7 @@
             "mode": {
               "schema": {
                 "type": "enum",
-                "values": [
-                  "one",
-                  "two"
-                ],
+                "values": ["one", "two"],
                 "nullable": false
               },
               "initial": "one",
@@ -1728,9 +1700,7 @@
             "arguments": {}
           }
         ],
-        "panels": [
-          "acme.ui.panel"
-        ]
+        "panels": ["acme.ui.panel"]
       },
       "valid": false,
       "expected": {
@@ -1805,10 +1775,7 @@
             "mode": {
               "schema": {
                 "type": "enum",
-                "values": [
-                  "one",
-                  "two"
-                ],
+                "values": ["one", "two"],
                 "nullable": false
               },
               "initial": "one",
@@ -2018,9 +1985,7 @@
             "arguments": {}
           }
         ],
-        "panels": [
-          "acme.ui.panel"
-        ]
+        "panels": ["acme.ui.panel"]
       },
       "valid": false,
       "expected": {
@@ -2103,10 +2068,7 @@
             "mode": {
               "schema": {
                 "type": "enum",
-                "values": [
-                  "one",
-                  "two"
-                ],
+                "values": ["one", "two"],
                 "nullable": false
               },
               "initial": "one",
@@ -2316,9 +2278,7 @@
             "arguments": {}
           }
         ],
-        "panels": [
-          "acme.ui.panel"
-        ]
+        "panels": ["acme.ui.panel"]
       },
       "valid": false,
       "expected": {
@@ -2393,10 +2353,7 @@
             "mode": {
               "schema": {
                 "type": "enum",
-                "values": [
-                  "one",
-                  "two"
-                ],
+                "values": ["one", "two"],
                 "nullable": false
               },
               "initial": "one",
@@ -2610,9 +2567,7 @@
             "arguments": {}
           }
         ],
-        "panels": [
-          "acme.ui.panel"
-        ]
+        "panels": ["acme.ui.panel"]
       },
       "valid": false,
       "expected": {
@@ -2687,10 +2642,7 @@
             "mode": {
               "schema": {
                 "type": "enum",
-                "values": [
-                  "one",
-                  "two"
-                ],
+                "values": ["one", "two"],
                 "nullable": false
               },
               "initial": "one",
@@ -2900,9 +2852,7 @@
             "arguments": {}
           }
         ],
-        "panels": [
-          "acme.ui.panel"
-        ]
+        "panels": ["acme.ui.panel"]
       },
       "valid": false,
       "expected": {
@@ -2977,10 +2927,7 @@
             "mode": {
               "schema": {
                 "type": "enum",
-                "values": [
-                  "one",
-                  "two"
-                ],
+                "values": ["one", "two"],
                 "nullable": false
               },
               "initial": "one",
@@ -3190,9 +3137,7 @@
             "arguments": {}
           }
         ],
-        "panels": [
-          "acme.ui.panel"
-        ]
+        "panels": ["acme.ui.panel"]
       },
       "valid": false,
       "expected": {
