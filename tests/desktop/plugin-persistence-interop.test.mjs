@@ -1,3 +1,12 @@
+import { sealedTtlOracle } from "./fixtures/plugin-persistence/sealed-ttl-oracle.mjs";
+import { sealedTtlSummary } from "./plugin-persistence-sealed-ttl.ts";
+import { unknownOracle } from "./fixtures/plugin-persistence/unknown-oracle.mjs";
+import { unknownSummary } from "./plugin-persistence-unknown.ts";
+import { actionReplayOracle } from "./fixtures/plugin-persistence/action-replay-oracle.mjs";
+import { actionSummary } from "./plugin-persistence-action-replay.ts";
+import { optionalOffOracle } from "./fixtures/plugin-persistence/optional-off-oracle.mjs";
+import { rendererLossOracle } from "./fixtures/plugin-persistence/renderer-loss-oracle.mjs";
+import { rendererLossSummary } from "./plugin-persistence-renderer-loss.ts";
 import test from "node:test";
 import { contentionOracle } from "./fixtures/plugin-persistence/contention-oracle.mjs";
 import { outcomeOracleFixture } from "./fixtures/plugin-persistence/outcome-oracle.mjs";
@@ -262,6 +271,23 @@ test("verifier negatives: every declared foundation observation is required", ()
       Object.assign(evidence.checks, oracle.checks);
       evidence.registration = oracle.registration;
     }
+    if (id === "renderer-loss") {
+      const oracle = rendererLossOracle();
+      Object.assign(evidence, { rendererLoss: oracle, checks: rendererLossSummary(oracle) });
+    }
+    if (id === "sealed-ttl") {
+      const oracle = sealedTtlOracle();
+      Object.assign(evidence, { sealedTtl: oracle, checks: sealedTtlSummary(oracle) });
+    }
+    if (id === "unknown-publication") {
+      const oracle = unknownOracle();
+      Object.assign(evidence, { unknown: oracle, checks: unknownSummary(oracle) });
+    }
+    if (id === "action-replay") {
+      const oracle = actionReplayOracle();
+      Object.assign(evidence, { actionReplay: oracle, checks: actionSummary(oracle) });
+    }
+    if (id === "all-optional-off") Object.assign(evidence, optionalOffOracle().evidence);
     assertFoundationEvidence(id, evidence);
     for (const key of required.checks) {
       const altered = structuredClone(evidence);
@@ -285,6 +311,7 @@ test("verifier negatives: inert import and second factory rejection precede allo
   const result = spawnSync(
     process.execPath,
     [
+      ...process.execArgv,
       "--input-type=module",
       "-e",
       `
