@@ -43,7 +43,12 @@ try {
   await server.listen();
   const address = server.httpServer.address();
   assert.ok(address && typeof address !== "string");
-  const rendererUrl = `http://127.0.0.1:${address.port}/@fs/${path.join(root, "tests/desktop/static-languages-browser.html")}`;
+  // Electron on Windows rejects any argument that follows a URL-like argument, so the
+  // renderer URL must stay last; Vite's /@fs/ route also needs forward slashes.
+  const rendererUrl = `http://127.0.0.1:${address.port}/@fs/${path
+    .join(root, "tests/desktop/static-languages-browser.html")
+    .split(path.sep)
+    .join("/")}`;
   await build({
     entryPoints: [path.join(root, "apps/desktop/src/preload/index.ts")],
     outfile: path.join(directory, "preload.cjs"),
@@ -73,7 +78,7 @@ try {
     const recovery = phase === "recover-hostile";
     const child = spawn(
       electron,
-      [main, `--user-data-dir=${profile}`, rendererUrl, directory, phase],
+      [main, `--user-data-dir=${profile}`, directory, phase, rendererUrl],
       {
         stdio: "inherit",
         detached: recovery && process.platform !== "win32",
@@ -111,7 +116,7 @@ try {
   const stressStarted = performance.now();
   const hostile = spawn(
     electron,
-    [main, `--user-data-dir=${stressProfile}`, rendererUrl, directory, "hostile-tokenization"],
+    [main, `--user-data-dir=${stressProfile}`, directory, "hostile-tokenization", rendererUrl],
     { detached: process.platform !== "win32", stdio: ["ignore", "pipe", "inherit"] },
   );
   const proof = await waitForHostileTermination(hostile);

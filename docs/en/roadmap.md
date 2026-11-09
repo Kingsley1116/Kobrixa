@@ -45,6 +45,7 @@ Implementation is delivered; stage-2 acceptance is not yet complete. The [master
 - **V02:** manual acceptance of an actual blocked renderer, next-launch recovery UI and persistent individual disables. Simulating the unresponsive hook does not satisfy this gate.
 - **V03:** manual installed-app acceptance on a fresh machine/container without the repository mounted, including themes, static-plugin lifecycle and recovery.
 - **V04:** retain the recorded environmental exception: full desktop smoke stops at the pre-existing `tests/desktop/monitor-smoke.mjs:332` timeout (`visibilityState === "hidden"`), also reproduced on pre-2C base `247db48`. Record checks skipped by that failure separately or obtain a complete run in a suitable desktop session; the full suite is not recorded as passing.
+- **Workspace file filter:** the shipped workspace lists and opens only `.bp`, `.bpi`, `.bpm` and `.json` files, so files that use a third-party static language's extension cannot be opened from the project tree. `pnpm test:desktop:packaged` therefore exercises third-party static languages through the catalog, the enable/disable lifecycle and Monaco registration only, and pins the current filter. Opening plugin-contributed extensions in the workspace is a separate product decision, not part of stage-2 acceptance.
 
 Exit: compiler and device APIs are stable enough for independent CLI and desktop release cycles.
 

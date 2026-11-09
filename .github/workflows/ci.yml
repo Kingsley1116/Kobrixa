@@ -84,7 +84,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
-      KOBRIXA_TEST_PYTHON: ${{ runner.os == 'Windows' && 'python' || 'python3' }}
+      KOBRIXA_TEST_PYTHON: ${{ matrix.platform == 'win32' && 'python' || 'python3' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -105,6 +105,16 @@ jobs:
         if: runner.os == 'Linux'
         run: pnpm check:collab && pnpm test:collab:live
       - run: pnpm test:desktop
+      - name: Configure the Electron SUID sandbox helper
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          # Requiring electron may first download the binary and print a progress line.
+          electron="$(node -e "console.log(require('electron'))" | tail -n 1)"
+          sandbox="$(dirname "$electron")/chrome-sandbox"
+          test -f "$sandbox"
+          sudo chown root:root "$sandbox"
+          sudo chmod 4755 "$sandbox"
       - name: Static language boundary ledger (P5)
         run: pnpm test:static-languages:boundaries
       - name: Static language IPC, Monaco and recovery smoke

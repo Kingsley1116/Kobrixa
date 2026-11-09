@@ -1,4 +1,4 @@
-import { appendFile, mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
@@ -63,9 +63,14 @@ it("rejects a file that grows past the limit after stat", async () => {
   await write("grow.json", JSON.stringify({ entries: [entry] }));
   // The size decision must come from the bounded read, not only from stat.
   const growingStat = async (file: string) => {
-    const info = await stat(file);
-    await appendFile(file, " ".repeat(DIAGNOSTIC_HELP_LIMITS.fileBytes));
-    return info;
+    const handle = await open(file, "a");
+    try {
+      const info = await handle.stat();
+      await handle.appendFile(" ".repeat(DIAGNOSTIC_HELP_LIMITS.fileBytes));
+      return info;
+    } finally {
+      await handle.close();
+    }
   };
   expect(await readDiagnosticHelp(plugin, decl("grow.json"), { stat: growingStat })).toMatchObject({
     ok: false,

@@ -251,22 +251,6 @@ try {
       /shutdown.recovery/,
     );
     assert.equal(await js('document.querySelectorAll(".project-tab .dirty").length'), 1);
-    await js("document.querySelector('[data-tree-path=\"sample.toy\"]').click()");
-    for (let attempt = 0; attempt < 50; attempt++) {
-      if (
-        await js("Boolean(document.querySelector('.editor-stage .editor[data-mode-id=\"toy\"]'))")
-      )
-        break;
-      await pause(100);
-    }
-    assert.equal(
-      await js("Boolean(document.querySelector('.editor-stage .editor[data-mode-id=\"toy\"]'))"),
-      true,
-    );
-    assert.match(
-      await js('document.querySelector(".editor-stage .view-lines").textContent'),
-      /draft_value/,
-    );
   });
   await assert.rejects(readFile(path.join(profile, "plugins/session.json")), { code: "ENOENT" });
   assert.deepEqual(JSON.parse(await readFile(path.join(profile, "updates.json"), "utf8")), {

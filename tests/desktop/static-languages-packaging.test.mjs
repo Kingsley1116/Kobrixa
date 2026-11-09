@@ -65,7 +65,8 @@ test("packaged copy preserves app framework symlinks verbatim", async () => {
       ["Framework", "Versions/Current/Framework"],
     ]) {
       assert.equal((await lstat(path.join(installed, name))).isSymbolicLink(), true);
-      assert.equal(await readlink(path.join(installed, name)), target);
+      // Windows reports relative link targets with backslashes.
+      assert.equal((await readlink(path.join(installed, name))).split(path.sep).join("/"), target);
     }
   } finally {
     await rm(root, { recursive: true, force: true });

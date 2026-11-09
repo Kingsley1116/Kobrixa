@@ -24,7 +24,7 @@ it("keeps Basic Plus imports inside the browser companion and worker adapters", 
   ]) {
     if (
       !/\.tsx?$/.test(file) ||
-      file.includes("/companions/basic-plus/") ||
+      file.split(path.sep).join("/").includes("/companions/basic-plus/") ||
       /\.test\.tsx?$/.test(file)
     )
       continue;

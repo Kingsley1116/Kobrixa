@@ -1,0 +1,17 @@
+name: Kobrixa CodeQL
+
+queries:
+  - uses: security-extended
+
+# Tests deliberately construct hostile inputs (ReDoS patterns, files that grow
+# after stat, injected scripts) to prove the product rejects them; scanning them
+# as product code only produces false positives.
+paths-ignore:
+  - "**/*.test.ts"
+  - "**/*.test.tsx"
+  - "**/*.test.mjs"
+  - "**/*.test.cjs"
+  - "tests/**"
+  - "**/fixtures/**"
+  - "**/test-fixtures/**"
+  - "sdks/python/tests/**"

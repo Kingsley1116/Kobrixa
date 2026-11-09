@@ -71,7 +71,7 @@ it("validates all staging bytes before replacing aux then assets then main", asy
       io: {
         write: (file, bytes) => writeFile(file, bytes),
         rename: async (from, to) => {
-          order.push(path.relative(path.join(root, "build"), to));
+          order.push(path.relative(path.join(root, "build"), to).split(path.sep).join("/"));
           await rename(from, to);
         },
       },
