@@ -7,6 +7,7 @@ import {
   prepareSimulation,
   snapshotSimulationAssets,
 } from "../main/workspace/prepare-simulation.js";
+import { resolveBuiltinCompiler } from "../main/workspace/builtin-compilers.js";
 import type { SimulationScene } from "../shared/simulator.js";
 import { validateScene } from "./scene.js";
 import { normalizeDegrees, SimulationWorld } from "./world.js";
@@ -53,7 +54,15 @@ describe.skipIf(!root)("Main_Simple project contract", () => {
               file.path === entry ? { ...file, content: source } : file,
             ),
           };
-    const result = await prepareSimulation(captured, [entry], files, new AbortController().signal);
+    const compiler = resolveBuiltinCompiler(captured.manifest.language, captured.manifest.target);
+    if (!compiler.ok) throw new Error(compiler.message);
+    const result = await prepareSimulation(
+      captured,
+      [entry],
+      files,
+      new AbortController().signal,
+      compiler,
+    );
     expect(result.success, JSON.stringify(result.diagnostics)).toBe(true);
     if (!result.success) throw new Error("Main_Simple preparation failed");
     return result.prepared;

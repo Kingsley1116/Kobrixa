@@ -186,11 +186,22 @@ void app.whenReady().then(async () => {
     const contents = mainWindow.webContents;
     return contents.isDestroyed() ? undefined : contents;
   };
-  const builds = new BuildService(workspaces, renderer, undefined, (language) =>
-    plugins.frontendFor(language),
+  const builds = new BuildService(workspaces, renderer, undefined, (language, target) =>
+    plugins.resolveCompiler(language, target),
   );
-  const language = new LanguageService(workspaces);
+  const language = new LanguageService(workspaces, undefined, (language) =>
+    plugins.resolveLanguageService(language),
+  );
+  const offLanguageStatus = language.onStatus((event) => {
+    const target = renderer();
+    if (target && !target.isDestroyed()) target.send("language:status-changed", event);
+  });
+  const offLanguagePlugins = plugins.onEvent((event) => {
+    if (event.type === "state") void language.refresh().catch(console.error);
+  });
   app.on("will-quit", () => {
+    offLanguageStatus();
+    offLanguagePlugins();
     updates?.dispose();
     language.dispose();
     builds.dispose();
@@ -349,6 +360,7 @@ void app.whenReady().then(async () => {
         throw error;
       }
     },
+    plugins,
   );
   const flushDeviceWork = async () => {
     await motors.flush();

@@ -45,7 +45,7 @@ A crash never replays a command; three process failures within five minutes requ
 
 ## Recovery
 
-If Kobrixa did not shut down normally while a third-party plugin was running, or its window stopped responding, the next start pauses all third-party plugins and shows a banner. Built-in Basic Plus stays enabled. Use **Open plugin settings** to disable or unlink the problem plugin, then **Restore plugins**.
+If Kobrixa did not shut down normally while a third-party plugin was running, or its window stopped responding, the next start pauses all third-party plugins and shows a banner. Built-in Basic Plus and EV3 remain enabled. Use **Open plugin settings** to disable or unlink the problem plugin, then **Restore plugins**.
 
 ## Advanced: launch options
 
@@ -73,6 +73,84 @@ open -a Kobrixa --args \
 ```
 
 Python must be installed locally with the SDK; Kobrixa does not download or manage the interpreter. Python stdout carries only protocol messages; write logs to stderr. See the [Python SDK](../../sdks/python/README.md) and [plugin architecture](../../docs/en/architecture.md#plugins-development-preview).
+
+These samples remain API 1.0-compatible command plugins. Kobrixa's current plugin API is 1.4.0; compiler declarations are reserved for built-ins. Adding `frontends` or `backends` to an external manifest makes the entire plugin invalid. Build outputs stay in the project's configured outputDir; changing or deleting them before deployment requires a new build. See [compiler and artifact contracts](../../docs/en/architecture.md#compiler-contracts).
+
+## Language services / 語言服務
+
+Built-in manifests place this complete `bp` declaration under `contributes`:
+內建 manifest 在 `contributes` 下使用以下完整 `bp` 宣告：
+
+```json
+{
+  "languageServices": [
+    {
+      "language": "bp",
+      "extensions": ["bp", "bpi", "bpm"],
+      "capabilities": [
+        "analysis",
+        "completion",
+        "quickFixes",
+        "semanticTokens",
+        "hover",
+        "signatureHelp",
+        "definition",
+        "references",
+        "rename",
+        "documentSymbols",
+        "documentFormatting",
+        "rangeFormatting"
+      ]
+    }
+  ]
+}
+```
+
+`languageServices` is a built-in-only contribution introduced in API 1.3.0 and retained in API 1.4.0. Do not add it to the development samples, even as `[]`. Structural schema validation is shared with Python; the host additionally validates uniqueness, required `analysis`, frontend ownership, extension-set equality and trusted source. A declaration contains no implementation path. The runtime resolves frontend conflicts before deciding whether a service is missing. Built-in factory capabilities must cover every declared capability; a mismatch makes the language unavailable without changing the plugin's status.
+
+`languageServices` 自 API 1.3.0 加入，API 1.4.0 繼續支援，僅供內建插件使用，請勿加到開發插件範例，空陣列也不允許。Python 共用結構 schema；唯一性、必要的 `analysis`、frontend 擁有者、副檔名集合相等及可信來源由宿主另行驗證。宣告沒有實作路徑。runtime 先判定 frontend 衝突再判定缺少服務；工廠能力不足會讓語言不可用，但不改變插件本身狀態。
+
+Duplicate languages within `languageServices`, and duplicate extensions or capabilities within a declaration, are rejected by the **host registry**, not by the published JSON Schema or the Python SDK validator. Passing structural validation alone does not make a language-service declaration valid for the host.
+
+`languageServices` 中重複的語言，以及單筆宣告中重複的副檔名或能力，由**宿主 registry** 拒絕；已發布的 JSON Schema 與 Python SDK 驗證器不會拒絕這些重複值。通過結構驗證不代表宣告符合宿主規則。
+
+## Author diagnostic help
+
+Declare `contributes.diagnosticHelp = { "version": 1, "path": "diagnostic-help.json" }` in your manifest. The path is relative to the plugin folder and must point to a JSON file inside it. The resource has an `entries` array:
+
+```json
+{
+  "entries": [
+    {
+      "code": "ACME1001",
+      "helpKey": "missing-value",
+      "title": { "en": "Missing value", "zh-TW": "缺少值" },
+      "cause": { "en": "A required value is missing." },
+      "steps": { "en": ["Supply the required value."] },
+      "example": { "before": "value =", "after": "value = 1" },
+      "links": [{ "url": "https://example.com/help", "label": { "en": "More help" } }]
+    }
+  ]
+}
+```
+
+Each entry requires `code`, `title`, `cause` and `steps`; `helpKey`, `example` and `links` are optional. Localized text and steps require `en`; `zh-TW` is optional and falls back to English. Codes match `/^[A-Za-z][A-Za-z0-9_.-]{0,63}$/`, and help keys match `/^[a-z0-9-]{1,100}$/`. Each `(code, helpKey)` pair must be unique within the file. Unknown fields, including `source`, are rejected.
+
+All content is plain text, without Markdown or HTML rendering. Titles, steps and link labels are single-line; causes and the `before`/`after` examples may span multiple lines. Links must use HTTPS. Version 1 limits come from [`DIAGNOSTIC_HELP_LIMITS`](../../packages/plugin-protocol/src/limits.ts):
+
+| Item                                 | Limit                   |
+| ------------------------------------ | ----------------------- |
+| Resource file                        | 1 MiB (1,048,576 bytes) |
+| Entries per plugin                   | 512                     |
+| Serialized JSON per entry (UTF-8)    | 16 KiB (16,384 bytes)   |
+| Steps per locale                     | 16                      |
+| Links per entry                      | 4                       |
+| URL                                  | 2048 characters         |
+| Title, individual step or link label | 500 characters          |
+| Cause or each example field          | 4000 characters         |
+| Total loaded help across plugins     | 8 MiB (8,388,608 bytes) |
+
+Help is published only while the plugin is enabled and shown only for diagnostics with the plugin's own source ID; matching another plugin's diagnostic code does not grant access to its help. This preview does not yet expose external diagnostic producers. An unreadable, invalid or over-budget help resource adds `PLUGIN_E_DIAGNOSTIC_HELP` and leaves the plugin enabled without that help. The reserved plugin ID `kobrixa.core` is rejected with `PLUGIN_E_RESERVED_ID`.
 
 ## 繁體中文
 
@@ -121,7 +199,7 @@ pnpm dev
 
 ### 復原
 
-如果 Kobrixa 在第三方插件執行時沒有正常結束，或視窗停止回應，下次啟動會暫停所有第三方插件並顯示提示橫幅。內建 Basic Plus 保持啟用。按「前往插件設定」停用或解除連結有問題的插件，再按「恢復插件」。
+如果 Kobrixa 在第三方插件執行時沒有正常結束，或視窗停止回應，下次啟動會暫停所有第三方插件並顯示提示橫幅。內建 Basic Plus 與 EV3 保持啟用。按「前往插件設定」停用或解除連結有問題的插件，再按「恢復插件」。
 
 ### 進階：啟動參數
 
@@ -149,3 +227,27 @@ open -a Kobrixa --args \
 ```
 
 必須在本機安裝 Python 與 SDK；Kobrixa 不下載或管理直譯器。Python stdout 只傳送協定訊息，日誌請寫入 stderr。詳見 [Python SDK](../../sdks/python/README.md) 與[插件架構](../../docs/zh-TW/architecture.md#插件開發預覽)。
+
+這些範例仍是相容 API 1.0 的命令插件。Kobrixa 目前的插件 API 為 1.4.0，編譯器宣告只限內建插件；在外部 manifest 加入 `frontends` 或 `backends` 會讓整個插件無效。建置成品仍在專案設定的 outputDir；部署前修改或刪除成品後，必須重新建置。詳見[編譯器與成品契約](../../docs/zh-TW/architecture.md#編譯器契約)。
+
+### 撰寫診斷說明
+
+在 manifest 宣告 `contributes.diagnosticHelp = { "version": 1, "path": "diagnostic-help.json" }`。路徑相對於插件資料夾，必須指向該資料夾內的 JSON 檔。資源格式如上方英文範例，以 `entries` 陣列包含各筆說明。
+
+每筆必須有 `code`、`title`、`cause` 與 `steps`；`helpKey`、`example` 與 `links` 可省略。在地化文字與步驟必須提供 `en`，`zh-TW` 可省略，缺漏時退回英文。代碼格式為 `/^[A-Za-z][A-Za-z0-9_.-]{0,63}$/`，helpKey 格式為 `/^[a-z0-9-]{1,100}$/`；同一檔案內的 `(code, helpKey)` 不得重複。未知欄位（包含 `source`）一律拒絕。
+
+所有內容只以純文字呈現，不解析 Markdown 或 HTML。標題、步驟與連結標籤只能單行；原因及範例的 `before`／`after` 可多行。連結只接受 HTTPS。第 1 版上限來自 [`DIAGNOSTIC_HELP_LIMITS`](../../packages/plugin-protocol/src/limits.ts)：
+
+| 項目                          | 上限                     |
+| ----------------------------- | ------------------------ |
+| 資源檔                        | 1 MiB（1,048,576 bytes） |
+| 每插件條目數                  | 512                      |
+| 單筆 JSON 序列化大小（UTF-8） | 16 KiB（16,384 bytes）   |
+| 每語系步驟數                  | 16                       |
+| 每筆連結數                    | 4                        |
+| URL                           | 2048 字元                |
+| 標題、單一步驟或連結標籤      | 500 字元                 |
+| 原因或範例的單一欄位          | 4000 字元                |
+| 全部插件已載入的說明合計      | 8 MiB（8,388,608 bytes） |
+
+說明只在插件啟用時發布，並且只顯示於來源 ID 為該插件的診斷；即使代碼相同，也不會使用其他插件的說明。本預覽版尚未開放外部診斷提供者。說明資源無法讀取、驗證失敗或超出上限時，會加上 `PLUGIN_E_DIAGNOSTIC_HELP`，插件仍保持啟用，但不提供該資源的說明。插件使用保留 ID `kobrixa.core` 時，會以 `PLUGIN_E_RESERVED_ID` 拒絕。

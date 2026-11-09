@@ -24,9 +24,9 @@ async function launchNode(
     serviceName: `Kobrixa plugin ${plugin.id}`,
     stdio: "pipe",
   });
-  const sigkill = () => {
+  const signal = (signal: "SIGTERM" | "SIGKILL") => {
     try {
-      if (child.pid !== undefined) process.kill(child.pid, "SIGKILL");
+      if (child.pid !== undefined) process.kill(child.pid, signal);
       else child.kill();
     } catch {
       /* The process already exited. */
@@ -38,7 +38,7 @@ async function launchNode(
   child.once("exit", () => tail.end());
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
-      sigkill();
+      signal("SIGKILL");
       reject(new Error(`The plugin process did not start within ${spawnTimeoutMs} ms.`));
     }, spawnTimeoutMs);
     child.once("spawn", () => {
@@ -58,8 +58,16 @@ async function launchNode(
     port1.close();
     exits.emit({ code });
   });
-  // utilityProcess.kill() sends SIGTERM on POSIX; escalate to SIGKILL when it is ignored.
-  const kill = escalatingKill(exits, () => child.kill(), sigkill);
+  // Electron 44's utilityProcess.kill() synchronously reaps for up to 2 s on macOS,
+  // blocking the manager's force-kill timer. Send the signal directly and await onExit.
+  // Recheck this behavior when upgrading Electron:
+  // https://github.com/electron/electron/blob/v44.7.0/shell/browser/api/electron_api_utility_process.cc#L423-L437
+  // https://github.com/chromium/chromium/blob/152.0.7977.130/base/process/kill_mac.cc#L156-L160
+  const kill = escalatingKill(
+    exits,
+    () => signal("SIGTERM"),
+    () => signal("SIGKILL"),
+  );
   return {
     send: (text) => port1.postMessage(text),
     onMessage: (listener) => {

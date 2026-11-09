@@ -1,0 +1,207 @@
+{
+  "ignoreCase": true,
+  "tokenPostfix": ".basic-plus",
+  "defaultToken": "invalid",
+  "lists": [
+    {
+      "name": "keywords",
+      "words": [
+        "And",
+        "Break",
+        "Continue",
+        "Dim",
+        "Else",
+        "ElseIf",
+        "EndFor",
+        "EndFunction",
+        "EndIf",
+        "EndModule",
+        "EndRegion",
+        "EndSub",
+        "EndWhile",
+        "False",
+        "For",
+        "Folder",
+        "Function",
+        "Goto",
+        "If",
+        "Include",
+        "Import",
+        "In",
+        "Module",
+        "Not",
+        "Number",
+        "Or",
+        "Out",
+        "Private",
+        "Property",
+        "Region",
+        "Return",
+        "Step",
+        "String",
+        "Sub",
+        "Then",
+        "To",
+        "True",
+        "While"
+      ]
+    },
+    {
+      "name": "control",
+      "words": [
+        "If",
+        "Then",
+        "Else",
+        "ElseIf",
+        "EndIf",
+        "For",
+        "To",
+        "Step",
+        "EndFor",
+        "While",
+        "EndWhile",
+        "Break",
+        "Continue",
+        "Return",
+        "Goto"
+      ]
+    },
+    {
+      "name": "types",
+      "words": ["Number", "String"]
+    },
+    {
+      "name": "booleans",
+      "words": ["True", "False"]
+    },
+    {
+      "name": "word_operators",
+      "words": ["And", "Or", "Not"]
+    }
+  ],
+  "states": [
+    {
+      "name": "root",
+      "rules": [
+        {
+          "regex": {
+            "pattern": "[ \\t\\r]+",
+            "flags": "i"
+          },
+          "action": {
+            "token": "white"
+          }
+        },
+        {
+          "regex": {
+            "pattern": "'[^\\r\\n]*",
+            "flags": "i"
+          },
+          "action": {
+            "token": "comment"
+          }
+        },
+        {
+          "regex": {
+            "pattern": "\"(?:[^\"\\r\\n]|\"\")*\"(?!\")",
+            "flags": "i"
+          },
+          "action": {
+            "token": "string"
+          }
+        },
+        {
+          "regex": {
+            "pattern": "\"[^\\r\\n]*$",
+            "flags": "i"
+          },
+          "action": {
+            "token": "string.invalid"
+          }
+        },
+        {
+          "regex": {
+            "pattern": "[A-Za-z_][\\w.]*",
+            "flags": "i"
+          },
+          "action": {
+            "cases": [
+              {
+                "when": "@types",
+                "action": {
+                  "token": "type"
+                }
+              },
+              {
+                "when": "@booleans",
+                "action": {
+                  "token": "constant.language"
+                }
+              },
+              {
+                "when": "@word_operators",
+                "action": {
+                  "token": "operator.word"
+                }
+              },
+              {
+                "when": "@control",
+                "action": {
+                  "token": "keyword.control"
+                }
+              },
+              {
+                "when": "@keywords",
+                "action": {
+                  "token": "keyword"
+                }
+              },
+              {
+                "when": "@default",
+                "action": {
+                  "token": "identifier"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "regex": {
+            "pattern": "(?:\\d+\\.\\d*|\\.\\d+|\\d+)",
+            "flags": "i"
+          },
+          "action": {
+            "token": "number"
+          }
+        },
+        {
+          "regex": {
+            "pattern": "!=|<=|>=|<>|\\+=|-=|\\*=|\\/=|\\+\\+|--|[=<>+\\-*/%]",
+            "flags": "i"
+          },
+          "action": {
+            "token": "operator"
+          }
+        },
+        {
+          "regex": {
+            "pattern": "@",
+            "flags": "i"
+          },
+          "action": {
+            "token": "operator"
+          }
+        },
+        {
+          "regex": {
+            "pattern": "[()[\\],.:]",
+            "flags": "i"
+          },
+          "action": {
+            "token": "delimiter"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+[
+  { "name": "toy", "pluginId": "acme.toy", "languageId": "toy", "extensions": ["toy"] },
+  {
+    "name": "shared",
+    "pluginId": "acme.other",
+    "languageId": "toy-other",
+    "extensions": ["toy", "other"]
+  },
+  {
+    "name": "duplicate",
+    "pluginId": "acme.duplicate",
+    "languageId": "toy",
+    "extensions": ["duplicate"]
+  },
+  {
+    "name": "invalid",
+    "pluginId": "acme.invalid",
+    "languageId": "toy-invalid",
+    "extensions": ["invalid"]
+  },
+  {
+    "name": "hostile",
+    "pluginId": "acme.hostile",
+    "languageId": "toy-hostile",
+    "extensions": ["hostile"]
+  }
+]

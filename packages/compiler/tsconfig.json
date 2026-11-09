@@ -6,5 +6,5 @@
     "composite": true
   },
   "include": ["src/**/*.ts"],
-  "references": [{ "path": "../ir" }]
+  "references": [{ "path": "../ir" }, { "path": "../plugin-protocol" }]
 }

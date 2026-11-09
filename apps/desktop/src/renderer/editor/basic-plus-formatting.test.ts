@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CancellationToken, IRange } from "monaco-editor";
-import { basicPlusRangeFormattingEdits } from "./basic-plus-formatting.js";
+import { basicPlusRangeFormattingEdits } from "./companions/basic-plus/formatting.js";
 
 function formatRange(source: string, range: IRange, tabSize = 2) {
   const lines = source.split("\n");

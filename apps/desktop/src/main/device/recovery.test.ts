@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -102,10 +102,17 @@ async function setup(descriptor = target) {
   await writeFile(program, "program");
   await writeFile(asset, "asset");
   const builds = {
-    deployableArtifacts: vi.fn(async () => [
-      { kind: "asset", path: asset, remotePath: "assets/image.rgf" },
-      { kind: "rbf", path: program, remotePath: "main.rbf" },
-    ]),
+    deployableArtifacts: vi.fn(async () =>
+      Promise.all(
+        [
+          { role: "deploy-asset" as const, path: asset, remotePath: "assets/image.rgf" },
+          { role: "deploy-main" as const, path: program, remotePath: "main.rbf" },
+        ].map(async (file) => {
+          const bytes = await readFile(file.path);
+          return { ...file, bytes, sha256: createHash("sha256").update(bytes).digest("hex") };
+        }),
+      ),
+    ),
   };
   const service = new DeviceService(
     builds as unknown as BuildService,

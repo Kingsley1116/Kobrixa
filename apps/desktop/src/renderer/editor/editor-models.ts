@@ -1,8 +1,69 @@
+import type { LanguageStatus } from "../../shared/language-services.js";
+import type {
+  StaticLanguageRegistrar,
+  StaticModelContext,
+  StaticModelRouteHooks,
+} from "./static-language-registration.js";
+
 import type { editor } from "monaco-editor";
 import type { EditorLocation } from "../../shared/api.js";
 
 /** Models outlive the visible editor, preserving undo across project switches. */
 export class EditorModels {
+  private registrar: StaticLanguageRegistrar | undefined;
+  private workspaceId: string | undefined;
+  private status: LanguageStatus | undefined;
+  private readonly languageTracks = new Map<editor.ITextModel, { dispose(): void }>();
+  private readonly languageHooks = new Map<editor.ITextModel, StaticModelRouteHooks>();
+  getLanguageStatus(): LanguageStatus | undefined {
+    return this.status;
+  }
+  configureLanguages(
+    registrar: StaticLanguageRegistrar,
+    workspaceId: string | undefined,
+    status: LanguageStatus | undefined,
+  ): void {
+    this.registrar = registrar;
+    this.workspaceId = workspaceId;
+    this.status = status;
+    registrar.refreshModels();
+  }
+  languageContext(model: editor.ITextModel): StaticModelContext {
+    const file = [...this.models].find(([, value]) => value === model)?.[0] ?? model.uri.path;
+    const binding =
+      this.status?.availability.kind === "available" ? this.status.availability.binding : undefined;
+    return {
+      file,
+      ...(this.workspaceId ? { workspaceId: this.workspaceId } : {}),
+      ...(binding ? { binding } : {}),
+    };
+  }
+  trackLanguage(model: editor.ITextModel, hooks: StaticModelRouteHooks): void {
+    this.languageHooks.set(model, hooks);
+    if (!this.languageTracks.has(model) && this.registrar) {
+      this.languageTracks.set(model, { dispose() {} });
+      try {
+        const handle = this.registrar.trackModel(model, () => this.languageContext(model), {
+          beforeChange: (previous, next) =>
+            this.languageHooks.get(model)?.beforeChange(previous, next),
+          afterChange: (route) => this.languageHooks.get(model)?.afterChange(route),
+        });
+        this.languageTracks.set(model, handle);
+      } catch (error) {
+        this.languageTracks.delete(model);
+        throw error;
+      }
+    }
+  }
+  releaseLanguageHooks(): void {
+    this.languageHooks.clear();
+  }
+  forgetLanguage(model: editor.ITextModel): void {
+    this.languageHooks.delete(model);
+    this.languageTracks.get(model)?.dispose();
+    this.languageTracks.delete(model);
+  }
+
   readonly models = new Map<string, editor.ITextModel>();
   readonly views = new Map<string, editor.ICodeEditorViewState>();
   readonly locations: Record<string, EditorLocation>;
@@ -46,7 +107,11 @@ export class EditorModels {
     }
   }
   dispose(): void {
-    for (const model of this.models.values()) model.dispose();
+    for (const model of this.models.values()) {
+      this.forgetLanguage(model);
+      model.dispose();
+    }
+
     this.models.clear();
     this.views.clear();
   }

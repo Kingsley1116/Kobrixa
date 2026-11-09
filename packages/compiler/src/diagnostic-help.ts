@@ -1,4 +1,7 @@
 /** Browser-safe diagnostic documentation shared by the IDE and documentation site. */
+import { CORE_DIAGNOSTIC_SOURCE } from "./diagnostics.js";
+
+export { CORE_DIAGNOSTIC_SOURCE };
 export type DiagnosticLocale = "zh-TW" | "en";
 export type Localized<T> = Record<DiagnosticLocale, T>;
 export interface DiagnosticHelp {
@@ -1325,6 +1328,105 @@ export const DIAGNOSTIC_HELP: readonly DiagnosticHelp[] = [
     "installation",
   ),
   entry(
+    "BUILD1001",
+    ["找不到編譯提供者", "Compiler provider unavailable"],
+    [
+      "找不到已啟用的語言／目標提供者，或有多個提供者衝突。",
+      "The language or target has no enabled provider, or multiple providers conflict.",
+    ],
+    [
+      [
+        "檢查 kobrixa.json 的 language／target 與插件狀態；衝突時先排除重複提供者。",
+        "Check language/target in kobrixa.json and plugin status; remove conflicting providers.",
+      ],
+    ],
+    "architecture",
+  ),
+  entry(
+    "BUILD1002",
+    ["IR 版本不相容", "Incompatible IR versions"],
+    [
+      "前端產出的 IR 版本與目標不相容。",
+      "The frontend IR version is incompatible with the target.",
+    ],
+    [
+      [
+        "使用支援相同 KobrixaIR 版本的語言前端與目標後端。",
+        "Use a frontend and target backend that support the same KobrixaIR version.",
+      ],
+    ],
+    "architecture",
+  ),
+  entry(
+    "BUILD1003",
+    ["建置成品無效", "Invalid build artifacts"],
+    [
+      "成品不符合宣告、路徑不安全、名稱碰撞，或超過建置上限。",
+      "Artifacts violate their declarations, use unsafe or colliding paths, or exceed build limits.",
+    ],
+    [
+      [
+        "檢查成品宣告、資源路徑與大小，修正後重新建置。",
+        "Check artifact declarations, resource paths and sizes, then build again.",
+      ],
+    ],
+    "architecture",
+  ),
+  entry(
+    "BUILD1004",
+    ["建置輸出正被使用", "Build output is busy"],
+    [
+      "另一個 Kobrixa 視窗正在寫入這個專案的建置輸出。",
+      "Another Kobrixa window is writing this project's build output.",
+    ],
+    [
+      [
+        "等待另一個視窗完成建置再重試；不要刪除仍在使用中的鎖。",
+        "Wait for the other window to finish and retry; do not remove an active lock.",
+      ],
+    ],
+    "architecture",
+  ),
+  entry(
+    "BUILD1005",
+    ["目標不可部署", "Target cannot be deployed"],
+    [
+      "這次建置的目標不支援目前設備的部署方式。",
+      "This build target does not support the connected device's deployment method.",
+    ],
+    [
+      [
+        "建置結果仍可使用；要部署至 EV3，請選擇提供 ev3 部署能力的目標。",
+        "The successful build remains available; choose a target with ev3 deployment capability to deploy to EV3.",
+      ],
+    ],
+    "architecture",
+  ),
+  entry(
+    "BUILD1006",
+    ["成品已變更", "Build artifacts changed"],
+    ["成品已變更，請重新建置。", "Build artifacts changed or are missing; build again."],
+    [
+      [
+        "重新建置再部署，並避免其他視窗或工具在部署前修改輸出檔案。",
+        "Build again before deploying and prevent other windows or tools from changing the output files.",
+      ],
+    ],
+    "architecture",
+  ),
+  internal(
+    "BUILD1007",
+    ["編譯提供者自行設定了診斷來源", "A compiler provider set its own diagnostic source"],
+    [
+      "診斷來源由 Kobrixa 依提供者身分填入；提供者回傳的診斷不可自帶 source。",
+      "Kobrixa assigns diagnostic sources from the provider identity; providers must not return diagnostics with a source.",
+    ],
+    [
+      "更新或停用造成問題的插件，然後重新建置。",
+      "Update or disable the plugin that caused the problem, then build again.",
+    ],
+  ),
+  entry(
     "BUILD9000",
     ["建置因未預期錯誤中止", "Build stopped after an unexpected error"],
     [
@@ -1562,6 +1664,44 @@ const byVariant = new Map(
 
 export function getDiagnosticHelp(code: string, helpKey?: string): DiagnosticHelp | undefined {
   return (helpKey ? byVariant.get(`${code}:${helpKey}`) : undefined) ?? byCode.get(code);
+}
+
+export const BUILTIN_DIAGNOSTIC_SOURCES = [
+  CORE_DIAGNOSTIC_SOURCE,
+  "kobrixa.basic-plus",
+  "kobrixa.ev3",
+] as const;
+export type BuiltinDiagnosticSource = (typeof BUILTIN_DIAGNOSTIC_SOURCES)[number];
+export const isBuiltinDiagnosticSource = (source: string): source is BuiltinDiagnosticSource =>
+  (BUILTIN_DIAGNOSTIC_SOURCES as readonly string[]).includes(source);
+
+/** Catalog entries emitted by more than one built-in provider. */
+export const SHARED_BUILTIN_HELP: Readonly<Record<string, readonly BuiltinDiagnosticSource[]>> = {
+  // Basic Plus lowering and the EV3 backend both validate Sensor.ReadSIValue arguments.
+  EV32031: ["kobrixa.basic-plus", "kobrixa.ev3"],
+};
+// Ownership of this static catalog. Runtime diagnostics get their source from the host, never
+// from these prefixes; the table only decides which source may show which built-in entry.
+const CATALOG_OWNERS: ReadonlyArray<[RegExp, BuiltinDiagnosticSource]> = [
+  [/^BP[0-9]{4}$/, "kobrixa.basic-plus"],
+  [/^EV3[0-9]{4}$/, "kobrixa.ev3"],
+  [/^(?:MAN|IR|BUILD)[0-9]{4}$/, CORE_DIAGNOSTIC_SOURCE],
+];
+export function builtinHelpOwners(code: string): readonly BuiltinDiagnosticSource[] {
+  if (!byCode.has(code)) return [];
+  return (
+    SHARED_BUILTIN_HELP[code] ??
+    CATALOG_OWNERS.filter(([pattern]) => pattern.test(code)).map(([, owner]) => owner)
+  );
+}
+export function getBuiltinDiagnosticHelp(
+  source: string,
+  code: string,
+  helpKey?: string,
+): DiagnosticHelp | undefined {
+  return isBuiltinDiagnosticSource(source) && builtinHelpOwners(code).includes(source)
+    ? getDiagnosticHelp(code, helpKey)
+    : undefined;
 }
 
 /** Accept known catalog identifiers only; callers cannot supply arbitrary external URLs. */

@@ -1,16 +1,22 @@
-import type {
-  BasicPlusProjectAnalysis,
-  BasicPlusSymbolIndex,
-  BasicPlusSemanticToken,
-  BasicPlusOccurrence,
-} from "@kobrixa/basic-plus";
+import type { LanguageUnavailable } from "./language-services.js";
+import type { PublishedDiagnostic } from "@kobrixa/compiler";
+import {
+  emptyLanguageIndex,
+  type LanguageAnalysis,
+  type LanguageIndex,
+  type SemanticToken,
+  type LanguageOccurrence,
+} from "./language-types.js";
+
+export { emptyLanguageIndex } from "./language-types.js";
+export type PublishedAnalysis = LanguageAnalysis;
 
 // Large token/occurrence arrays otherwise clone hundreds of thousands of nested
 // range objects across both worker and Electron IPC boundaries.
 interface TokenWire {
   data: Uint32Array;
-  types: BasicPlusSemanticToken["type"][];
-  modifiers: BasicPlusSemanticToken["modifiers"][];
+  types: SemanticToken["type"][];
+  modifiers: SemanticToken["modifiers"][];
 }
 interface OccurrenceWire {
   data: Uint32Array;
@@ -32,8 +38,8 @@ function dictionary<T>() {
     },
   };
 }
-function packTokens(tokens: BasicPlusSemanticToken[]): TokenWire {
-  const types = dictionary<BasicPlusSemanticToken["type"]>(),
+function packTokens(tokens: SemanticToken[]): TokenWire {
+  const types = dictionary<SemanticToken["type"]>(),
     modifiers = dictionary<string>();
   const data = new Uint32Array(tokens.length * 6);
   tokens.forEach((token, i) => {
@@ -49,13 +55,11 @@ function packTokens(tokens: BasicPlusSemanticToken[]): TokenWire {
   return {
     data,
     types: types.values,
-    modifiers: modifiers.values.map(
-      (value) => JSON.parse(value) as BasicPlusSemanticToken["modifiers"],
-    ),
+    modifiers: modifiers.values.map((value) => JSON.parse(value) as SemanticToken["modifiers"]),
   };
 }
-function unpackTokens(wire: TokenWire): BasicPlusSemanticToken[] {
-  const result: BasicPlusSemanticToken[] = [];
+function unpackTokens(wire: TokenWire): SemanticToken[] {
+  const result: SemanticToken[] = [];
   const data = wire.data;
   for (let i = 0; i < data.length; i += 6)
     result.push({
@@ -70,7 +74,7 @@ function unpackTokens(wire: TokenWire): BasicPlusSemanticToken[] {
     });
   return result;
 }
-function packOccurrences(occurrences: BasicPlusOccurrence[]): OccurrenceWire {
+function packOccurrences(occurrences: LanguageOccurrence[]): OccurrenceWire {
   const strings = dictionary<string>();
   const data = new Uint32Array(occurrences.length * 8);
   occurrences.forEach((item, i) => {
@@ -87,8 +91,8 @@ function packOccurrences(occurrences: BasicPlusOccurrence[]): OccurrenceWire {
   });
   return { data, strings: strings.values };
 }
-function unpackOccurrences(wire: OccurrenceWire): BasicPlusOccurrence[] {
-  const result: BasicPlusOccurrence[] = [];
+function unpackOccurrences(wire: OccurrenceWire): LanguageOccurrence[] {
+  const result: LanguageOccurrence[] = [];
   const data = wire.data;
   for (let i = 0; i < data.length; i += 8)
     result.push({
@@ -117,6 +121,7 @@ export interface RecordPatch<T> {
   removed: string[];
 }
 export interface LanguageSyncRequest {
+  epoch: number;
   session: string;
   revision: number;
   /** null replaces the overlay set, including after an uncertain transport failure. */
@@ -127,20 +132,22 @@ export interface LanguageSyncRequest {
 export interface AnalysisPatch {
   base: number | null;
   version: number;
-  diagnostics?: BasicPlusProjectAnalysis["diagnostics"];
+  diagnostics?: PublishedDiagnostic[];
   tokensByFile: RecordPatch<TokenWire>;
   index: {
-    symbols: RecordPatch<BasicPlusSymbolIndex["symbols"][string]>;
+    symbols: RecordPatch<LanguageIndex["symbols"][string]>;
     occurrencesByFile: RecordPatch<OccurrenceWire>;
     sources: RecordPatch<string>;
     fileContexts: RecordPatch<string>;
     contextFiles: RecordPatch<string[]>;
-    scopes?: BasicPlusSymbolIndex["scopes"];
+    scopes?: LanguageIndex["scopes"];
     invalidContexts?: string[];
   };
 }
 export type LanguageSyncReply =
-  { kind: "resync" } | { kind: "result"; session: string; revision: number; patch: AnalysisPatch };
+  | { kind: "resync"; epoch: number }
+  | (LanguageUnavailable & { epoch: number })
+  | { kind: "result"; epoch: number; session: string; revision: number; patch: AnalysisPatch };
 
 export const equalValue = (a: unknown, b: unknown): boolean =>
   a === b ||
@@ -167,25 +174,13 @@ export function applyRecord<T>(
   for (const key of patch.removed) delete result[key];
   return result;
 }
-export function emptyAnalysis(): BasicPlusProjectAnalysis {
-  return {
-    diagnostics: [],
-    tokensByFile: Object.create(null),
-    index: {
-      symbols: Object.create(null),
-      occurrencesByFile: Object.create(null),
-      sources: Object.create(null),
-      fileContexts: Object.create(null),
-      contextFiles: Object.create(null),
-      scopes: [],
-      invalidContexts: [],
-    },
-  };
+export function emptyAnalysis(): LanguageAnalysis {
+  return { diagnostics: [], tokensByFile: Object.create(null), index: emptyLanguageIndex() };
 }
 /** Run in the worker: unchanged files, symbols and source text never cross IPC. */
 export function diffAnalysis(
-  before: BasicPlusProjectAnalysis | undefined,
-  after: BasicPlusProjectAnalysis,
+  before: LanguageAnalysis | undefined,
+  after: LanguageAnalysis,
   base: number | null,
   version: number,
 ): AnalysisPatch {
@@ -216,9 +211,9 @@ export function diffAnalysis(
 }
 /** Retain immutable identities for unchanged token arrays and index sections. */
 export function applyAnalysis(
-  before: { version: number; analysis: BasicPlusProjectAnalysis } | undefined,
+  before: { version: number; analysis: LanguageAnalysis } | undefined,
   patch: AnalysisPatch,
-) {
+): { version: number; analysis: LanguageAnalysis } {
   if (patch.base !== null && before?.version !== patch.base)
     throw new Error("Analysis base version mismatch.");
   const old = patch.base === null ? emptyAnalysis() : before!.analysis;

@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { PLUGIN_API_VERSION } from "@kobrixa/plugin-protocol";
 import {
   classifyProbe,
   probePython,
@@ -122,7 +123,7 @@ describe("runProbe", () => {
     vi.stubEnv("PYTHONPATH", fileURLToPath(new URL("../../../../../sdks/python", import.meta.url)));
     expect(await probePython({ executable: python!, args: [] })).toMatchObject({
       status: "ok",
-      sdkApiVersion: "1.0.0",
+      sdkApiVersion: PLUGIN_API_VERSION,
     });
     expect(PYTHON_PROBE_SCRIPT).toContain("import kobrixa");
   });

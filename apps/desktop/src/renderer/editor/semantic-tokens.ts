@@ -1,14 +1,11 @@
-import type { BasicPlusProjectAnalysis, BasicPlusSemanticToken } from "@kobrixa/basic-plus";
+import type { SemanticToken, SemanticLegend } from "../../shared/language-types.js";
+import type { PublishedAnalysis } from "../../shared/language-sync.js";
 import type { CancellationToken, IDisposable, editor, languages } from "monaco-editor";
 
-export const semanticLegend: languages.SemanticTokensLegend = {
-  tokenTypes: ["namespace", "function", "method", "variable", "parameter", "label"],
-  tokenModifiers: ["declaration", "defaultLibrary", "local", "global"],
-};
-
 export function encodeSemanticTokens(
-  tokens: readonly BasicPlusSemanticToken[],
+  tokens: readonly SemanticToken[],
   model: editor.ITextModel,
+  legend: SemanticLegend,
   leadingBOM = false,
 ): Uint32Array {
   const data: number[] = [];
@@ -24,7 +21,7 @@ export function encodeSemanticTokens(
     const lastColumn = token.range.endColumn - offset;
     const line = startLine - 1;
     const column = startColumn - 1;
-    const type = semanticLegend.tokenTypes.indexOf(token.type);
+    const type = legend.tokenTypes.indexOf(token.type);
     if (
       type < 0 ||
       startLine < 1 ||
@@ -38,7 +35,7 @@ export function encodeSemanticTokens(
     )
       continue;
     const modifiers = token.modifiers.reduce((bits, modifier) => {
-      const index = semanticLegend.tokenModifiers.indexOf(modifier);
+      const index = legend.tokenModifiers.indexOf(modifier);
       return index < 0 ? bits : bits | (1 << index);
     }, 0);
     data.push(
@@ -61,7 +58,7 @@ interface ModelTokens {
   subscription: IDisposable;
   version?: number | undefined;
   data: Uint32Array;
-  tokens?: readonly BasicPlusSemanticToken[] | undefined;
+  tokens?: readonly SemanticToken[] | undefined;
   leadingBOM?: boolean | undefined;
   requests: Set<{
     version: number;
@@ -73,9 +70,15 @@ const busy = () => new Error("busy: semantic analysis was superseded");
 
 /** Monaco tracks the last painted tokens through edits. Never replace those
  * with an empty snapshot just because a newer analysis is still running. */
-export class BasicPlusSemanticTokens
+export class LanguageSemanticTokens
   implements languages.DocumentSemanticTokensProvider, IDisposable
 {
+  constructor(
+    private readonly legend: SemanticLegend,
+    private readonly languageId: string,
+    private readonly epoch: number,
+    private readonly isCurrentRoute: (model: editor.ITextModel) => boolean = () => true,
+  ) {}
   private readonly models = new Map<editor.ITextModel, ModelTokens>();
   private readonly listeners = new Set<() => void>();
   readonly onDidChange = (listener: () => void): IDisposable => {
@@ -87,7 +90,7 @@ export class BasicPlusSemanticTokens
     };
   };
   getLegend(): languages.SemanticTokensLegend {
-    return semanticLegend;
+    return this.legend;
   }
   releaseDocumentSemanticTokens(): void {}
   provideDocumentSemanticTokens(
@@ -97,7 +100,8 @@ export class BasicPlusSemanticTokens
   ): languages.SemanticTokens | null | Promise<languages.SemanticTokens> {
     if (token.isCancellationRequested) return null;
     const state = this.models.get(model);
-    if (!state || model.getLanguageId() !== "basic-plus") return { data: new Uint32Array() };
+    if (!state || !this.isCurrentRoute(model) || model.getLanguageId() !== this.languageId)
+      return { data: new Uint32Array() };
     if (state.version === model.getVersionId()) return { data: state.data };
     const version = model.getVersionId();
     return new Promise((resolve, reject) => {
@@ -151,17 +155,20 @@ export class BasicPlusSemanticTokens
     state.subscription.dispose();
     for (const request of state.requests) request.reject(busy());
     this.models.delete(model);
+    this.fire();
   }
   update(
-    tokensByFile: BasicPlusProjectAnalysis["tokensByFile"] | undefined,
-    sources?: Record<string, string>,
-    versions?: ReadonlyMap<editor.ITextModel, number>,
+    tokensByFile: PublishedAnalysis["tokensByFile"] | undefined,
+    sources: Record<string, string> | undefined,
+    versions: ReadonlyMap<editor.ITextModel, number> | undefined,
+    epoch: number,
   ): void {
+    if (epoch !== this.epoch) return;
     if (
       versions &&
       [...this.models].some(
         ([model, state]) =>
-          model.getLanguageId() === "basic-plus" &&
+          model.getLanguageId() === this.languageId &&
           (tokensByFile?.[state.file] !== undefined || sources?.[state.file] !== undefined) &&
           versions.get(model) !== model.getVersionId(),
       )
@@ -175,7 +182,7 @@ export class BasicPlusSemanticTokens
         tokens && state.tokens === tokens && state.leadingBOM === leadingBOM
           ? state.data
           : tokens
-            ? encodeSemanticTokens(tokens, model, leadingBOM)
+            ? encodeSemanticTokens(tokens, model, this.legend, leadingBOM)
             : new Uint32Array();
       state.tokens = tokens;
       state.leadingBOM = leadingBOM;

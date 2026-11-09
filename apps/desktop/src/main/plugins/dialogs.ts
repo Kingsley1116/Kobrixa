@@ -27,7 +27,7 @@ const copy = {
     cancel: "Cancel",
     developerTitle: "Turn on developer mode?",
     developerDetail:
-      "Developer mode runs the code in the plugin folders you link as normal programs on this computer, with your permissions. It is not a sandbox. Link only folders you trust.",
+      "Developer mode runs plugin code with your permissions on this computer. It is not a sandbox. Static language rules can block the editor even without a plugin process. Link only folders you trust.",
     turnOn: "Turn on",
     chooseFolder: "Choose a plugin folder",
     linkTitle: (name: string) => `Link “${name}”?`,
@@ -36,7 +36,8 @@ const copy = {
     folder: "Folder: ",
     problem: "Problem: ",
     unknown: "unknown",
-    trust: "Its code will run on this computer. Link only plugins you trust.",
+    trust:
+      "Link only plugins you trust. Plugin code runs with your permissions on this computer. Static language rules can block the editor even without a plugin process.",
     link: "Link",
     unlinkTitle: (name: string) => `Unlink “${name}”?`,
     unlinkDetail: "Kobrixa stops the plugin and forgets the folder. No files are deleted.",
@@ -47,7 +48,7 @@ const copy = {
     cancel: "取消",
     developerTitle: "開啟開發者模式？",
     developerDetail:
-      "開發者模式會以你的權限，把你連結的插件資料夾當作一般程式在這部電腦上執行。這不是沙箱，請只連結你信任的資料夾。",
+      "開發者模式會以你的權限，在這部電腦上執行插件程式碼。這不是沙箱。靜態語言規則即使沒有插件程序，也可能讓編輯器無回應。請只連結你信任的資料夾。",
     turnOn: "開啟",
     chooseFolder: "選擇插件資料夾",
     linkTitle: (name: string) => `連結「${name}」？`,
@@ -56,7 +57,8 @@ const copy = {
     folder: "資料夾：",
     problem: "問題：",
     unknown: "未知",
-    trust: "它的程式碼會在這部電腦上執行，請只連結你信任的插件。",
+    trust:
+      "請只連結你信任的插件。插件程式碼會以你的權限在這部電腦上執行。靜態語言規則即使沒有插件程序，也可能讓編輯器無回應。",
     link: "連結",
     unlinkTitle: (name: string) => `解除連結「${name}」？`,
     unlinkDetail: "Kobrixa 會停止這個插件並移除連結，不會刪除任何檔案。",

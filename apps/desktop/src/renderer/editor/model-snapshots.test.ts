@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vitest";
 import type { editor } from "monaco-editor";
 import { emptyAnalysis } from "../../shared/language-sync.js";
+import type { LanguageBinding } from "../../shared/language-services.js";
 import { ModelSnapshots } from "./model-snapshots.js";
 
 it("binds accepted snapshots to exact model identities, paths and versions without reading text", () => {
@@ -10,7 +11,21 @@ it("binds accepted snapshots to exact model identities, paths and versions witho
   const versions = new ModelSnapshots();
   const analysis = emptyAnalysis();
   analysis.index.sources["main.bp"] = "value = 1";
-  const snapshot = { analysis, overlays: analysis.index.sources };
+  const binding: LanguageBinding = {
+    epoch: 1,
+    pluginId: "kobrixa.basic-plus",
+    sourceKey: "builtin:kobrixa.basic-plus",
+    language: "bp",
+    extensions: ["bp", "bpi", "bpm"],
+    capabilities: ["analysis", "quickFixes"],
+    frontend: {
+      language: "bp",
+      entryExtensions: ["bp"],
+      sourceExtensions: ["bp", "bpi", "bpm"],
+      ir: { min: 1, max: 1 },
+    },
+  };
+  const snapshot = { epoch: 1, binding, analysis, overlays: analysis.index.sources };
   versions.bind(model, "main.bp", "value = 1");
   versions.accept(model, snapshot);
   expect(versions.isCurrent(model, "main.bp", snapshot)).toBe(true);

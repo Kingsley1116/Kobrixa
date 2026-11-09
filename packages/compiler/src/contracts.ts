@@ -1,4 +1,5 @@
 import type { KobrixaIR } from "@kobrixa/ir";
+import type { BackendDecl } from "@kobrixa/plugin-protocol";
 
 export interface SourceRange {
   startLine: number;
@@ -15,30 +16,47 @@ export interface Diagnostic {
   file: string;
   range: SourceRange;
   message: string;
+  /** Host-assigned provider identity. Producers must leave it unset. */
+  source?: string;
+}
+
+export type PublishedDiagnostic = Omit<Diagnostic, "source"> & { source: string };
+export interface DiagnosticSources {
+  frontend: string;
+  backend: string;
 }
 
 export interface BuildArtifact {
-  kind: "rbf" | "ir" | "listing" | "asset";
+  slot: string;
+  kind: string;
+  role: "deploy-main" | "deploy-asset" | "aux";
+  mediaType: string;
   path: string;
   sha256: string;
-  /** Project-relative destination used by device deployment for runtime assets. */
+  byteLength: number;
   remotePath?: string;
 }
 
 export interface CompileResult {
-  /** Destination required by an entry source Folder directive. */
+  buildId: string;
+  target: string;
+  deploy?: "ev3";
   runtimeDirectory?: string;
   success: boolean;
   diagnostics: Diagnostic[];
   artifacts: BuildArtifact[];
 }
 
+export type PublishedCompileResult = Omit<CompileResult, "diagnostics"> & {
+  diagnostics: PublishedDiagnostic[];
+};
+
 export interface ProjectManifest {
   schemaVersion: 1;
   name: string;
-  language: "bp";
+  language: string;
   entry: string;
-  target: "ev3-native";
+  target: string;
   assets: string[];
   outputDir: string;
   [key: string]: unknown;
@@ -59,6 +77,7 @@ export interface SourceProject {
   manifest: ProjectManifest;
   sources: SourceFile[];
   assets: AssetFile[];
+  assetSnapshots?: Readonly<Record<string, Uint8Array>>;
 }
 
 export interface FrontendResult {
@@ -67,20 +86,41 @@ export interface FrontendResult {
 }
 
 export interface LanguageFrontend {
-  id: "bp" | "python" | "typescript" | "cpp";
+  id: string;
   compile(input: SourceProject, signal: AbortSignal): Promise<FrontendResult>;
 }
 
 export interface BackendResult {
-  rbf?: Uint8Array;
-  listing?: string;
+  artifacts: Array<{ slot: string; data: Uint8Array }>;
   diagnostics: Diagnostic[];
 }
 
 export interface CompilerBackend {
-  id: "ev3-native";
+  id: string;
+  declaration: BackendDecl;
+  irVersion: number;
   compile(ir: KobrixaIR, signal: AbortSignal): Promise<BackendResult>;
 }
+
+export interface MemoryArtifact {
+  slot: string;
+  kind: string;
+  role: BuildArtifact["role"];
+  mediaType: string;
+  relativePath: string;
+  data: Uint8Array;
+  remotePath?: string;
+}
+
+export type CompileMemoryResult =
+  | {
+      success: true;
+      ir: KobrixaIR;
+      diagnostics: Diagnostic[];
+      artifacts: MemoryArtifact[];
+      runtimeDirectory?: string;
+    }
+  | { success: false; diagnostics: Diagnostic[]; artifacts: [] };
 
 export interface BuildProgress {
   buildId: string;

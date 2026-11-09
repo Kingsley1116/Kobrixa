@@ -1,15 +1,19 @@
-import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fileURLToPath } from "node:url";
+import { DIAGNOSTIC_HELP_LIMITS } from "@kobrixa/plugin-protocol";
 import {
   developmentSourceKey,
+  PLUGIN_FORCE_MARGIN_MS,
+  PLUGIN_SHUTDOWN_DEADLINE_MS,
   PluginManager,
   PluginSupervisor,
   spawnPluginProcess,
   type PluginManagerEvent,
   type PluginPersistedState,
+  type PluginProcess,
   type PluginStateStore,
 } from "./index.js";
 import { memoryPlugin } from "./test-process.js";
@@ -42,12 +46,35 @@ async function devPlugin(name: string) {
 }
 const builtin = {
   kind: "builtin" as const,
+  resources: {},
   manifest: {
     id: "kobrixa.basic-plus",
     version: "1.0.0",
     apiVersion: "^1.0.0",
     runtime: { kind: "builtin" },
-    contributes: { frontends: [{ language: "bp" }] },
+    contributes: {
+      frontends: [
+        {
+          language: "bp",
+          entryExtensions: ["bp"],
+          sourceExtensions: ["bp", "bpi", "bpm"],
+          ir: { min: 1, max: 1 },
+        },
+      ],
+    },
+  },
+};
+const builtinBackend = {
+  kind: "builtin" as const,
+  resources: {},
+  manifest: {
+    id: "test.back",
+    version: "1.0.0",
+    apiVersion: "^1.1.0",
+    runtime: { kind: "builtin" },
+    contributes: {
+      backends: [{ target: "test-vm", ir: { min: 1, max: 1 }, capabilities: {}, artifacts: [] }],
+    },
   },
 };
 function memoryStore(
@@ -97,13 +124,103 @@ const create = async (
 ) => PluginManager.create({ sources, store, safeMode, launcher, locale: "en", now: () => 1000 });
 
 describe("PluginManager", () => {
+  it.each([true, false])(
+    "migrates a disabled identity atomically with its alias present: %s",
+    async (present) => {
+      const alias = { kind: "development" as const, directory: path.join(root, "alias") };
+      const canonical = { kind: "development" as const, directory: path.join(root, "canonical") };
+      const unrelated = "dev:1111111111111111";
+      const store = memoryStore([keyOf(alias), unrelated], ["acme.legacy"]);
+      const manager = await create(present ? [alias] : [], store, true);
+      const save = vi.spyOn(store, "save").mockRejectedValueOnce(new Error("Disk unavailable."));
+      expect(await manager.migrateSourceDisable(keyOf(alias), keyOf(canonical))).toMatchObject({
+        ok: false,
+        code: "PLUGIN_E_STATE_SAVE",
+      });
+      expect([...(await store.load()).disabled]).toEqual([keyOf(alias), unrelated]);
+      if (present)
+        expect(manager.state().plugins[0]).toMatchObject({
+          sourceKey: keyOf(alias),
+          disabledBy: "user",
+        });
+      expect(await manager.migrateSourceDisable(keyOf(alias), keyOf(canonical))).toMatchObject({
+        ok: true,
+      });
+      expect(save).toHaveBeenCalledTimes(2);
+      expect([...(await store.load()).disabled].sort()).toEqual(
+        [keyOf(canonical), unrelated].sort(),
+      );
+      expect([...(await store.load()).legacyDisabledIds]).toEqual(["acme.legacy"]);
+      // Later ordinary saves must use the migrated set, not revive the alias.
+      if (present) await manager.removeSource(keyOf(alias), { forget: false });
+      await manager.addSource(canonical);
+      expect(manager.state().plugins).toMatchObject([
+        { sourceKey: keyOf(canonical), disabledBy: "user" },
+      ]);
+      await manager.removeSource(keyOf(canonical));
+      expect([...(await store.load()).disabled]).toEqual([unrelated]);
+    },
+  );
+
+  it("migrates a disable held only in memory after a failed user-disable save", async () => {
+    const source = await devPlugin("hello");
+    const target = developmentSourceKey(path.join(root, "canonical"));
+    const store = memoryStore();
+    const manager = await create([source], store, true);
+    vi.spyOn(store, "save").mockRejectedValueOnce(new Error("Disk unavailable."));
+    expect(await manager.setEnabled(keyOf(source), false)).toMatchObject({
+      ok: true,
+      persisted: false,
+    });
+    expect(await manager.migrateSourceDisable(keyOf(source), target)).toMatchObject({ ok: true });
+    expect([...(await store.load()).disabled]).toEqual([target]);
+  });
+
+  it("refuses disable migration outside safe mode", async () => {
+    const source = await devPlugin("hello");
+    const store = memoryStore([keyOf(source)]);
+    const manager = await create([source], store);
+    expect(
+      await manager.migrateSourceDisable(
+        keyOf(source),
+        developmentSourceKey(path.join(root, "canonical")),
+      ),
+    ).toMatchObject({ ok: false, code: "PLUGIN_E_SAFE_MODE" });
+    expect(store.saved).toEqual([]);
+  });
+
+  it("keeps a built-in language-service plugin required", async () => {
+    const manifest = {
+      ...builtin.manifest,
+      apiVersion: "^1.3.0",
+      contributes: {
+        ...builtin.manifest.contributes,
+        languageServices: [
+          { language: "bp", extensions: ["bp", "bpi", "bpm"], capabilities: ["analysis"] },
+        ],
+      },
+    };
+    const manager = await create([{ kind: "builtin", resources: {}, manifest }]);
+    try {
+      expect(await manager.setEnabled("builtin:kobrixa.basic-plus", false)).toMatchObject({
+        ok: false,
+        code: "PLUGIN_E_BUILTIN_REQUIRED",
+      });
+      expect(manager.state().plugins[0]?.status).toBe("enabled");
+    } finally {
+      await manager.shutdown();
+    }
+  });
   it("routes commands, tags notices with the channel's plugin id and resolves frontends", async () => {
     const hello = await devPlugin("hello");
-    const manager = await create([builtin, hello]);
+    const manager = await create([builtin, builtinBackend, hello]);
     const events: PluginManagerEvent[] = [];
     manager.onEvent((event) => events.push(event));
-    expect(manager.frontendFor("bp")).toBe("kobrixa.basic-plus");
-    expect(manager.frontendFor("python")).toBeUndefined();
+    expect(manager.resolveCompiler("bp", "missing")).toMatchObject({
+      ok: false,
+      code: "BUILD1001",
+    });
+    expect(manager.resolveCompiler("bp", "test-vm").ok).toBe(true);
     await expect(manager.executeCommand("acme.hello.greet")).resolves.toEqual({ ok: true });
     expect(events).toContainEqual({
       type: "notice",
@@ -316,6 +433,149 @@ describe("PluginManager", () => {
     expect(await manager.setEnabled(keyOf(a), false)).toMatchObject({ ok: true });
     await expect(manager.shutdown()).resolves.toBeUndefined();
   });
+  it("waits for a forced stop to finish before resuming commands", async () => {
+    vi.useFakeTimers();
+    const stubborn = memoryPlugin((peer) => {
+      peer.handle("initialize", () => ({ apiVersion: "1.0.0", sdk: { name: "t", version: "1" } }));
+      peer.handle("command/execute", () => null);
+      peer.handle("shutdown", () => new Promise(() => {}));
+    });
+    const forceKill = vi.fn(() => setTimeout(() => stubborn.process.forceKill(), 50));
+    const launch = vi.fn(launcher).mockResolvedValueOnce({ ...stubborn.process, forceKill });
+    const manager = await PluginManager.create({
+      sources: [await devPlugin("hello")],
+      store: memoryStore(),
+      safeMode: false,
+      launcher: launch,
+      locale: "en",
+      supervisor: { stopTimeoutMs: 100, exitTimeoutMs: 100 },
+    });
+    await manager.executeCommand("acme.hello.greet");
+    const shutdown = manager.shutdown(10);
+    await vi.advanceTimersByTimeAsync(10);
+    await shutdown;
+    expect(forceKill).toHaveBeenCalledTimes(1);
+
+    const resumed = manager.resume();
+    const command = resumed.then(() => manager.executeCommand("acme.hello.greet"));
+    expect(launch).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(await command).toEqual({ ok: true });
+    expect(launch).toHaveBeenCalledTimes(2);
+    await manager.shutdown();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it.each(["running", "launching"] as const)(
+    "does not reuse a forced stop for a %s plugin after resuming",
+    async (state) => {
+      vi.useFakeTimers();
+      const stubborn = memoryPlugin((peer) => {
+        peer.handle("initialize", () => ({
+          apiVersion: "1.0.0",
+          sdk: { name: "t", version: "1" },
+        }));
+        peer.handle("command/execute", () => null);
+        peer.handle("shutdown", () => new Promise(() => {}));
+      });
+      const gracefulShutdown = vi.fn(() => null);
+      const restarted = memoryPlugin((peer, { exit }) => {
+        peer.handle("initialize", () => ({
+          apiVersion: "1.0.0",
+          sdk: { name: "t", version: "1" },
+        }));
+        peer.handle("command/execute", () => null);
+        peer.handle("shutdown", gracefulShutdown);
+        peer.onNotification("exit", () => exit(0));
+      });
+      const forceKill = vi.spyOn(restarted.process, "forceKill");
+      let finishLaunch!: (child: PluginProcess) => void;
+      const launch = vi
+        .fn(() => new Promise<PluginProcess>((resolve) => (finishLaunch = resolve)))
+        .mockResolvedValueOnce(stubborn.process);
+      const manager = await PluginManager.create({
+        sources: [await devPlugin("hello")],
+        store: memoryStore(),
+        safeMode: false,
+        launcher: launch,
+        locale: "en",
+        supervisor: { stopTimeoutMs: 100, exitTimeoutMs: 100 },
+      });
+      await manager.executeCommand("acme.hello.greet");
+      const first = manager.shutdown(10);
+      await vi.advanceTimersByTimeAsync(1);
+      await first;
+      expect(stubborn.killed()).toBe(true);
+      await manager.resume();
+      expect(launch).toHaveBeenCalledTimes(1);
+
+      const command = manager.executeCommand("acme.hello.greet");
+      if (state === "running") {
+        // This case checks graceful shutdown after resume; only launching reads #forced.
+        finishLaunch(restarted.process);
+        expect(await command).toEqual({ ok: true });
+      }
+      const second = manager.shutdown();
+      if (state === "launching") {
+        finishLaunch(restarted.process);
+        expect(await command).toMatchObject({ code: "PLUGIN_E_DISABLED" });
+      }
+      await second;
+      expect(forceKill).not.toHaveBeenCalled();
+      if (state === "running") {
+        expect(gracefulShutdown).toHaveBeenCalledTimes(1);
+        expect(restarted.killed()).toBe(false);
+      }
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+  it("does not force a resumed launch of a plugin that stopped before another was forced", async () => {
+    vi.useFakeTimers();
+    const a = await devPlugin("a");
+    const b = await devPlugin("b");
+    const stubborn = memoryPlugin((peer) => {
+      peer.handle("initialize", () => ({ apiVersion: "1.0.0", sdk: { name: "t", version: "1" } }));
+      peer.handle("command/execute", () => null);
+      peer.handle("shutdown", () => new Promise(() => {}));
+    });
+    const forceB = vi.spyOn(stubborn.process, "forceKill");
+    let finishLaunch!: (child: PluginProcess) => void;
+    const launchA = vi
+      .fn(() => new Promise<PluginProcess>((resolve) => (finishLaunch = resolve)))
+      .mockResolvedValueOnce(await launcher());
+    const manager = await PluginManager.create({
+      sources: [a, b],
+      store: memoryStore(),
+      safeMode: false,
+      launcher: (plugin) =>
+        plugin.id === "acme.a" ? launchA() : Promise.resolve(stubborn.process),
+      locale: "en",
+      supervisor: { stopTimeoutMs: 60_000 },
+    });
+    await manager.executeCommand("acme.a.greet");
+    await manager.executeCommand("acme.b.greet");
+    const first = manager.shutdown();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(manager.state().plugins.map((plugin) => plugin.running)).toEqual([false, false]);
+    expect(manager.active).toBe(true); // B is still stopping; A has already finished.
+    expect(forceB).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(PLUGIN_SHUTDOWN_DEADLINE_MS - PLUGIN_FORCE_MARGIN_MS);
+    await first;
+    expect(forceB).toHaveBeenCalledOnce();
+    await manager.resume();
+
+    const restarted = await launcher();
+    const killA = vi.spyOn(restarted, "kill");
+    const forceA = vi.spyOn(restarted, "forceKill");
+    const command = manager.executeCommand("acme.a.greet");
+    expect(launchA).toHaveBeenCalledTimes(2);
+    const second = manager.shutdown();
+    finishLaunch(restarted);
+    expect(await command).toMatchObject({ code: "PLUGIN_E_DISABLED" });
+    await second;
+    expect(killA).toHaveBeenCalledOnce();
+    expect(forceA).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
   it("keeps tracking a plugin that is still being disabled", async () => {
     const stubborn = vi.fn(
       async () =>
@@ -429,9 +689,17 @@ describe("PluginManager", () => {
       message: "moved to state.json.corrupt-1",
     });
     expect(manager.state().plugins.map((plugin) => plugin.status)).toEqual(["enabled", "disabled"]);
+    expect(manager.state().safeMode).toBe(true);
+    expect(await manager.setEnabled(keyOf(hello), true)).toMatchObject({
+      ok: false,
+      code: "PLUGIN_E_SAFE_MODE",
+    });
+    expect(await manager.leaveSafeMode()).toMatchObject({ ok: true });
+    // Corruption conservatively disabled every development source; leaving safe mode does not undo that choice.
+    expect(manager.state().plugins[1]?.status).toBe("disabled");
     expect(await manager.setEnabled(keyOf(hello), true)).toMatchObject({ ok: true });
     expect(manager.state().stateProblem).toBeUndefined();
-    expect(savedDisabled(store)).toEqual([[]]);
+    expect(savedDisabled(store).at(-1)).toEqual([]);
   });
   it("treats a store that cannot be read like a corrupt one", async () => {
     const hello = await devPlugin("hello");
@@ -745,5 +1013,265 @@ describe("PluginManager", () => {
       expect(await manager.executeCommand("acme.hello.greet")).toEqual({ ok: true });
       await manager.shutdown();
     });
+  });
+});
+
+describe("diagnostic help", () => {
+  const helpEntry = (code: string) => ({
+    code,
+    title: { en: "T" },
+    cause: { en: "C" },
+    steps: { en: ["S"] },
+  });
+  const writeHelp = (name: string, help: unknown) =>
+    writeFile(
+      path.join(root, name, "help.json"),
+      typeof help === "string" ? help : JSON.stringify({ entries: help }),
+    );
+  async function helpPlugin(name: string, help: unknown) {
+    const source = await devPlugin(name);
+    const file = path.join(source.directory, "kobrixa-plugin.json");
+    const manifest = JSON.parse(await readFile(file, "utf8"));
+    manifest.contributes.diagnosticHelp = { version: 1, path: "help.json" };
+    await writeFile(file, JSON.stringify(manifest));
+    await writeHelp(name, help);
+    return source;
+  }
+  const createWith = (
+    sources: Parameters<typeof PluginManager.create>[0]["sources"],
+    options: { safeMode?: boolean; diagnosticHelpTotalBytes?: number } = {},
+  ) =>
+    PluginManager.create({
+      sources,
+      store: memoryStore(),
+      safeMode: options.safeMode ?? false,
+      launcher,
+      locale: "en",
+      now: () => 1000,
+      ...(options.diagnosticHelpTotalBytes === undefined
+        ? {}
+        : { diagnosticHelpTotalBytes: options.diagnosticHelpTotalBytes }),
+    });
+
+  it("publishes enabled plugins' help and drops it when disabled or reloaded", async () => {
+    const source = await helpPlugin("one", [helpEntry("ACME100")]);
+    const manager = await createWith([builtin, source]);
+    const first = manager.diagnosticHelp();
+    expect(first.plugins).toEqual([
+      expect.objectContaining({
+        source: "acme.one",
+        sourceKey: keyOf(source),
+        entries: [expect.objectContaining({ code: "ACME100" })],
+      }),
+    ]);
+    expect(manager.state().diagnosticHelpRevision).toBe(first.revision);
+    await manager.setEnabled(keyOf(source), false);
+    const disabled = manager.diagnosticHelp();
+    expect(disabled.plugins).toEqual([]);
+    expect(disabled.revision).toBeGreaterThan(first.revision);
+    await manager.setEnabled(keyOf(source), true);
+    const enabled = manager.diagnosticHelp();
+    expect(enabled.plugins).toEqual(first.plugins);
+    expect(enabled.revision).toBeGreaterThan(disabled.revision);
+    await writeHelp("one", [helpEntry("ACME200")]);
+    await manager.reloadSource(keyOf(source));
+    expect(manager.diagnosticHelp().plugins[0]!.entries[0]!.code).toBe("ACME200");
+    expect(manager.diagnosticHelp().revision).toBeGreaterThan(enabled.revision);
+    expect(manager.state().diagnosticHelpRevision).toBe(manager.diagnosticHelp().revision);
+    expect(launcher).not.toHaveBeenCalled();
+  });
+  it.each(["enable", "disable", "remove"] as const)(
+    "bumps the help revision when a plugin without help is changed: %s",
+    async (action) => {
+      const source = await devPlugin("plain");
+      const manager = await create(
+        [builtin, source],
+        memoryStore(action === "enable" ? [keyOf(source)] : []),
+      );
+      const before = manager.state().diagnosticHelpRevision;
+      const result =
+        action === "remove"
+          ? await manager.removeSource(keyOf(source))
+          : await manager.setEnabled(keyOf(source), action === "enable");
+      expect(result).toMatchObject({ ok: true });
+      expect(manager.state().diagnosticHelpRevision).toBeGreaterThan(before);
+      expect(manager.diagnosticHelp().plugins).toEqual([]);
+    },
+  );
+  it("bumps the help revision when a plugin without help reloads with a new display name", async () => {
+    const source = await devPlugin("plain");
+    const file = path.join(source.directory, "kobrixa-plugin.json");
+    const manifest = JSON.parse(await readFile(file, "utf8"));
+    manifest.displayName = { en: "Original", "zh-TW": "原名" };
+    await writeFile(file, JSON.stringify(manifest));
+    const manager = await create([source]);
+    const before = manager.state().diagnosticHelpRevision;
+    manifest.displayName = { en: "Renamed", "zh-TW": "新名" };
+    await writeFile(file, JSON.stringify(manifest));
+    expect(await manager.reloadSource(keyOf(source))).toMatchObject({ ok: true });
+    expect(manager.state().plugins[0]!.displayName).toEqual(manifest.displayName);
+    expect(manager.state().diagnosticHelpRevision).toBeGreaterThan(before);
+    expect(manager.diagnosticHelp().plugins).toEqual([]);
+  });
+  it("keeps the help revision stable when an unrelated disabled plugin is removed", async () => {
+    const source = await devPlugin("plain");
+    const manager = await create([builtin, source], memoryStore([keyOf(source)]));
+    const before = manager.state();
+    expect(await manager.removeSource(keyOf(source))).toMatchObject({ ok: true });
+    const after = manager.state();
+    expect(after.revision).toBeGreaterThan(before.revision);
+    expect(after.plugins).toEqual(before.plugins.filter((plugin) => plugin.status === "enabled"));
+    expect(after.diagnosticHelpRevision).toBe(before.diagnosticHelpRevision);
+  });
+  it("keeps the plugin enabled when its help file is invalid", async () => {
+    const source = await helpPlugin("broken", "{");
+    const manager = await createWith([source]);
+    const summary = manager.state().plugins.find((item) => item.sourceKey === keyOf(source))!;
+    expect(summary.status).toBe("enabled");
+    expect(summary.problems.map((item) => item.code)).toEqual(["PLUGIN_E_DIAGNOSTIC_HELP"]);
+    expect(summary.problems[0]!.message).toContain("help.json");
+    expect(manager.diagnosticHelp().plugins).toEqual([]);
+    await manager.setEnabled(keyOf(source), false);
+    expect(manager.state().plugins[0]!.problems).toEqual([]);
+  });
+  it("does not read help in safe mode", async () => {
+    const source = await helpPlugin("safe", [helpEntry("ACME100")]);
+    const manager = await createWith([source], { safeMode: true });
+    expect(manager.diagnosticHelp().plugins).toEqual([]);
+    const revision = manager.diagnosticHelp().revision;
+    expect(manager.state().plugins[0]).toMatchObject({
+      id: "safe",
+      status: "disabled",
+      problems: [],
+    });
+    await manager.leaveSafeMode();
+    expect(manager.diagnosticHelp().plugins[0]!.source).toBe("acme.safe");
+    expect(manager.diagnosticHelp().revision).toBeGreaterThan(revision);
+    expect(launcher).not.toHaveBeenCalled();
+  });
+  it("fails the first plugin by source key that exceeds the total budget", async () => {
+    const sources = await Promise.all(
+      ["a", "b", "c"].map((name) => helpPlugin(name, [helpEntry("ACME100")])),
+    );
+    const size = Buffer.byteLength(await readFile(path.join(root, "a", "help.json")));
+    const manager = await createWith(sources, { diagnosticHelpTotalBytes: size * 2 });
+    const keys = sources.map(keyOf).sort();
+    expect(manager.diagnosticHelp().plugins.map((item) => item.sourceKey)).toEqual(
+      keys.slice(0, 2),
+    );
+    const last = manager.state().plugins.find((item) => item.sourceKey === keys[2])!;
+    expect(last.status).toBe("enabled");
+    expect(last.problems.map((item) => item.code)).toContain("PLUGIN_E_DIAGNOSTIC_HELP");
+    await manager.setEnabled(keys[0]!, false);
+    expect(manager.diagnosticHelp().plugins.map((item) => item.sourceKey)).toEqual(keys.slice(1));
+    expect(manager.state().plugins.find((item) => item.sourceKey === keys[2])!.problems).toEqual(
+      [],
+    );
+  });
+  it("accepts exactly 8 MiB by default and rejects the plugin that adds one byte too many", async () => {
+    const body = JSON.stringify({ entries: [helpEntry("ACME100")] });
+    const size = Buffer.byteLength(body);
+    const sources = await Promise.all(
+      Array.from({ length: 9 }, (_, index) => helpPlugin(`limit${index}`, body)),
+    );
+    const sorted = [...sources].sort((a, b) => (keyOf(a) < keyOf(b) ? -1 : 1));
+    await Promise.all(
+      sorted
+        .slice(0, 8)
+        .map((source, index) =>
+          writeFile(
+            path.join(source.directory, "help.json"),
+            body + " ".repeat(DIAGNOSTIC_HELP_LIMITS.fileBytes - size - (index === 7 ? size : 0)),
+          ),
+        ),
+    );
+    const manager = await createWith(sources.reverse());
+    expect(manager.diagnosticHelp().plugins.map((item) => item.sourceKey)).toEqual(
+      sorted.map(keyOf),
+    );
+    expect(manager.state().plugins.every((item) => item.problems.length === 0)).toBe(true);
+    await appendFile(path.join(sorted[7]!.directory, "help.json"), " ");
+    await manager.reloadSource(keyOf(sorted[7]!));
+    expect(manager.diagnosticHelp().plugins.map((item) => item.sourceKey)).toEqual(
+      sorted.slice(0, 8).map(keyOf),
+    );
+    expect(
+      manager.state().plugins.find((item) => item.sourceKey === keyOf(sorted[8]!)),
+    ).toMatchObject({
+      status: "enabled",
+      problems: [{ code: "PLUGIN_E_DIAGNOSTIC_HELP", message: expect.stringMatching(/8 MiB/) }],
+    });
+  });
+  it("continues checking later plugins after a resource exceeds the remaining budget", async () => {
+    const body = JSON.stringify({ entries: [helpEntry("ACME100")] });
+    const size = Buffer.byteLength(body);
+    const sources = await Promise.all(["a", "b", "c"].map((name) => helpPlugin(name, body)));
+    const sorted = [...sources].sort((a, b) => (keyOf(a) < keyOf(b) ? -1 : 1));
+    await writeFile(path.join(sorted[1]!.directory, "help.json"), body + " ".repeat(size));
+    const manager = await createWith(sources, { diagnosticHelpTotalBytes: size * 2 });
+    expect(manager.diagnosticHelp().plugins.map((item) => item.sourceKey)).toEqual([
+      keyOf(sorted[0]!),
+      keyOf(sorted[2]!),
+    ]);
+    expect(
+      manager.state().plugins.find((item) => item.sourceKey === keyOf(sorted[1]!)),
+    ).toMatchObject({
+      status: "enabled",
+      problems: [{ code: "PLUGIN_E_DIAGNOSTIC_HELP" }],
+    });
+  });
+  it("removes stale help on an invalid reload and recovers when the resource is fixed", async () => {
+    const source = await helpPlugin("one", [helpEntry("ACME100")]);
+    const manager = await createWith([source]);
+    const first = manager.diagnosticHelp();
+    await writeHelp("one", "{");
+    await manager.reloadSource(keyOf(source));
+    const broken = manager.diagnosticHelp();
+    expect(broken.plugins).toEqual([]);
+    expect(broken.revision).toBeGreaterThan(first.revision);
+    expect(manager.state().plugins[0]).toMatchObject({
+      status: "enabled",
+      problems: [{ code: "PLUGIN_E_DIAGNOSTIC_HELP" }],
+    });
+    await writeHelp("one", [helpEntry("ACME200")]);
+    await manager.reloadSource(keyOf(source));
+    expect(manager.diagnosticHelp().plugins[0]!.entries[0]!.code).toBe("ACME200");
+    expect(manager.diagnosticHelp().revision).toBeGreaterThan(broken.revision);
+    expect(manager.state().plugins[0]!.problems).toEqual([]);
+  });
+  it("removes and re-adds help atomically with the source's state events", async () => {
+    const source = await helpPlugin("one", [helpEntry("ACME100")]);
+    const manager = await createWith([source]);
+    const first = manager.diagnosticHelp();
+    const events: PluginManagerEvent[] = [];
+    manager.onEvent((event) => events.push(event));
+    await manager.removeSource(keyOf(source));
+    const removed = manager.diagnosticHelp();
+    expect(removed.plugins).toEqual([]);
+    expect(removed.revision).toBeGreaterThan(first.revision);
+    expect(events).toContainEqual({
+      type: "state",
+      state: expect.objectContaining({ diagnosticHelpRevision: removed.revision, plugins: [] }),
+    });
+    await manager.addSource(source);
+    expect(manager.diagnosticHelp().plugins).toEqual(first.plugins);
+    expect(manager.diagnosticHelp().revision).toBeGreaterThan(removed.revision);
+  });
+  it("returns isolated catalogs and bumps the revision when adding a plugin without help", async () => {
+    const source = await helpPlugin("one", [helpEntry("ACME100")]);
+    const manager = await createWith([source]);
+    const first = manager.diagnosticHelp();
+    const returned = manager.diagnosticHelp();
+    returned.plugins[0]!.entries[0]!.steps.en.push("Changed");
+    returned.plugins.length = 0;
+    expect(manager.diagnosticHelp()).toEqual(first);
+    await manager.addSource(await devPlugin("plain"));
+    const added = manager.diagnosticHelp();
+    expect(added.plugins).toEqual(first.plugins);
+    expect(added.revision).toBeGreaterThan(first.revision);
+    await manager.reloadSource(keyOf(source));
+    expect(manager.diagnosticHelp().plugins).toEqual(first.plugins);
+    expect(manager.diagnosticHelp().revision).toBeGreaterThan(added.revision);
+    expect(launcher).not.toHaveBeenCalled();
   });
 });

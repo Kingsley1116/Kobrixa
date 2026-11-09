@@ -1,3 +1,4 @@
+import type { LanguageStatusEvent } from "../shared/language-services.js";
 import type { MotorTestState } from "../shared/motor-test.js";
 import type { UpdateState } from "../shared/updates.js";
 import type { PluginEvent } from "../shared/plugins.js";
@@ -54,6 +55,10 @@ const api: KobrixaApi = {
   },
   plugins: {
     state: () => ipcRenderer.invoke("plugins:state"),
+    diagnosticHelp: () => ipcRenderer.invoke("plugins:diagnosticHelp"),
+    staticLanguages: () => ipcRenderer.invoke("plugins:static-languages"),
+    reportLanguageRegistrationFailure: (input) =>
+      ipcRenderer.invoke("plugins:report-language-registration-failure", input),
     notices: () => ipcRenderer.invoke("plugins:notices"),
     execute: (commandId) => ipcRenderer.invoke("plugins:execute", commandId),
     cancel: (sourceKey) => ipcRenderer.invoke("plugins:cancel", sourceKey),
@@ -140,6 +145,20 @@ const api: KobrixaApi = {
     },
   },
   language: {
+    status: (workspaceId, refresh) =>
+      ipcRenderer.invoke("language:status", workspaceId, refresh ?? false),
+    feature: (workspaceId, request) => ipcRenderer.invoke("language:feature", workspaceId, request),
+    cancelFeature: (workspaceId, requestId) =>
+      ipcRenderer.invoke("language:cancel-feature", workspaceId, requestId),
+    onStatus: (listener) => {
+      const receive = (_event: Electron.IpcRendererEvent, event: LanguageStatusEvent) =>
+        listener(event);
+      ipcRenderer.on("language:status-changed", receive);
+      return () => {
+        ipcRenderer.removeListener("language:status-changed", receive);
+      };
+    },
+
     cancelQuickFix: (workspaceId, requestId) =>
       ipcRenderer.invoke("language:cancel-quick-fix", workspaceId, requestId),
     quickFixes: (workspaceId, request) =>

@@ -10,9 +10,9 @@ Electron preload bridge
           │ validated Electron IPC
           ▼
 Electron main process (Node.js)
-          ├─ Workspace service → Language frontend (.bp in v1)
+          ├─ Workspace service → Resolved built-in frontend
           │                       → Typed KobrixaIR + validation
-          │                       → EV3 backend → .rbf artifact
+          │                       → Resolved backend → validated artifact set
           └─ Device service ────────────────────→ USB HID / Wi-Fi
 ```
 
@@ -105,7 +105,7 @@ Host main process                        Guest main process
 
 ## Plugins (development preview)
 
-Phase 1 supports trusted local JS/TS and Python plugins. Third-party plugins load only in developer mode, which is off by default and turned on in Settings → Plugins after a native confirmation dialog. The panel links plugin folders through a native folder picker, chooses the Python interpreter, lists built-in and development plugins with their load errors, messages and logs, runs and cancels contributed commands, and reloads, enables, disables or unlinks development plugins. See the [runnable samples](../../plugins/samples/README.md) and [Python SDK](../../sdks/python/README.md).
+The development preview supports trusted local JS/TS, Python, and static-only JSON plugins. Third-party plugins load only in developer mode, which is off by default and turned on in Settings → Plugins after a native confirmation dialog. The panel links plugin folders through a native folder picker, chooses the Python interpreter, lists built-in and development plugins with their load errors, messages and logs, runs and cancels contributed commands, and reloads, enables, disables or unlinks development plugins. See the [runnable samples](../../plugins/samples/README.md) and [Python SDK](../../sdks/python/README.md).
 
 The public API has three layers: JSON-RPC 2.0, Zod definitions and committed JSON Schema, and language SDKs:
 
@@ -132,7 +132,9 @@ Advanced launch options apply to one session only and are never saved:
 
 `<userData>/plugins/state.json` (schema version 2) stores developer mode, the linked folders, the chosen Python interpreter, the source keys of plugins kept disabled after restart, and the safe-mode lock. A file that cannot be read keeps third-party plugins off instead of being overwritten.
 
-`<userData>/plugins/session.json` records whether a third-party plugin process ran and whether the window stopped responding; it is written synchronously and removed on a normal quit. If it is still present at the next start and either flag is set, Kobrixa writes a safe-mode lock: third-party plugins stay paused and the app shows a banner until the user selects **Restore plugins**. A hung window keeps the marker even after a normal quit. Development plugins cannot be enabled, linked or reloaded during safe mode; they can still be disabled or unlinked.
+If a normal startup cannot resolve a `--plugin-dev-dir` folder or save the migration of its disabled source key, all third-party plugins stay paused. An in-memory recovery flag keeps **Restore plugins** visible in the banner and plugin settings even when settings cannot be written. Restore retries resolution and migration before leaving safe mode, preserving individually disabled sources. Fix the folder or settings storage and retry, or restart without `--plugin-dev-dir` for the affected folder.
+
+`<userData>/plugins/session.json` records whether a third-party plugin process ran, whether `thirdPartyStaticContributions` was delivered, and whether the window stopped responding; it is written synchronously and removed on a normal quit. If it is still present at the next start and any risk flag is set, Kobrixa writes a safe-mode lock: third-party plugins stay paused and the app shows a banner until the user selects **Restore plugins**. A hung window keeps the marker even after a normal quit. Development plugins cannot be enabled, linked or reloaded during safe mode; they can still be disabled or unlinked.
 
 The phase 1 methods are:
 
@@ -149,11 +151,35 @@ The host derives caller identity from the bound channel, never from a plugin ID 
 
 These are **trusted local plugins**. Separate processes provide crash isolation; manifest permissions only restrict calls through Kobrixa and are **not an operating-system sandbox**. Plugin code can still access files and the network directly.
 
-The built-in `kobrixa.basic-plus` plugin registers the `bp` frontend through a minimal adapter to `frontends/basic-plus`. It remains enabled, including in safe mode, and cannot be disabled in phase 1. Compilation keeps the existing EV3 backend and build behavior. The generic artifact contract, `Diagnostic.source` and static language contributions are **planned (phase 2)**; the `devices` API is **planned (phase 3)**. See the [plugin design](../superpowers/specs/2026-10-14-plugin-system-design.md) for those later phases.
+Plugin API **1.4.0** supports static languages, compiler frontend/backend declarations and `contributes.diagnosticHelp`; compatible 1.3.x manifests remain accepted. `kobrixa.basic-plus` provides language `bp`; the separate built-in `kobrixa.ev3` provides target `ev3-native`. Both declare IR version `{ min: 1, max: 1 }` and remain available in safe mode. Built-in plugins retain the phase 1 disable restrictions. Valid API 1.0, 1.1 and 1.2 plugins remain compatible, but external plugins declaring `frontends` or `backends` are invalid (`PLUGIN_E_FRONTEND_REQUIRES_BUILTIN` / `PLUGIN_E_BACKEND_REQUIRES_BUILTIN`). This release has no external compiler RPC.
+
+The host resolves one enabled, valid provider for each language and target. Every conflicting provider is rejected with `PLUGIN_E_PROVIDER_CONFLICT`; no provider wins by load order. Recomputing a provider set excludes disabled providers and clears obsolete conflicts. The selected IR version is the maximum of the overlapping ranges. Missing/conflicting providers report `BUILD1001` before a worker starts; incompatible IR ranges report `BUILD1002`.
+
+Frontend declarations supply entry and source extensions. Backend declarations supply artifact slots, kinds, media types, extensions, roles and required flags; the backend returns only slot/bytes. The host owns `ir` and `asset` slots and produces resource artifacts. A deployable backend must declare exactly one required, non-empty `deploy-main`. Compiler contributions are limited to 8 frontends and 8 backends per plugin and 16 artifact declarations per backend. IDs use `/^[a-z][a-z0-9-]{0,31}$/`; extensions use `/^[a-z0-9]{1,16}$/`. The committed JSON Schema describes structural validation; the host additionally validates extension subsets, IR ranges, unique slots and the main-artifact relationship.
+
+Plugin API **1.3.0** adds `contributes.languageServices`. Only built-in plugins may declare it, including an empty array; development plugins receive `PLUGIN_E_LANGUAGE_SERVICE_REQUIRES_BUILTIN`. The declaration must include `analysis`, match a frontend owned by the same plugin, and use exactly that frontend's source extensions. A plugin may declare at most eight services. Valid API 1.0, 1.1 and 1.2 plugins remain compatible.
+
+The main process selects the enabled frontend owner for the validated project's language, independently of backend availability and IR compatibility. Its `pluginId:language` key selects a compiled-in worker factory and browser companion. Each workspace has independent analysis/Quick Fix and completion workers. All messages and accepted results carry a host-issued binding epoch; provider generation, routing changes or either worker restarting invalidates both channels and requires a full sync. Ordinary typing changes document revisions only.
+
+Workers retain native semantic state and publish provider-neutral symbols, packed tokens and occurrences, completion visibility groups, and editor results. The host stamps diagnostic sources. Basic Plus completion filtering, structural edit checks and formatting live in its browser companion; generic renderer and shared modules do not import Basic Plus. Missing services show a language status row; configuration conflicts show a workspace banner naming the plugins. Both link to plugin settings. Built-in plugins remain required. Static languages use strict version-1 tokenizer/configuration JSON and the shared protocol validator. Runtime publishes an atomic revisioned catalog; one renderer store and registrar manage all live document and review models. Builtin raw JSON is bundled into main, not fetched from the repository. Catalog revisions are separate from service epochs. The static risk marker is synchronously persisted before third-party delivery and remains sticky until clean exit; write failure blocks that delivery. No static-only process or handshake is started. See [Static language plugins](plugin-static-languages.md) for authoring, conflict resolution, bounded resource accounting and recovery. External language-service RPC is not implemented.
+
+The host assigns `Diagnostic.source`, and diagnostic help is scoped to that source. The `devices` API remains planned for phase 3. See the [plugin design](../superpowers/specs/2026-10-14-plugin-system-design.md).
+
+### Language-service acceptance
+
+Run `pnpm test:desktop:smoke` from the repository root. Its runner calls `checkCompletionPerformance` alongside language-features, indentation and highlighting checks; loading the performance module alone does not run the checks. Keep the thresholds unchanged: **warm completion p95 ≤100 ms, new variable ≤200 ms, 30,000 lines ≤300 ms**. If Electron cannot run locally, record the actual error and leave performance and UI acceptance pending for a machine that can run it.
+
+Manual acceptance in both English and Traditional Chinese:
+
+- [ ] Distinguish missing services from conflicts; list conflicting plugins and open plugin settings from each status action. An available service with no diagnostics shows no unavailable row.
+- [ ] Confirm status changes preserve document contents, JSON formatting and Basic Plus lexical highlighting; recovery starts analysis without typing.
+- [ ] Verify completion candidates and local scope visibility inside and outside functions **while analysis is pending**, and check API-call signature help during that pending period.
+- [ ] Exercise Basic Plus completion (including closing-keyword indentation), Quick Fix, semantic tokens, hover, signature help, definition, references, rename, outline/breadcrumbs, and document/range formatting.
+- [ ] Run the full Electron smoke and verify all three completion latency limits above; unit/integration passes do not establish performance acceptance.
 
 ## Project manifest
 
-Each project uses `kobrixa.json`. Unknown fields are allowed for forward compatibility; invalid known fields are errors.
+Projects can use `kobrixa.json`; projects without a manifest default to `bp` / `ev3-native`. Unknown fields are allowed for forward compatibility; invalid known fields are errors.
 
 ```json
 {
@@ -171,9 +197,9 @@ Contract:
 
 - `schemaVersion`: positive integer; v1 accepts only `1`.
 - `name`: non-empty project and default EV3 program name.
-- `language`: v1 accepts `bp`; planned values are `python`, `typescript`, and `cpp`.
+- `language`: validated ID resolved by an enabled frontend provider.
 - `entry`: project-relative source path that must remain inside the project root.
-- `target`: v1 accepts only `ev3-native`.
+- `target`: validated ID resolved by an enabled backend provider.
 - `assets`: project-relative files or glob patterns; resolved paths must stay inside the project root. Each pattern is limited to 4,096 characters, 64 opening braces or parentheses and 64 closing ones (including escaped or quoted characters). All asset patterns together may expand to at most 256 patterns; this does not limit how many files a wildcard matches. Oversized inputs produce a manifest diagnostic before file discovery, rather than selecting a partial asset set. Ordinary alternatives and numeric ranges remain supported.
 - `outputDir`: literal project-relative directory, not a glob pattern; it must not equal or contain the source root.
 
@@ -183,7 +209,7 @@ The frontend contract is defined in [`packages/compiler/src/contracts.ts`](https
 
 ```ts
 interface LanguageFrontend {
-  id: "bp" | "python" | "typescript" | "cpp";
+  id: string;
   compile(input: SourceProject, signal: AbortSignal): Promise<FrontendResult>;
 }
 
@@ -199,40 +225,73 @@ The EV3 backend optimizes native output by default: it omits jumps to the next b
 
 All source functions are lowered for diagnostics before pruning, so errors in unused functions are still reported. Global declarations and runtime support storage retain their layout and initialization. Values needed for array cleanup remain live through the function epilogue, and background-thread loop yields are preserved. `new EV3Backend({ optimize: false })` disables all optimizations for diagnostic comparisons. Tools that invoke subcalls directly can use `retainFunctions: ["helper"]` to keep additional functions and their call/thread dependencies without disabling optimization; names are case-insensitive and unknown names are errors in either mode. Both modes leave the input IR unchanged; the `.ir.json` artifact describes frontend output, while `.lst` records only emitted functions and support objects, their current object IDs, and local-memory sizes. Object IDs may change when functions are pruned.
 
-The public build result is:
+The library and published build contracts are defined in `packages/compiler/src/contracts.ts`:
 
 ```ts
+interface SourceRange {
+  startLine: number;
+  startColumn: number;
+  endLine: number;
+  endColumn: number;
+}
+
+interface Diagnostic {
+  code: string;
+  helpKey?: string | undefined;
+  severity: "error" | "warning" | "info";
+  file: string;
+  range: SourceRange;
+  message: string;
+  source?: string;
+}
+
+type PublishedDiagnostic = Omit<Diagnostic, "source"> & { source: string };
+
+interface BuildArtifact {
+  slot: string;
+  kind: string;
+  role: "deploy-main" | "deploy-asset" | "aux";
+  mediaType: string;
+  path: string;
+  sha256: string;
+  byteLength: number;
+  remotePath?: string;
+}
+
 interface CompileResult {
+  buildId: string;
+  target: string;
+  deploy?: "ev3";
   runtimeDirectory?: string;
   success: boolean;
   diagnostics: Diagnostic[];
   artifacts: BuildArtifact[];
 }
 
-interface Diagnostic {
-  code: string;
-  helpKey?: string;
-  severity: "error" | "warning" | "info";
-  file: string;
-  range: { startLine: number; startColumn: number; endLine: number; endColumn: number };
-  message: string;
-}
-
-interface BuildArtifact {
-  kind: "rbf" | "ir" | "listing" | "asset";
-  path: string;
-  sha256: string;
-  remotePath?: string;
-}
+type PublishedCompileResult = Omit<CompileResult, "diagnostics"> & {
+  diagnostics: PublishedDiagnostic[];
+};
 ```
 
-Line and column numbers are one-based in public results. `success` is true only when no error diagnostic exists and a valid `rbf` artifact was committed atomically. Temporary output is removed after failure or cancellation.
+`Diagnostic.source` is optional for standalone library callers. Providers must leave it unset; the host stamps each producer's diagnostics with its trusted plugin ID, uses `kobrixa.core` for core diagnostics, and rejects producer-supplied sources. Published diagnostics require a valid source. The desktop API aliases `Diagnostic` to `PublishedDiagnostic` and `CompileResult` to `PublishedCompileResult`; its publication guards and wire schemas enforce this boundary.
 
-The browser-safe `@kobrixa/compiler/diagnostic-help` subpath contains the shared English and Traditional Chinese diagnostic catalog; the original compiler entrypoint is unchanged. Producers set optional `helpKey` values when one code has distinct causes. Consumers fall back to the code's general entry for missing or unknown keys and retain the raw message for unknown codes. Tests compare production codes with the catalog and validate the examples and documentation links.
+Line and column numbers are one-based. A successful build has no error diagnostics, contains every required artifact and, when deployable, exactly one non-empty main. A successful non-deployable build remains successful; Run and Upload explain why it cannot deploy. Failed or cancelled results contain no artifacts. `BUILD1003` reports undeclared, duplicate, missing, unsafe, colliding or oversized artifacts.
 
-Quick Fix requests carry the workspace, accepted analysis session/revision/version, file, diagnostic and a cancellation ID. The language worker derives insertion candidates from parser tokens and block metadata, reparses an in-memory copy, and caches validated candidates per analysis version. Queries are bounded to 1,000,000 UTF-16 code units and at most two parses of that file; they never run full project analysis in the renderer. Cancellation marks a shared flag without cancelling another query or invalidating accepted analysis. Edits recheck the target model version, source snapshot and disk conflicts before one undo group is applied through the normal document/draft/save path. Rename continues to validate all project source files. A dedicated documentation IPC accepts catalog selectors only; the main process constructs official URLs.
+`compileToMemory` is shared by BuildSession and simulation. It runs the frontend, checks the actual IR version and IR validity, runs the backend and validates artifacts without writing outputs. Simulation still requires backend success and supports at most 4 entries and 64 resource files totaling 1 MiB; it uses captured sources/resources and the simulator's actual IR support, not a backend simulation capability.
 
-`runtimeDirectory` records the entry source's `Folder` destination. Asset artifacts carry a project-relative `remotePath` so deployment preserves the paths expected by the program. Each output file is committed through a same-filesystem rename; this is not a transaction across the complete set of output files.
+Build limits are 64 backend artifacts, 1024 artifacts including resources, 64 MiB per artifact, 256 MiB total, 128 UTF-8 bytes per filename and 512 UTF-8 bytes per relative path. Names are checked after Unicode NFC normalization and lowercasing; `.kobrixa*` names are reserved. Resource traversal and symbolic links are rejected. Sizes are accumulated while reading/writing and hashes come from the actual staging contents.
+
+Outputs remain at `outputDir/<name>.<extension>` and `outputDir/assets/<relative-path>`, including the existing `<name>.rbf`, `<name>.ir.json` and `<name>.lst` paths. The host validates all staging files under `.kobrixa-<buildId>.tmp` before replacing final files in aux → deploy-asset → deploy-main order. Cancellation before the first rename reports `BUILD0001`; once renaming starts the sequence finishes. An I/O failure reports `BUILD9000` with an empty artifact list; the disk may contain mixed generations. This is not a multi-file atomic transaction.
+
+Within one process, builds use FIFO queues keyed by `realpath(outputDir)`. During commit, `.kobrixa-build.lock` is opened with `wx` and contains `{ pid, startedAt }`. A nonexistent PID, or malformed contents older than 60 seconds, can be reclaimed. A live lock is polled every 100 ms for at most 5 seconds, then `BUILD1004` is returned. Release compares ownership and removes only the caller's lock. PID checks do not guarantee correctness between different computers sharing a network disk. Stale-lock reclamation compares contents and then unlinks the file, which is not atomic: if two processes reclaim the same stale lock concurrently, rare scheduling can let one delete the other's newly created lock; 2A accepts this limitation.
+
+Deployment requires a supported `deploy` capability (`ev3` today), otherwise `BUILD1005`. Every selected file is read into memory and checked against its SHA-256 before any upload; missing or changed files report `BUILD1006`. Resources are sorted by remotePath and uploaded before the main, using those same verified bytes. Folder/runtimeDirectory, the device lock and skipping unchanged resources are preserved. Device transfers themselves are not atomic.
+
+The browser-safe `@kobrixa/compiler/diagnostic-help` subpath contains the shared English and Traditional Chinese diagnostic catalog; the original compiler entrypoint is unchanged. Producers set optional `helpKey` values when one code has distinct causes. Help lookup first uses `(source, code, helpKey)`, then falls back to `(source, code)` within the same source. Missing help preserves the raw message; a third-party `BP1015` cannot use Basic Plus help. Only known built-in sources use the shared built-in catalog and official URLs; third-party help remains local and uses its own controlled HTTPS links. Tests compare production codes with the catalog and validate the examples and documentation links.
+
+Diagnostic identity, caches, deduplication, Monaco markers and help panels include `source`. Quick Fix requests carry the workspace, binding epoch, accepted analysis session/revision/version, file, diagnostic identity (`source`, `code`, optional `helpKey` and range) and a cancellation ID. The host matches the published diagnostic against accepted analysis and the selected language binding before routing a fix; a UI-supplied source or code cannot select another provider. Registering diagnostic help does not enable Quick Fix. The language worker derives insertion candidates from parser tokens and block metadata, reparses an in-memory copy, and caches validated candidates per analysis version. Queries are bounded to 1,000,000 UTF-16 code units and at most two parses of that file; they never run full project analysis in the renderer. Cancellation marks a shared flag without cancelling another query or invalidating accepted analysis. Edits recheck the target model version, source snapshot and disk conflicts before one undo group is applied through the normal document/draft/save path. Rename continues to validate all project source files. A dedicated documentation IPC accepts catalog selectors only; the main process constructs official URLs.
+
+`runtimeDirectory` records the entry source's `Folder` destination. Asset artifacts carry a project-relative `remotePath` so deployment preserves the paths expected by the program.
 
 ## Device contract
 

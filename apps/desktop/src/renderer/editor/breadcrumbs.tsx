@@ -1,29 +1,40 @@
+import type { LanguageSymbolKind } from "../../shared/language-types.js";
+import type { LanguageFeatureQuery, LanguageFeatureReply } from "../../shared/language-query.js";
+import { supportsFile } from "../../shared/language-services.js";
+import type { EditorAnalysis } from "./editor.js";
 import type { SourceRange } from "@kobrixa/compiler";
 import { Fragment, useEffect, useState, useSyncExternalStore } from "react";
 import { ContextMenu } from "../components/context-menu.js";
 import type { Locale } from "../i18n/copy.js";
 import type { AnalysisSession } from "./analysis-session.js";
 import type { CursorStore } from "./documents.js";
-import { documentOutline, outlinePath, type OutlineItem } from "./outline.js";
+import { outlinePath, type OutlineItem } from "./outline.js";
 
-const KIND_LABELS: Record<OutlineItem["kind"], [string, string]> = {
-  sub: ["Sub", "Sub"],
+const KIND_LABELS: Record<LanguageSymbolKind, [string, string]> = {
   function: ["Function", "Function"],
   method: ["方法", "Method"],
   variable: ["變數", "Variable"],
   label: ["標籤", "Label"],
+  parameter: ["參數", "Parameter"],
+  namespace: ["命名空間", "Namespace"],
 };
 
 /** File path and enclosing Sub above the editor; the symbol list jumps within the file. */
 export function Breadcrumbs({
   file,
   analysisSession,
+  query,
   cursor,
   locale,
   onReveal,
 }: {
   file: string;
   analysisSession: AnalysisSession;
+  query(
+    snapshot: EditorAnalysis,
+    query: LanguageFeatureQuery,
+    signal: AbortSignal,
+  ): Promise<LanguageFeatureReply>;
   cursor: CursorStore;
   locale: Locale;
   onReveal(range: SourceRange): void;
@@ -33,13 +44,40 @@ export function Breadcrumbs({
   const [outline, setOutline] = useState<OutlineItem[]>([]);
   useEffect(() => {
     setOutline([]);
-    const accept = (snapshot = analysisSession.getCurrent()) => {
-      if (snapshot && file in snapshot.analysis.index.sources)
-        setOutline(documentOutline(snapshot.analysis.index, file));
+    let controller: AbortController | undefined;
+    const accept = (snapshot = analysisSession.getCurrent(), event?: string) => {
+      controller?.abort();
+      if (event === "reset" || event === "failure") setOutline([]);
+      if (
+        !snapshot ||
+        !supportsFile(snapshot.binding, file) ||
+        !snapshot.binding.capabilities.includes("documentSymbols") ||
+        !(file in snapshot.analysis.index.sources)
+      )
+        return;
+      const request = (controller = new AbortController());
+      void query(snapshot, { kind: "documentSymbols", file }, request.signal)
+        .then((reply) => {
+          if (
+            !request.signal.aborted &&
+            analysisSession.getCurrent() === snapshot &&
+            reply.kind === "result" &&
+            reply.epoch === snapshot.epoch &&
+            reply.result.kind === "documentSymbols"
+          )
+            setOutline(reply.result.symbols);
+        })
+        .catch(() => {
+          if (!request.signal.aborted) setOutline([]);
+        });
     };
     accept();
-    return analysisSession.subscribe((snapshot) => accept(snapshot));
-  }, [analysisSession, file]);
+    const detach = analysisSession.subscribe(accept);
+    return () => {
+      controller?.abort();
+      detach();
+    };
+  }, [analysisSession, file, query]);
   const position = useSyncExternalStore(cursor.subscribe, cursor.getSnapshot);
   const path = outlinePath(outline, position.line, position.column);
   const [menu, setMenu] = useState<{ x: number; y: number }>();
@@ -104,7 +142,7 @@ export function Breadcrumbs({
                 onClick={() => onReveal(item.selectionRange)}
               >
                 <span>{item.name}</span>
-                <kbd>{KIND_LABELS[item.kind][zh ? 0 : 1]}</kbd>
+                <kbd>{item.detail || KIND_LABELS[item.kind][zh ? 0 : 1]}</kbd>
               </button>
             ))}
           </div>

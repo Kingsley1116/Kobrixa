@@ -1,12 +1,22 @@
+import type { StaticLanguageProblemDetail } from "./static-languages.js";
+
 export const PLUGIN_ERROR_CODES = [
   "PLUGIN_E_MANIFEST",
   "PLUGIN_E_API_VERSION",
+  "PLUGIN_E_RESERVED_ID",
+  "PLUGIN_E_DIAGNOSTIC_HELP",
+  "PLUGIN_E_STATIC_LANGUAGE",
+  "PLUGIN_E_STATIC_LANGUAGE_CONFLICT",
+  "PLUGIN_E_STATIC_LANGUAGE_REGISTRATION",
   "PLUGIN_E_DUPLICATE_ID",
   "PLUGIN_E_COMMAND_NAMESPACE",
   "PLUGIN_E_DUPLICATE_COMMAND",
   "PLUGIN_E_ACTIVATION",
   "PLUGIN_E_RUNTIME_NOT_ALLOWED",
   "PLUGIN_E_FRONTEND_REQUIRES_BUILTIN",
+  "PLUGIN_E_BACKEND_REQUIRES_BUILTIN",
+  "PLUGIN_E_LANGUAGE_SERVICE_REQUIRES_BUILTIN",
+  "PLUGIN_E_PROVIDER_CONFLICT",
   "PLUGIN_E_ENTRY",
   "PLUGIN_E_LAUNCH",
   "PLUGIN_E_HANDSHAKE",
@@ -35,6 +45,8 @@ export type PluginErrorCode = (typeof PLUGIN_ERROR_CODES)[number];
 export interface PluginProblem {
   code: PluginErrorCode;
   message: string;
+  detail?: StaticLanguageProblemDetail;
+  providerKey?: `language:${string}` | `target:${string}`;
 }
 export class PluginError extends Error {
   constructor(

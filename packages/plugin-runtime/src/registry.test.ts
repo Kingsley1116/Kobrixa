@@ -29,17 +29,107 @@ async function plugin(name: string, value: unknown, entry = "main.py", prefix = 
 }
 const builtin = {
   kind: "builtin" as const,
+  resources: {},
   manifest: {
     id: "kobrixa.basic-plus",
     version: "1.0.0",
     apiVersion: "^1.0.0",
     runtime: { kind: "builtin" },
-    contributes: { frontends: [{ language: "bp" }] },
+    contributes: {
+      frontends: [
+        {
+          language: "bp",
+          entryExtensions: ["bp"],
+          sourceExtensions: ["bp", "bpi", "bpm"],
+          ir: { min: 1, max: 1 },
+        },
+      ],
+    },
   },
 };
 const none = { disabled: new Set<string>(), safeMode: false };
 
 describe("loadPlugins", () => {
+  it.each([
+    { languageServices: [] },
+    { languageServices: [{ language: "bp", extensions: ["bp"], capabilities: ["analysis"] }] },
+  ])(
+    "rejects development languageServices even when empty: $languageServices",
+    async ({ languageServices }) => {
+      const source = await plugin(
+        "language",
+        manifest({ activationEvents: [], contributes: { languageServices } }),
+      );
+      const [loaded] = await loadPlugins([source], none);
+      expect(loaded?.status).toBe("invalid");
+      expect(loaded?.problems.map((p) => p.code)).toContain(
+        "PLUGIN_E_LANGUAGE_SERVICE_REQUIRES_BUILTIN",
+      );
+    },
+  );
+  it("rejects a built-in language declaration without its frontend", async () => {
+    await expect(
+      readSource(
+        {
+          kind: "builtin",
+          resources: {},
+          manifest: {
+            id: "test.language",
+            version: "1.0.0",
+            apiVersion: "^1.3.0",
+            runtime: { kind: "builtin" },
+            contributes: {
+              languageServices: [
+                { language: "bp", extensions: ["bp"], capabilities: ["analysis"] },
+              ],
+            },
+          },
+        },
+        { safeMode: false },
+      ),
+    ).rejects.toThrow("Invalid built-in plugin manifest");
+  });
+  it("rejects the reserved kobrixa.core identity", async () => {
+    const [loaded] = await loadPlugins(
+      [
+        await plugin(
+          "core",
+          manifest({
+            id: "kobrixa.core",
+            activationEvents: ["onCommand:kobrixa.core.greet"],
+            contributes: { commands: [{ id: "kobrixa.core.greet", title: "Greet" }] },
+          }),
+        ),
+      ],
+      none,
+    );
+    expect(loaded).toMatchObject({ status: "invalid" });
+    expect(loaded!.problems.map((item) => item.code)).toContain("PLUGIN_E_RESERVED_ID");
+  });
+  it("keeps the built-in plugin when a development plugin reuses its id", async () => {
+    const impostor = await plugin(
+      "impostor",
+      manifest({
+        id: "kobrixa.basic-plus",
+        activationEvents: ["onCommand:kobrixa.basic-plus.greet"],
+        contributes: { commands: [{ id: "kobrixa.basic-plus.greet", title: "Greet" }] },
+      }),
+    );
+    for (const order of [
+      [builtin, impostor],
+      [impostor, builtin],
+    ]) {
+      const loaded = await loadPlugins(order, none);
+      const real = loaded.find((item) => item.source === "builtin")!;
+      const fake = loaded.find((item) => item.source === "development")!;
+      expect(real.status).toBe("enabled");
+      expect(fake.problems.map((item) => item.code)).toContain("PLUGIN_E_DUPLICATE_ID");
+    }
+  });
+  it("reserves the same identity the compiler stamps as core", async () => {
+    const { RESERVED_PLUGIN_IDS } = await import("./index.js");
+    expect([...RESERVED_PLUGIN_IDS]).toEqual(["kobrixa.core"]);
+  });
   it("loads development plugins from folders with spaces and non-ASCII names", async () => {
     const [loaded] = await loadPlugins([await plugin("插件 測試", manifest())], none);
     expect(loaded).toMatchObject({ id: "acme.hello", status: "enabled", problems: [] });
@@ -107,7 +197,38 @@ describe("loadPlugins", () => {
   it.each([
     ["PLUGIN_E_API_VERSION", { apiVersion: "^2.0.0" }],
     ["PLUGIN_E_RUNTIME_NOT_ALLOWED", { runtime: { kind: "builtin" } }],
-    ["PLUGIN_E_FRONTEND_REQUIRES_BUILTIN", { contributes: { frontends: [{ language: "bp" }] } }],
+    ["PLUGIN_E_FRONTEND_REQUIRES_BUILTIN", { contributes: { frontends: [] } }],
+    ["PLUGIN_E_BACKEND_REQUIRES_BUILTIN", { contributes: { backends: [] } }],
+    [
+      "PLUGIN_E_BACKEND_REQUIRES_BUILTIN",
+      {
+        contributes: {
+          backends: [
+            {
+              target: "test-vm",
+              ir: { min: 1, max: 1 },
+              capabilities: {},
+              artifacts: [],
+            },
+          ],
+        },
+      },
+    ],
+    [
+      "PLUGIN_E_FRONTEND_REQUIRES_BUILTIN",
+      {
+        contributes: {
+          frontends: [
+            {
+              language: "bp",
+              entryExtensions: ["bp"],
+              sourceExtensions: ["bp", "bpi", "bpm"],
+              ir: { min: 1, max: 1 },
+            },
+          ],
+        },
+      },
+    ],
     [
       "PLUGIN_E_COMMAND_NAMESPACE",
       { contributes: { commands: [{ id: "other.greet", title: "x" }] }, activationEvents: [] },
@@ -130,6 +251,94 @@ describe("loadPlugins", () => {
     const [loaded] = await loadPlugins([await plugin("p", manifest(overrides))], none);
     expect(loaded!.status).toBe("invalid");
     expect(loaded!.problems.map((problem) => problem.code)).toContain(code);
+  });
+  it.each([
+    [
+      "Frontend IR range is empty.",
+      {
+        frontends: [
+          {
+            language: "test",
+            entryExtensions: ["test"],
+            sourceExtensions: ["test"],
+            ir: { min: 2, max: 1 },
+          },
+        ],
+      },
+    ],
+    [
+      "Entry extensions must be a subset of source extensions.",
+      {
+        frontends: [
+          {
+            language: "test",
+            entryExtensions: ["test"],
+            sourceExtensions: ["inc"],
+            ir: { min: 1, max: 1 },
+          },
+        ],
+      },
+    ],
+    [
+      "Backend IR range is empty.",
+      {
+        backends: [{ target: "test-vm", ir: { min: 2, max: 1 }, capabilities: {}, artifacts: [] }],
+      },
+    ],
+    [
+      "A deployable backend requires exactly one required deploy-main.",
+      {
+        backends: [
+          {
+            target: "test-vm",
+            ir: { min: 1, max: 1 },
+            capabilities: { deploy: "ev3" },
+            artifacts: [],
+          },
+        ],
+      },
+    ],
+  ])("rejects compiler declaration semantics: %s", async (message, contributes) => {
+    const [loaded] = await loadPlugins(
+      [await plugin("semantics", manifest({ activationEvents: [], contributes }))],
+      none,
+    );
+    expect(loaded!.status).toBe("invalid");
+    expect(loaded!.problems).toContainEqual({ code: "PLUGIN_E_MANIFEST", message });
+    await expect(
+      readSource(
+        {
+          kind: "builtin",
+          resources: {},
+          manifest: manifest({ runtime: { kind: "builtin" }, activationEvents: [], contributes }),
+        },
+        { safeMode: false },
+      ),
+    ).rejects.toThrow(message);
+  });
+  it("invalidates the whole external backend plugin even with valid commands", async () => {
+    const value = manifest();
+    const [loaded] = await loadPlugins(
+      [
+        await plugin("backend", {
+          ...value,
+          contributes: {
+            ...value.contributes,
+            backends: [
+              { target: "test-vm", ir: { min: 1, max: 1 }, capabilities: {}, artifacts: [] },
+            ],
+          },
+        }),
+      ],
+      none,
+    );
+    expect(loaded!.status).toBe("invalid");
+    expect(loaded!.problems).toEqual([
+      {
+        code: "PLUGIN_E_BACKEND_REQUIRES_BUILTIN",
+        message: "Compiler backends can only be contributed by built-in plugins in this version.",
+      },
+    ]);
   });
   // Windows users may not have permission to create symlinks.
   it.skipIf(process.platform === "win32")(
@@ -203,8 +412,8 @@ describe("loadPlugins", () => {
     expect(results[1]!.problems[0]!.code).toBe("PLUGIN_E_DUPLICATE_ID");
   });
   it("throws on an invalid built-in manifest", async () => {
-    await expect(loadPlugins([{ kind: "builtin", manifest: { id: "x" } }], none)).rejects.toThrow(
-      /built-in/i,
-    );
+    await expect(
+      loadPlugins([{ kind: "builtin", resources: {}, manifest: { id: "x" } }], none),
+    ).rejects.toThrow(/built-in/i);
   });
 });

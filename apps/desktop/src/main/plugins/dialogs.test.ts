@@ -58,3 +58,33 @@ it("returns the chosen path, undefined when cancelled, and attaches to a live wi
     expect.objectContaining({ properties: ["openFile"] }),
   );
 });
+
+it.each(["en", "zh-TW"] as const)(
+  "explains static-language editor blocking without a plugin process in %s",
+  async (locale) => {
+    showMessageBox.mockResolvedValue({ response: 0 });
+    const dialogs = electronPluginDialogs(() => undefined, locale);
+    expect(await dialogs.confirmDeveloperMode()).toBe(true);
+    expect(
+      await dialogs.confirmLink({
+        name: "Toy",
+        id: "acme.toy",
+        runtime: "static",
+        directory: "/p/toy",
+        problems: [],
+      }),
+    ).toBe(true);
+    const required =
+      locale === "en"
+        ? ["Static language rules", "block the editor", "without a plugin process"]
+        : ["靜態語言規則", "編輯器無回應", "沒有插件程序"];
+    for (const [options] of showMessageBox.mock.calls)
+      for (const text of required) expect(options.detail).toContain(text);
+    const developer = showMessageBox.mock.calls[0]![0];
+    expect(developer.defaultId).toBe(1);
+    expect(developer.cancelId).toBe(1);
+    const link = showMessageBox.mock.calls[1]![0];
+    expect(link.detail).toContain("static");
+    expect(link.detail).toContain("acme.toy");
+  },
+);

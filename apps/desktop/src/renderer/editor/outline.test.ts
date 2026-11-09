@@ -1,6 +1,7 @@
 import { analyzeBasicPlusProject } from "@kobrixa/basic-plus";
 import { expect, it } from "vitest";
-import { documentOutline, outlinePath } from "./outline.js";
+import { outlinePath } from "./outline.js";
+import { basicPlusOutline } from "../../main/language/basic-plus-outline.js";
 
 const source = [
   "number speed",
@@ -34,7 +35,7 @@ function outline() {
     },
     new AbortController().signal,
   );
-  return documentOutline(analysis.index, "main.bp");
+  return basicPlusOutline(analysis.index, "main.bp");
 }
 
 it("lists globals, labels and callables with their locals in source order", () => {
@@ -44,12 +45,13 @@ it("lists globals, labels and callables with their locals in source order", () =
   expect(shape(items)).toEqual([
     ["variable", "speed", []],
     ["label", "start", []],
-    ["sub", "Drive", [["variable", "turns", []]]],
+    ["function", "Drive", [["variable", "turns", []]]],
     ["function", "Half", []],
   ]);
   const drive = items.find((item) => item.name === "Drive")!;
   expect(drive.range).toMatchObject({ startLine: 5, endLine: 8 });
   expect(drive.selectionRange.startLine).toBe(5);
+  expect(drive.detail).toBe("Sub");
 });
 
 it("finds the callable containing a position", () => {

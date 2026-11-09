@@ -1,4 +1,4 @@
-import type { BackendResult, CompilerBackend, Diagnostic } from "@kobrixa/compiler";
+import type { Diagnostic } from "@kobrixa/compiler";
 import { getEV3Operation } from "@kobrixa/ir";
 import type {
   IRBasicBlock,
@@ -3829,12 +3829,18 @@ export interface EV3BackendOptions {
   retainFunctions?: readonly string[];
 }
 
-export class EV3Backend implements CompilerBackend {
+export interface EV3Result {
+  rbf?: Uint8Array;
+  listing?: string;
+  diagnostics: Diagnostic[];
+}
+
+export class EV3Backend {
   readonly id = "ev3-native" as const;
 
   constructor(readonly options: EV3BackendOptions = {}) {}
 
-  async compile(ir: KobrixaIR, signal: AbortSignal): Promise<BackendResult> {
+  async compile(ir: KobrixaIR, signal: AbortSignal): Promise<EV3Result> {
     signal.throwIfAborted();
     const functions = new Map(ir.functions.map((fn) => [fn.name.toLocaleLowerCase("en-US"), fn]));
     const retained = this.options.retainFunctions ?? [];
@@ -3881,7 +3887,7 @@ export class EV3Backend implements CompilerBackend {
     optimize: boolean,
     diagnosticsOnly = false,
     storageIR = ir,
-  ): BackendResult {
+  ): EV3Result {
     const diagnostics: Diagnostic[] = [];
     const objects: RbfObject[] = [];
     const listing: string[] = [];

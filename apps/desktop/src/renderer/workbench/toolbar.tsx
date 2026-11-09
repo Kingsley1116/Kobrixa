@@ -1,3 +1,4 @@
+import { deploymentUnavailableReason } from "../execution/build-path.js";
 import { SIMULATOR_ENABLED } from "../../shared/features.js";
 import type { ReactNode } from "react";
 import kobrixaMark from "../../../../../assets/brand/kobrixa-mark.svg";
@@ -77,6 +78,11 @@ export function Toolbar({
   const hint = (label: string, command: AppCommand) =>
     [label, shortcutHint(command)].filter(Boolean).join(" · ");
   const controlBlocked = Boolean(deviceControlNotice);
+  const deploymentReason = deploymentUnavailableReason(
+    state.successfulBuild?.undeployableReason,
+    locale,
+  );
+
   return (
     <header ref={ref} className={`topbar${hasWindowControls ? " has-window-controls" : ""}`}>
       <div className="brand">
@@ -137,7 +143,7 @@ export function Toolbar({
             <button
               className="primary run-button"
               disabled={deviceLocked || controlBlocked || Boolean(state.recovery)}
-              title={deviceControlNotice ?? hint(t.runOnDevice, "run")}
+              title={deviceControlNotice ?? deploymentReason ?? hint(t.runOnDevice, "run")}
               onClick={onRun}
             >
               <Icon name="play" />
@@ -183,9 +189,13 @@ export function Toolbar({
               <button
                 role="menuitem"
                 disabled={
-                  deviceLocked || controlBlocked || !state.session || !state.successfulBuild
+                  deviceLocked ||
+                  controlBlocked ||
+                  !state.session ||
+                  !state.successfulBuild?.path ||
+                  Boolean(deploymentReason)
                 }
-                title={deviceControlNotice}
+                title={deviceControlNotice ?? deploymentReason}
                 onClick={onUpload}
               >
                 {t.uploadLatest}

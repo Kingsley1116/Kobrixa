@@ -1,7 +1,7 @@
 {
   "name": "kobrixa",
   "private": true,
-  "version": "1.0.1-beta.1",
+  "version": "1.0.1-beta.2",
   "packageManager": "pnpm@10.15.0",
   "engines": {
     "node": ">=24.0.0"
@@ -13,15 +13,15 @@
     "build:web": "pnpm --filter @kobrixa/web build",
     "build:desktop": "pnpm --filter @kobrixa/desktop package",
     "check:ci": "pnpm format:check && pnpm check && pnpm build:web",
-    "test:ci": "vitest run && pnpm test:bytecode && pnpm test:release",
+    "test:ci": "vitest run && pnpm test:bytecode && pnpm test:release && pnpm test:static-languages",
     "test:release": "node --test tools/release/*.test.mjs",
     "package:archive": "node tools/release/archive.mjs",
     "check": "pnpm -r check && eslint .",
-    "test": "pnpm -r test && pnpm test:bytecode",
+    "test": "pnpm -r test && pnpm test:bytecode && pnpm test:static-languages",
     "test:collab:live": "node tests/collab/run-live.mjs",
     "test:collab:remote": "node tests/collab/run-live.mjs --remote",
     "test:desktop:smoke": "node tests/desktop/run-smoke.mjs",
-    "test:plugins:smoke": "node tests/desktop/run-plugins-smoke.mjs",
+    "test:plugins:smoke": "node --test tests/desktop/plugins-smoke-process.test.mjs && node tests/desktop/run-plugins-smoke.mjs",
     "test:hardware": "node tests/hardware/run.mjs",
     "assets:build": "node tools/build-assets.mjs",
     "format": "prettier --write .",
@@ -33,12 +33,16 @@
     "check:desktop": "pnpm --filter \"@kobrixa/desktop...\" --filter @kobrixa/plugin-sdk -r check && eslint apps/desktop packages frontends tools tests assets",
     "check:common": "pnpm format:check && eslint \"*.mjs\" \"*.ts\" tools/ci && pnpm test:ci-routing",
     "test:web": "vitest run --project web --project @kobrixa/ir && pnpm --filter @kobrixa/web test:worker",
-    "test:desktop": "vitest run --project \"!web\" && pnpm test:bytecode && pnpm test:release && pnpm test:python-sdk",
+    "test:desktop": "vitest run --project \"!web\" && pnpm test:bytecode && pnpm test:release && pnpm test:python-sdk && pnpm test:static-languages",
     "test:python-sdk": "node tools/run-python-tests.mjs",
     "test:ci-routing": "node --test tools/ci/*.test.mjs",
     "package:installers": "pnpm --filter @kobrixa/desktop make",
     "package:updates": "node tools/release/update-assets.mjs",
-    "test:desktop:packaged": "node tests/desktop/packaged-smoke.mjs"
+    "test:desktop:packaged": "node tests/desktop/packaged-smoke.mjs",
+    "generate:static-language-core-ids": "node tools/generate-static-language-core-ids.mjs",
+    "test:static-languages": "node tools/generate-static-language-core-ids.mjs --check && node --test tests/desktop/static-languages-*.test.mjs tests/desktop/smoke-harness.test.mjs",
+    "test:static-languages:boundaries": "node tools/check-static-language-boundaries.mjs",
+    "test:static-languages:smoke": "node tests/desktop/static-languages-run.mjs"
   },
   "devDependencies": {
     "@electron/asar": "4.3.1",

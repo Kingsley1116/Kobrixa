@@ -151,6 +151,7 @@ export class PluginSupervisor {
         this.#exited(child, peer, { code: null, reason: "did not exit after a forced kill" });
     } finally {
       this.#stopping = false;
+      this.#forced = false;
     }
   }
 
@@ -182,7 +183,7 @@ export class PluginSupervisor {
 
   /** Terminates immediately, e.g. when the manager's overall shutdown deadline is reached. */
   forceKill(): void {
-    this.#forced = true;
+    if (this.#stopping) this.#forced = true;
     this.#process?.forceKill();
   }
 

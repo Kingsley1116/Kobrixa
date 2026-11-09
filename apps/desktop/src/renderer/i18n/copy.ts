@@ -1,6 +1,20 @@
+import type { LexicalLanguageRoute } from "../editor/static-language-routing.js";
+
 export type Locale = "en" | "zh-TW";
 export const copy = {
   en: {
+    plainText: "Plain Text",
+    staticLanguageLoading: "Loading languages…",
+    staticLanguageFailed:
+      "Language highlighting could not be loaded. You can keep editing in plain text.",
+
+    languageMissing: (language: string) =>
+      `No language service is available for this project's language '${language}'.`,
+    languageConflict: (language: string, plugins: string) =>
+      `Language service configuration conflict for '${language}': ${plugins}.`,
+    languageSettings: "Open plugin settings",
+    languageChooseEntry: "Choose an entry file before checking.",
+
     runOnDevice: "Run on EV3",
     advanced: "More actions",
     lightTheme: "Light theme",
@@ -76,7 +90,7 @@ export const copy = {
       error: "Operation failed",
       built: "Build complete",
       uploaded: "Program and assets uploaded",
-      runSent: "Run command sent",
+      runStarted: "Program start confirmed",
       stopped: "Stop command sent",
       deleted: "Uploaded program deleted",
       connected: "EV3 connected",
@@ -144,7 +158,6 @@ export const copy = {
     editorLabel: "Code editor",
     line: "Ln",
     column: "Col",
-    basicPlus: "BASIC PLUS",
     buildComplete: "Build complete",
     buildFailed: "Build failed",
     startingBuild: "Starting build…",
@@ -180,6 +193,16 @@ export const copy = {
     managingFiles: "Updating project files…",
   },
   "zh-TW": {
+    plainText: "純文字",
+    staticLanguageLoading: "正在載入語言…",
+    staticLanguageFailed: "無法載入語法上色，仍可繼續以純文字編輯。",
+
+    languageMissing: (language: string) => `此專案的語言 ${language} 沒有可用的語言服務。`,
+    languageConflict: (language: string, plugins: string) =>
+      `語言 ${language} 的語言服務設定衝突：${plugins}。`,
+    languageSettings: "前往插件設定",
+    languageChooseEntry: "請先選擇進入點檔案，再進行檢查。",
+
     runOnDevice: "在 EV3 執行",
     advanced: "更多操作",
     lightTheme: "淺色主題",
@@ -253,7 +276,7 @@ export const copy = {
       error: "操作失敗",
       built: "建置完成",
       uploaded: "程式與素材已上傳",
-      runSent: "已送出執行指令",
+      runStarted: "已確認程式啟動",
       stopped: "已送出停止指令",
       deleted: "已刪除上傳的程式",
       connected: "EV3 已連線",
@@ -321,7 +344,6 @@ export const copy = {
     editorLabel: "程式碼編輯器",
     line: "行",
     column: "列",
-    basicPlus: "BASIC PLUS",
     buildComplete: "建置完成",
     buildFailed: "建置失敗",
     startingBuild: "正在開始建置…",
@@ -359,3 +381,9 @@ export const copy = {
 } as const;
 
 export type Copy = (typeof copy)[Locale];
+
+export function languageDisplayName(route: LexicalLanguageRoute, locale: Locale): string {
+  if (route.kind === "plaintext") return copy[locale].plainText;
+  if (route.kind === "core" && route.monacoLanguage === "json") return "JSON";
+  return route.displayName;
+}

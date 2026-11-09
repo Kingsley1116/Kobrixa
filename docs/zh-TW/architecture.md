@@ -10,9 +10,9 @@ Electron preload bridge
           │ 經驗證的 Electron IPC
           ▼
 Electron main process（Node.js）
-          ├─ 工作區服務 → 語言前端（v1 為 .bp）
+          ├─ 工作區服務 → 已解析的內建語言前端
           │              → 具型別 KobrixaIR + 驗證
-          │              → EV3 後端 → .rbf 成品
+          │              → 已解析的後端 → 經驗證的成品組
           └─ 設備服務 ───────────────────→ USB HID / Wi-Fi
 ```
 
@@ -105,7 +105,7 @@ src/
 
 ## 插件（開發預覽）
 
-第一階段支援可信任的本機 JS／TS 與 Python 插件。第三方插件只在開發者模式載入；開發者模式預設關閉，需在「設定 → 插件」經過原生確認對話框才能開啟。面板透過原生資料夾選擇視窗連結插件資料夾、選擇 Python 直譯器、列出內建與開發插件及其載入錯誤、訊息與日誌，並提供執行與取消貢獻命令，以及重新載入、啟用、停用、解除連結開發插件的操作。詳見[可執行範例](../../plugins/samples/README.md)與 [Python SDK](../../sdks/python/README.md)。
+開發預覽支援可信任的本機 JS／TS、Python 與純靜態 JSON 插件。第三方插件只在開發者模式載入；開發者模式預設關閉，需在「設定 → 插件」經過原生確認對話框才能開啟。面板透過原生資料夾選擇視窗連結插件資料夾、選擇 Python 直譯器、列出內建與開發插件及其載入錯誤、訊息與日誌，並提供執行與取消貢獻命令，以及重新載入、啟用、停用、解除連結開發插件的操作。詳見[可執行範例](../../plugins/samples/README.md)與 [Python SDK](../../sdks/python/README.md)。
 
 公開 API 分成三層：JSON-RPC 2.0、Zod 定義與已提交的 JSON Schema，以及語言 SDK：
 
@@ -132,7 +132,9 @@ Python 的 stderr 與 JS／TS 的 stdout／stderr 會保存在主程序記憶體
 
 `<userData>/plugins/state.json`（schema 第 2 版）保存開發者模式、連結的資料夾、選擇的 Python 直譯器、重新啟動後也保持停用的插件來源 key，以及安全模式鎖。檔案無法讀取時，第三方插件保持關閉，不會覆寫該檔案。
 
-`<userData>/plugins/session.json` 記錄是否有第三方插件程序執行過、視窗是否停止回應；它以同步方式寫入，正常結束時刪除。下次啟動時若檔案仍在且任一旗標成立，Kobrixa 會寫入安全模式鎖：第三方插件保持暫停，並顯示提示橫幅，直到使用者按「恢復插件」。視窗卡住過的話，即使之後正常結束也會保留 marker。安全模式中無法啟用、連結或重新載入開發插件，但仍可停用或解除連結。
+一般啟動時，若無法解析 `--plugin-dev-dir` 資料夾的實際路徑，或無法儲存停用來源 key 的遷移結果，所有第三方插件會保持暫停。記憶體中的復原旗標讓橫幅及插件設定持續顯示「恢復插件」，即使設定無法寫入也一樣。恢復時會先重試路徑解析與遷移，再離開安全模式，並保留個別來源的停用選擇。請修正資料夾或設定儲存問題後重試，或移除受影響資料夾的 `--plugin-dev-dir` 啟動參數後重新啟動。
+
+`<userData>/plugins/session.json` 記錄第三方插件程序是否執行過、是否交付 `thirdPartyStaticContributions`、視窗是否停止回應；它以同步方式寫入，正常結束時刪除。下次啟動時若檔案仍在且任一旗標成立，Kobrixa 會寫入安全模式鎖：第三方插件保持暫停，並顯示提示橫幅，直到使用者按「恢復插件」。視窗卡住過的話，即使之後正常結束也會保留 marker。安全模式中無法啟用、連結或重新載入開發插件，但仍可停用或解除連結。
 
 第一階段的方法如下：
 
@@ -149,11 +151,35 @@ Python 的 stderr 與 JS／TS 的 stdout／stderr 會保存在主程序記憶體
 
 這些是**可信任的本機插件**。獨立程序提供當機隔離；manifest 權限僅限制透過 Kobrixa 的呼叫，**不是作業系統沙箱**。插件程式仍可直接存取檔案與網路。
 
-內建插件 `kobrixa.basic-plus` 透過 `frontends/basic-plus` 的最小轉接註冊 `bp` 前端。它在安全模式中仍保持啟用，第一階段無法停用。編譯沿用既有 EV3 後端與建置行為。通用成品契約、`Diagnostic.source` 與語言靜態貢獻均為**規劃中（第二階段）**；`devices` API 為**規劃中（第三階段）**。後續階段詳見[插件設計](../superpowers/specs/2026-10-14-plugin-system-design.md)。
+插件 API **1.4.0** 支援靜態語言、編譯前端／後端與 `contributes.diagnosticHelp`；符合 host range 的 1.3.x manifests 仍接受。`kobrixa.basic-plus` 提供語言 `bp`，獨立的內建插件 `kobrixa.ev3` 提供目標 `ev3-native`；兩者都宣告 IR `{ min: 1, max: 1 }`，安全模式下仍保留，並沿用第一階段的內建停用限制。有效的 API 1.0、1.1、1.2 插件仍相容，但外部插件宣告 `frontends` 或 `backends` 時，整個插件無效（`PLUGIN_E_FRONTEND_REQUIRES_BUILTIN`／`PLUGIN_E_BACKEND_REQUIRES_BUILTIN`）。本版沒有外部編譯 RPC。
+
+宿主為每個語言／目標解析唯一、有效且已啟用的提供者。衝突的提供者全部以 `PLUGIN_E_PROVIDER_CONFLICT` 失效，不依載入順序取首筆；重新檢查提供者集合時排除停用者，清除已消失的衝突。IR 版本選前後端範圍交集的最大值。找不到提供者或發生衝突時，在開 worker 前回 `BUILD1001`；IR 不相容回 `BUILD1002`。
+
+前端宣告入口與來源副檔名；後端宣告成品 slot、kind、mediaType、副檔名、role 與 required，實際只回傳 slot／bytes。宿主保留 `ir`、`asset` slot，並負責產生資源成品。可部署後端必須宣告唯一、必填且非空的 `deploy-main`。每個插件最多 8 個前端、8 個後端，每個後端最多 16 個成品宣告；ID 格式為 `/^[a-z][a-z0-9-]{0,31}$/`，副檔名為 `/^[a-z0-9]{1,16}$/`。提交的 JSON Schema 驗證結構，宿主另外檢查副檔名子集、IR 閉區間、slot 唯一性與主檔關聯。
+
+插件 API **1.3.0** 新增 `contributes.languageServices`。只有內建插件可宣告，空陣列也受限制；開發插件會收到 `PLUGIN_E_LANGUAGE_SERVICE_REQUIRES_BUILTIN`。宣告必須包含 `analysis`，由同插件的 frontend 擁有該語言，且副檔名集合必須與該 frontend 的 `sourceExtensions` 完全相同。每插件最多八筆服務。有效的 API 1.0、1.1、1.2 插件仍相容。
+
+main 依通過驗證的專案語言選取啟用中的 frontend 擁有者，backend 缺席或 IR 不相容不影響編輯器分析。以 `pluginId:language` 選取編譯期內建 worker factory 與 browser companion；每工作區保留獨立的分析／Quick Fix 和補全 worker。所有訊息及已接受結果都帶宿主發放的 binding epoch；提供者 generation、路由設定或任一 worker 重啟都讓兩條通道失效並要求完整同步，一般輸入只改文件 revision。
+
+worker 保留原生語意狀態，只發布通用符號、緊湊 tokens／occurrences、補全可見性群組與編輯結果；診斷來源由宿主加註。Basic Plus 的即時補全過濾、結構性編輯偵測與格式化留在 browser companion，通用 renderer／shared 不匯入 Basic Plus。缺少服務顯示語言狀態列，設定衝突顯示列出插件的工作區橫幅，兩者皆可前往插件設定。內建插件仍不可停用；靜態語言使用 strict v1 tokenizer／configuration JSON 與共用 protocol validator。Runtime 原子發布 revisioned catalog，由單一 renderer store／registrar 管理所有文件與 review models；builtin raw JSON 封裝於 main，不從 repository 讀取。Catalog revision 與 service epoch 分離。第三方交付前同步保存 static risk marker，保持 sticky 到正常結束；寫入失敗阻止該交付。純靜態插件不啟動程序或 handshake。作者格式、衝突解析、有界資源計量與復原見[靜態語言插件](plugin-static-languages.md)。沒有第三方語言服務 RPC。
+
+宿主負責加註 `Diagnostic.source`，診斷說明只在同一來源內查詢。`devices` API 仍規劃於第三階段。詳見[插件設計](../superpowers/specs/2026-10-14-plugin-system-design.md)。
+
+### 語言服務驗收
+
+從儲存庫根目錄執行 `pnpm test:desktop:smoke`。runner 會呼叫 `checkCompletionPerformance`，並涵蓋 language-features、indentation、highlighting；單獨載入效能模組不算執行測試。門檻維持 **熱補全 p95 ≤100 ms、新變數 ≤200 ms、30,000 行 ≤300 ms**。本機無法啟動 Electron 時，記錄實際錯誤，效能及 UI 驗收保留為未完成，待可執行的機器驗證。
+
+中英文各執行一次人工驗收：
+
+- [ ] missing 與 conflict 顯示不同說明；衝突列出插件，兩者的動作皆可開啟插件設定；available 且診斷為空時不顯示不可用列。
+- [ ] 狀態切換保留文件內容、JSON 格式化與 Basic Plus 詞法高亮；恢復後不必輸入就重新分析。
+- [ ] **分析尚在進行時**，確認補全候選及函式內外的區域作用域可見性，並確認此時 API 呼叫仍有簽名提示。
+- [ ] 逐項驗證 Basic Plus 補全（含收尾關鍵字縮排）、Quick Fix、semantic tokens、hover、簽名提示、定義、引用、重新命名、大綱／breadcrumbs、文件與範圍格式化。
+- [ ] 執行完整 Electron smoke，確認上述三個補全延遲門檻；單元／整合測試通過不代表效能驗收完成。
 
 ## 專案 manifest
 
-每個專案使用 `kobrixa.json`。為了向前相容，允許未知欄位；已知欄位無效時則回報錯誤。
+專案可使用 `kobrixa.json`；沒有 manifest 的專案預設為 `bp`／`ev3-native`。為了向前相容，允許未知欄位；已知欄位無效時則回報錯誤。
 
 ```json
 {
@@ -171,9 +197,9 @@ Python 的 stderr 與 JS／TS 的 stdout／stderr 會保存在主程序記憶體
 
 - `schemaVersion`：正整數；v1 只接受 `1`。
 - `name`：非空的專案名稱與預設 EV3 程式名稱。
-- `language`：v1 接受 `bp`；規劃值為 `python`、`typescript`、`cpp`。
+- `language`：經驗證的 ID，由已啟用的前端提供者解析。
 - `entry`：專案相對來源路徑，解析後必須位於專案根目錄內。
-- `target`：v1 只接受 `ev3-native`。
+- `target`：經驗證的 ID，由已啟用的後端提供者解析。
 - `assets`：專案相對檔案或 glob；解析後路徑必須位於專案根目錄內。每個模式最多 4,096 個字元，左大括號或左括號合計最多 64 個，右側括號亦最多 64 個（包括已跳脫或引號內的字元）。所有資產模式合計最多可展開成 256 個模式；此限制不影響萬用字元可比對的檔案數量。超出限制時會在檔案探索前回報 manifest 診斷，不會只選取部分資產；一般選項與數字範圍仍受支援。
 - `outputDir`：依字面解讀的專案相對目錄，並非 glob 模式；不得等於或包含來源根目錄。
 
@@ -183,7 +209,7 @@ Python 的 stderr 與 JS／TS 的 stdout／stderr 會保存在主程序記憶體
 
 ```ts
 interface LanguageFrontend {
-  id: "bp" | "python" | "typescript" | "cpp";
+  id: string;
   compile(input: SourceProject, signal: AbortSignal): Promise<FrontendResult>;
 }
 
@@ -199,40 +225,73 @@ EV3 後端預設優化原生輸出：省略跳到下一個區塊的跳躍、簡�
 
 裁剪前會對所有來源函式執行 lowering 診斷，因此未使用函式中的錯誤仍會回報。全域宣告與執行期支援儲存空間的配置及初始化規則維持不變。陣列清理需要的值會保留到函式結束，背景執行緒迴圈讓出 CPU 的指令也會保留。可使用 `new EV3Backend({ optimize: false })` 關閉全部優化，以便診斷與比較。直接呼叫子函式的工具可使用 `retainFunctions: ["helper"]` 保留額外函式及其呼叫／執行緒相依關係，同時維持優化啟用；名稱不分大小寫，兩種模式都會對未知名稱回報錯誤。兩種模式皆不修改輸入 IR；`.ir.json` 成品描述前端輸出，`.lst` 則只記錄實際產生的函式與支援物件、目前的物件 ID 及區域記憶體大小。函式裁剪後的物件 ID 可能改變。
 
-公共建置結果為：
+函式庫與發布用的建置契約定義於 `packages/compiler/src/contracts.ts`：
 
 ```ts
+interface SourceRange {
+  startLine: number;
+  startColumn: number;
+  endLine: number;
+  endColumn: number;
+}
+
+interface Diagnostic {
+  code: string;
+  helpKey?: string | undefined;
+  severity: "error" | "warning" | "info";
+  file: string;
+  range: SourceRange;
+  message: string;
+  source?: string;
+}
+
+type PublishedDiagnostic = Omit<Diagnostic, "source"> & { source: string };
+
+interface BuildArtifact {
+  slot: string;
+  kind: string;
+  role: "deploy-main" | "deploy-asset" | "aux";
+  mediaType: string;
+  path: string;
+  sha256: string;
+  byteLength: number;
+  remotePath?: string;
+}
+
 interface CompileResult {
+  buildId: string;
+  target: string;
+  deploy?: "ev3";
   runtimeDirectory?: string;
   success: boolean;
   diagnostics: Diagnostic[];
   artifacts: BuildArtifact[];
 }
 
-interface Diagnostic {
-  code: string;
-  helpKey?: string;
-  severity: "error" | "warning" | "info";
-  file: string;
-  range: { startLine: number; startColumn: number; endLine: number; endColumn: number };
-  message: string;
-}
-
-interface BuildArtifact {
-  kind: "rbf" | "ir" | "listing" | "asset";
-  path: string;
-  sha256: string;
-  remotePath?: string;
-}
+type PublishedCompileResult = Omit<CompileResult, "diagnostics"> & {
+  diagnostics: PublishedDiagnostic[];
+};
 ```
 
-公共結果的行、列從 1 起算。只有在沒有 error 診斷，且有效 `rbf` 已原子提交時，`success` 才為 true。失敗或取消後必須移除暫存輸出。
+獨立使用函式庫時，`Diagnostic.source` 可省略。提供者必須留空，由宿主依可信插件 ID 為各產生處的診斷加註來源；核心診斷使用 `kobrixa.core`，提供者自行設定來源會被拒絕。已發布診斷必須帶有合法來源。桌面 API 將 `Diagnostic` 設為 `PublishedDiagnostic` 的別名，將 `CompileResult` 設為 `PublishedCompileResult` 的別名，並以發布檢查與 wire schema 強制驗證這個邊界。
 
-可在瀏覽器使用的 `@kobrixa/compiler/diagnostic-help` 子路徑提供繁體中文及英文共用診斷目錄，原有 compiler 入口保持不變。同一代碼有不同原因時，由產生處設定可選的 `helpKey`；缺少或未知的分類使用該代碼的通用解說，未知代碼保留原始訊息。測試會核對 production 代碼與目錄，並驗證範例及文件連結。
+公共結果的行、列從 1 起算。成功建置必須沒有 error 診斷、包含全部 required 成品；若可部署，還須有唯一且非空的主檔。成功但不可部署仍是建置成功，執行／上傳按鈕會說明原因。失敗或取消的成品清單一律為空。未宣告、重複、缺少必要成品、路徑不安全、名稱碰撞或超過上限，皆回 `BUILD1003`。
 
-Quick Fix 請求包含工作區、已接受的分析 session／revision／version、檔案、診斷及取消識別碼。語言 worker 依 parser token 與區塊資訊產生插入候選，在記憶體副本重新解析後，按分析版本快取通過驗證的候選。查詢上限為 1,000,000 個 UTF-16 code unit，每次最多解析該檔兩次，不在 renderer 執行完整專案分析。取消會設定共享旗標，不影響其他查詢或已接受的分析。套用前會重新檢查目標 model 版本、來源快照與磁碟衝突，再以單一復原步驟沿用文件、草稿與儲存流程；rename 仍檢查全專案來源檔。文件開啟 IPC 只接受目錄選項，由 main process 組合官方網址。
+BuildSession 與模擬共用 `compileToMemory`：執行前端、檢查實際 IR 版本與 IR 有效性、執行後端、驗證成品，過程不寫輸出。模擬仍要求後端成功，保留最多 4 個入口、64 個資源／1 MiB 的限制，使用來源及資源快照；是否能模擬依實際 IR 與模擬器支援判斷，不增加後端模擬能力宣告。
 
-`runtimeDirectory` 記錄入口來源的 `Folder` 目的地。素材成品的 `remotePath` 為專案相對路徑，部署時保留程式預期的素材位置。每個輸出檔透過同一檔案系統內的 rename 提交；整組輸出檔並非單一交易。
+建置上限為後端成品 64 個、含資源成品 1024 個、單一成品 64 MiB、總量 256 MiB、檔名 128 UTF-8 bytes、相對路徑 512 UTF-8 bytes。名稱先做 Unicode NFC 正規化再轉小寫檢查碰撞，`.kobrixa*` 為保留名稱；資源不得越界或經過符號連結。讀寫時累計大小，hash 取自 staging 的實際內容。
+
+輸出仍位於 `outputDir/<名稱>.<extension>` 與 `outputDir/assets/<相對路徑>`，既有 `<名稱>.rbf`、`<名稱>.ir.json`、`<名稱>.lst` 位置不變。宿主在 `.kobrixa-<buildId>.tmp` 完成全部 staging 驗證後，才依 aux → deploy-asset → deploy-main 替換最終檔案。第一次 rename 前取消回 `BUILD0001`；開始 rename 後完成整段提交。I/O 失敗回 `BUILD9000`、成品清單為空，磁碟可能留下新舊混合的檔案；這不是多檔案原子交易。
+
+同一程序依 `realpath(outputDir)` FIFO 排隊。提交期間以 `wx` 建立 `.kobrixa-build.lock`，內容為 `{ pid, startedAt }`。pid 不存在，或內容無法解析且檔案超過 60 秒，才回收殘留鎖；活鎖每 100 ms 輪詢，最多 5 秒後回 `BUILD1004`。釋放時比對所有權，只刪自己的鎖。不同電腦共用網路磁碟時，pid 判斷不保證正確。殘留鎖回收採「比對內容後 unlink」，並非原子操作：兩個程序同時回收同一殘留鎖時，極端排程下可能刪到另一程序剛建立的新鎖；2A 接受此限制。
+
+部署要求設備支援的 `deploy`（目前為 `ev3`），否則回 `BUILD1005`。先把全部待部署檔案讀進記憶體並驗 SHA-256，再開始任何上傳；檔案遺失或變更回 `BUILD1006`。資源依 remotePath 排序、主檔最後，傳送的就是驗過的同一批 bytes。Folder／runtimeDirectory、設備鎖與略過未變資源的行為保留；設備傳輸本身仍非原子操作。
+
+可在瀏覽器使用的 `@kobrixa/compiler/diagnostic-help` 子路徑提供繁體中文及英文共用診斷目錄，原有 compiler 入口保持不變。同一代碼有不同原因時，由產生處設定可選的 `helpKey`；說明先查 `(source, code, helpKey)`，再退回同一來源的 `(source, code)`。找不到說明時保留原始訊息；第三方的 `BP1015` 不會使用 Basic Plus 的說明。只有已知的內建來源可使用共用內建目錄與官方網址，第三方說明保留在本機，使用自己的受控 HTTPS 連結。測試會核對 production 代碼與目錄，並驗證範例及文件連結。
+
+診斷身分、快取、去重、Monaco marker 與說明面板皆納入 `source`。Quick Fix 請求包含工作區、binding epoch、已接受的分析 session／revision／version、檔案、診斷身分（`source`、`code`、可選的 `helpKey` 與 range）及取消識別碼。宿主先比對已發布診斷、已接受的分析與選定的語言綁定，再路由修正；UI 傳入的來源或代碼不能改選其他提供者。註冊診斷說明不會啟用 Quick Fix。語言 worker 依 parser token 與區塊資訊產生插入候選，在記憶體副本重新解析後，按分析版本快取通過驗證的候選。查詢上限為 1,000,000 個 UTF-16 code unit，每次最多解析該檔兩次，不在 renderer 執行完整專案分析。取消會設定共享旗標，不影響其他查詢或已接受的分析。套用前會重新檢查目標 model 版本、來源快照與磁碟衝突，再以單一復原步驟沿用文件、草稿與儲存流程；rename 仍檢查全專案來源檔。文件開啟 IPC 只接受目錄選項，由 main process 組合官方網址。
+
+`runtimeDirectory` 記錄入口來源的 `Folder` 目的地。素材成品的 `remotePath` 為專案相對路徑，部署時保留程式預期的素材位置。
 
 ## 設備契約
 

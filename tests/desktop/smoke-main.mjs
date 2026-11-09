@@ -22,11 +22,18 @@ import { checkHighlighting } from "./highlighting-smoke.mjs";
 import { checkEditorPerformance } from "./performance-smoke.mjs";
 import { checkSharedComponents } from "./components-smoke.mjs";
 import { checkWorkbenchFeatures } from "./workbench-features-smoke.mjs";
+import {
+  basicPlusSmokeCatalog,
+  createStaticLanguagesHarness,
+} from "./static-languages-harness.mjs";
 const [url, temporary] = process.argv.slice(2);
 const { attachKeyboard, setKeyboardContext } = await import(
   pathToFileURL(path.join(temporary, "keyboard.cjs")).href
 );
 const { LanguageService } = await import(pathToFileURL(path.join(temporary, "language.cjs")).href);
+const { resolveBuiltinLanguageService } = await import(
+  pathToFileURL(path.join(temporary, "builtin-language-resolution.cjs")).href
+);
 const { MonitorService } = await import(
   pathToFileURL(path.join(temporary, "monitor-service.cjs")).href
 );
@@ -39,12 +46,24 @@ const searchHelpers = await import(
 );
 const languageRoot = path.join(temporary, "language-project");
 fs.mkdirSync(languageRoot);
-const language = new LanguageService({
-  projectInput: (id) => ({
-    inputPath: path.join(fixtures.get(id)?.root ?? languageRoot, "main.bp"),
-  }),
+// This UI smoke harness does not mirror production afterRouting refreshes or IPC zod schemas.
+const language = new LanguageService(
+  {
+    projectInput: (id) => ({
+      inputPath: path.join(fixtures.get(id)?.root ?? languageRoot, "main.bp"),
+    }),
+  },
+  undefined,
+  resolveBuiltinLanguageService,
+);
+const offLanguageStatus = language.onStatus((event) => {
+  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return;
+  win.webContents.send("language:status-changed", event);
 });
-app.on("will-quit", () => language.dispose());
+app.on("will-quit", () => {
+  offLanguageStatus();
+  language.dispose();
+});
 const mod = process.platform === "darwin" ? "meta" : "control";
 const storedMod = process.platform === "darwin" ? "Meta" : "Ctrl";
 app.setPath("userData", path.join(temporary, "profile"));
@@ -185,6 +204,26 @@ let devicePreferences = {
   wifiConnectTimeout: 5000,
   wifiHandshakeTimeout: 3000,
 };
+function syncLanguageFiles(fixture) {
+  const diskContents = (fixture.diskContents ??= new Map());
+  for (const file of diskContents.keys())
+    if (!(file in fixture.files)) {
+      fs.unlinkSync(path.join(fixture.root, file));
+      diskContents.delete(file);
+    }
+  for (const [file, content] of Object.entries(fixture.files))
+    if (/\.(bp|bpi|bpm)$/i.test(file) && diskContents.get(file) !== content) {
+      fs.mkdirSync(path.dirname(path.join(fixture.root, file)), { recursive: true });
+      fs.writeFileSync(path.join(fixture.root, file), content);
+      diskContents.set(file, content);
+    }
+}
+const staticHarness = createStaticLanguagesHarness(await basicPlusSmokeCatalog());
+ipcMain.handle("plugins:state", () => staticHarness.state());
+ipcMain.handle("plugins:static-languages", () => staticHarness.staticLanguages());
+ipcMain.handle("plugins:report-language-registration-failure", (_event, input) =>
+  staticHarness.reportLanguageRegistrationFailure(input),
+);
 ipcMain.handle("smoke", async (_e, name, args) => {
   if (name === "motorState") return motors.service.getState();
   if (name === "motorStart") return motors.start(args[0], _e.sender.id);
@@ -228,7 +267,15 @@ ipcMain.handle("smoke", async (_e, name, args) => {
   if (labMethod) return sensorLab[labMethod](...args);
   if (monitor.handles(name)) return monitor.handle(name, args);
   if (name === "readFile") search.beforeRead(args);
-  if (fileHistory.handles(name)) return fileHistory.handle(name, args);
+  if (fileHistory.handles(name)) {
+    const result = await fileHistory.handle(name, args);
+    if (name === "refresh") {
+      syncLanguageFiles(fixtures.get(args[0]));
+      // Match workspace:refresh: return the file result without waiting for routing.
+      void language.refresh(args[0]).catch(console.error);
+    }
+    return result;
+  }
   if (name === "search") return search.handle(args);
   const fixture = fixtures.get(args[0]) ?? fixtures.get(firstId);
   if (name === "simulatorCancel") return;
@@ -243,7 +290,7 @@ ipcMain.handle("smoke", async (_e, name, args) => {
     savedSession = structuredClone(args[0]);
     return;
   }
-  if (name === "closeProject") return;
+  if (name === "closeProject") return language.close(args[0]);
   if (name === "finishClose") {
     closeReply = args;
     return;
@@ -258,9 +305,24 @@ ipcMain.handle("smoke", async (_e, name, args) => {
         workspaceId: args[0],
         buildId,
         result: {
+          buildId,
+          target: "ev3-native",
+          deploy: "ev3",
           success: Boolean(ir),
           diagnostics,
-          artifacts: ir ? [{ kind: "rbf", path: "/tmp/preview.rbf", sha256: "smoke" }] : [],
+          artifacts: ir
+            ? [
+                {
+                  slot: "program",
+                  kind: "rbf",
+                  role: "deploy-main",
+                  mediaType: "application/octet-stream",
+                  path: "/tmp/preview.rbf",
+                  sha256: "smoke",
+                  byteLength: 1,
+                },
+              ]
+            : [],
         },
       });
       return buildId;
@@ -276,7 +338,13 @@ ipcMain.handle("smoke", async (_e, name, args) => {
     win.webContents.send("build:event", {
       type: "complete",
       ...backgroundBuild,
-      result: { success: false, diagnostics: [], artifacts: [] },
+      result: {
+        buildId: backgroundBuild.buildId,
+        target: "ev3-native",
+        success: false,
+        diagnostics: [],
+        artifacts: [],
+      },
     });
     return;
   }
@@ -315,22 +383,22 @@ ipcMain.handle("smoke", async (_e, name, args) => {
     language.cancel();
     return;
   }
-  if (name === "analyze" || name === "languageSync" || name === "completionSync") {
-    const files = fixture.files;
-    const languageRoot = fixture.root;
-    const diskContents = (fixture.diskContents ??= new Map());
+  if (name === "languageStatus") {
+    syncLanguageFiles(fixture);
+    return language.status(args[0], args[1]);
+  }
+  if (name === "languageFeature") return language.feature(args[0], args[1]);
+  if (name === "languageCancelFeature") return language.cancelFeature(args[0], args[1]);
+  if (
+    name === "analyze" ||
+    name === "languageDiagnostics" ||
+    name === "languageSync" ||
+    name === "completionSync"
+  ) {
+    syncLanguageFiles(fixture);
     if (name !== "completionSync") analysisRequests++;
-    for (const file of diskContents.keys())
-      if (!(file in files)) {
-        fs.unlinkSync(path.join(languageRoot, file));
-        diskContents.delete(file);
-      }
-    for (const [file, content] of Object.entries(files))
-      if (/\.(bp|bpi|bpm)$/i.test(file) && diskContents.get(file) !== content) {
-        fs.writeFileSync(path.join(languageRoot, file), content);
-        diskContents.set(file, content);
-      }
     if (name === "completionSync") return language.completionSync(args[0], args[1]);
+    if (name === "languageDiagnostics") return language.diagnostics(args[0], args[1]);
     if (name === "languageSync") {
       const started = performance.now();
       const reply = await language.sync(args[0], args[1]);
@@ -589,9 +657,22 @@ app
           type: "complete",
           ...backgroundBuild,
           result: {
+            buildId: backgroundBuild.buildId,
+            target: "ev3-native",
+            deploy: "ev3",
             success: true,
             diagnostics: [],
-            artifacts: [{ kind: "rbf", path: "/tmp/build/program.rbf", sha256: "smoke" }],
+            artifacts: [
+              {
+                slot: "program",
+                kind: "rbf",
+                role: "deploy-main",
+                mediaType: "application/octet-stream",
+                path: "/tmp/build/program.rbf",
+                sha256: "smoke",
+                byteLength: 1,
+              },
+            ],
           },
         }),
     };

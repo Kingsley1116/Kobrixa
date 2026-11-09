@@ -59,15 +59,17 @@ describe("device protocol", () => {
     ).rejects.toThrow("Unexpected end of file.");
   });
 
-  it("starts programs with a no-reply direct command", async () => {
+  it("reports rejection of a program control command", async () => {
     const commands: Uint8Array[] = [];
     const transport = new MockTransport((payload) => {
       commands.push(payload);
       return Uint8Array.from([0x04]);
     });
     const session = await transport.connect(transport.descriptor, new AbortController().signal);
-    await session.run("/home/root/lms2012/prjs/demo/main.rbf", new AbortController().signal);
+    await expect(
+      session.run("/home/root/lms2012/prjs/demo/main.rbf", new AbortController().signal),
+    ).rejects.toMatchObject({ category: "device" });
     expect(commands).toHaveLength(1);
-    expect(commands[0]![0]).toBe(0x80);
+    expect(commands[0]![0]).toBe(0);
   });
 });

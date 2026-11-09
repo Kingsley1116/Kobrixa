@@ -20,6 +20,13 @@ function keywords(node: unknown, found = new Set<string>(), inProperties = false
 }
 
 describe("published JSON Schema", () => {
+  it("publishes the 1.4.0 schema and a strict language service declaration", () => {
+    const schema = JSON.parse(serializeJsonSchema());
+    expect(schema.$id).toBe("https://kobrixa.com/schemas/plugin-protocol/1.4.0.json");
+    const services = schema.$defs.manifest.properties.contributes.properties.languageServices;
+    expect(services.maxItems).toBe(8);
+    expect(services.items.additionalProperties).toBe(false);
+  });
   it("matches the committed schema (run pnpm --filter @kobrixa/plugin-protocol schema)", async () => {
     expect(await read("../schema/plugin-protocol.schema.json")).toBe(serializeJsonSchema());
   });
@@ -43,5 +50,24 @@ describe("published JSON Schema", () => {
     }
     for (const method of Object.keys(notificationMethods))
       expect(SCHEMA_DEFINITIONS).toHaveProperty([`${method}.params`]);
+  });
+  it("publishes strict v1 tokenizer/configuration definitions and code-point limits", () => {
+    const schema = JSON.parse(serializeJsonSchema());
+    for (const name of ["static-language-tokenizer-v1", "static-language-configuration-v1"])
+      expect(schema.$defs[name].additionalProperties).toBe(false);
+    const languages = schema.$defs.manifest.properties.contributes.properties.languages;
+    expect(languages.maxItems).toBe(8);
+    expect(languages.items.additionalProperties).toBe(false);
+    expect(languages.items.properties.aliases.items.maxLength).toBe(80);
+    expect(languages.items.properties.aliases).toMatchObject({ minItems: 1, maxItems: 8 });
+    expect(languages.items.properties.extensions).toMatchObject({ minItems: 1, maxItems: 16 });
+    expect(languages.items.properties.tokenizer.properties.path.maxLength).toBe(600);
+    expect(languages.items.properties.tokenizer.additionalProperties).toBe(false);
+    expect(languages.items.properties.configuration.properties.version.const).toBe(1);
+    expect(
+      schema.$defs["static-language-configuration-v1"].properties.wordPattern.properties.pattern
+        .maxLength,
+    ).toBe(2048);
+    expect(serializeJsonSchema()).not.toContain("\\p{");
   });
 });

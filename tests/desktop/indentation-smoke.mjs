@@ -5,7 +5,7 @@ export async function checkIndentation({ js, key, until, win }) {
     smoke.keybindingsStore.reset();document.querySelector('[data-tree-path="main.bp"]').click()`);
   await until('ed.getModel().uri.path === "/main.bp"');
   await until(
-    "smoke.monaco.editor.tokenize('If True Then','basic-plus')[0][0].type === 'keyword.control.basic-plus'",
+    "smoke.monaco.editor.tokenize('If True Then','bp')[0][0].type === 'keyword.control.basic-plus'",
   );
   await js(
     "ed.updateOptions({quickSuggestions:false,suggestOnTriggerCharacters:false});ed.focus()",
@@ -33,7 +33,7 @@ export async function checkIndentation({ js, key, until, win }) {
       console.error(
         "indentation state",
         await js(
-          "({language:ed.getModel().getLanguageId(),autoIndent:ed.getRawOptions().autoIndent,position:ed.getPosition(),tokens:smoke.monaco.editor.tokenize(ed.getValue(),'basic-plus')})",
+          "({language:ed.getModel().getLanguageId(),autoIndent:ed.getRawOptions().autoIndent,position:ed.getPosition(),tokens:smoke.monaco.editor.tokenize(ed.getValue(),'bp')})",
         ),
       );
     assert.equal(actual, text);

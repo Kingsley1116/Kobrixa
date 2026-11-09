@@ -84,7 +84,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
-      KOBRIXA_TEST_PYTHON: ${{ runner.os == 'Windows' && 'python' || 'python3' }}
+      KOBRIXA_TEST_PYTHON: ${{ matrix.platform == 'win32' && 'python' || 'python3' }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -95,10 +95,36 @@ jobs:
           python-version: "3.12"
       - run: pnpm check:desktop
       - run: pnpm build:core
+      - name: Verify static language schemas and generated core ids
+        shell: bash
+        run: |
+          pnpm --filter @kobrixa/plugin-protocol schema
+          node tools/generate-static-language-core-ids.mjs --check
+          git diff --exit-code -- packages/plugin-protocol/schema/plugin-protocol.schema.json sdks/python/kobrixa/plugin-protocol.schema.json apps/desktop/src/renderer/editor/core-static-language-ids.json
       - name: Check collaboration service and real two-client sync
         if: runner.os == 'Linux'
         run: pnpm check:collab && pnpm test:collab:live
       - run: pnpm test:desktop
+      - name: Configure the Electron SUID sandbox helper
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          # Requiring electron may first download the binary and print a progress line.
+          electron="$(node -e "console.log(require('electron'))" | tail -n 1)"
+          sandbox="$(dirname "$electron")/chrome-sandbox"
+          test -f "$sandbox"
+          sudo chown root:root "$sandbox"
+          sudo chmod 4755 "$sandbox"
+      - name: Static language boundary ledger (P5)
+        run: pnpm test:static-languages:boundaries
+      - name: Static language IPC, Monaco and recovery smoke
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a pnpm test:static-languages:smoke
+          else
+            pnpm test:static-languages:smoke
+          fi
       - name: Plugin smoke (utilityProcess, Python, crash isolation)
         shell: bash
         run: |

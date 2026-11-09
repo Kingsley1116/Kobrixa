@@ -1,5 +1,6 @@
 import * as monaco from "monaco-editor";
-import { formatBasicPlus } from "@kobrixa/basic-plus/language";
+import type { LanguageStatus } from "../../shared/language-services.js";
+import { routeLanguage } from "./language-routing.js";
 interface JsonEdit {
   range: { start: { line: number; character: number }; end: { line: number; character: number } };
   newText: string;
@@ -12,13 +13,40 @@ interface JsonFormatter {
   ): Promise<JsonEdit[]>;
 }
 let request = 0;
+/** Keep format-on-save bound to the same language epoch and document snapshot. */
+export async function formatSourceForSave(
+  file: string,
+  source: string,
+  indentSize: 2 | 4,
+  getStatus: () => LanguageStatus | undefined | Promise<LanguageStatus | undefined>,
+  isCurrent: () => boolean,
+): Promise<string> {
+  let status: LanguageStatus | undefined;
+  try {
+    status = await getStatus();
+  } catch {
+    return source;
+  }
+  const formatted = await formatSource(file, source, indentSize, status);
+  let latest: LanguageStatus | undefined;
+  try {
+    latest = await getStatus();
+  } catch {
+    return source;
+  }
+  return isCurrent() && latest?.epoch === status?.epoch ? formatted : source;
+}
+
 /** Format a snapshot, including recovered files that are not currently open. */
 export async function formatSource(
   file: string,
   source: string,
   indentSize: 2 | 4,
+  status: LanguageStatus | undefined,
 ): Promise<string> {
-  if (/\.(bp|bpi|bpm)$/i.test(file)) return formatBasicPlus(source, { indentSize });
+  const route = routeLanguage(file, status);
+  if (route.binding?.capabilities.includes("documentFormatting") && route.companion)
+    return route.companion.formatSource(source, indentSize);
   if (!/\.json$/i.test(file)) return source;
   const uri = monaco.Uri.from({ scheme: "kobrixa-format", path: `/${++request}/${file}` });
   const model = monaco.editor.createModel(source, "json", uri);

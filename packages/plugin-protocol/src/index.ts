@@ -1,6 +1,7 @@
 export * from "./limits.js";
 export * from "./common.js";
 export * from "./manifest.js";
+export * from "./diagnostic-help.js";
 export * from "./errors.js";
 export * from "./rpc.js";
 export * from "./methods.js";
@@ -8,3 +9,5 @@ export * from "./framing.js";
 export * from "./json-schema.js";
 export * from "./peer.js";
 export * from "./memory-channel.js";
+export * from "./static-language-limits.js";
+export * from "./static-languages.js";

@@ -10,15 +10,26 @@ const EV3_PRODUCT_ID = 0x0005;
 type NodeHid = typeof NodeHidModule;
 type HidDevice = InstanceType<NodeHid["HID"]>;
 
-export function trimHidReply(data: Uint8Array): Uint8Array {
-  const report = data[0] === 0 && data.length > 5 ? data.slice(1) : data;
-  if (report.length < 2) return report;
-  const frameLength = new DataView(report.buffer, report.byteOffset, report.byteLength).getUint16(
-    0,
-    true,
-  );
-  const totalLength = frameLength + 2;
-  return totalLength <= report.length ? report.slice(0, totalLength) : report;
+export function trimHidReply(data: Uint8Array, expectedCounter?: number): Uint8Array {
+  const candidates: Uint8Array[] = [];
+  // Zero can be either a report ID or the low byte of a valid frame length.
+  for (const offset of data[0] === 0 ? [0, 1] : [0]) {
+    const report = data.subarray(offset);
+    if (report.length < 5) continue;
+    const view = new DataView(report.buffer, report.byteOffset, report.byteLength);
+    const length = view.getUint16(0, true);
+    const replyType = report[4]!;
+    if (length < 3 || length + 2 > report.length || ![2, 3, 4, 5].includes(replyType)) continue;
+    if ((replyType === 3 || replyType === 5) && length < 5) continue;
+    if (expectedCounter !== undefined && view.getUint16(2, true) !== expectedCounter) continue;
+    candidates.push(report.slice(0, length + 2));
+  }
+  if (candidates.length !== 1)
+    throw new DeviceOperationError(
+      "protocol",
+      candidates.length ? "Ambiguous EV3 USB report." : "Malformed or mismatched EV3 USB reply.",
+    );
+  return candidates[0]!;
 }
 
 async function loadHid(): Promise<NodeHid> {
@@ -38,7 +49,8 @@ export class HidConnection extends FramedConnection {
   private closed = false;
   private failure: DeviceOperationError | undefined;
   private readonly listeners = new Set<(error: Error) => void>();
-  private pending: { resolve(data: Uint8Array): void; reject(error: Error): void } | undefined;
+  private pending:
+    { counter: number; resolve(data: Uint8Array): void; reject(error: Error): void } | undefined;
 
   constructor(private readonly device: HidDevice) {
     super();
@@ -61,7 +73,12 @@ export class HidConnection extends FramedConnection {
   }
 
   private onData = (data: Uint8Array): void => {
-    if (!this.closed && !this.failure) this.pending?.resolve(trimHidReply(data));
+    if (this.closed || this.failure || !this.pending) return;
+    try {
+      this.pending.resolve(trimHidReply(data, this.pending.counter));
+    } catch (error) {
+      this.fail(normalizeDeviceError(error, "protocol"));
+    }
   };
 
   private onError = (error: Error): void => {
@@ -108,6 +125,7 @@ export class HidConnection extends FramedConnection {
         timeoutMs,
       );
       this.pending = {
+        counter: new DataView(frame.buffer, frame.byteOffset, frame.byteLength).getUint16(2, true),
         resolve: (data) => finish(undefined, data),
         reject: (error) => finish(error),
       };

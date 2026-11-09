@@ -1,11 +1,12 @@
 import type { BuildProgress, CompileResult, SourceProject } from "@kobrixa/compiler";
+import type { CompilerSnapshot } from "@kobrixa/plugin-runtime";
 import type { OfflinePreviewProgram } from "../../shared/offline-preview.js";
 import type { SimulationPrepareResult } from "../../shared/simulator.js";
 
 export interface BuildRequest {
+  buildId: string;
   project: SourceProject;
-  /** Plugin id of the frontend selected by the plugin registry; unknown ids fail the build. */
-  frontend: string;
+  compiler: CompilerSnapshot;
   cancellation: SharedArrayBuffer;
   preview?: boolean;
   simulation?: { entries: string[]; files: Record<string, number[]> };

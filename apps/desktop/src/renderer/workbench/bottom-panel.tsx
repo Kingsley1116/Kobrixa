@@ -68,7 +68,9 @@ export function BottomPanel({
                   onClick={() => onJump(item, index)}
                 >
                   <b className={item.severity}>{item.code}</b>
-                  <span>{diagnosticSummary(item, detailsHost.locale)}</span>
+                  <span>
+                    {diagnosticSummary(item, detailsHost.locale, detailsHost.helpCatalog)}
+                  </span>
                   <small>
                     {item.file}:{item.range.startLine}:{item.range.startColumn}
                   </small>

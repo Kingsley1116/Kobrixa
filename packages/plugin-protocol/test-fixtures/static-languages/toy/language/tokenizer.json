@@ -1,0 +1,38 @@
+{
+  "ignoreCase": false,
+  "defaultToken": "invalid",
+  "states": [
+    {
+      "name": "root",
+      "rules": [
+        {
+          "regex": {
+            "pattern": "[ \\t]+",
+            "flags": ""
+          },
+          "action": {
+            "token": "white"
+          }
+        },
+        {
+          "regex": {
+            "pattern": "[A-Za-z_][A-Za-z0-9_]*",
+            "flags": ""
+          },
+          "action": {
+            "token": "identifier"
+          }
+        },
+        {
+          "regex": {
+            "pattern": "[0-9]+",
+            "flags": ""
+          },
+          "action": {
+            "token": "number"
+          }
+        }
+      ]
+    }
+  ]
+}
