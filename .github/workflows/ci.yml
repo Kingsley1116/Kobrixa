@@ -105,6 +105,13 @@ jobs:
         if: runner.os == 'Linux'
         run: pnpm check:collab && pnpm test:collab:live
       - run: pnpm test:desktop
+      - name: Configure the Electron SUID sandbox helper
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sandbox="$(dirname "$(node -e "console.log(require('electron'))")")/chrome-sandbox"
+          sudo chown root:root "$sandbox"
+          sudo chmod 4755 "$sandbox"
       - name: Static language boundary ledger (P5)
         run: pnpm test:static-languages:boundaries
       - name: Static language IPC, Monaco and recovery smoke
