@@ -15,12 +15,12 @@ const invalid = (message: string): never => {
   throw new BuildError("BUILD1003", message);
 };
 export function safeProjectName(name: string): string {
-  return (
-    name
-      .normalize("NFKD")
-      .replace(/[^A-Za-z0-9_-]+/g, "_")
-      .replace(/^_+|_+$/g, "") || "program"
-  );
+  const normalized = name.normalize("NFKD").replace(/[^A-Za-z0-9_-]+/g, "_");
+  let start = 0;
+  let end = normalized.length;
+  while (start < end && normalized[start] === "_") start++;
+  while (end > start && normalized[end - 1] === "_") end--;
+  return normalized.slice(start, end) || "program";
 }
 export function validateBuildLimits(
   backendCount: number,

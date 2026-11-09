@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import {
   BUILD_LIMITS,
+  safeProjectName,
   validateArtifacts,
   validateArtifactLayout,
   validateBuildLimits,
@@ -20,6 +21,15 @@ afterEach(() => rm(root, { recursive: true, force: true }));
 const data = new Uint8Array([1]);
 const signal = () => new AbortController().signal;
 const entry = (relativePath = "x", byteLength = 1) => ({ relativePath, byteLength });
+it.each([
+  ["__demo___", "demo"],
+  ["_____", "program"],
+  ["first___second", "first___second"],
+  ["", "program"],
+  [" !demo? ", "demo"],
+])("normalizes project name %j to %j", (name, expected) => {
+  expect(safeProjectName(name)).toBe(expected);
+});
 it.each(["ir", "asset"])("rejects reserved backend result slot %s", async (slot) => {
   await expect(
     validateArtifacts(

@@ -1,7 +1,7 @@
 import { parentPort, workerData } from "node:worker_threads";
 import { BuildSession, failedBuild, requirePublished } from "@kobrixa/compiler";
 import type { KobrixaIR } from "@kobrixa/ir";
-import { readFile, stat } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { createBuiltinCompilers } from "./builtin-compilers.js";
 import { prepareSimulation } from "./prepare-simulation.js";
@@ -65,16 +65,24 @@ async function run(): Promise<void> {
       let total = 0;
       for (const asset of assets) {
         controller.signal.throwIfAborted();
-        const info = await stat(asset.path);
-        if (info.size > PREVIEW_MAX_FILE_BYTES - total)
-          throw new Error("Offline preview resource files exceed the 1 MiB limit.");
-        const bytes = await readFile(asset.path);
-        total += bytes.length;
-        if (total > PREVIEW_MAX_FILE_BYTES)
-          throw new Error("Offline preview resource files exceed the 1 MiB limit.");
-        if (!asset.remotePath || createHash("sha256").update(bytes).digest("hex") !== asset.sha256)
-          throw new Error("Build resources changed while preparing the preview. Build again.");
-        files[asset.remotePath] = Array.from(bytes);
+        const handle = await open(asset.path, "r");
+        try {
+          const info = await handle.stat();
+          if (info.size > PREVIEW_MAX_FILE_BYTES - total)
+            throw new Error("Offline preview resource files exceed the 1 MiB limit.");
+          const bytes = await handle.readFile();
+          total += bytes.length;
+          if (total > PREVIEW_MAX_FILE_BYTES)
+            throw new Error("Offline preview resource files exceed the 1 MiB limit.");
+          if (
+            !asset.remotePath ||
+            createHash("sha256").update(bytes).digest("hex") !== asset.sha256
+          )
+            throw new Error("Build resources changed while preparing the preview. Build again.");
+          files[asset.remotePath] = Array.from(bytes);
+        } finally {
+          await handle.close();
+        }
       }
       controller.signal.throwIfAborted();
       preview = { ir: previewIR, files };

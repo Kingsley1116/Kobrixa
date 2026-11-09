@@ -1,4 +1,4 @@
-import { appendFile, mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, open, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -43,9 +43,14 @@ it("accepts exactly 512 KiB and rejects one byte more, including growth after st
   await expect(
     readPackagedJson(directory, "grow.json", L.resourceFileBytes, new SourceReadBudget(), {
       stat: async (file) => {
-        const result = await stat(file);
-        await appendFile(file, " ".repeat(L.resourceFileBytes));
-        return result;
+        const handle = await open(file, "a");
+        try {
+          const result = await handle.stat();
+          await handle.appendFile(" ".repeat(L.resourceFileBytes));
+          return result;
+        } finally {
+          await handle.close();
+        }
       },
     }),
   ).rejects.toMatchObject({ limit: "resourceFileBytes" });
