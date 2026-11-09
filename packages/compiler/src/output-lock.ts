@@ -58,7 +58,6 @@ export async function acquireOutputLock(
             // Node has no atomic compare-and-unlink. The lock is released only when the
             // path still has the identity and content this process wrote; a lock replaced
             // in between fails the comparison and is left alone.
-            // codeql[js/file-system-race]
             (await readFile(file, "utf8")) === content
           )
             await unlink(file);
@@ -76,7 +75,6 @@ export async function acquireOutputLock(
           throw new BuildError("BUILD1004", "The build lock path is a symbolic link.");
         // The lstat identity is kept and re-compared before any reclaim below; the read
         // here only decides whether the lock looks stale.
-        // codeql[js/file-system-race]
         const existing = await readFile(file, "utf8");
         let stale = false;
         try {
@@ -102,7 +100,6 @@ export async function acquireOutputLock(
             current.dev === info.dev &&
             // A stale lock is reclaimed only when device, inode and content still match the
             // snapshot taken above; a lock rewritten by another process in between is kept.
-            // codeql[js/file-system-race]
             (await readFile(file, "utf8")) === existing
           ) {
             await unlink(file);
