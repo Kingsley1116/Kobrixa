@@ -1,6 +1,10 @@
+import { settingsRequestSchemas } from "./settings.js";
+import { storageRequestSchemas } from "./storage.js";
+import { persistenceActionRequestSchemas } from "./persistence-actions.js";
+import { uiRequestSchemasV2 } from "./ui-v2-session.js";
 import { z } from "zod";
-import { deviceRequestSchemas } from "./device-methods.js";
-import { eventEnvelopeSchema } from "./events.js";
+import { deviceRequestSchemasV180 } from "./device-methods.js";
+import { eventEnvelopeSchemaV180 } from "./events.js";
 import {
   MULTI_LINE,
   namespacedIdSchema,
@@ -16,7 +20,11 @@ export type Severity = z.infer<typeof severitySchema>;
 const empty = z.strictObject({});
 
 export const requestMethods = {
-  ...deviceRequestSchemas,
+  ...settingsRequestSchemas,
+  ...storageRequestSchemas,
+  ...persistenceActionRequestSchemas,
+  ...uiRequestSchemasV2,
+  ...deviceRequestSchemasV180,
   initialize: {
     params: z.strictObject({
       apiVersion: semverSchema,
@@ -40,7 +48,7 @@ export const requestMethods = {
   },
 } as const;
 export const notificationMethods = {
-  "events/deliver": eventEnvelopeSchema,
+  "events/deliver": eventEnvelopeSchemaV180,
   "$/cancelRequest": z.strictObject({ id: jsonRpcIdSchema }),
   exit: empty,
 } as const;

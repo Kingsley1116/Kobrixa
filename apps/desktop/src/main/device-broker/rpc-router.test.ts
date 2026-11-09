@@ -624,7 +624,7 @@ describe("actual broker and paired RpcPeer publication", () => {
       },
     },
   ] satisfies Stage3Event[])(
-    "rejects unnegotiated and unpublished $kind before sending",
+    "requires negotiation and a published schema for $kind before sending",
     async (event) => {
       for (const negotiateFutureDomain of [false, true]) {
         const f = pairedFixture();
@@ -632,6 +632,20 @@ describe("actual broker and paired RpcPeer publication", () => {
         const subscriptionId = await subscribe(f);
         if (negotiateFutureDomain)
           f.attachment.negotiated(event.kind === "ui.instances" ? "ui" : "settings", 1);
+        // P160 publishes UI events; settings remains unpublished until P170.
+        // Keep the unnegotiated rejection and verify the real ledger/ACK path.
+        if (negotiateFutureDomain && event.kind === "ui.instances") {
+          f.broker.events.publish(f.owner, subscriptionId, structuredClone(event), "control");
+          expect(f.notifications).toHaveBeenCalledExactlyOnceWith(
+            expect.objectContaining({ ...event, owner: f.owner, subscriptionId, sequence: 1 }),
+          );
+          expect(f.broker.events.diagnostics().queuedBytes).toBeGreaterThan(0);
+          await f.client.request("events/ack", { subscriptionId, sequence: 1 });
+          expect(f.broker.events.diagnostics().queuedBytes).toBe(0);
+          await f.client.request("events/unsubscribe", { subscriptionId });
+          expect(f.broker.events.diagnostics().subscriptions).toBe(0);
+          continue;
+        }
         expect(() =>
           f.broker.events.publish(f.owner, subscriptionId, structuredClone(event), "control"),
         ).toThrow();

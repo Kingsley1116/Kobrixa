@@ -6,10 +6,9 @@ it("starts all desktop services under the primary callback", async () => {
   expect(gate).toBeGreaterThan(0);
   for (const construction of [
     "new WorkspaceService(",
-    "await composeDesktopMain(",
+    "composeDesktopMain(",
     "new DeviceService(",
     "new MonitorService(",
-    "new SensorLabService(",
     "await createCollabService(",
   ])
     expect(source.indexOf(construction), construction).toBeGreaterThan(gate);
@@ -92,4 +91,136 @@ it("re-arms restored USB sessions without retaining their old loss episode", asy
   });
   handle({ type: "usb-recovery", state: "waiting", previousSessionId: "old", descriptor });
   expect(lost).toHaveBeenCalledTimes(2);
+});
+
+import { EventEmitter } from "node:events";
+
+import { attachNativeLifecycle } from "./plugins/shutdown-coordinator.js";
+const owner = {
+  sourceKey: "builtin:acme.fixture",
+  pluginId: "acme.fixture",
+  generation: 1,
+  hostEpoch: "host",
+  processEpoch: "process",
+};
+it("native hide stops intent but preserves a healthy background consumer", () => {
+  const window = new EventEmitter();
+  const contents = new EventEmitter();
+  const power = new EventEmitter();
+  const retire = vi.fn(async () => {});
+  const revokeIntent = vi.fn();
+  attachNativeLifecycle({
+    window,
+    contents,
+    power,
+    scope: () => ({ hostEpoch: "host", workbenchInstance: "window" }),
+    owners: () => [owner],
+    sessions: () => ["session"],
+    revokeIntent,
+    revokeActions: vi.fn(),
+    replaceWorkbench: vi.fn(),
+    markUnresponsive: vi.fn(),
+    retire,
+    suspend: vi.fn(async () => {}),
+    resume: vi.fn(async () => {}),
+    failed: vi.fn(),
+  });
+  window.emit("hide");
+  window.emit("blur");
+  window.emit("minimize");
+  expect(revokeIntent).toHaveBeenCalledTimes(3);
+  expect(retire).not.toHaveBeenCalled();
+});
+it("renderer loss revokes before retirement and publication, while only a hang marks recovery risk", async () => {
+  const window = new EventEmitter();
+  const contents = new EventEmitter();
+  const power = new EventEmitter();
+  const trace: string[] = [];
+  const markUnresponsive = vi.fn();
+  attachNativeLifecycle({
+    window,
+    contents,
+    power,
+    scope: () => ({ hostEpoch: "host", workbenchInstance: "window" }),
+    owners: () => [owner],
+    sessions: () => [],
+    revokeIntent: () => {
+      trace.push("intent");
+    },
+    revokeActions: () => {
+      trace.push("actions");
+    },
+    replaceWorkbench: () => {
+      trace.push("new-workbench");
+    },
+    markUnresponsive,
+    retire: async (_owner, reason) => {
+      trace.push(reason);
+    },
+    suspend: vi.fn(async () => {}),
+    resume: vi.fn(async () => {}),
+    failed: vi.fn(),
+  });
+  contents.emit("render-process-gone", {}, { reason: "crashed" });
+  expect(trace).toEqual(["intent", "actions", "renderer-crash", "new-workbench"]);
+  expect(markUnresponsive).not.toHaveBeenCalled();
+  window.emit("unresponsive");
+  expect(markUnresponsive).toHaveBeenCalledTimes(1);
+});
+it("suspend/wake routes each session through quiesce/reconcile without retiring owners or replaying work", async () => {
+  const window = new EventEmitter();
+  const contents = new EventEmitter();
+  const power = new EventEmitter();
+  const suspend = vi.fn(async () => {}),
+    resume = vi.fn(async () => {}),
+    retire = vi.fn(async () => {});
+  attachNativeLifecycle({
+    window,
+    contents,
+    power,
+    scope: () => ({ hostEpoch: "host", workbenchInstance: "window" }),
+    owners: () => [owner],
+    sessions: () => ["s1", "s2"],
+    revokeIntent: vi.fn(),
+    revokeActions: vi.fn(),
+    replaceWorkbench: vi.fn(),
+    markUnresponsive: vi.fn(),
+    retire,
+    suspend,
+    resume,
+    failed: vi.fn(),
+  });
+  power.emit("suspend");
+  expect(suspend.mock.calls).toEqual([["s1"], ["s2"]]);
+  power.emit("resume");
+  expect(resume.mock.calls).toEqual([["s1"], ["s2"]]);
+  expect(retire).not.toHaveBeenCalled();
+});
+
+it("installs the quit guard before awaiting desktop worker construction", async () => {
+  const source = await readFile(new URL("./index.ts", import.meta.url), "utf8");
+  const guard = source.indexOf("installPluginQuitCleanup(");
+  const admitted = source.indexOf("const { broker } = composition.foundation;");
+  expect(guard).toBeGreaterThan(source.indexOf("const pendingComposition = composeDesktopMain("));
+  expect(admitted).toBeGreaterThan(guard);
+  expect(source.slice(guard, admitted)).toContain("const composition = await pendingComposition;");
+  expect(source.slice(guard, admitted)).toContain("await composition.dispose()");
+});
+
+it("retires the private Lab writer while retaining migration and core lifecycle guards", async () => {
+  const source = await readFile(new URL("./index.ts", import.meta.url), "utf8");
+  expect(source).not.toMatch(/SensorLabService|sensorLab\.|labBusy|sensor-lab:state/);
+  expect(source).toContain("const legacyLabWriter = Object.freeze({");
+  expect(source).toContain('sourceKey: "builtin:kobrixa.sensor-lab"');
+  expect(source).toContain("legacyLabWriter,");
+  expect(source).toContain("legacyFlush: () => legacyLabWriter.settled()");
+  expect(source).toContain("flush: () => legacyLabWriter.settled()");
+  for (const guard of [
+    "requireCleanClose",
+    "createWindowRetirementHandler",
+    "monitor.disconnect",
+    "powerSessions.suspend",
+    "powerSessions.resume",
+  ])
+    expect(source).toContain(guard);
 });

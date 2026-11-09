@@ -1,0 +1,29 @@
+{
+  "commit": "c319a5a9b5209030296c32c66d1e4b7352ace275",
+  "dirty": false,
+  "hostSha256": "6397fbf882957ea6988914f1fde98edb0fa9c364ad6f7183fba0e02a2dcccbbe",
+  "releasePayloadIndex": {
+    "version": 1,
+    "pluginId": "kobrixa.motor-test",
+    "files": [
+      {
+        "path": "kobrixa-plugin.json",
+        "bytes": 1669,
+        "sha256": "735ab1830beff9f59eb36759fd000c62e1c59a9b976e19aa50852736b2e58579"
+      },
+      {
+        "path": "main.cjs",
+        "bytes": 199132,
+        "sha256": "5e158dae01d8432588cc257583a8bed6c74030911275780b75a33efc209319f0"
+      },
+      {
+        "path": "panel.json",
+        "bytes": 617,
+        "sha256": "c4478c295515e038c6bcf455f67f5866702dd8bb06ef0f9ceb0e193377d7e900"
+      }
+    ]
+  },
+  "platform": "darwin",
+  "arch": "arm64",
+  "syntheticHost": true
+}

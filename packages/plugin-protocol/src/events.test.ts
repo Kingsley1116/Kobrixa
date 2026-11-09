@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { deviceEventDataSchemas, eventEnvelopeSchema } from "./events.js";
+import { deviceEventDataSchemas, settingsEventDataSchemas, eventEnvelopeSchema } from "./events.js";
 import { validateDeviceWire } from "./device-validation.js";
 const id = "00000000-0000-4000-8000-000000000001";
 const event = {
@@ -37,9 +37,40 @@ it("F13 kind/data/delivery is closed and sequence starts at one", () => {
 });
 
 it("pairs every published event kind with its data schema regardless of union order", () => {
-  expect(Object.keys(deviceEventDataSchemas).sort()).toEqual(
-    eventEnvelopeSchema.options.map((option) => option.shape.kind.value).sort(),
-  );
+  expect(
+    Object.keys({
+      ...deviceEventDataSchemas,
+      ...uiEventDataSchemas,
+      ...settingsEventDataSchemas,
+    }).sort(),
+  ).toEqual(eventEnvelopeSchema.options.map((option) => option.shape.kind.value).sort());
   for (const option of eventEnvelopeSchema.options)
-    expect(deviceEventDataSchemas[option.shape.kind.value]).toBe(option.shape.data);
+    expect(
+      { ...deviceEventDataSchemas, ...uiEventDataSchemas, ...settingsEventDataSchemas }[
+        option.shape.kind.value
+      ],
+    ).toBe(option.shape.data);
+});
+
+import { PLUGIN_API_VERSION } from "./limits.js";
+it("gates the UI environment envelope on the published batch", () => {
+  expect(
+    eventEnvelopeSchema.safeParse({
+      ...event,
+      kind: "ui.environment",
+      data: { locale: "en", theme: "dark" },
+    }).success,
+  ).toBe(String(PLUGIN_API_VERSION) !== "1.5.0");
+});
+
+import { uiEventDataSchemas } from "./events.js";
+
+it("rejects malformed settings revisions in the 1.7 event envelope", () => {
+  expect(
+    eventEnvelopeSchema.safeParse({
+      ...event,
+      kind: "settings.changed",
+      data: { revision: 1, schemaVersion: 1, changedKeys: [], cause: "update" },
+    }).success,
+  ).toBe(false);
 });

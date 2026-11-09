@@ -51,7 +51,6 @@ async function ready(window) {
       'Boolean(window.kobrixa && document.querySelector(".app-shell"))',
     ),
   );
-  await window.webContents.executeJavaScript("window.kobrixa.sensorLab.getState()");
   assert.equal(
     await window.webContents.executeJavaScript("Boolean(window.kobrixa.windowChrome)"),
     process.platform === "win32",

@@ -1,0 +1,556 @@
+{
+  "kind": "panel",
+  "formSync": true,
+  "root": "root",
+  "fields": {
+    "transport": {
+      "schema": {
+        "type": "enum",
+        "values": ["usb", "wifi"],
+        "nullable": false
+      },
+      "initial": "usb",
+      "required": false
+    },
+    "port": {
+      "schema": {
+        "type": "enum",
+        "values": ["input:0", "input:1", "input:2", "input:3"],
+        "nullable": false
+      },
+      "initial": "input:0",
+      "required": false
+    },
+    "wifi-address": {
+      "schema": {
+        "type": "string",
+        "maxLength": 45,
+        "nullable": false
+      },
+      "initial": "",
+      "required": false
+    }
+  },
+  "data": {
+    "connection": {
+      "schema": {
+        "type": "string",
+        "maxLength": 1000,
+        "nullable": false
+      },
+      "initial": ""
+    },
+    "discovery": {
+      "schema": {
+        "type": "string",
+        "maxLength": 1000,
+        "nullable": false
+      },
+      "initial": ""
+    },
+    "recovery": {
+      "schema": {
+        "type": "string",
+        "maxLength": 1000,
+        "nullable": false
+      },
+      "initial": ""
+    },
+    "monitor": {
+      "schema": {
+        "type": "string",
+        "maxLength": 1000,
+        "nullable": false
+      },
+      "initial": ""
+    },
+    "error": {
+      "schema": {
+        "type": "string",
+        "maxLength": 1000,
+        "nullable": false
+      },
+      "initial": ""
+    },
+    "preferences": {
+      "schema": {
+        "type": "string",
+        "maxLength": 1000,
+        "nullable": false
+      },
+      "initial": ""
+    },
+    "authority": {
+      "schema": {
+        "type": "string",
+        "maxLength": 1000,
+        "nullable": false
+      },
+      "initial": ""
+    },
+    "session-id": {
+      "schema": {
+        "type": "string",
+        "maxLength": 36,
+        "nullable": true
+      },
+      "initial": null
+    },
+    "recovery-id": {
+      "schema": {
+        "type": "string",
+        "maxLength": 36,
+        "nullable": true
+      },
+      "initial": null
+    },
+    "presentation": {
+      "schema": {
+        "type": "number",
+        "min": 0,
+        "max": 9007199254740991,
+        "integer": true,
+        "nullable": false
+      },
+      "initial": 0
+    },
+    "can-mode": {
+      "schema": {
+        "type": "boolean",
+        "nullable": false
+      },
+      "initial": false
+    }
+  },
+  "nodes": [
+    {
+      "id": "root",
+      "type": "group",
+      "layout": "stack",
+      "children": [
+        "transport",
+        "port",
+        "address",
+        "connection",
+        "discovery",
+        "recovery",
+        "monitor",
+        "error",
+        "preferences",
+        "authority",
+        "discover-action",
+        "connect-action",
+        "modes-action",
+        "refresh-action",
+        "disconnect",
+        "open-recovery",
+        "cancel-recovery",
+        "candidates",
+        "modes",
+        "readings"
+      ]
+    },
+    {
+      "id": "transport",
+      "type": "choice",
+      "field": "transport",
+      "label": {
+        "en": "Connection mode",
+        "zh-TW": "連線模式"
+      },
+      "presentation": "segmented",
+      "options": [
+        {
+          "value": "usb",
+          "label": {
+            "en": "usb",
+            "zh-TW": "usb"
+          }
+        },
+        {
+          "value": "wifi",
+          "label": {
+            "en": "wifi",
+            "zh-TW": "wifi"
+          }
+        }
+      ]
+    },
+    {
+      "id": "port",
+      "type": "choice",
+      "field": "port",
+      "label": {
+        "en": "Input port",
+        "zh-TW": "輸入埠"
+      },
+      "presentation": "segmented",
+      "options": [
+        {
+          "value": "input:0",
+          "label": {
+            "en": "input:0",
+            "zh-TW": "input:0"
+          }
+        },
+        {
+          "value": "input:1",
+          "label": {
+            "en": "input:1",
+            "zh-TW": "input:1"
+          }
+        },
+        {
+          "value": "input:2",
+          "label": {
+            "en": "input:2",
+            "zh-TW": "input:2"
+          }
+        },
+        {
+          "value": "input:3",
+          "label": {
+            "en": "input:3",
+            "zh-TW": "input:3"
+          }
+        }
+      ]
+    },
+    {
+      "id": "address",
+      "type": "textInput",
+      "field": "wifi-address",
+      "label": {
+        "en": "Wi-Fi IP address",
+        "zh-TW": "Wi-Fi IP 位址"
+      }
+    },
+    {
+      "id": "connection",
+      "type": "text",
+      "value": {
+        "ref": {
+          "scope": "data",
+          "key": "connection"
+        }
+      },
+      "emphasis": "normal"
+    },
+    {
+      "id": "discovery",
+      "type": "text",
+      "value": {
+        "ref": {
+          "scope": "data",
+          "key": "discovery"
+        }
+      },
+      "emphasis": "normal"
+    },
+    {
+      "id": "recovery",
+      "type": "text",
+      "value": {
+        "ref": {
+          "scope": "data",
+          "key": "recovery"
+        }
+      },
+      "emphasis": "normal"
+    },
+    {
+      "id": "monitor",
+      "type": "text",
+      "value": {
+        "ref": {
+          "scope": "data",
+          "key": "monitor"
+        }
+      },
+      "emphasis": "normal"
+    },
+    {
+      "id": "error",
+      "type": "text",
+      "value": {
+        "ref": {
+          "scope": "data",
+          "key": "error"
+        }
+      },
+      "emphasis": "normal"
+    },
+    {
+      "id": "preferences",
+      "type": "text",
+      "value": {
+        "ref": {
+          "scope": "data",
+          "key": "preferences"
+        }
+      },
+      "emphasis": "normal"
+    },
+    {
+      "id": "authority",
+      "type": "text",
+      "value": {
+        "ref": {
+          "scope": "data",
+          "key": "authority"
+        }
+      },
+      "emphasis": "normal"
+    },
+    {
+      "id": "discover-action",
+      "type": "action",
+      "label": {
+        "en": "Discover",
+        "zh-TW": "搜尋"
+      },
+      "variant": "normal",
+      "action": {
+        "kind": "command",
+        "command": "kobrixa.device-ev3.discover",
+        "arguments": {}
+      }
+    },
+    {
+      "id": "connect-action",
+      "type": "action",
+      "label": {
+        "en": "Connect address",
+        "zh-TW": "連線至位址"
+      },
+      "variant": "normal",
+      "action": {
+        "kind": "command",
+        "command": "kobrixa.device-ev3.connect",
+        "arguments": {}
+      },
+      "visibleWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "transport"
+        },
+        "right": "wifi"
+      }
+    },
+    {
+      "id": "modes-action",
+      "type": "action",
+      "label": {
+        "en": "Query input modes",
+        "zh-TW": "查詢輸入模式"
+      },
+      "variant": "normal",
+      "action": {
+        "kind": "command",
+        "command": "kobrixa.device-ev3.modes",
+        "arguments": {}
+      }
+    },
+    {
+      "id": "refresh-action",
+      "type": "action",
+      "label": {
+        "en": "Refresh observations",
+        "zh-TW": "重新整理觀察"
+      },
+      "variant": "normal",
+      "action": {
+        "kind": "command",
+        "command": "kobrixa.device-ev3.refresh",
+        "arguments": {}
+      }
+    },
+    {
+      "id": "disconnect",
+      "type": "action",
+      "label": {
+        "en": "Disconnect",
+        "zh-TW": "中斷連線"
+      },
+      "variant": "normal",
+      "action": {
+        "kind": "core",
+        "action": "disconnect",
+        "session": {
+          "scope": "data",
+          "key": "session-id"
+        }
+      }
+    },
+    {
+      "id": "open-recovery",
+      "type": "action",
+      "label": {
+        "en": "Open recovery",
+        "zh-TW": "開啟復原"
+      },
+      "variant": "normal",
+      "action": {
+        "kind": "core",
+        "action": "openRecovery"
+      }
+    },
+    {
+      "id": "cancel-recovery",
+      "type": "action",
+      "label": {
+        "en": "Cancel connection recovery",
+        "zh-TW": "取消連線復原"
+      },
+      "variant": "normal",
+      "action": {
+        "kind": "core",
+        "action": "cancelConnectionRecovery",
+        "recovery": {
+          "scope": "data",
+          "key": "recovery-id"
+        }
+      }
+    },
+    {
+      "id": "candidates",
+      "type": "table",
+      "dataset": "candidates",
+      "label": {
+        "en": "candidates",
+        "zh-TW": "candidates"
+      },
+      "onSelect": {
+        "command": "kobrixa.device-ev3.candidate",
+        "arguments": {},
+        "rowKeyArg": "key",
+        "rowVersionArg": "version",
+        "datasetRevisionArg": "dataset"
+      }
+    },
+    {
+      "id": "modes",
+      "type": "table",
+      "dataset": "modes",
+      "label": {
+        "en": "modes",
+        "zh-TW": "modes"
+      },
+      "onSelect": {
+        "command": "kobrixa.device-ev3.mode",
+        "arguments": {},
+        "rowKeyArg": "key",
+        "rowVersionArg": "version",
+        "datasetRevisionArg": "dataset"
+      },
+      "enabledWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "data",
+          "key": "can-mode"
+        },
+        "right": true
+      }
+    },
+    {
+      "id": "readings",
+      "type": "table",
+      "dataset": "readings",
+      "label": {
+        "en": "readings",
+        "zh-TW": "readings"
+      }
+    }
+  ],
+  "datasets": {
+    "candidates": {
+      "kind": "table",
+      "columns": [
+        {
+          "id": "c0",
+          "label": {
+            "en": "Name",
+            "zh-TW": "Name"
+          },
+          "value": "string"
+        },
+        {
+          "id": "c1",
+          "label": {
+            "en": "Transport",
+            "zh-TW": "Transport"
+          },
+          "value": "string"
+        },
+        {
+          "id": "c2",
+          "label": {
+            "en": "Address",
+            "zh-TW": "Address"
+          },
+          "value": "string"
+        }
+      ]
+    },
+    "modes": {
+      "kind": "table",
+      "columns": [
+        {
+          "id": "c0",
+          "label": {
+            "en": "Mode",
+            "zh-TW": "Mode"
+          },
+          "value": "string"
+        }
+      ]
+    },
+    "readings": {
+      "kind": "table",
+      "columns": [
+        {
+          "id": "c0",
+          "label": {
+            "en": "Port",
+            "zh-TW": "Port"
+          },
+          "value": "string"
+        },
+        {
+          "id": "c1",
+          "label": {
+            "en": "State",
+            "zh-TW": "State"
+          },
+          "value": "string"
+        },
+        {
+          "id": "c2",
+          "label": {
+            "en": "Value",
+            "zh-TW": "Value"
+          },
+          "value": "string"
+        },
+        {
+          "id": "c3",
+          "label": {
+            "en": "Unit",
+            "zh-TW": "Unit"
+          },
+          "value": "string"
+        },
+        {
+          "id": "c4",
+          "label": {
+            "en": "Age ms",
+            "zh-TW": "Age ms"
+          },
+          "value": "string"
+        }
+      ]
+    }
+  },
+  "presentationKey": "presentation"
+}

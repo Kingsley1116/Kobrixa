@@ -1,6 +1,13 @@
 import type {
-  Handle, Counter, ResourceOwner, Text, BusinessResult, PermissionErrorDetail,
-  ResourceErrorDetail, Result,
+  ConnectionRecoveryRef,
+  Handle,
+  Counter,
+  ResourceOwner,
+  Text,
+  BusinessResult,
+  PermissionErrorDetail,
+  ResourceErrorDetail,
+  Result,
 } from "@kobrixa/plugin-protocol";
 // 新增 host-only 型別；3A DeviceRecoveryPort／DeviceSessionControlPort 與 3B-2 PersistenceParticipant
 // 僅 type-only import 本定義，不各自定義 actionToken 或 scope variant。
@@ -53,6 +60,7 @@ export type UserPersistenceActionContext = { owner: ResourceOwner; actionRef: Ha
 // Core-only action ledger validation seam; B1-T3 declarations, B1-T5 implementation.
 // Minting is deliberately absent from this consumer-facing host port.
 export type CoreActionTarget =
+  | ({ kind: "device-connection-recovery-cancel" } & ConnectionRecoveryRef)
   | { kind: "device-stop"; faultId: Handle; sessionId: Handle }
   | {
       kind: "device-reconcile";

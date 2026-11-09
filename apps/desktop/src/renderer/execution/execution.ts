@@ -6,7 +6,6 @@ import type {
   Diagnostic,
   KobrixaApi,
 } from "../../shared/api.js";
-import type { MotorTestState } from "../../shared/motor-test.js";
 import { deploymentPath } from "./build-path.js";
 import type { OfflinePreviewProgram } from "../../shared/offline-preview.js";
 
@@ -29,7 +28,7 @@ export type Message =
   | Phase
   | "built"
   | "uploaded"
-  | "runSent"
+  | "runStarted"
   | "stopped"
   | "deleted"
   | "connected"
@@ -110,13 +109,16 @@ export class ExecutionController {
   private disconnectingSession: string | undefined;
   private logId = 0;
   private deviceLogs: OperationLog[] = [];
-  private motorActivity:
-    { testId: string; workspaceId: string | undefined; phases: Set<string> } | undefined;
   private working = false;
   private deviceWork = false;
   private pendingRun: ExecutionRequest | undefined;
   private waitingBuild: WaitingBuild | undefined;
   private controlBlocked = false;
+  private ownConnection = false;
+  private catalogEpoch: string | undefined;
+  private catalogRevision = -1;
+  private attachment = 0;
+  private intentGeneration = 0;
 
   constructor(private api: KobrixaApi) {}
   getSnapshot = (): ExecutionState => this.snapshot;
@@ -125,9 +127,16 @@ export class ExecutionController {
     return () => this.listeners.delete(listener);
   };
   attach(): () => void {
+    this.unsubscribe.forEach((stop) => stop());
+    const attachment = ++this.attachment;
     this.unsubscribe = [
       this.api.build.onEvent((event) => this.onBuildEvent(event)),
       this.api.device.onEvent((event) => {
+        if (attachment !== this.attachment) return;
+        if (event.type === "session-catalog") {
+          this.onSessionCatalog(event);
+          return;
+        }
         if (event.type === "usb-recovery") {
           this.onRecovery(event);
           return;
@@ -159,9 +168,81 @@ export class ExecutionController {
       }),
     ];
     return () => {
+      if (attachment !== this.attachment) return;
+      this.attachment++;
+      this.cancelWaiting();
       this.unsubscribe.forEach((stop) => stop());
       this.unsubscribe = [];
     };
+  }
+  private onSessionCatalog(event: Extract<DeviceEvent, { type: "session-catalog" }>): void {
+    if (this.catalogEpoch && event.hostEpoch !== this.catalogEpoch) return;
+    if (event.revision <= this.catalogRevision) return;
+    this.catalogEpoch = event.hostEpoch;
+    this.catalogRevision = event.revision;
+    // The old explicit connect promise remains its sole adopter.
+    if (this.ownConnection) return;
+    if (event.cause === "lost") {
+      this.cancelWaiting();
+      return;
+    } // ordered legacy recovery owns loss/deployment evidence
+    const next = event.session;
+    if (!next || next.state !== "connected") {
+      if (event.cause !== "snapshot") this.cancelWaiting();
+      if (this.state.session && this.state.session.id !== this.disconnectingSession)
+        this.connectionLost("EV3 connection is unavailable.", false);
+      return;
+    }
+    if (this.disconnectingSession || this.state.recovery) return;
+    if (this.state.session?.id === next.sessionId) return;
+    if (this.state.session) this.connectionLost("EV3 session changed.", false);
+    this.update({
+      session: { id: next.sessionId, name: next.name, transport: next.transport },
+      deployed: undefined,
+      ...(!this.working && !this.pendingRun ? { phase: "idle" as const, error: undefined } : {}),
+      connectionNotice: undefined,
+    });
+    this.log("connected");
+    const pending = this.pendingRun,
+      generation = this.generation,
+      attachment = this.attachment,
+      intent = this.intentGeneration;
+    if (event.cause !== "connected" || event.origin !== "plugin") {
+      this.cancelWaiting();
+      return;
+    }
+    if (!pending) return;
+    // A same-turn Cancel/authority loss/window change wins over observation delivery.
+    void Promise.resolve().then(async () => {
+      if (
+        this.pendingRun !== pending ||
+        this.intentGeneration !== intent ||
+        this.generation !== generation ||
+        this.attachment !== attachment ||
+        this.workspaceId !== pending.workspaceId ||
+        this.controlBlocked ||
+        this.working ||
+        this.disconnectingSession ||
+        this.state.recovery ||
+        this.state.session?.id !== next.sessionId
+      )
+        return;
+      this.pendingRun = undefined;
+      this.operationWorkspaceId = undefined;
+      const current = () => {
+        if (
+          this.intentGeneration !== intent ||
+          this.workspaceId !== pending.workspaceId ||
+          this.controlBlocked ||
+          this.attachment !== attachment ||
+          this.state.session?.id !== next.sessionId ||
+          this.state.recovery ||
+          this.disconnectingSession
+        )
+          throw new Cancelled();
+      };
+      await this.buildAndMaybeRun(pending, true, current);
+    });
   }
   private connectionLost(detail: string, recovering: boolean): void {
     const localBuild = this.working && !this.deviceWork;
@@ -232,6 +313,7 @@ export class ExecutionController {
   setDeviceControlBlocked(blocked: boolean): void {
     if (this.controlBlocked === blocked) return;
     this.controlBlocked = blocked;
+    if (blocked) this.intentGeneration++;
     if (blocked && this.pendingRun) this.cancelWaiting();
     else this.publish();
   }
@@ -316,50 +398,14 @@ export class ExecutionController {
       ],
     });
   }
-  /** Capture the starting project once so changing tabs cannot split a test's activity. */
-  recordMotorTest(state: MotorTestState): void {
-    const request = state.request;
-    if (!request) return;
-    if (this.motorActivity?.testId !== request.testId) {
-      this.motorActivity = {
-        testId: request.testId,
-        workspaceId: this.workspaceId,
-        phases: new Set(),
-      };
-    }
-    const messages: Partial<Record<MotorTestState["phase"], Message>> = {
-      preparing: "motorPreparing",
-      running: "motorStarted",
-      completed: "motorCompleted",
-      stopped: "motorStopped",
-      timeout: "motorTimeout",
-      failed: "motorFailed",
-      unconfirmed: "motorUnconfirmed",
-    };
-    const message = messages[state.phase];
-    if (!message || this.motorActivity.phases.has(state.phase)) return;
-    this.motorActivity.phases.add(state.phase);
-    const log: OperationLog = {
-      id: ++this.logId,
-      time: Date.now(),
-      message,
-      detail: `${String.fromCharCode(65 + request.port)} · ${request.direction * request.power}%${request.durationMs ? ` · ${request.durationMs / 1_000} s` : ""}${request.degrees ? ` · ${request.degrees}°` : ""}${state.message ? `\n${state.message}` : ""}`,
-      failed:
-        state.phase === "failed" || state.phase === "unconfirmed" || state.phase === "timeout",
-    };
-    const id = this.motorActivity.workspaceId;
-    if (id) {
-      const project = this.project(id);
-      this.projects.set(id, { ...project, logs: [...project.logs.slice(-99), log] });
-    } else this.deviceLogs = [...this.deviceLogs.slice(-99), log];
-    this.publish();
-  }
   private phase(phase: Phase): void {
     this.update({ phase });
     this.log(phase);
   }
   setWorkspace(id: string | undefined): void {
     if (id === this.workspaceId) return;
+    this.intentGeneration++;
+    if (this.pendingRun && this.pendingRun.workspaceId !== id) this.cancelWaiting();
     this.workspaceId = id;
     this.publish();
   }
@@ -384,6 +430,7 @@ export class ExecutionController {
     this.publish();
   }
   cancelWaiting(): void {
+    this.intentGeneration++;
     if (!this.pendingRun) return;
     this.pendingRun = undefined;
     if (this.state.phase === "awaitingDevice") this.update({ phase: "idle" });
@@ -543,17 +590,28 @@ export class ExecutionController {
     }, request.workspaceId);
     return ir;
   }
-  private async buildAndMaybeRun(request: ExecutionRequest, run: boolean): Promise<void> {
+  private async buildAndMaybeRun(
+    request: ExecutionRequest,
+    run: boolean,
+    admission?: () => void,
+  ): Promise<void> {
     await this.perform(
       async (generation) => {
+        admission?.();
         this.phase("saving");
         await request.saveAll();
         this.assertCurrent(generation);
+        admission?.();
         const version = await this.compile(request);
         this.assertCurrent(generation);
+        admission?.();
         if (run && version.path && version.deploy === "ev3") {
+          if (this.controlBlocked) throw new Error(DEVICE_CONTROL_DENIED);
+          await this.stopVersion(generation);
+          admission?.();
           await this.deploy(version, generation);
           this.assertCurrent(generation);
+          admission?.();
           await this.runVersion(generation);
         } else if (run) {
           this.log("built", "BUILD1005: This target cannot deploy to EV3.");
@@ -571,26 +629,31 @@ export class ExecutionController {
     if (this.working || this.state.session || this.state.recovery || this.disconnectingSession)
       return;
     this.update({ connectionNotice: undefined });
-    await this.perform(async (generation) => {
-      this.phase("connecting");
-      const id =
-        typeof target === "string"
-          ? await this.api.device.connectWifi(target)
-          : await this.api.device.connect(target);
-      if (generation !== this.generation) {
-        void this.api.device.disconnect(id).catch(() => {});
-        throw new Cancelled();
-      }
-      this.update({
-        session: {
-          id,
-          name: typeof target === "string" ? `EV3 · ${target}` : target.name,
-          transport: typeof target === "string" ? "wifi" : target.transport,
-        },
-        deployed: undefined,
-      });
-      this.log("connected");
-    }, this.pendingRun?.workspaceId ?? this.workspaceId);
+    this.ownConnection = true;
+    try {
+      await this.perform(async (generation) => {
+        this.phase("connecting");
+        const id =
+          typeof target === "string"
+            ? await this.api.device.connectWifi(target)
+            : await this.api.device.connect(target);
+        if (generation !== this.generation) {
+          void this.api.device.disconnect(id).catch(() => {});
+          throw new Cancelled();
+        }
+        this.update({
+          session: {
+            id,
+            name: typeof target === "string" ? `EV3 · ${target}` : target.name,
+            transport: typeof target === "string" ? "wifi" : target.transport,
+          },
+          deployed: undefined,
+        });
+        this.log("connected");
+      }, this.pendingRun?.workspaceId ?? this.workspaceId);
+    } finally {
+      this.ownConnection = false;
+    }
     const pending = this.pendingRun;
     // Connection failures clear the intent: retries never run a robot unexpectedly.
     this.pendingRun = undefined;
@@ -691,7 +754,7 @@ export class ExecutionController {
     this.phase("running");
     await this.api.device.run(session.id, deployed.path);
     this.assertCurrent(generation);
-    this.log("runSent");
+    this.log("runStarted");
   }
   async upload(): Promise<void> {
     const version = this.snapshot.successfulBuild;
@@ -720,16 +783,15 @@ export class ExecutionController {
   async stop(): Promise<void> {
     const session = this.state.session;
     if (this.locked || !session) return;
-    await this.perform(
-      async (generation) => {
-        this.phase("stopping");
-        await this.api.device.stop(session.id);
-        this.assertCurrent(generation);
-        this.log("stopped");
-      },
-      this.workspaceId,
-      true,
-    );
+    await this.perform((generation) => this.stopVersion(generation), this.workspaceId, true);
+  }
+  private async stopVersion(generation: number): Promise<void> {
+    const session = this.state.session;
+    if (!session) throw new Error("EV3 disconnected.");
+    this.phase("stopping");
+    await this.api.device.stop(session.id);
+    this.assertCurrent(generation);
+    this.log("stopped");
   }
   async deleteDeployed(): Promise<void> {
     const { session, deployed } = this.state;

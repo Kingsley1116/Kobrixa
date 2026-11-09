@@ -1,8 +1,15 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { spawn } from "node:child_process";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { collectBundledNotices } from "../../packaging.js";
+import {
+  collectBundledNotices,
+  copyNativeDependencies,
+  PERSISTENCE_WORKER_ENTRY,
+  persistenceWorkerPath,
+  withPersistenceWorkerUnpack,
+} from "../../packaging.js";
 
 const roots: string[] = [];
 
@@ -43,6 +50,40 @@ afterEach(async () => {
 });
 
 describe("bundled dependency notices", () => {
+  it("copies native transitive packages and their matching notices without hoisting", async () => {
+    const { buildPath, nodeModules } = await fixture([]);
+    const root = path.dirname(nodeModules);
+    const desktopPackage = path.join(root, "apps/desktop/package.json");
+    await put(root, "apps/desktop/package.json", "{}");
+    const hid = path.join(nodeModules, ".pnpm/node-hid@3.4.0/node_modules/node-hid");
+    const addon = path.join(nodeModules, ".pnpm/node-addon-api@8.9.2/node_modules/node-addon-api");
+    const prebuild = path.join(nodeModules, ".pnpm/pkg-prebuilds@1.1.0/node_modules/pkg-prebuilds");
+    for (const [directory, name, version, license] of [
+      [hid, "node-hid", "3.4.0", "LICENSE-bsd.txt"],
+      [addon, "node-addon-api", "8.9.2", "LICENSE.md"],
+      [prebuild, "pkg-prebuilds", "1.1.0", "LICENSE"],
+    ] as const) {
+      await put(directory, "package.json", JSON.stringify({ name, version }));
+      await put(directory, license, `${name} ${version} license`);
+    }
+    await mkdir(path.join(root, "apps/desktop/node_modules"));
+    await symlink(hid, path.join(root, "apps/desktop/node_modules/node-hid"), "junction");
+    await symlink(addon, path.join(hid, "../node-addon-api"), "junction");
+    await symlink(prebuild, path.join(hid, "../pkg-prebuilds"), "junction");
+    await put(hid, "prebuilds/node-darwin-arm64/hid.node", "target");
+    await put(hid, "prebuilds/node-win32-x64/hid.node", "foreign");
+    await copyNativeDependencies(buildPath, "darwin", "arm64", desktopPackage);
+    expect(await readdir(path.join(buildPath, "node_modules/node-hid/prebuilds"))).toEqual([
+      "node-darwin-arm64",
+    ]);
+    const notices = await readFile(path.join(buildPath, "THIRD-PARTY-NOTICES.txt"), "utf8");
+    for (const name of ["node-hid", "node-addon-api", "pkg-prebuilds"]) {
+      const copied = JSON.parse(
+        await readFile(path.join(buildPath, "node_modules", name, "package.json"), "utf8"),
+      ) as { name: string; version: string };
+      expect(notices).toContain(`${copied.name} ${copied.version} license`);
+    }
+  });
   it("lists every package referenced by staged source maps, including scoped and nested ones", async () => {
     const { buildPath, nodeModules } = await fixture(
       [
@@ -80,5 +121,291 @@ describe("bundled dependency notices", () => {
     await rm(path.join(buildPath, ".vite"), { recursive: true });
     await mkdir(path.join(buildPath, ".vite"));
     await expect(collectBundledNotices(buildPath, nodeModules)).rejects.toThrow("No source maps");
+  });
+});
+
+import {
+  builtinProcessBuilds,
+  BUILTIN_PAYLOAD_UNPACK,
+  DELIVERED_BUILTIN_PROCESS_BUILDS,
+} from "../../packaging.js";
+import { builtinPluginConfig } from "../../vite.plugin.config.js";
+it("keeps native unpack and feature payload unpack in the same packaging rule", () => {
+  expect(BUILTIN_PAYLOAD_UNPACK).toBe("{**/*.node,**/.vite/build/plugins/**}");
+  expect(DELIVERED_BUILTIN_PROCESS_BUILDS).toEqual([
+    {
+      entry: "../../plugins/motor-test/src/main.ts",
+      config: "vite.plugin-motor.config.ts",
+      target: "main",
+      slug: "motor-test",
+      pluginId: "kobrixa.motor-test",
+    },
+    {
+      entry: "../../plugins/sensor-lab/src/main.ts",
+      config: "vite.plugin-lab.config.ts",
+      target: "main",
+      slug: "sensor-lab",
+      pluginId: "kobrixa.sensor-lab",
+    },
+    {
+      entry: "../../plugins/device-ev3/src/main.ts",
+      config: "vite.plugin-device.config.ts",
+      target: "main",
+      slug: "device-ev3",
+      pluginId: "kobrixa.device-ev3",
+    },
+  ]);
+  expect(builtinProcessBuilds(false)).toEqual(DELIVERED_BUILTIN_PROCESS_BUILDS);
+  expect(() => builtinProcessBuilds(true)).toThrow("conflicts with the delivered motor payload");
+});
+it("does not externalize SDK or protocol or share chunks between process leaves", () => {
+  const result = builtinPluginConfig({
+    slug: "acceptance-builtin",
+    pluginId: "acceptance.ui",
+    sourceRoot: "/fixture",
+  });
+  const external = result.build?.rollupOptions?.external;
+  if (typeof external !== "function") throw new Error("Expected Node builtin predicate");
+  expect(external("@kobrixa/plugin-sdk", undefined, false)).toBe(false);
+  expect(external("@kobrixa/plugin-protocol", undefined, false)).toBe(false);
+  expect(result.build?.rollupOptions?.output).toMatchObject({
+    format: "cjs",
+    inlineDynamicImports: true,
+  });
+});
+
+describe("persistence worker packaging", () => {
+  it("selects only the development or installed artifact root", () => {
+    expect(PERSISTENCE_WORKER_ENTRY).toBe("src/main/plugins/persistence/worker.ts");
+    expect(
+      persistenceWorkerPath({ packaged: false, resourcesPath: "ignored", buildRoot: "/build" }),
+    ).toBe(path.join("/build", "persistence-worker.cjs"));
+    expect(
+      persistenceWorkerPath({
+        packaged: true,
+        resourcesPath: "/installed/resources",
+        buildRoot: "ignored",
+      }),
+    ).toBe(
+      path.join(
+        "/installed/resources",
+        "app.asar.unpacked",
+        ".vite",
+        "build",
+        "persistence-worker.cjs",
+      ),
+    );
+    for (const packaged of [false, true]) {
+      expect(() =>
+        persistenceWorkerPath({ packaged, resourcesPath: "relative", buildRoot: "relative" }),
+      ).toThrow("absolute");
+    }
+  });
+
+  it("preserves nested native and plugin unpack patterns and adds the worker once", () => {
+    const worker = "**/.vite/build/persistence-worker.cjs";
+    for (const existing of [
+      "",
+      "**/*.node",
+      BUILTIN_PAYLOAD_UNPACK,
+      "{**/*.{node,dll},**/plugin-bundles/**}",
+      worker,
+      `{**/*.node,${worker}}`,
+    ]) {
+      const once = withPersistenceWorkerUnpack(existing);
+      expect(withPersistenceWorkerUnpack(once)).toBe(once);
+      expect(once.split(worker)).toHaveLength(2);
+      if (existing.includes("**/*.node")) expect(once).toContain("**/*.node");
+      if (existing.includes("**/*.{node,dll}")) expect(once).toContain("**/*.{node,dll}");
+      if (existing.includes("**/.vite/build/plugins/**"))
+        expect(once).toContain("**/.vite/build/plugins/**");
+    }
+    expect(withPersistenceWorkerUnpack(BUILTIN_PAYLOAD_UNPACK)).toBe(
+      "{**/*.node,**/.vite/build/plugins/**,**/.vite/build/persistence-worker.cjs}",
+    );
+  });
+
+  it("registers one worker entry without replacing the main entry", async () => {
+    const config = await readFile(new URL("../../forge.config.ts", import.meta.url), "utf8");
+    expect(config.match(/entry:\s*PERSISTENCE_WORKER_ENTRY/g)).toHaveLength(1);
+    expect(config).toContain("withPersistenceWorkerUnpack(BUILTIN_PAYLOAD_UNPACK)");
+    const mainConfig = await readFile(
+      new URL("../../vite.main.config.ts", import.meta.url),
+      "utf8",
+    );
+    expect(mainConfig).toContain('"persistence-worker.cjs"');
+    expect(mainConfig).toContain('"main.cjs"');
+  });
+});
+
+const installedResources = process.env.PERSISTENCE_INSTALLED_RESOURCES;
+it.skipIf(!installedResources)(
+  "starts the installed worker from arbitrary cwd and observes normal exit",
+  async () => {
+    if (!installedResources) throw new Error("installed resources required");
+    const entry = persistenceWorkerPath({
+      packaged: true,
+      resourcesPath: installedResources,
+      buildRoot: "unused",
+    });
+    const cwd = await mkdtemp(path.join(tmpdir(), "kobrixa-installed-worker-"));
+    roots.push(cwd);
+    const script = `
+    const { Worker } = require("node:worker_threads");
+    const { mkdirSync, realpathSync } = require("node:fs");
+    const path = require("node:path");
+    const directory = path.join(process.cwd(), "store");
+    mkdirSync(directory, { mode: 0o700 });
+    const root = realpathSync(directory);
+    // Match the host's openStoreRoot bootstrap before passing its private root.
+    mkdirSync(path.join(root, "namespaces"), { mode: 0o700 });
+    const held = new SharedArrayBuffer(16 + 1024 * 16 + 1024 * 4);
+    Atomics.store(new Int32Array(held), 0, 1);
+    const worker = new Worker(process.argv[1], { workerData: {} });
+    let ready = false;
+    const timer = setTimeout(() => {
+      console.error("installed worker did not exit normally");
+      worker.terminate().then(() => { process.exitCode = 2; });
+    }, 10000);
+    worker.once("error", error => { console.error(error); process.exitCode = 1; });
+    worker.once("message", message => {
+      if (message.version !== 1 || message.kind !== "ready" || message.recovery !== "ready") {
+        console.error("invalid worker readiness", JSON.stringify(message));
+        worker.terminate().then(() => { process.exitCode = 3; });
+        return;
+      }
+      ready = true;
+      worker.postMessage({ version: 1, kind: "close" });
+    });
+    worker.once("exit", code => {
+      clearTimeout(timer);
+      Atomics.store(new Int32Array(held), 0, 0);
+      if (ready && code === 0) process.stdout.write("installed-worker-ready-and-exited");
+      else process.exitCode = 4;
+    });
+    worker.postMessage({ version: 1, kind: "boot", hostEpoch: "10000000-0000-4000-8000-000000000001", root, held });
+  `;
+    const child = spawn(process.execPath, ["-e", script, entry], {
+      cwd,
+      env: { ...process.env, PATH: "" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "",
+      stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    const timeout = setTimeout(() => child.kill("SIGKILL"), 12000);
+    try {
+      const exit = await new Promise<number | null>((resolve, reject) => {
+        child.once("error", reject);
+        child.once("close", resolve);
+      });
+      expect(stderr).toBe("");
+      expect(exit).toBe(0);
+      expect(stdout).toBe("installed-worker-ready-and-exited");
+    } finally {
+      clearTimeout(timeout);
+    }
+  },
+  15000,
+);
+import { build } from "vite";
+import { fileURLToPath } from "node:url";
+import motorConfig from "../../vite.plugin-motor.config.js";
+import { validateBuiltinLeaf } from "./plugins/builtin-launch.js";
+import { assembleBuiltinPluginSources } from "./plugins/builtin.js";
+it("builds the actual registered motor entry into an isolated validated product leaf", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "kobrixa-motor-build-"));
+  roots.push(root);
+  const output = path.join(root, "plugins/motor-test");
+  await build({
+    ...motorConfig,
+    configFile: false,
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    logLevel: "silent",
+    build: { ...motorConfig.build, outDir: output },
+  });
+  const payload = await validateBuiltinLeaf(output, "kobrixa.motor-test");
+  expect(payload.index.files.map((file) => file.path)).toEqual([
+    "kobrixa-plugin.json",
+    "main.cjs",
+    "panel.json",
+    "status.json",
+  ]);
+  const code = await readFile(path.join(output, "main.cjs"), "utf8");
+  expect(code).not.toMatch(/\brequire\(["']@kobrixa\//);
+  const map = JSON.parse(await readFile(path.join(output, "main.cjs.map"), "utf8")) as {
+    sources: string[];
+  };
+  expect(map.sources.some((source) => source.includes("plugins/motor-test/src/main.ts"))).toBe(
+    true,
+  );
+  expect(map.sources.some((source) => source.includes("packages/plugin-sdk-js/src/index.ts"))).toBe(
+    true,
+  );
+  expect(map.sources.some((source) => source.includes("apps/desktop/src/"))).toBe(false);
+  const sources = await assembleBuiltinPluginSources({
+    packaged: false,
+    appPath: "/unused",
+    buildRoot: root,
+  });
+  expect(sources[3]).toMatchObject({
+    kind: "builtin",
+    policy: "optional",
+    manifest: payload.manifest,
+    resources: payload.resources,
+    launch: { packageRoot: payload.root },
+  });
+});
+
+it("builds the real EV3 entry with public SDK and indexed settings/v2 resources", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "kobrixa-device-build-"));
+  roots.push(root);
+  const { default: config } = await import("../../vite.plugin-device.config.js");
+  const output = path.join(root, "plugins/device-ev3");
+  await build({
+    ...config,
+    configFile: false,
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    logLevel: "silent",
+    build: { ...config.build, outDir: output },
+  });
+  const payload = await validateBuiltinLeaf(output, "kobrixa.device-ev3");
+  expect(payload.index.files.map((file) => file.path)).toEqual([
+    "kobrixa-plugin.json",
+    "main.cjs",
+    "settings/preferences.json",
+    "ui/panel.json",
+  ]);
+  const code = await readFile(path.join(output, "main.cjs"), "utf8");
+  expect(code).not.toMatch(/\brequire\(["']@kobrixa\//);
+  const map = JSON.parse(await readFile(path.join(output, "main.cjs.map"), "utf8")) as {
+    sources: string[];
+  };
+  expect(map.sources.some((source) => source.includes("plugins/device-ev3/src/main.ts"))).toBe(
+    true,
+  );
+  expect(map.sources.some((source) => source.includes("packages/plugin-sdk-js/src/index.ts"))).toBe(
+    true,
+  );
+  expect(map.sources.some((source) => source.includes("apps/desktop/src/"))).toBe(false);
+  const sources = await assembleBuiltinPluginSources({
+    packaged: false,
+    appPath: "/unused",
+    buildRoot: root,
+  });
+  const matching = sources.filter(
+    (source) =>
+      source.kind === "builtin" && (source.manifest as { id?: string }).id === "kobrixa.device-ev3",
+  );
+  expect(matching).toHaveLength(1);
+  expect(matching[0]).toMatchObject({
+    manifest: payload.manifest,
+    resources: payload.resources,
+    launch: { packageRoot: payload.root },
   });
 });

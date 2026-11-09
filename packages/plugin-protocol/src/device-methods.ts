@@ -1,3 +1,7 @@
+import {
+  connectionRecoverySnapshotSchema,
+  validateConnectionRecoverySnapshot,
+} from "./device-connection-recovery.js";
 import { z } from "zod";
 import { namespacedIdSchema } from "./common.js";
 import {
@@ -245,3 +249,74 @@ export type RecordingReadValue = Extract<
   DeviceResult<"devices/recording/read">,
   { ok: true }
 >["value"];
+
+// API 1.8 overlay. The original exports above remain strict for older sessions.
+export const deviceSubscriptionParamsSchemaV180 = z.discriminatedUnion("topic", [
+  ...deviceSubscriptionParamsSchema.options,
+  z.strictObject({ topic: z.literal("connectionRecovery") }),
+]);
+export const deviceRequestSchemasV180 = {
+  ...deviceRequestSchemas,
+  "devices/connectionRecovery/read": pair(empty, connectionRecoverySnapshotSchema),
+  "devices/subscribe": pair(
+    deviceSubscriptionParamsSchemaV180,
+    z.strictObject({
+      subscriptionId: h,
+      sequence: z.literal(0),
+      snapshot: z.union([snapshot, connectionRecoverySnapshotSchema]),
+    }),
+  ),
+} as const;
+export type DeviceRequestMapV180 = DefinitionMap<typeof deviceRequestSchemasV180>;
+export type DeviceMethodV180 = keyof DeviceRequestMapV180;
+export type DeviceParamsV180<M extends DeviceMethodV180> = DeviceRequestMapV180[M]["params"];
+export type DeviceResultV180<M extends DeviceMethodV180> = DeviceRequestMapV180[M]["result"];
+export type DeviceSubscriptionParamsV180 = z.output<typeof deviceSubscriptionParamsSchemaV180>;
+export type DeviceSubscriptionSnapshotV180 =
+  z.output<(typeof deviceRequestSchemasV180)["devices/subscribe"]["result"]> extends infer R
+    ? R extends { ok: true; value: { snapshot: infer S } }
+      ? S
+      : never
+    : never;
+/** Validate successful results against their original parsed request, not an uncorrelated union. */
+export function validDeviceResultV180(method: string, result: unknown, params: unknown): boolean {
+  try {
+    const r = result as { ok?: boolean; value?: unknown };
+    if (!r?.ok) return true;
+    if (method === "devices/connectionRecovery/read") validateConnectionRecoverySnapshot(r.value);
+    if (method === "devices/subscribe") {
+      const p = deviceSubscriptionParamsSchemaV180.parse(params);
+      const value = deviceRequestSchemasV180["devices/subscribe"].result.parse(result);
+      if (!value.ok) return false;
+      const s = value.value.snapshot;
+      if (p.topic === "connectionRecovery") validateConnectionRecoverySnapshot(s);
+      else {
+        const schema =
+          p.topic === "catalog"
+            ? deviceListValueSchema
+            : p.topic === "session"
+              ? sessionSources
+              : p.topic === "telemetry"
+                ? read
+                : p.topic === "motion"
+                  ? motionSnapshotSchema
+                  : p.topic === "reservation"
+                    ? reservation
+                    : authoritySnapshotSchema;
+        const parsed = schema.parse(s) as Record<string, unknown>;
+        if (
+          p.topic === "session" &&
+          (parsed.session as { sessionId: string }).sessionId !== p.sessionId
+        )
+          return false;
+        if (p.topic === "telemetry" && parsed.sessionId !== p.sessionId) return false;
+        if (p.topic === "motion" && parsed.operationId !== p.operationId) return false;
+        if (p.topic === "reservation" && parsed.reservationId !== p.reservationId) return false;
+        if (p.topic === "authority" && parsed.contextRef !== p.contextRef) return false;
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}

@@ -1,5 +1,21 @@
-import type { Handle, Counter, Timestamp, ResourceOwner, MotionSnapshot, ReservationSnapshot, DeviceErrorReason } from "@kobrixa/plugin-protocol";
-import type { BusinessResult, DispatchOutcome, DeviceErrorDetail, PermissionErrorDetail, ResourceErrorDetail } from "@kobrixa/plugin-protocol";
+import type {
+  Handle,
+  Counter,
+  Timestamp,
+  ResourceOwner,
+  MotionSnapshot,
+  ReservationSnapshot,
+  DeviceErrorReason,
+} from "@kobrixa/plugin-protocol";
+import type {
+  BusinessResult,
+  DispatchOutcome,
+  DeviceErrorDetail,
+  PermissionErrorDetail,
+  ResourceErrorDetail,
+  ResourceErrorDetailFor,
+} from "@kobrixa/plugin-protocol";
+import type { ConnectionRecoveryRef, ConnectionRecoverySnapshot } from "@kobrixa/plugin-protocol";
 import type { CoreActionReference } from "./core-actions.js";
 export type OperationClass =
   | "connection"
@@ -182,22 +198,66 @@ export interface DeviceRecoveryPort {
 
 import type { EventEnvelope, Stage3EventData } from "@kobrixa/plugin-protocol";
 import type { Stage3PluginErrorCode, PluginErrorCodeV150 } from "@kobrixa/plugin-protocol";
-export type Stage3Event =
-  | { [K in keyof Stage3EventData]: { kind: K; data: Stage3EventData[K] } }[keyof Stage3EventData];
+export type Stage3Event = {
+  [K in keyof Stage3EventData]: { kind: K; data: Stage3EventData[K] };
+}[keyof Stage3EventData];
 // Stage3EventData is A-T1 events.ts's type-only map of the exact A/B1/B2 event data schemas.
 export type Stage3EventEnvelope = Omit<EventEnvelope<unknown>, "kind" | "data"> & Stage3Event;
 export interface CommonEventLedgerPort {
   diagnostics(): Readonly<{ subscriptions: number; queuedEvents: number; queuedBytes: number }>;
-  create(owner: ResourceOwner): BusinessResult<{ subscriptionId: Handle; sequence: 0 }, ResourceErrorDetail>;
+  create(
+    owner: ResourceOwner,
+  ): BusinessResult<
+    { subscriptionId: Handle; sequence: 0 },
+    ResourceErrorDetailFor<"subscription">,
+    PluginErrorCodeV150
+  >;
   owns(owner: ResourceOwner, subscriptionId: Handle): boolean;
-  publish(owner: ResourceOwner, subscriptionId: Handle, event: Stage3Event,
-    delivery: "control" | "telemetry"): BusinessResult<{ accepted: true }, ResourceErrorDetail>;
+  publish(
+    owner: ResourceOwner,
+    subscriptionId: Handle,
+    event: Stage3Event,
+    delivery: "control" | "telemetry",
+  ): BusinessResult<
+    { accepted: true },
+    ResourceErrorDetailFor<"subscription">,
+    PluginErrorCodeV150
+  >;
   activate(owner: ResourceOwner, subscriptionId: Handle): void;
-  resync(owner: ResourceOwner, subscriptionId: Handle): BusinessResult<{ accepted: true }, ResourceErrorDetail>;
-  snapshot<T,D,C extends Stage3PluginErrorCode>(owner: ResourceOwner, subscriptionId: Handle,
-    read: () => BusinessResult<T,D,C>): BusinessResult<{ sequence: Counter; snapshot: T }, D | ResourceErrorDetail, C | PluginErrorCodeV150>;
-  ack(owner: ResourceOwner, subscriptionId: Handle, sequence: Counter): BusinessResult<{ acknowledged: Counter }, ResourceErrorDetail>;
-  unsubscribe(owner: ResourceOwner, subscriptionId: Handle): BusinessResult<{ removed: boolean }, ResourceErrorDetail>;
+  resync(
+    owner: ResourceOwner,
+    subscriptionId: Handle,
+  ): BusinessResult<
+    { accepted: true },
+    ResourceErrorDetailFor<"subscription">,
+    PluginErrorCodeV150
+  >;
+  snapshot<T, D, C extends Stage3PluginErrorCode>(
+    owner: ResourceOwner,
+    subscriptionId: Handle,
+    read: () => BusinessResult<T, D, C>,
+  ): BusinessResult<
+    { sequence: Counter; snapshot: T },
+    D | ResourceErrorDetailFor<"subscription">,
+    C | PluginErrorCodeV150
+  >;
+  ack(
+    owner: ResourceOwner,
+    subscriptionId: Handle,
+    sequence: Counter,
+  ): BusinessResult<
+    { acknowledged: Counter },
+    ResourceErrorDetailFor<"subscription">,
+    PluginErrorCodeV150
+  >;
+  unsubscribe(
+    owner: ResourceOwner,
+    subscriptionId: Handle,
+  ): BusinessResult<
+    { removed: boolean },
+    ResourceErrorDetailFor<"subscription">,
+    PluginErrorCodeV150
+  >;
   closeAfterControl(owner: ResourceOwner, subscriptionId: Handle): void;
   onRemoved(listener: (subscriptionId: Handle) => void): () => void;
 }
@@ -210,3 +270,12 @@ export interface DeviceChannelAttachment {
 }
 
 export type DeviceRequirement = Readonly<{ capability: string; required: boolean }>;
+
+/** Host-only USB retry cancellation; distinct from persisted stop-unconfirmed recovery. */
+export interface DeviceConnectionRecoveryPort {
+  snapshot(): ConnectionRecoverySnapshot;
+  cancel(input: {
+    target: ConnectionRecoveryRef;
+    action: CoreActionReference;
+  }): Promise<BusinessResult<ConnectionRecoverySnapshot, DeviceFailureDetail>>;
+}

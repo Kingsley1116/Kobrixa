@@ -67,7 +67,7 @@ it("F07 no work-cancellation signal aborts an already dispatched read", async ()
   const pending = view.stop(undefined, work.signal);
   work.abort();
   expect(transport.signal.aborted).toBe(false);
-  reply(Uint8Array.of(2));
+  reply(Uint8Array.of(2, 0x40));
   await pending;
   expect(exchange).toHaveBeenCalledOnce();
 });

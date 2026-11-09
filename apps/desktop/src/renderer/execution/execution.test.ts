@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BuildEvent, CompileResult, DeviceEvent, KobrixaApi } from "../../shared/api.js";
-import type { MotorTestState } from "../../shared/motor-test.js";
 import { DEVICE_CONTROL_DENIED, ExecutionController, filesToSave } from "./execution.js";
 import { readTheme } from "../settings/theme.js";
 
@@ -63,7 +62,6 @@ function setup() {
     },
     updates: {} as KobrixaApi["updates"],
     plugins: {} as KobrixaApi["plugins"],
-    sensorLab: {} as KobrixaApi["sensorLab"],
     keyboard: { updateContext: vi.fn(async () => undefined) },
     build: {
       onEvent: vi.fn((listener) => {
@@ -82,11 +80,6 @@ function setup() {
       preview: vi.fn(),
     },
     device: {
-      startMotorTest: vi.fn(),
-      keepMotorTestAlive: vi.fn(),
-      stopMotorTest: vi.fn(),
-      motorTestState: vi.fn(),
-      onMotorTest: () => () => {},
       watchMonitor: vi.fn(),
       onMonitor: () => () => {},
       monitor: vi.fn(),
@@ -114,7 +107,9 @@ function setup() {
       run: vi.fn(async () => {
         calls.push("run");
       }),
-      stop: vi.fn(async () => {}),
+      stop: vi.fn(async () => {
+        calls.push("stop");
+      }),
       delete: vi.fn(async () => {}),
     },
     workspace: {} as KobrixaApi["workspace"],
@@ -170,65 +165,6 @@ describe("execution flow", () => {
     expect(await h.controller.preview(h.request)).toBeUndefined();
     expect(h.controller.getSnapshot().error?.detail).toBe("Preview snapshot missing");
     expect(h.controller.locked).toBe(false);
-  });
-  it("records motor transitions once and keeps their starting project association", () => {
-    const { controller } = setup();
-    const state: MotorTestState = {
-      request: {
-        sessionId: "ev3",
-        testId: "motor-1",
-        port: 2,
-        power: 20,
-        direction: -1,
-        mode: "angle",
-        degrees: 90,
-        brake: true,
-      },
-      phase: "preparing",
-      angle: null,
-      displacement: null,
-      elapsedMs: 0,
-    };
-    controller.recordMotorTest(state);
-    controller.recordMotorTest({ ...state, phase: "running" });
-    controller.recordMotorTest({ ...state, phase: "running", angle: 10 });
-    controller.setWorkspace("w2");
-    controller.recordMotorTest({ ...state, phase: "completed" });
-    expect(controller.getSnapshot().logs).toHaveLength(0);
-    controller.setWorkspace("w1");
-    expect(controller.getSnapshot().logs.map((entry) => entry.message)).toEqual([
-      "motorPreparing",
-      "motorStarted",
-      "motorCompleted",
-    ]);
-    expect(controller.getSnapshot().logs[0]?.detail).toBe("C · -20% · 90°");
-    expect(controller.editingLocked).toBe(false);
-  });
-  it("keeps a motor test without an open project in device activity", () => {
-    const { controller } = setup();
-    controller.setWorkspace(undefined);
-    controller.recordMotorTest({
-      request: {
-        sessionId: "ev3",
-        testId: "motor-global",
-        port: 0,
-        power: 20,
-        direction: 1,
-        mode: "jog",
-        brake: true,
-      },
-      phase: "unconfirmed",
-      angle: null,
-      displacement: null,
-      elapsedMs: 0,
-      message: "Disconnected",
-    });
-    expect(controller.getSnapshot().logs[0]).toMatchObject({
-      message: "motorUnconfirmed",
-      failed: true,
-    });
-    controller.setWorkspace("w2");
-    expect(controller.getSnapshot().logs).toHaveLength(1);
   });
   it("locks device actions during a mode change without logging each monitor sample", async () => {
     const h = setup();
@@ -287,12 +223,93 @@ describe("execution flow", () => {
     const h = setup();
     await h.controller.connect(usb);
     await h.controller.run(h.request);
-    expect(h.calls).toEqual(["save", "build", "deploy", "run"]);
+    expect(h.calls).toEqual(["save", "build", "stop", "deploy", "run"]);
     expect(h.api.build.start).toHaveBeenCalledWith("w1", {});
     expect(h.api.device.deploy).toHaveBeenCalledWith("s1", "b1", "/robot");
     expect(h.api.device.run).toHaveBeenCalledWith("s1", "/robot/demo.rbf");
-    expect(h.controller.getSnapshot().logs.at(-1)?.message).toBe("runSent");
+    expect(h.controller.getSnapshot().logs.at(-1)?.message).toBe("runStarted");
     expect(h.controller.locked).toBe(false);
+  });
+  it("waits for a confirmed stop before uploading and ignores another F5", async () => {
+    const h = setup(),
+      stopped = deferred<void>();
+    await h.controller.connect(usb);
+    h.api.device.stop.mockImplementationOnce(() => stopped.promise);
+    const run = h.controller.run(h.request);
+    await vi.waitFor(() => expect(h.controller.getSnapshot().phase).toBe("stopping"));
+    expect(h.api.device.deploy).not.toHaveBeenCalled();
+    expect(h.api.device.run).not.toHaveBeenCalled();
+    await h.controller.run(h.request);
+    expect(h.api.build.start).toHaveBeenCalledOnce();
+    stopped.resolve();
+    await run;
+    expect(h.api.device.stop).toHaveBeenCalledOnce();
+    expect(h.api.device.deploy).toHaveBeenCalledOnce();
+    expect(h.api.device.run).toHaveBeenCalledOnce();
+  });
+  it("keeps stop failures separate from upload failures", async () => {
+    const h = setup();
+    await h.controller.connect(usb);
+    h.api.device.stop.mockRejectedValueOnce(new Error("Stop was not confirmed"));
+    await h.controller.run(h.request);
+    expect(h.api.device.deploy).not.toHaveBeenCalled();
+    expect(h.api.device.run).not.toHaveBeenCalled();
+    expect(h.controller.getSnapshot().error).toEqual({
+      phase: "stopping",
+      detail: "Stop was not confirmed",
+    });
+    expect(h.controller.locked).toBe(false);
+  });
+  it("does not claim startup success when an uploaded program cannot start", async () => {
+    const h = setup();
+    await h.controller.connect(usb);
+    h.api.device.run.mockRejectedValueOnce(new Error("EV3 could not load the uploaded program."));
+    await h.controller.run(h.request);
+    const state = h.controller.getSnapshot();
+    expect(state.error?.phase).toBe("running");
+    expect(state.logs.some((entry) => entry.message === "uploaded")).toBe(true);
+    expect(state.logs.some((entry) => entry.message === "runStarted")).toBe(false);
+    expect(state.deployed?.buildId).toBe("b1");
+    expect(h.api.device.run).toHaveBeenCalledOnce();
+    await h.controller.runDeployed();
+    expect(h.api.device.run).toHaveBeenCalledTimes(2);
+    expect(h.controller.getSnapshot().logs.at(-1)?.message).toBe("runStarted");
+  });
+  it("upload-only does not stop or start a user program", async () => {
+    const h = setup();
+    await h.controller.connect(usb);
+    await h.controller.build(h.request);
+    await h.controller.upload();
+    expect(h.api.device.stop).not.toHaveBeenCalled();
+    expect(h.api.device.run).not.toHaveBeenCalled();
+    expect(h.api.device.deploy).toHaveBeenCalledOnce();
+  });
+  it("does not upload or restart after disconnecting during the stop", async () => {
+    const h = setup(),
+      stopped = deferred<void>();
+    await h.controller.connect(usb);
+    h.api.device.stop.mockImplementationOnce(() => stopped.promise);
+    const run = h.controller.run(h.request);
+    await vi.waitFor(() => expect(h.controller.getSnapshot().phase).toBe("stopping"));
+    h.emitDevice({ type: "state", state: "disconnected", sessionId: "s1" });
+    stopped.resolve();
+    await run;
+    expect(h.api.device.deploy).not.toHaveBeenCalled();
+    expect(h.api.device.run).not.toHaveBeenCalled();
+    expect(h.controller.locked).toBe(false);
+  });
+  it("does not automatically stop after losing collaboration control during build", async () => {
+    const h = setup();
+    await h.controller.connect(usb);
+    h.api.build.start.mockImplementationOnce(async (workspaceId) => {
+      h.controller.setDeviceControlBlocked(true);
+      h.emitBuild({ type: "complete", workspaceId, buildId: "b1", result: success });
+      return "b1";
+    });
+    await h.controller.run(h.request);
+    expect(h.api.device.stop).not.toHaveBeenCalled();
+    expect(h.api.device.deploy).not.toHaveBeenCalled();
+    expect(h.api.device.run).not.toHaveBeenCalled();
   });
   it("waits for connection and resumes only that requested run", async () => {
     const h = setup();
@@ -300,7 +317,7 @@ describe("execution flow", () => {
     expect(h.controller.getSnapshot().phase).toBe("awaitingDevice");
     expect(h.calls).toEqual([]);
     await h.controller.connect(usb);
-    expect(h.calls).toEqual(["save", "build", "deploy", "run"]);
+    expect(h.calls).toEqual(["save", "build", "stop", "deploy", "run"]);
   });
   it("cancels connection intent without starting after a later connection", async () => {
     const h = setup();
@@ -335,6 +352,7 @@ describe("execution flow", () => {
       return "bad";
     });
     await h.controller.run(h.request);
+    expect(h.api.device.stop).not.toHaveBeenCalled();
     expect(h.api.device.deploy).not.toHaveBeenCalled();
     expect(h.controller.getSnapshot().successfulBuild?.buildId).toBe("b1");
     expect(h.controller.getSnapshot().diagnostics).toEqual(failure.diagnostics);
@@ -504,7 +522,7 @@ describe("execution flow", () => {
     h.emitDevice({ type: "state", state: "disconnected", sessionId: "s1" });
     ran.resolve();
     await run;
-    expect(h.controller.getSnapshot().logs.some((entry) => entry.message === "runSent")).toBe(
+    expect(h.controller.getSnapshot().logs.some((entry) => entry.message === "runStarted")).toBe(
       false,
     );
     expect(h.controller.getSnapshot().phase).toBe("error");
@@ -763,6 +781,7 @@ describe("file operation isolation", () => {
     await h.controller.connect(usb);
     await h.controller.run(h.request);
     h.calls.length = 0;
+    h.api.device.stop.mockClear();
     const gate = deferred<void>();
     const work = h.controller.withFiles(() => gate.promise, "upload");
     expect(h.controller.locked).toBe(true);
@@ -825,6 +844,7 @@ it("keeps a successful non-deployable build without a build error", async () => 
   await h.controller.connect(usb);
   await h.controller.upload();
   await h.controller.run(h.request);
+  expect(h.api.device.stop).not.toHaveBeenCalled();
   expect(h.api.device.deploy).not.toHaveBeenCalled();
   expect(h.api.device.run).not.toHaveBeenCalled();
   expect(h.controller.getSnapshot().error).toBeUndefined();
@@ -853,4 +873,162 @@ it("F17 core Disconnect keeps the session until stop/save/disconnect acknowledge
   expect(controller.getSnapshot().session?.id).toBe("s1");
   expect(controller.getSnapshot().error?.detail).toContain("unconfirmed");
   expect(controller.locked).toBe(false);
+});
+
+function publicCatalog(
+  revision: number,
+  cause: Extract<DeviceEvent, { type: "session-catalog" }>["cause"] = "connected",
+  id: string | null = "public-session",
+): Extract<DeviceEvent, { type: "session-catalog" }> {
+  return {
+    type: "session-catalog",
+    hostEpoch: "host",
+    revision,
+    cause,
+    origin: "plugin",
+    session: id
+      ? {
+          sessionId: id,
+          providerId: "kobrixa.device-ev3",
+          providerGeneration: 1,
+          revision: 1,
+          name: "Public EV3",
+          transport: "wifi",
+          capabilities: ["connection.v1"],
+          state: "connected",
+          foreground: "none",
+          recording: false,
+          sourceRevision: 1,
+        }
+      : null,
+  };
+}
+it("E5 resumes exactly one current explicit pending Run from a public connection", async () => {
+  const h = setup();
+  await h.controller.run(h.request);
+  h.emitDevice(publicCatalog(1));
+  await vi.waitFor(() => expect(h.calls).toEqual(["save", "build", "stop", "deploy", "run"]));
+  h.emitDevice(publicCatalog(2));
+  await Promise.resolve();
+  expect(h.calls).toEqual(["save", "build", "stop", "deploy", "run"]);
+  expect(h.controller.getSnapshot().session?.id).toBe("public-session");
+});
+it.each(["cancel", "authority", "workspace", "detach"])(
+  "E5 %s before the queued adoption continuation prevents automatic Run",
+  async (reason) => {
+    const h = setup();
+    await h.controller.run(h.request);
+    h.emitDevice(publicCatalog(1));
+    if (reason === "cancel") h.controller.cancelWaiting();
+    if (reason === "authority") {
+      h.controller.setDeviceControlBlocked(true);
+      h.controller.setDeviceControlBlocked(false);
+    }
+    if (reason === "workspace") {
+      h.controller.setWorkspace("other");
+      h.controller.setWorkspace("w1");
+    }
+    if (reason === "detach") {
+      const detach = h.controller.attach();
+      detach();
+    }
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(h.calls).toEqual([]);
+  },
+);
+it.each(["authority", "workspace", "cancel"])(
+  "E5 %s during resumed save cannot later deploy or run after returning",
+  async (reason) => {
+    const h = setup();
+    const saved = deferred<void>();
+    h.request.saveAll.mockImplementation(() => saved.promise);
+    await h.controller.run(h.request);
+    h.emitDevice(publicCatalog(1));
+    await Promise.resolve();
+    if (reason === "authority") {
+      h.controller.setDeviceControlBlocked(true);
+      h.controller.setDeviceControlBlocked(false);
+    }
+    if (reason === "workspace") {
+      h.controller.setWorkspace("other");
+      h.controller.setWorkspace("w1");
+    }
+    if (reason === "cancel") h.controller.cancelWaiting();
+    saved.resolve();
+    await vi.waitFor(() => expect(h.controller.getSnapshot().phase).toBe("idle"));
+    expect(h.calls).toEqual([]);
+  },
+);
+it("E5 bootstrap snapshots and recovered sessions adopt for display without replaying pending work", async () => {
+  for (const cause of ["snapshot", "recovered"] as const) {
+    const h = setup();
+    await h.controller.run(h.request);
+    h.emitDevice(publicCatalog(1, cause));
+    await Promise.resolve();
+    expect(h.calls).toEqual([]);
+    expect(h.controller.getSnapshot().session?.id).toBe("public-session");
+    expect(h.controller.locked).toBe(false);
+  }
+});
+it.each(["authority", "workspace", "cancel", "detach"])(
+  "E5 %s during confirmed stop prevents the resumed Run from deploying",
+  async (reason) => {
+    const h = setup(),
+      stopped = deferred<void>();
+    h.api.device.stop.mockImplementationOnce(() => stopped.promise);
+    await h.controller.run(h.request);
+    h.emitDevice(publicCatalog(1));
+    await vi.waitFor(() => expect(h.controller.getSnapshot().phase).toBe("stopping"));
+    expect(h.api.device.stop).toHaveBeenCalledWith("public-session");
+    if (reason === "authority") {
+      h.controller.setDeviceControlBlocked(true);
+      h.controller.setDeviceControlBlocked(false);
+    }
+    if (reason === "workspace") {
+      h.controller.setWorkspace("other");
+      h.controller.setWorkspace("w1");
+    }
+    if (reason === "cancel") h.controller.cancelWaiting();
+    if (reason === "detach") {
+      const detach = h.controller.attach();
+      detach();
+    }
+    stopped.resolve();
+    await vi.waitFor(() => expect(h.controller.locked).toBe(false));
+    expect(h.api.device.deploy).not.toHaveBeenCalled();
+    expect(h.api.device.run).not.toHaveBeenCalled();
+    expect(h.controller.getSnapshot().logs.at(-1)?.message).toBe("cancelled");
+  },
+);
+it("E5 disconnected/newer catalog and foreign epoch fence late adoption", async () => {
+  const h = setup();
+  await h.controller.run(h.request);
+  h.emitDevice(publicCatalog(2, "changed", null));
+  h.emitDevice(publicCatalog(1));
+  h.emitDevice({ ...publicCatalog(99), hostEpoch: "old-host" });
+  await Promise.resolve();
+  expect(h.controller.getSnapshot().session).toBeUndefined();
+  expect(h.calls).toEqual([]);
+});
+it("E5 legacy promise-owned connect does not double-adopt or double-run", async () => {
+  const h = setup();
+  const connected = deferred<string>();
+  h.api.device.connect.mockReturnValueOnce(connected.promise);
+  await h.controller.run(h.request);
+  const work = h.controller.connect(usb);
+  h.emitDevice(publicCatalog(1, "connected", "s1"));
+  expect(h.controller.getSnapshot().session).toBeUndefined();
+  connected.resolve("s1");
+  await work;
+  expect(h.calls).toEqual(["save", "build", "stop", "deploy", "run"]);
+});
+
+it("C retirement sends adopted public-session Stop through the retained core API without a project", async () => {
+  const h = setup();
+  h.controller.setWorkspace(undefined);
+  h.emitDevice(publicCatalog(1));
+  await h.controller.stop();
+  expect(h.api.device.stop).toHaveBeenCalledTimes(1);
+  expect(h.api.device.stop).toHaveBeenCalledWith("public-session");
 });

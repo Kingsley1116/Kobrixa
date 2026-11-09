@@ -12,6 +12,14 @@ Support is not considered shipped until automated transport tests and physical r
 
 The shared USB and Wi-Fi transports already exist in `packages/device`. The maintainer confirmed physical EV3 acceptance on 2026-10-12. This records that confirmation; detailed platform logs are not attached here. Record the operating system, firmware, transport, exact application version and observed results for each acceptance run. Desktop signature validity is checked separately under the [code signing policy](../en/code-signing.md).
 
+## Stage 3 development interface
+
+On the Stage 3 development branch, use **Plugin tools → EV3 device** for explicit discovery, connection and monitoring, and the contributed plugin settings for connection preferences. Opening the panel does not connect. Switching USB/Wi-Fi saves the choice immediately; remembering a Wi-Fi address still requires opt-in and a successful connection. A preference-save failure after connection does not disconnect or repeat the connection.
+
+Core build/deploy, version checks, remote files and pending-Run Cancel continue to use the same session. Disconnect is a host action that stops and saves first. Closing a device panel removes only its observation demand; another active recorder remains responsible for its recording. Reconnection does not revive cancelled Run or recording intent.
+
+The v1 platform confirmations above do not certify this migration. Stage 3 native/installed and physical acceptance remains open in the [device UI checklist](../../tests/hardware/device-ui.md). The legacy monitor path described below remains a comparison baseline until its replacement evidence and removal are complete.
+
 ## USB
 
 - Discover supported EV3 USB HID devices without scanning unrelated interfaces.
@@ -33,6 +41,8 @@ The shared USB and Wi-Fi transports already exist in `packages/device`. The main
 Discovery is read-only. Upload, run, stop, and delete require an explicit user action. The UI shows `disconnected`, `connecting`, `connected`, `busy`, or `error` and identifies the active transport.
 
 Upload streams directly to the selected remote path and verifies the transferred length and firmware replies. It does not provide an atomic replacement of an existing remote file. Cancellation or a disconnect can leave a partial remote file; reconnect, inspect the destination and upload again. The transfer handle is closed when possible.
+
+**Run on EV3** saves and builds first, then confirms that the previous user program has stopped before uploading. Starting a program (including **Run uploaded version**) stops the user slot, checks image loading and waits for a firmware startup acknowledgement. The activity log distinguishes upload completion from confirmed startup. A short program may already have finished by the time its acknowledgement arrives; this is not a startup failure. A failed or interrupted start is never retried automatically. Upload-only and USB reconnection do not start a program.
 
 The remote file browser also supports directory listing, downloads, folder creation, rename and deletion. Batch transfers preview conflicts before execution. Local downloads use a temporary file and commit only after a complete transfer; remote rename uses copy/verification/delete behavior because the EV3 firmware does not provide an atomic rename.
 

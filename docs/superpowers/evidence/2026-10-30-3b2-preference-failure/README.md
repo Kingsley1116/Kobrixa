@@ -1,0 +1,5 @@
+# Preference capture trial: first run failed
+
+Frozen f26c75c, fresh offline Linux Electron profile, before-raw publication cut. The actual first host135 was killed and headless host1230 returned pending with no fabricated empty capture. The next fresh-window capture correctly rejected the old host/workbench scope with `Invalid preference scope`; the fixture expected only an error containing `stale` and stopped before obtaining the new challenge. This is a fixture assertion mismatch with the production controller scope guard, not evidence that the stale snapshot was accepted. The failed capture retained settled cleanup with no cleanup errors.
+
+No four-trial, complete RF5, load or Stage3 PASS. Pending/cut receipts and failures remain exact raw files; subsequent corrections require a fresh-profile immutable candidate. Product IPC validation is not relaxed. The public source bootstrap passed596 pure tests and54 focused tests; those are not substitutes for this failed native run. Original file and renderer preference data were synthetic. Raw profiles remain at their inventory source paths; this archive is not a full filesystem payload backup.

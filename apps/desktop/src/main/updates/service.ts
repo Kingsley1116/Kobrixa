@@ -195,7 +195,9 @@ export class UpdateService {
     this.patch({ phase: "preparing", error: undefined });
   }
   cancelInstall(): void {
-    if (this.preparing) this.patch({ phase: "ready" });
+    if (!this.preparing) return;
+    this.patch({ phase: "ready" });
+    this.#notifyInstallFailed();
   }
   install(): void {
     try {
@@ -236,13 +238,7 @@ export class UpdateOperationGate {
     if (
       service?.installing ||
       (service?.preparing &&
-        ![
-          "workspace:write",
-          "workspace:save-draft",
-          "workspace:save-session",
-          "device:motor-test-stop",
-          "device:motor-test-state",
-        ].includes(channel))
+        !["workspace:write", "workspace:save-draft", "workspace:save-session"].includes(channel))
     )
       throw new Error("busy");
     this.active++;

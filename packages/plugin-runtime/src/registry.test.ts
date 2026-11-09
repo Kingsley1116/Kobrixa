@@ -477,3 +477,162 @@ it("F20 never grants required policy when host policy is absent", async () => {
   const loaded = await readSource(source, { safeMode: false });
   expect(loaded.problems.map((item) => item.code)).toContain("PLUGIN_E_MANIFEST");
 });
+
+import { sourcePolicy } from "./registry.js";
+import type { Stage3BuiltinSource } from "./builtin-launch.js";
+
+const unavailable: Stage3BuiltinSource = {
+  kind: "builtin",
+  policy: "optional",
+  payloadUnavailable: true,
+  resources: { "stale.json": "{}" },
+  manifest: manifest({
+    displayName: { en: "Hello" },
+    runtime: { kind: "node", entry: "/private/secret/main.cjs" },
+  }),
+  launch: {
+    sourceKey: "builtin:stale.identity",
+    pluginId: "stale.identity",
+    policy: "optional",
+    runtime: "node",
+    packageRoot: "/private/secret",
+    entry: "main.cjs",
+    manifest: "kobrixa-plugin.json",
+    resourceIndex: "resource-index.json",
+  },
+};
+
+it.each([false, true])(
+  "isolates host payload failure before manifest/launch validation, safeMode=%s",
+  async (safeMode) => {
+    const [loaded] = await loadPlugins([unavailable], {
+      disabled: new Set(["builtin:acme.hello"]),
+      safeMode,
+    });
+    expect(loaded).toEqual({
+      sourceKey: "builtin:acme.hello",
+      id: "acme.hello",
+      source: "builtin",
+      policy: "optional",
+      status: "invalid",
+      manifest: {
+        id: "acme.hello",
+        version: "0.0.0",
+        apiVersion: expect.any(String),
+        runtime: { kind: "builtin" },
+        displayName: { en: "Hello" },
+      },
+      problems: [
+        { code: "PLUGIN_E_ENTRY", message: "Shipped plugin payload is unavailable or invalid." },
+      ],
+    });
+  },
+);
+
+it("aborts required payload failure with a fixed sanitized reason", async () => {
+  await expect(
+    loadPlugins([builtin, { ...unavailable, policy: "required" }], none),
+  ).rejects.toMatchObject({
+    code: "PLUGIN_E_ENTRY",
+    message: "Shipped plugin payload is unavailable or invalid.",
+  });
+});
+
+it("reports payload failure even for malformed metadata without exposing it", async () => {
+  const read = await readSource({ ...unavailable, manifest: { id: "/private/secret" } }, none);
+  expect(read.id).toBe("builtin");
+  expect(read.problems).toEqual([
+    { code: "PLUGIN_E_ENTRY", message: "Shipped plugin payload is unavailable or invalid." },
+  ]);
+  expect(JSON.stringify(read)).not.toContain("/private/secret");
+});
+
+it("ignores a forged payloadUnavailable inside builtin and development manifests", async () => {
+  const [trusted, development] = await loadPlugins(
+    [
+      { ...builtin, manifest: { ...builtin.manifest, payloadUnavailable: true } },
+      await plugin("forged", manifest({ payloadUnavailable: true })),
+    ],
+    none,
+  );
+  expect(trusted?.status).toBe("enabled");
+  expect(development?.status).toBe("enabled");
+  const read = await readSource(
+    {
+      kind: "builtin",
+      policy: "optional",
+      resources: {},
+      manifest: manifest({
+        runtime: { kind: "node", entry: "main.cjs" },
+        payloadUnavailable: true,
+      }),
+    },
+    none,
+  );
+  expect(read.problems.map((item) => item.code)).toContain("PLUGIN_E_RUNTIME_NOT_ALLOWED");
+});
+
+it("R160 derives required/canToggle from the trusted source, never manifest policy (U11)", () => {
+  const source: Stage3BuiltinSource = {
+    kind: "builtin",
+    manifest: { id: "kobrixa.fixture", policy: "required" },
+    resources: {},
+    policy: "optional",
+  };
+  expect(sourcePolicy(source)).toEqual({ required: false, canToggle: true });
+  expect(sourcePolicy({ ...source, policy: "required" })).toEqual({
+    required: true,
+    canToggle: false,
+  });
+  expect(sourcePolicy({ kind: "development", directory: "/fixture" })).toEqual({
+    required: false,
+    canToggle: true,
+  });
+});
+
+it("R160 admits onPanel activation for an optional shipped source and isolates malformed optional metadata", async () => {
+  const source: Stage3BuiltinSource = {
+    kind: "builtin",
+    policy: "optional",
+    resources: {},
+    manifest: {
+      id: "acme.panel",
+      version: "1.0.0",
+      apiVersion: "^1.6.0",
+      runtime: { kind: "node", entry: "main.cjs" },
+      activationEvents: ["onPanel:acme.panel.main"],
+      contributes: {
+        panels: [
+          {
+            id: "acme.panel.main",
+            title: { en: "Panel" },
+            location: "right",
+            resource: { version: 1, path: "panel.json" },
+          },
+        ],
+      },
+    },
+    launch: {
+      sourceKey: "builtin:acme.panel",
+      pluginId: "acme.panel",
+      policy: "optional",
+      runtime: "node",
+      packageRoot: "/fixture",
+      entry: "main.cjs",
+      manifest: "kobrixa-plugin.json",
+      resourceIndex: "resource-index.json",
+    },
+  };
+  expect((await readSource(source, { safeMode: false })).problems).toEqual([]);
+  expect(
+    (await readSource({ ...source, manifest: {} }, { safeMode: false })).problems.length,
+  ).toBeGreaterThan(0);
+  expect(
+    (
+      await readSource(
+        { ...source, launch: { ...source.launch!, packageRoot: "relative" } },
+        { safeMode: false },
+      )
+    ).problems,
+  ).toEqual(expect.arrayContaining([expect.objectContaining({ code: "PLUGIN_E_ENTRY" })]));
+});

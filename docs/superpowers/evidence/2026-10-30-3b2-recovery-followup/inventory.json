@@ -1,0 +1,135 @@
+[
+  {
+    "source": "/private/tmp/b2-recovery-independent-review.md",
+    "archive": "b2-recovery-independent-review.md.gz",
+    "rawSha256": "c8c54823c07a0e9c1e9df2445feb2ab3040f37ea057f414c250b67b2de729860",
+    "archiveSha256": "8d41bd7a61dfac1ddd7d5b86eab03015302a823ea1adf46f98bf22545fa2ae9f",
+    "rawBytes": 4636
+  },
+  {
+    "source": "/private/tmp/b2-half-quarantine-fix.md",
+    "archive": "b2-half-quarantine-fix.md.gz",
+    "rawSha256": "985a9cab8b9fdd0533adbdcd750ff17a917d38ce9b6e3fdf69ffd7738bd5c39c",
+    "archiveSha256": "d911252e3e4fa7ed2b52f52b2e5f42f1bdd19f4eb176716cc216fd38147b43c2",
+    "rawBytes": 3859
+  },
+  {
+    "source": "/private/tmp/b2-half-quarantine-red.log",
+    "archive": "b2-half-quarantine-red.log.gz",
+    "rawSha256": "e93c181cdf06480a2603916d02837553df83c30bf35ce37a96ba87c768d0018f",
+    "archiveSha256": "536348897a706fee5eb24681728b012124e8ea58329f3d9ea0d784f049373478",
+    "rawBytes": 1245
+  },
+  {
+    "source": "/private/tmp/b2-half-quarantine-green.log",
+    "archive": "b2-half-quarantine-green.log.gz",
+    "rawSha256": "208dd90c6420c70c6bcfde668f607543c7356eb770ac40d2ceb4ce4d645b7e9d",
+    "archiveSha256": "4018b2d715a204d8e4c1951451d6e8c664584b99cccc1b87d4fc99e2016a559f",
+    "rawBytes": 189
+  },
+  {
+    "source": "/private/tmp/b2-half-controller-check.log",
+    "archive": "b2-half-controller-check.log.gz",
+    "rawSha256": "589711d9aef746737b405f2ef3d6a6840b2acbd6fd15f6326ce0c7f70a0cc7d9",
+    "archiveSha256": "6c5604577b9fd802cfe9c40c9f4695692118a425602d91b90c7b3037726a4bd4",
+    "rawBytes": 238
+  },
+  {
+    "source": "/private/tmp/b2-half-negatives-controller-check.log",
+    "archive": "b2-half-negatives-controller-check.log.gz",
+    "rawSha256": "a644a04fb3e99e5c653e14512548c424bf2fc38af26663ba9d2688ecd3f35f5e",
+    "archiveSha256": "51a69e0c52d2cc81369e6e35b450b58c2bdfcb6a3cfc626414b7ea5dadc1b2d5",
+    "rawBytes": 226
+  },
+  {
+    "source": "/private/tmp/b2-ordinary-evidence-retention.md",
+    "archive": "b2-ordinary-evidence-retention.md.gz",
+    "rawSha256": "5ecb670adb287991cc728856dcd6b21add70dec7fdbffb9b46d4201da7ff351c",
+    "archiveSha256": "3f5d3db717ef93bc84c8a1012bb25b1d0c925dfe240968f0f63c00dffcc4ebd2",
+    "rawBytes": 3039
+  },
+  {
+    "source": "/private/tmp/b2-ordinary-retention-red.log",
+    "archive": "b2-ordinary-retention-red.log.gz",
+    "rawSha256": "c48cb049381124f514656c1ac27792fdbdf50b452433042acb305ef56e9851b3",
+    "archiveSha256": "f663226bf29195e5f6d868ed83347105a806d874f2754669ed7dd3baea96be8d",
+    "rawBytes": 2060
+  },
+  {
+    "source": "/private/tmp/b2-ordinary-retention-green.log",
+    "archive": "b2-ordinary-retention-green.log.gz",
+    "rawSha256": "dd82c7fe1ffebfa6bfd80ead3d550d741914c26076ac6194930f9de524c195a0",
+    "archiveSha256": "af3fc4acb017d2fc885f6a77677c6f8c3e4f4a9fdd221c34afbf1572575674d7",
+    "rawBytes": 187
+  },
+  {
+    "source": "/private/tmp/b2-ordinary-controller-check.log",
+    "archive": "b2-ordinary-controller-check.log.gz",
+    "rawSha256": "e865ce2923a62ab7b0866f95089fd38cf9a20a984cf15d7c9e3f271e0a2db4aa",
+    "archiveSha256": "2c0c37a7810c722a0501a20fa4cf0f9a4a6ed6c5af5fb074a26d87d0bbd7861f",
+    "rawBytes": 236
+  },
+  {
+    "source": "/private/tmp/stage3-desktop-regression-284b264.log",
+    "archive": "stage3-desktop-regression-284b264.log.gz",
+    "rawSha256": "d78ee8e8420110006f5d8a6f9764e6f9870946639e2f56d197c1ef2026b41d57",
+    "archiveSha256": "62d7a88038da16a67da910645f2ce284002b7c2b6498f7146a93a0512d064caa",
+    "rawBytes": 838
+  },
+  {
+    "source": "/private/tmp/b2-prepublish-vitest.config.mjs",
+    "archive": "b2-prepublish-vitest.config.mjs.gz",
+    "rawSha256": "b874ff5fb51ebb1fe1924d054ecefb0de7503f01b86ab871e0639d333c925012",
+    "archiveSha256": "f7e593ebda2860bde421fea71c675216acea7c60fcc242d36e140622a053bcab",
+    "rawBytes": 227
+  },
+  {
+    "source": "/private/tmp/e1-vitest.config.mjs",
+    "archive": "e1-vitest.config.mjs.gz",
+    "rawSha256": "c44803d38e9877688d8200bedde5f37c3b06cf6149a5aebaf8cc2eb4faf928f5",
+    "archiveSha256": "166ad093565e07a5d2eec17908728aa40cf86558f95768dedce3f6868068cb83",
+    "rawBytes": 1682
+  },
+  {
+    "source": "/private/tmp/e6-full-desktop.config.mjs",
+    "archive": "e6-full-desktop.config.mjs.gz",
+    "rawSha256": "1aba8661fbb90783f3cd0680ab12f3bc602d502dba4dcd139441877c64475834",
+    "archiveSha256": "110e837b7a94614f660227ab8f8304e8399ca5e3a78bbe22a66a38166db7b753",
+    "rawBytes": 1386
+  },
+  {
+    "source": "/private/tmp/e4-assembly-vitest.config.mjs",
+    "archive": "e4-assembly-vitest.config.mjs.gz",
+    "rawSha256": "23d6dc300def60d56eebb6f5cc45c23f6f85a7b2bcb5a77aa99c2e4f12388f7a",
+    "archiveSha256": "b7f3b9264d1ee85a374f7c0a6520b8b52c66fb9b4168b7b6099621d739692b8e",
+    "rawBytes": 983
+  },
+  {
+    "source": "/private/tmp/e3-gate-vitest.config.mjs",
+    "archive": "e3-gate-vitest.config.mjs.gz",
+    "rawSha256": "4c3047cf6d301de42916cc204b8b145f781fd3c1f294f40636df7e3d8f280278",
+    "archiveSha256": "efc39c3dd4e35e6bb072476f985cbfd7947c6c080bc56cf0626827745d98c57f",
+    "rawBytes": 1386
+  },
+  {
+    "source": "/private/tmp/e4-build-wrapper.mjs",
+    "archive": "e4-build-wrapper.mjs.gz",
+    "rawSha256": "a0dfb7a74a70a868585770eb2fd28789cdf2b3fe3a8ff14bbb6e1ad71b8bc1dd",
+    "archiveSha256": "e925158302911ed2699df850e85cd95de0d55d4d9a8b963e77fa00f1dde0485c",
+    "rawBytes": 1181
+  },
+  {
+    "source": "/private/tmp/e3-vite-source-wrapper.mjs",
+    "archive": "e3-vite-source-wrapper.mjs.gz",
+    "rawSha256": "d002acd3b9972516e74b0e47c1b051ddbe8ad65f6b9c4326c4e1cd0e242bd816",
+    "archiveSha256": "1dd0a3e99f4fdb4f4870e9ca7e76a748315dc6c150c21f0d4e9d7fb674008013",
+    "rawBytes": 853
+  },
+  {
+    "source": "/private/tmp/e6-esbuild-wrapper.mjs",
+    "archive": "e6-esbuild-wrapper.mjs.gz",
+    "rawSha256": "a547678bd523b2f54cbde007ea0732eb5640bbca6e7e883f3408b176b1565f61",
+    "archiveSha256": "dfdd396ab067cbca712049bfd40da6c7aec556859ee61a3e14cfabf0864da1c7",
+    "rawBytes": 1322
+  }
+]

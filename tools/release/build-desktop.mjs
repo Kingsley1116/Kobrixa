@@ -4,7 +4,14 @@ import { builtinModules, createRequire } from "node:module";
 import { cp, mkdir, readFile, rm, writeFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { repositoryRoot, readVersion } from "./common.mjs";
-import { copyNativeDependencies } from "../../apps/desktop/packaging.ts";
+import {
+  copyNativeDependencies,
+  buildBuiltinPayloads,
+  validateBuiltinPayloads,
+  BUILTIN_PAYLOAD_UNPACK,
+  PERSISTENCE_WORKER_ENTRY,
+  withPersistenceWorkerUnpack,
+} from "./desktop-packaging.mjs";
 import { macIdentity, required, signingModes, windowsVersion } from "../../apps/desktop/signing.ts";
 
 const desktop = path.join(repositoryRoot, "apps/desktop");
@@ -12,6 +19,7 @@ const version = await readVersion();
 const platform = process.platform,
   arch = process.arch;
 const release = process.env.KOBRIXA_RELEASE_BUILD === "true";
+const fixtureBuild = process.env.KOBRIXA_PLUGIN_FIXTURE_BUILD === "1";
 const modes = release ? signingModes() : { macos: false, windows: false };
 const stage = path.join(desktop, "out/stage");
 const output = path.join(desktop, "out");
@@ -27,12 +35,13 @@ const external = [
 ];
 for (const [config, entry, name] of [
   ["vite.main.config.ts", "src/main/index.ts", "main.cjs"],
+  ["vite.main.config.ts", PERSISTENCE_WORKER_ENTRY, "persistence-worker.cjs"],
   ["vite.language.config.ts", "src/main/language/language-worker.ts", "language-worker.cjs"],
   ["vite.build-worker.config.ts", "src/main/workspace/build-worker.ts", "build-worker.cjs"],
   ["vite.preload.config.ts", "src/preload/index.ts", "preload.cjs"],
 ]) {
   const user = await loadConfigFromFile(
-    { command: "build", mode: "production" },
+    { command: "build", mode: "production", forgeConfigSelf: { entry } },
     path.join(desktop, config),
   );
   await viteBuild(
@@ -64,9 +73,11 @@ await viteBuild({
   base: "./",
   build: { outDir: ".vite/renderer/main_window" },
 });
+await buildBuiltinPayloads(fixtureBuild);
 await rm(stage, { recursive: true, force: true });
 await mkdir(stage, { recursive: true });
 await cp(path.join(desktop, ".vite"), path.join(stage, ".vite"), { recursive: true });
+await validateBuiltinPayloads(stage, fixtureBuild);
 await copyNativeDependencies(stage, platform, arch);
 // Stage a standalone app: workspace packages are bundled, only actual runtime dependencies remain.
 const dependencyVersions = new Map();
@@ -155,9 +166,15 @@ if (signMac) {
   required(process.env, "APPLE_ID");
   required(process.env, "APPLE_APP_SPECIFIC_PASSWORD");
 }
+let nativeOutput;
 await packageElectron({
   publish: "never",
   config: {
+    afterPack: ({ appOutDir }) => {
+      if (nativeOutput && nativeOutput !== appOutDir)
+        throw new Error("Desktop build produced multiple platform outputs");
+      nativeOutput = appOutDir;
+    },
     publish: null, // Preserve the fixed updater resource; metadata is generated after signing.
     appId: "com.kobrixa.ide",
     productName: "Kobrixa",
@@ -176,7 +193,7 @@ await packageElectron({
     beforeBuild: async () => false,
     nodeGypRebuild: false,
     asar: { smartUnpack: false },
-    asarUnpack: ["**/*.node"],
+    asarUnpack: [withPersistenceWorkerUnpack(BUILTIN_PAYLOAD_UNPACK)],
     files: [
       "**/*",
       { from: path.join(stage, "node_modules"), to: "node_modules", filter: ["**/*"] },
@@ -221,15 +238,7 @@ await packageElectron({
     buildVersion: platform === "win32" ? windowsVersion(version) : version.split(/[+-]/)[0],
   },
 });
-const nativeOutput = path.join(
-  output,
-  "builder",
-  platform === "darwin"
-    ? `mac${arch === "arm64" ? "-arm64" : ""}`
-    : platform === "win32"
-      ? "win-unpacked"
-      : "linux-unpacked",
-);
+if (!nativeOutput) throw new Error("Desktop packaging did not report its output directory");
 const destination = path.join(output, `Kobrixa-${platform}-${arch}`);
 await rm(destination, { recursive: true, force: true });
 await cp(nativeOutput, destination, { recursive: true, verbatimSymlinks: true });

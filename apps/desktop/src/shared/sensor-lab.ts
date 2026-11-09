@@ -81,38 +81,6 @@ export interface MonitorUpdate {
   error?: string | undefined;
 }
 
-export interface SensorLabState {
-  recording: SensorRecording | undefined;
-  active: boolean;
-  waiting: boolean;
-  saved: boolean;
-  error: string | undefined;
-  issues: string[];
-}
-
-export interface SensorLabStartRequest {
-  sessionId: string;
-  name: string;
-  channels: CalibratedChannel[];
-}
-
-export interface SensorLabApi {
-  getState(): Promise<SensorLabState>;
-  start(request: SensorLabStartRequest): Promise<SensorLabState>;
-  stop(reason?: "manual" | "close" | "update"): Promise<SensorLabState>;
-  retrySave(): Promise<SensorLabState>;
-  list(): Promise<SensorRecordingSummary[]>;
-  read(id: string): Promise<SensorRecording>;
-  delete(id: string): Promise<void>;
-  listCalibrations(): Promise<CalibrationProfile[]>;
-  saveCalibration(
-    profile: Omit<CalibrationProfile, "id"> & { id?: string },
-  ): Promise<CalibrationProfile>;
-  deleteCalibration(id: string): Promise<void>;
-  exportCsv(id: string): Promise<{ cancelled: boolean }>;
-  onState(listener: (state: SensorLabState) => void): () => void;
-}
-
 export function channelKey(
   source: Omit<SensorChannel, "id" | "name" | "modeName" | "decimals">,
 ): string {

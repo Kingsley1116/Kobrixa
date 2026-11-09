@@ -12,6 +12,45 @@ const temporary: string[] = [];
 afterEach(async () => {
   await Promise.all(temporary.splice(0).map((file) => rm(file, { recursive: true, force: true })));
 });
+it("freezes admission before migration and joins all previously admitted writes", async () => {
+  let finish!: () => void;
+  const persist = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const store = new DevicePreferencesStore(undefined, persist);
+  const writing = store.set({ usbRetryLimit: 3 }, () => {});
+  await vi.waitFor(() => expect(persist).toHaveBeenCalledOnce());
+  store.freezeAdmission();
+  await expect(store.set({ usbRetryLimit: 5 }, () => {})).rejects.toThrow("frozen");
+  let settled = false;
+  const migration = store.settleMigration().then(() => {
+    settled = true;
+  });
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  finish();
+  await Promise.all([writing, migration]);
+  expect(store.get().usbRetryLimit).toBe(3);
+  expect(persist).toHaveBeenCalledOnce();
+});
+it("a failed admitted write keeps migration blocked even if a later queued write succeeds", async () => {
+  const persist = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("uncertain write"))
+    .mockResolvedValue(undefined);
+  const store = new DevicePreferencesStore(undefined, persist);
+  const first = store.set({ usbRetryLimit: 3 }, () => {});
+  const second = store.set({ usbRetryLimit: 5 }, () => {});
+  const failed = expect(first).rejects.toThrow("uncertain write");
+  store.freezeAdmission();
+  await failed;
+  await second;
+  await expect(store.settleMigration()).rejects.toThrow("uncertain write");
+  await expect(store.settleMigration()).rejects.toThrow("uncertain write");
+});
 it("validates IPC presets and ignores undefined fields without overriding defaults", () => {
   expect(devicePreferencesPatchSchema.parse({ usbRetryLimit: undefined })).toEqual({});
   for (const value of [

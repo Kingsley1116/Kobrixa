@@ -1,3 +1,18 @@
+import type {
+  BoundSettingsService,
+  CoreWindowScope,
+  SettingsFormBinding,
+} from "@kobrixa/plugin-runtime";
+import type { Sha256 } from "@kobrixa/plugin-protocol";
+import type { PluginsApi } from "../../shared/plugins.js";
+import { attachSettingsControls, type SettingsControlsPort } from "../plugin-ui/host-ports.js";
+import {
+  createContributedSettingsForm,
+  createSettingsFieldMap,
+} from "./contributed-settings-form.js";
+import { SettingsControls, SettingsControlsView } from "../plugin-ui/forms.js";
+import { pluginUiCopy } from "./plugin-copy.js";
+import { submitLegacyPreferences } from "./legacy-preferences-bridge.js";
 import { UpdatesPanel } from "../updates/updates.js";
 import { PluginsPanel } from "./plugins-panel.js";
 import type { UpdateState } from "../../shared/updates.js";
@@ -102,6 +117,108 @@ export const settingsCopy = {
     off: "關閉",
   },
 };
+/** One form owns one watch; its store protects drafts and discards stale reads. */
+export function mountContributedSettings170(input: {
+  api: PluginsApi["settings"];
+  sourceKey: string;
+  resourceDigest: Sha256;
+  controls: SettingsControlsPort;
+  failure(error: unknown): void;
+}): () => void {
+  let disposed = false;
+  const service: BoundSettingsService = {
+    ...input.api,
+    open: ({ sourceKey, resourceDigest }) => input.api.open({ sourceKey, resourceDigest }),
+    dispose(binding) {
+      if (disposed) return;
+      disposed = true;
+      input.api.dispose(binding);
+    },
+  };
+  const form = createContributedSettingsForm(input.controls, service);
+  const detach = attachSettingsControls(input.controls, {
+    retry: form.retry.bind(form),
+    reload: form.reload.bind(form),
+    fieldMap: createSettingsFieldMap,
+  });
+  let alive = true;
+  let binding: SettingsFormBinding | undefined;
+  void input.api.open({ sourceKey: input.sourceKey, resourceDigest: input.resourceDigest }).then(
+    (opened) => {
+      if (!alive) {
+        service.dispose(opened.binding);
+        return;
+      }
+      binding = opened.binding;
+      try {
+        form.open(binding, opened.resource, opened.snapshot);
+      } catch (error) {
+        form.dispose(binding);
+        service.dispose(binding);
+        input.failure(error);
+      }
+    },
+    (error) => {
+      if (alive) input.failure(error);
+    },
+  );
+  return () => {
+    if (!alive) return;
+    alive = false;
+    detach();
+    if (binding) {
+      form.dispose(binding);
+      service.dispose(binding);
+    }
+  };
+}
+
+export function ContributedSettingsMount(props: {
+  sourceKey: string;
+  resourceDigest: Sha256;
+  scope: CoreWindowScope;
+  locale: Locale;
+}) {
+  const [controls] = useState(() => new SettingsControls());
+  const [error, setError] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
+  useEffect(() => {
+    setError(null);
+    return mountContributedSettings170({
+      api: window.kobrixa.plugins.settings,
+      controls,
+      sourceKey: props.sourceKey,
+      resourceDigest: props.resourceDigest,
+      failure: () => setError(pluginUiCopy[props.locale].unavailable),
+    });
+  }, [
+    props.sourceKey,
+    props.resourceDigest,
+    props.scope.hostEpoch,
+    props.scope.workbenchInstance,
+    props.locale,
+    controls,
+    reload,
+  ]);
+  return (
+    <>
+      {error && (
+        <div role="alert">
+          {error}
+          <button onClick={() => setReload((value) => value + 1)}>
+            {pluginUiCopy[props.locale].refresh}
+          </button>
+        </div>
+      )}
+      <SettingsControlsView
+        controls={controls}
+        locale={props.locale}
+        labels={pluginUiCopy[props.locale]}
+      />
+    </>
+  );
+}
+
 type Change = <K extends keyof Settings>(key: K, value: Settings[K]) => void;
 export function SettingsQuickControls({
   settings,
@@ -203,7 +320,13 @@ export function SettingsPanel({
   onInstallUpdate,
   reducedMotion,
   filePreferences,
+  legacyDescriptorId,
+  externalDevicePreferences = false,
+  contributedSettings,
 }: {
+  legacyDescriptorId?: string;
+  externalDevicePreferences?: boolean;
+  contributedSettings?: { sourceKey: string; resourceDigest: Sha256; scope: CoreWindowScope };
   filePreferences: FilePreferencesState;
   updates: UpdateState | undefined;
   updateBusy: boolean;
@@ -221,13 +344,21 @@ export function SettingsPanel({
   onRetry(): void;
   reducedMotion: boolean;
 }): React.JSX.Element {
+  useEffect(() => {
+    if (!active || legacyDescriptorId === undefined) return;
+    void submitLegacyPreferences(
+      window.kobrixa.plugins.legacyPreferences,
+      () => window.localStorage,
+      legacyDescriptorId,
+    );
+  }, [active, legacyDescriptorId]);
   const t = settingsCopy[settings.locale];
   const local = (zh: string, en: string) => (settings.locale === "zh-TW" ? zh : en);
   const [category, setCategory] = useState<SettingsCategory | "all" | "shortcuts">("appearance");
   const [query, setQuery] = useState("");
   const [modified, setModified] = useState(false);
   const [defaults] = useState(() => defaultSettings(navigator.language));
-  const device = useDevicePreferences();
+  const device = useDevicePreferences(!externalDevicePreferences);
   const [updateSaving, setUpdateSaving] = useState(false);
   const [updateError, setUpdateError] = useState(false);
   const updateFlight = useRef(false);
@@ -279,7 +410,15 @@ export function SettingsPanel({
     content.current?.scrollTo({ top: 0 });
   }, [category, query, modified]);
   const entries = filterSettings(context, query, modified).filter(
-    (entry) => category === "all" || entry.category === category,
+    (entry) =>
+      (category === "all" || entry.category === category) &&
+      (!externalDevicePreferences ||
+        (entry.source !== "device" &&
+          ![
+            "kobrixa.connectionMode",
+            "kobrixa.rememberWifiAddress",
+            "kobrixa.lastWifiAddress",
+          ].includes(entry.id))),
   );
   const searching = Boolean(query.trim() || modified);
   const labelValue = (entry: SettingDefinition, value: string | number | boolean | null) =>
@@ -432,6 +571,23 @@ export function SettingsPanel({
         )}
       </header>
       {saveError && <SettingsError locale={settings.locale} onRetry={onRetry} />}
+      {externalDevicePreferences && category === "device" && (
+        <p role="status">
+          {local(
+            "裝置與連線偏好已移至插件設定。",
+            "Device and connection preferences are in plugin settings.",
+          )}
+          <button
+            onClick={() => {
+              setCategory("plugins");
+              setQuery("");
+              setModified(false);
+            }}
+          >
+            {local("開啟插件設定", "Open plugin settings")}
+          </button>
+        </p>
+      )}
       {device.error && (
         <div role="alert" className="settings-save-error">
           <span>
@@ -475,6 +631,9 @@ export function SettingsPanel({
             {t.retry}
           </button>
         </div>
+      )}
+      {active && contributedSettings && (
+        <ContributedSettingsMount {...contributedSettings} locale={settings.locale} />
       )}
       <div className="settings-body">
         <nav className="settings-categories" aria-label={t.title}>

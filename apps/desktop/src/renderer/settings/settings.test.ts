@@ -8,6 +8,73 @@ function storage(values: Record<string, string> = {}) {
     }),
   };
 }
+it("freezes only the three legacy connection keys, including indirect save and retry paths", () => {
+  const originals = {
+    "kobrixa.connectionMode": "wifi",
+    "kobrixa.rememberWifiAddress": "true",
+    "kobrixa.lastWifiAddress": " 192.168.0.2 ",
+  };
+  const backing = storage({ ...originals });
+  const store = new SettingsStore(() => backing, "en");
+  store.freezeDevicePreferences();
+  expect(() => store.set("connectionMode", "usb")).toThrow("frozen");
+  expect(() => store.reset("rememberWifiAddress")).toThrow("frozen");
+  expect(() => store.rememberAddress("192.168.0.3")).toThrow("frozen");
+  store.set("theme", "light");
+  store.resetLayout();
+  store.save();
+  expect(backing.getItem("kobrixa.theme")).toBe("light");
+  expect(store.getSnapshot().saveError).toBe(false);
+  for (const [key, value] of Object.entries(originals)) {
+    expect(backing.getItem(key)).toBe(value);
+    expect(backing.setItem.mock.calls.some(([written]) => written === key)).toBe(false);
+  }
+  expect(store.getSnapshot().values.connectionMode).toBe("wifi");
+  expect(store.getWifiAddress()).toBe("192.168.0.2");
+});
+it("a frozen fresh profile does not manufacture legacy preference originals on unrelated saves", () => {
+  const backing = storage();
+  const store = new SettingsStore(() => backing, "en");
+  store.freezeDevicePreferences();
+  store.set("locale", "zh-TW");
+  for (const key of [
+    "kobrixa.connectionMode",
+    "kobrixa.rememberWifiAddress",
+    "kobrixa.lastWifiAddress",
+  ])
+    expect(backing.getItem(key)).toBeNull();
+});
+it("U15 persists the exclusive plugins pane and notifies before render consumers", () => {
+  const backing = storage();
+  const store = new SettingsStore(() => backing, "en");
+  const order: string[] = [];
+  const off = store.beforeChange((next) =>
+    order.push(`${store.getSnapshot().values.rightPanel}->${next.rightPanel}`),
+  );
+  store.subscribe(() => order.push(`render:${store.getSnapshot().values.rightPanel}`));
+  store.set("rightPanel", "plugins");
+  store.set("rightPanel", "collab");
+  store.set("rightPanel", "ev3");
+  store.resetLayout();
+  expect(order).toEqual([
+    "null->plugins",
+    "render:plugins",
+    "plugins->collab",
+    "render:collab",
+    "collab->ev3",
+    "render:ev3",
+    "ev3->null",
+    "render:null",
+  ]);
+  store.set("rightPanel", "plugins");
+  expect(new SettingsStore(() => backing, "en").getSnapshot().values.rightPanel).toBe("plugins");
+  off();
+  order.length = 0;
+  store.set("rightPanel", "plugins");
+  expect(order).toEqual([]);
+  store.resetLayout();
+  expect(order).toEqual(["render:null"]);
+});
 describe("application settings", () => {
   it("uses offline defaults and the system language only until the user chooses", () => {
     const s = storage(),

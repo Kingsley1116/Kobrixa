@@ -1,0 +1,15 @@
+import { defineConfig } from '/Users/kingsley/.codex/worktrees/plugin-3d/Kobrixa/node_modules/vitest/dist/config.js';
+const root = '/Users/kingsley/.codex/worktrees/plugin-3e/Kobrixa';
+const deps = '/Users/kingsley/.codex/worktrees/plugin-3d/Kobrixa/node_modules';
+export default defineConfig({ root, resolve: { alias: [
+{find:/^vite$/,replacement:'/private/tmp/e3-vite-source-wrapper.mjs'},
+{find: /^vitest$/, replacement: deps + '/vitest/dist/index.js'},
+{find: /^@eslint-community\/regexpp$/, replacement: deps + '/@eslint-community/regexpp/index.js'},
+{find: /^semver$/, replacement: deps + '/semver/index.js'},
+{find: /^electron$/, replacement: deps + '/electron/index.js'},
+{find: /^fast-glob$/, replacement: deps + '/fast-glob/out/index.js'},
+{find: /^zod$/, replacement: deps + '/zod/index.js'},
+{find: /^@kobrixa\/plugin-protocol$/, replacement: root + '/packages/plugin-protocol/src/index.ts'},
+{find: /^@kobrixa\/plugin-runtime$/, replacement: root + '/packages/plugin-runtime/src/index.ts'},
+{find: /^@kobrixa\/plugin-sdk$/, replacement: root + '/packages/plugin-sdk-js/src/index.ts'},
+]}, test: { environment: 'node', maxWorkers: 2, include: ['apps/desktop/src/main/plugins/persistence/{device-settings-migration,device-settings-import,device-settings-import-worker,import-coordinator,import-journal,import-sources,worker,atomic-store,shipped-import-worker}.test.ts'] }});

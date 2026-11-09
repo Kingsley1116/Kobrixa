@@ -1,5 +1,6 @@
 import {
-  deviceRequestSchemas,
+  deviceRequestSchemasV180 as deviceRequestSchemas,
+  eventEnvelopeSchemaV180,
   eventEnvelopeSchema,
   requestMethods,
   type RequestContext,
@@ -26,7 +27,12 @@ export function attachDeviceRpc(input: {
     send(event) {
       binding.capture();
       if (input.peer.closed) throw new Error("Device channel closed.");
-      input.peer.notify("events/deliver", eventEnvelopeSchema.parse(event));
+      input.peer.notify(
+        "events/deliver",
+        (input.peer.connectionRecoveryReady ? eventEnvelopeSchemaV180 : eventEnvelopeSchema).parse(
+          event,
+        ),
+      );
     },
   });
   attachedPeers.add(input.peer);

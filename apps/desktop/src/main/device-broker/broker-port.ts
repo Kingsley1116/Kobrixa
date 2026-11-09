@@ -5,7 +5,9 @@ import type {
   ReadSnapshot,
   SourceCatalog,
   BusinessResult,
-  DeviceRequestMap,
+  DeviceRequestMapV180 as DeviceRequestMap,
+  ConnectionRecoveryRef,
+  ConnectionRecoverySnapshot,
   Permission,
 } from "@kobrixa/plugin-protocol";
 import type {
@@ -17,6 +19,7 @@ import type {
   DeviceRecoveryPort,
   DeviceRecoverySnapshot,
   DeviceFailureDetail,
+  DeviceDisposition,
   DeviceRequirement,
   CommonEventLedgerPort,
   Stage3EventEnvelope,
@@ -64,12 +67,33 @@ export interface CoreTelemetrySubscription {
 export type DeviceMethod = keyof DeviceRequestMap;
 export type DeviceParams<M extends DeviceMethod> = DeviceRequestMap[M]["params"];
 export type DeviceResult<M extends DeviceMethod> = DeviceRequestMap[M]["result"];
+/** Host-only extension. Legacy synchronous unregister callers remain valid; hosts
+ * that replace providers must require and await this retirement capability. */
+export interface ProviderRetirement {
+  /** Reversible admission fence while the manager owns its cleanup hold. */
+  admission(allowed: boolean): void;
+  /** Shares pending/completed work; a call after failure retries retained cleanup. */
+  retire(): Promise<void>;
+}
+export type ProviderRegistration = (() => void) & { retirement?: ProviderRetirement };
+export class ProviderRetirementBlocked extends Error {
+  constructor(readonly disposition: DeviceDisposition) {
+    super("Provider retirement disposition is incomplete.");
+  }
+}
 export interface DeviceBrokerPort {
   readonly intent: DeviceIntentPort;
   readonly reservations: ReservationBindingPort;
   readonly sessions: DeviceSessionControlPort;
   readonly resources: DeviceResourceParticipant;
   readonly recovery: DeviceRecoveryPort;
+  readonly connectionRecovery: {
+    snapshot(): ConnectionRecoverySnapshot;
+    cancel(input: {
+      target: ConnectionRecoveryRef;
+      action: CoreActionReference;
+    }): Promise<BusinessResult<ConnectionRecoverySnapshot, DeviceFailureDetail>>;
+  };
   request<M extends DeviceMethod>(
     principal: Principal,
     method: M,
@@ -82,7 +106,7 @@ export interface DeviceBrokerPort {
     request: LegacyProviderRequest,
     signal: AbortSignal,
   ): Promise<ProviderOutcome<LegacyProviderValue>>;
-  registerProvider(provider: BuiltinDeviceProvider): () => void;
+  registerProvider(provider: BuiltinDeviceProvider): ProviderRegistration;
   readonly events: CommonEventLedgerPort;
   providerCatalog(providerId: string): ProviderCatalogPort;
   attachChannel(input: {
@@ -133,6 +157,8 @@ export type DeviceBrokerOptions = {
   requirements: (owner: ResourceOwner) => readonly DeviceRequirement[] | null;
   operationGate: DeviceOperationGate;
   connectionPolicy: () => DeviceConnectionPolicy;
+  /** Host committed-policy notification; observation itself performs no reads. */
+  subscribeConnectionPolicy?: (changed: () => void) => () => void;
 };
 import { createBroker } from "./broker.js";
 import { createDeviceRecovery } from "./recovery-port.js";

@@ -1,3 +1,4 @@
+import type { DeviceSessionSnapshot } from "@kobrixa/plugin-protocol";
 import type { LanguageStatus, LanguageStatusEvent } from "./language-services.js";
 import type { LanguageFeatureRequest, LanguageFeatureReply } from "./language-query.js";
 import type { FilePreferences } from "./file-preferences.js";
@@ -23,9 +24,8 @@ export type {
   WorkspaceRefreshResult,
   WorkspaceWriteResult,
 } from "./workspace-files.js";
-import type { MotorTestRef, MotorTestRequest, MotorTestState } from "./motor-test.js";
 import type { DevicePreferences } from "./device-preferences.js";
-import type { MonitorUpdate, SensorLabApi } from "./sensor-lab.js";
+import type { MonitorUpdate } from "./sensor-lab.js";
 import type { QuickFixReply, QuickFixRequest } from "./quick-fixes.js";
 import type { DocumentationRequest } from "./documentation.js";
 import type { UpdatesApi } from "./updates.js";
@@ -166,6 +166,15 @@ export interface FileBatchSnapshot extends FileBatchRef {
 }
 export type DeviceEvent =
   | {
+      /** Host-only committed broker projection; observation is not permission to run. */
+      type: "session-catalog";
+      hostEpoch: string;
+      revision: number;
+      cause: "snapshot" | "changed" | "connected" | "recovered" | "lost";
+      origin: "core" | "plugin" | "recovery";
+      session: DeviceSessionSnapshot | null;
+    }
+  | {
       type: "usb-recovery";
       state: "waiting" | "connecting" | "cancelled" | "unavailable" | "exhausted";
       previousSessionId: string;
@@ -212,7 +221,6 @@ export interface KobrixaApi {
       entries: string[],
     ): Promise<SimulationPrepareResult>;
   };
-  sensorLab: SensorLabApi;
   plugins: PluginsApi;
   documentation: { open(request: DocumentationRequest): Promise<void> };
   updates: UpdatesApi;
@@ -290,11 +298,6 @@ export interface KobrixaApi {
     diagnostics(workspaceId: string, overlays: Record<string, string>): Promise<Diagnostic[]>;
   };
   device: {
-    startMotorTest(request: MotorTestRequest): Promise<MotorTestState>;
-    keepMotorTestAlive(ref: MotorTestRef): Promise<void>;
-    stopMotorTest(ref: MotorTestRef, brake?: boolean): Promise<MotorTestState>;
-    motorTestState(): Promise<MotorTestState>;
-    onMotorTest(listener: (state: MotorTestState) => void): () => void;
     watchMonitor(sessionId: string, enabled: boolean): Promise<MonitorUpdate>;
     onMonitor(listener: (update: MonitorUpdate) => void): () => void;
     monitor(sessionId: string): Promise<MonitorResult<DeviceMonitorSnapshot>>;

@@ -1,3 +1,4 @@
+import { UpdateInstallation } from "./updates/installation.js";
 import { filePreferencesPatchSchema } from "./workspace/preferences.js";
 import { devicePreferencesPatchSchema } from "./device/preferences.js";
 import type { UpdateService, UpdateOperationGate } from "./updates/service.js";
@@ -22,15 +23,6 @@ import type { WorkspaceService } from "./workspace/workspace.js";
 import { workspaceSessionSchema } from "../shared/workspace-session.js";
 import { workspaceSearchRequestSchema } from "./workspace/search.js";
 import type { MonitorService } from "./device/monitor-service.js";
-import {
-  motorTestRefSchema,
-  motorTestRequestSchema,
-  type MotorTestService,
-} from "./device/motor-test-service.js";
-import type { MotorTestRequest } from "../shared/motor-test.js";
-import type { SensorLabService } from "./sensor-lab/service.js";
-import { sensorLabStartSchema, sensorLabCalibrationSchema } from "./sensor-lab/schema.js";
-import { exportSensorCsv } from "./sensor-lab-export.js";
 import { registerCollabMirrorIpc } from "./collab/mirror.js";
 import { DeviceControlGate, registerDeviceControlIpc } from "./collab/device-control.js";
 
@@ -94,13 +86,16 @@ export function registerIpc(
   operationGate: UpdateOperationGate,
   finishClose: (requestId: string, ready: boolean) => void = () => {},
   rendererReady: () => void = () => {},
-  sensorTools?: { monitor: MonitorService; lab: SensorLabService; motors?: MotorTestService },
+  sensorTools?: { monitor: MonitorService },
   modules: readonly ((handle: IpcHandle) => void)[] = [],
   /** Runs before quitAndInstall(); plugin processes must be gone before the installer quits. */
   beforeUpdateInstall: () => Promise<void> = async () => {},
   plugins?: Pick<PluginController, "diagnosticHelpEntry">,
   deviceFoundation?: DesktopDeviceIpc,
-): void {
+  beforeWindowClose?: () => Promise<void>,
+  beforeUpdatePrepare?: () => Promise<void>,
+  resumeAfterUpdate?: () => Promise<void>,
+): UpdateInstallation {
   const trusted = (event: IpcMainInvokeEvent): void => {
     const renderer = trustedRenderer();
     if (!renderer || event.sender.id !== renderer.id || event.senderFrame !== renderer.mainFrame) {
@@ -119,7 +114,7 @@ export function registerIpc(
       // action. Safety cleanup must remain reachable while an update fences work.
       if (deviceFoundation && channel === "device:stop") return action(event, ...args);
       if (
-        /^(workspace|device|build|simulator|sensor-lab):/.test(channel) ||
+        /^(workspace|device|build|simulator):/.test(channel) ||
         /^collab:(prepare-project|preview-project|save-copy)$/.test(channel)
       )
         return operationGate.run(channel, () => action(event, ...args));
@@ -128,11 +123,7 @@ export function registerIpc(
   };
 
   for (const register of modules) register(handle);
-  registerDeviceControlIpc(
-    handle,
-    deviceControl,
-    () => sensorTools?.motors?.flush() ?? Promise.resolve(),
-  );
+  registerDeviceControlIpc(handle, deviceControl);
   handle("updates:state", () => updates.getState());
   handle("simulator:cancel", (_event, workspaceId: unknown) =>
     builds.cancelSimulation(id.parse(workspaceId)),
@@ -144,66 +135,10 @@ export function registerIpc(
       z.array(file).max(4).parse(entries),
     ),
   );
-  if (sensorTools?.motors) {
-    const motors = sensorTools.motors;
-    handle("device:motor-test-state", () => motors.getState());
-    handle("device:motor-test-start", (event, request: unknown) => {
-      const parsed = motorTestRequestSchema.parse(request) as MotorTestRequest;
-      try {
-        return motors.start(parsed, event.sender.id);
-      } catch (error) {
-        return {
-          request: parsed,
-          phase: "failed",
-          angle: null,
-          displacement: null,
-          elapsedMs: 0,
-          message: error instanceof Error ? error.message : String(error),
-        };
-      }
-    });
-    handle("device:motor-test-keepalive", (event, ref: unknown) =>
-      motors.keepAlive(motorTestRefSchema.parse(ref), event.sender.id),
-    );
-    handle("device:motor-test-stop", (event, ref: unknown, brake: unknown) =>
-      motors.stop(
-        motorTestRefSchema.parse(ref),
-        event.sender.id,
-        z.boolean().default(true).parse(brake),
-      ),
-    );
-  }
   if (sensorTools) {
-    const { lab, monitor } = sensorTools;
+    const { monitor } = sensorTools;
     handle("device:watch-monitor", (_event, sessionId: unknown, enabled: unknown) =>
       monitor.watch(id.parse(sessionId), z.boolean().parse(enabled)),
-    );
-    handle("sensor-lab:state", () => lab.getState());
-    handle("sensor-lab:start", (_event, request: unknown) =>
-      lab.start(sensorLabStartSchema.parse(request)),
-    );
-    handle("sensor-lab:stop", async (_event, reason: unknown) => {
-      const parsed = z.enum(["manual", "close", "update"]).default("manual").parse(reason);
-      if (parsed === "manual") return lab.stop(parsed);
-      await sensorTools.motors?.flush();
-      await lab.flush(parsed);
-      return lab.getState();
-    });
-    handle("sensor-lab:retry-save", () => lab.retrySave());
-    handle("sensor-lab:list", () => lab.list());
-    handle("sensor-lab:read", (_event, recordingId: unknown) => lab.read(id.parse(recordingId)));
-    handle("sensor-lab:delete", (_event, recordingId: unknown) =>
-      lab.delete(id.parse(recordingId)),
-    );
-    handle("sensor-lab:calibrations", () => lab.listCalibrations());
-    handle("sensor-lab:save-calibration", (_event, profile: unknown) =>
-      lab.saveCalibration(sensorLabCalibrationSchema.parse(profile)),
-    );
-    handle("sensor-lab:delete-calibration", (_event, profileId: unknown) =>
-      lab.deleteCalibration(id.parse(profileId)),
-    );
-    handle("sensor-lab:export", (_event, recordingId: unknown) =>
-      exportSensorCsv(lab, id.parse(recordingId)),
     );
   }
   handle("documentation:open", (_event, request: unknown) =>
@@ -250,16 +185,18 @@ export function registerIpc(
     ),
   );
   handle("updates:check", () => updates.check());
-  handle("updates:prepare", async () => {
-    await sensorTools?.motors?.flush();
-    await sensorTools?.lab.flush("update");
-    updates.prepareInstall();
-  });
-  handle("updates:cancel", () => updates.cancelInstall());
-  handle("updates:install", async () => {
-    await beforeUpdateInstall();
-    updates.install();
-  });
+  const installation = new UpdateInstallation(
+    updates,
+    async () => {
+      if (beforeUpdatePrepare) await beforeUpdatePrepare();
+    },
+    beforeUpdateInstall,
+    resumeAfterUpdate,
+    (error) => console.error("Update recovery blocked.", error),
+  );
+  handle("updates:prepare", () => installation.prepare());
+  handle("updates:cancel", () => installation.cancel());
+  handle("updates:install", () => installation.install());
   handle("updates:open", () => updates.openRelease());
   handle("keyboard:context", (event, value: unknown) => {
     const context = z
@@ -297,9 +234,8 @@ export function registerIpc(
     const parsedId = id.parse(requestId),
       parsedReady = z.boolean().parse(ready);
     if (parsedReady) {
-      await sensorTools?.motors?.flush();
-      await sensorTools?.lab.flush("close");
-      await deviceFoundation?.beforeClose();
+      if (beforeWindowClose) await beforeWindowClose();
+      else await deviceFoundation?.beforeClose();
     }
     finishClose(parsedId, parsedReady);
   });
@@ -516,6 +452,7 @@ export function registerIpc(
   handle("device:delete", (_event, sessionId: unknown, remotePath: unknown) =>
     devices.delete(id.parse(sessionId), file.parse(remotePath)),
   );
+  return installation;
 }
 
 import type { Principal } from "@kobrixa/plugin-runtime";
@@ -526,3 +463,164 @@ export interface DesktopDeviceIpc {
   disconnect(sessionId: string, principal: Principal): Promise<void>;
   beforeClose(): Promise<void>;
 }
+
+export function registerLegacyPreferencesIpc170(
+  handle: IpcHandle,
+  imports: LegacyImportHostPort,
+  scopeFor: (event: IpcMainInvokeEvent) => CoreWindowScope,
+): () => void {
+  let disposed = false;
+  const bridge = (event: IpcMainInvokeEvent) => {
+    if (disposed) throw new Error("Stale preferences window");
+    return legacyPreferencesFor170(scopeFor(event), imports);
+  };
+  handle("persistence:legacy-preferences-challenge", (event, descriptorId: string) =>
+    bridge(event).challenge(descriptorId),
+  );
+  handle("persistence:legacy-preferences-submit", (event, snapshot: LegacyPreferencesSnapshot) =>
+    bridge(event).submit(snapshot),
+  );
+  return () => {
+    disposed = true;
+  };
+}
+
+import type { CoreWindowScope } from "@kobrixa/plugin-runtime";
+export function registerPersistenceWindow170(input: {
+  handle: IpcHandle;
+  facets: NonNullable<PluginController["persistence170"]>;
+  coreRecovery: CoreRecovery;
+  renderer: () => Electron.WebContents | undefined;
+}): () => void {
+  const original = input.renderer();
+  if (!original) throw new Error("No workbench renderer");
+  let disposed = false;
+  let documentScope = structuredClone(input.facets.scope());
+  let documentFrame = original.mainFrame;
+  let attached = false;
+  let documentReady = true;
+  let retireDocument = () => {};
+  const routes = new Map<string, (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown>();
+  const registered = new Set<string>();
+  const sameScope = (a: CoreWindowScope, b: CoreWindowScope) =>
+    a.hostEpoch === b.hostEpoch && a.workbenchInstance === b.workbenchInstance;
+  const scope = () => {
+    if (
+      disposed ||
+      !attached ||
+      input.renderer() !== original ||
+      original.isDestroyed() ||
+      original.mainFrame !== documentFrame ||
+      !sameScope(input.facets.scope(), documentScope)
+    )
+      throw new Error("Stale persistence window");
+    return documentScope;
+  };
+  // Register native-window routes once. Their document handlers are replaceable,
+  // so pending old opens and subscriptions retain their retired closures.
+  const handle: IpcHandle = (channel, action) => {
+    routes.set(channel, action as (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown);
+    if (registered.has(channel)) return;
+    registered.add(channel);
+    input.handle(channel, (event, ...args: unknown[]) => {
+      if (event.sender !== original || event.senderFrame !== original.mainFrame)
+        throw new Error("Rejected IPC from an untrusted sender.");
+      if (
+        !disposed &&
+        documentReady &&
+        !attached &&
+        !sameScope(input.facets.scope(), documentScope)
+      )
+        attach();
+      scope();
+      return routes.get(channel)!(event, ...args);
+    });
+  };
+  const publish = (expected: CoreWindowScope, channel: string, value: unknown) => {
+    try {
+      if (sameScope(expected, scope())) original.send(channel, value);
+    } catch {
+      /* Retired document publications are dropped. */
+    }
+  };
+  const attach = () => {
+    documentScope = structuredClone(input.facets.scope());
+    documentFrame = original.mainFrame;
+    attached = true;
+    const expected = documentScope;
+    const documentScopeFor = () => {
+      const current = scope();
+      if (!sameScope(expected, current)) throw new Error("Stale persistence window");
+      return expected;
+    };
+    const offLegacy = registerLegacyPreferencesIpc170(
+      handle,
+      input.facets.imports,
+      documentScopeFor,
+    );
+    const offCore = input.coreRecovery.attachPersistence170(input.facets.detail);
+    const offSettings = registerSettingsIpc170({
+      handle,
+      service: input.facets.settings,
+      scope: documentScopeFor,
+      publish,
+    });
+    const offRecovery = registerPersistenceRecoveryIpc170({
+      handle,
+      bridge: input.facets.detail.bridge,
+      scope: documentScopeFor,
+      publish,
+    });
+    retireDocument = () => {
+      if (!attached) return;
+      attached = false;
+      offLegacy();
+      offSettings();
+      offRecovery();
+      offCore();
+      input.facets.imports.retirePreferences(expected);
+    };
+  };
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    retireDocument();
+    routes.clear();
+    original.removeListener("destroyed", dispose);
+    original.removeListener("render-process-gone", retireDocumentOnCrash);
+    original.removeListener("did-start-navigation", navigation);
+    original.removeListener("did-navigate", documentCommitted);
+  };
+  const retireDocumentOnCrash = () => {
+    documentReady = false;
+    retireDocument();
+  };
+  const documentCommitted = () => {
+    documentReady = true;
+  };
+  const navigation = (
+    _event: Electron.Event,
+    _url: string,
+    inPlace: boolean,
+    mainFrame: boolean,
+  ) => {
+    if (mainFrame && !inPlace) {
+      documentReady = false;
+      retireDocument();
+    }
+  };
+  attach();
+  original.once("destroyed", dispose);
+  original.on("render-process-gone", retireDocumentOnCrash);
+  original.on("did-start-navigation", navigation);
+  original.on("did-navigate", documentCommitted);
+  return dispose;
+}
+
+import { legacyPreferencesFor170 } from "./plugins/controller.js";
+import type {
+  LegacyImportHostPort,
+  LegacyPreferencesSnapshot,
+} from "./plugins/persistence/import-sources.js";
+import type { CoreRecovery } from "./plugins/core-recovery.js";
+import { registerSettingsIpc170, registerPersistenceRecoveryIpc170 } from "./plugins/ipc.js";

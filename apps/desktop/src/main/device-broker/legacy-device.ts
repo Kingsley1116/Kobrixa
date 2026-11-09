@@ -16,7 +16,12 @@ import type {
   DeviceResult,
 } from "./broker-port.js";
 import type { DeviceEvent, MonitorResult } from "../../shared/api.js";
-import { observeBrokerLifecycle, observeCoreTelemetryClosed } from "./broker.js";
+import {
+  observeBrokerLifecycle,
+  observeCoreTelemetryClosed,
+  observeBrokerSessions,
+  readBrokerSessionCatalog,
+} from "./broker.js";
 export interface LegacyMonitorFeed {
   subscribe(input: {
     principal: Principal;
@@ -240,6 +245,10 @@ export class LegacyDevice {
   private candidates = new Map<string, DeviceCandidate>();
   private descriptors = new Map<string, DeviceDescriptor>();
   private lost = new Map<string, DeviceDescriptor>();
+  private publicCatalog = false;
+  private ownConnection = 0;
+  private catalogRevision = -1;
+  private catalogEpoch: string | undefined;
   private listeners = new Set<(event: DeviceEvent) => void>();
   constructor(readonly dependencies: LegacyDeviceDependencies) {
     observeBrokerLifecycle(dependencies.broker, (event) => {
@@ -288,6 +297,29 @@ export class LegacyDevice {
           this.lost.delete(event.previousSessionId);
       }
     });
+    observeBrokerSessions(dependencies.broker, (snapshot) => {
+      if (this.catalogEpoch && this.catalogEpoch !== snapshot.hostEpoch) return;
+      if (snapshot.revision <= this.catalogRevision) return;
+      this.catalogEpoch = snapshot.hostEpoch;
+      this.catalogRevision = snapshot.revision;
+      const current = snapshot.session;
+      // Keep disconnecting/quarantined identities for the original safety/resume obligations.
+      this.descriptors.clear();
+      if (current && current.state !== "disconnected")
+        this.descriptors.set(current.sessionId, {
+          id: current.sessionId,
+          name: current.name,
+          transport: current.transport,
+        });
+      if (snapshot.cause === "connected")
+        this.publicCatalog = snapshot.origin === "plugin" && this.ownConnection === 0;
+      else if (snapshot.cause === "snapshot") this.publicCatalog = snapshot.origin === "plugin";
+      if (this.publicCatalog) this.emit({ type: "session-catalog", ...snapshot });
+    });
+  }
+  sessionCatalog(): Extract<DeviceEvent, { type: "session-catalog" }> | undefined {
+    const snapshot = readBrokerSessionCatalog(this.dependencies.broker);
+    return snapshot ? { type: "session-catalog", ...snapshot } : undefined;
   }
   private emit(event: DeviceEvent): void {
     for (const listener of this.listeners) listener(event);
@@ -341,11 +373,18 @@ export class LegacyDevice {
     const candidate = this.candidates.get(value.id);
     if (!candidate || value.metadata || value.serialNumber)
       throw new Error("Rediscover this EV3 candidate.");
-    const { session } = await this.request(
-      "devices/connect",
-      { target: { kind: "candidate", candidateId: candidate.candidateId } },
-      signal,
-    );
+    this.ownConnection++;
+    let session;
+    try {
+      ({ session } = await this.request(
+        "devices/connect",
+        { target: { kind: "candidate", candidateId: candidate.candidateId } },
+        signal,
+      ));
+    } finally {
+      this.ownConnection--;
+    }
+
     this.descriptors.set(session.sessionId, {
       id: session.sessionId,
       name: session.name,
@@ -354,11 +393,18 @@ export class LegacyDevice {
     return session.sessionId;
   }
   async connectWifi(address: string, signal?: AbortSignal): Promise<string> {
-    const { session } = await this.request(
-      "devices/connect",
-      { target: { kind: "wifi-address", providerId: "kobrixa.device-ev3", address } },
-      signal,
-    );
+    this.ownConnection++;
+    let session;
+    try {
+      ({ session } = await this.request(
+        "devices/connect",
+        { target: { kind: "wifi-address", providerId: "kobrixa.device-ev3", address } },
+        signal,
+      ));
+    } finally {
+      this.ownConnection--;
+    }
+
     this.descriptors.set(session.sessionId, {
       id: session.sessionId,
       name: session.name,
@@ -492,4 +538,28 @@ export class LegacyDevice {
       ...(onClosed ? { onClosed } : {}),
     });
   }
+}
+
+/** Power wake settles the original suspension identities even if the live catalog changes. */
+export function createSessionPowerLifecycle(input: {
+  sessionIds(): string[];
+  suspend(id: string): Promise<void>;
+  resume(id: string): Promise<void>;
+}) {
+  const suspended = new Set<string>();
+  return {
+    suspend(): Promise<void> {
+      const ids = input.sessionIds();
+      for (const id of ids) suspended.add(id);
+      return Promise.all(ids.map((id) => input.suspend(id))).then(() => {});
+    },
+    resume(): Promise<void> {
+      return Promise.all(
+        [...suspended].map(async (id) => {
+          await input.resume(id);
+          suspended.delete(id);
+        }),
+      ).then(() => {});
+    },
+  };
 }

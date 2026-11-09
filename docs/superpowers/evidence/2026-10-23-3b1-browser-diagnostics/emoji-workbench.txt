@@ -1,0 +1,116 @@
+Real workbench browser workspace: /private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M
+(electron) 'console-message' arguments are deprecated and will be removed. Please use Event<WebContentsConsoleMessageEventParams> object instead.
+renderer: %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools
+You might need to use a local HTTP server (instead of file://): https://react.dev/link/react-devtools-faq font-weight:bold
+[89436:1023/022105.650424:INFO:CONSOLE:234] "%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools
+You might need to use a local HTTP server (instead of file://): https://react.dev/link/react-devtools-faq font-weight:bold", source: file:///private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/renderer/main_window/assets/index-2iQSb1en.js (234)
+renderer:  Note that 'script-src' was not explicitly set, so 'default-src' is used as a fallback.
+[89436:1023/022105.684658:INFO:CONSOLE:1201] " Note that 'script-src' was not explicitly set, so 'default-src' is used as a fallback.", source: file:///private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/renderer/main_window/assets/index-2iQSb1en.js (1201)
+renderer:  Note that 'script-src' was not explicitly set, so 'default-src' is used as a fallback.
+[89436:1023/022105.750785:INFO:CONSOLE:911] " Note that 'script-src' was not explicitly set, so 'default-src' is used as a fallback.", source:  (911)
+[plugin acceptance.ui-1] UI_PID:89442
+[plugin acceptance.ui-0] UI_PID:89443
+Renderer process crashed - see https://www.electronjs.org/docs/tutorial/application-debugging for potential debugging information.
+UI_RENDERER_EXIT {"reason":"crashed","exitCode":10}
+Error: Actual renderer exited: {"reason":"crashed","exitCode":10}
+    at WebContents.<anonymous> (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/ui-browser-main.cjs:47:47)
+    at WebContents.emit (node:events:526:24)
+Error sending from webContents:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at WebContents.send (node:electron/js2c/browser_init:1:94985)
+    at ue (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:401:6569)
+    at Object.publish (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:401:8242)
+    at aO.publish (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:397:1092)
+    at /private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:397:5846
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+Error sending from webContents:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at WebContents.send (node:electron/js2c/browser_init:1:94985)
+    at ue (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:401:6569)
+    at Object.publish (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:401:8242)
+    at aO.publish (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:397:1092)
+    at aO.saveCurrent (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:397:6283)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async /private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:397:5949
+Error sending from webContents:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at WebContents.send (node:electron/js2c/browser_init:1:94985)
+    at ue (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:401:6569)
+    at /private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:401:9393
+    at nj.changed (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:400:48436)
+    at /private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:401:5792
+    at #L (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:400:31913)
+    at /private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:400:19145
+    at #X (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:72:3541)
+    at #Y (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:72:3474)
+    at #j (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:71:15433)
+Error sending from webContents:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at WebContents.send (node:electron/js2c/browser_init:1:94985)
+    at ue (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:401:6569)
+    at /private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:401:9279
+    at #L (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:400:31913)
+    at /private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:400:19145
+    at #X (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:72:3541)
+    at #Y (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:72:3474)
+    at #j (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:71:15433)
+    at #F (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:71:20284)
+    at /private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:71:19240
+Error sending from webContents:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at WebContents.send (node:electron/js2c/browser_init:1:94985)
+    at ue (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:401:6569)
+    at /private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:401:9393
+    at nj.changed (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:400:48436)
+    at /private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:401:5792
+    at #L (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:400:31913)
+    at /private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:400:19145
+    at #X (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:72:3541)
+    at #Y (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:72:3474)
+    at #F (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:71:20428)
+Error sending from webContents:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at WebContents.send (node:electron/js2c/browser_init:1:94985)
+    at ue (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:401:6569)
+    at /private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:401:9279
+    at #L (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:400:31913)
+    at /private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:400:19145
+    at #X (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:72:3541)
+    at #Y (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:72:3474)
+    at #F (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:71:20428)
+    at /private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:71:19240
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+Error sending from webContents:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at WebContents.send (node:electron/js2c/browser_init:1:94985)
+    at ue (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:401:6569)
+    at /private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:401:9393
+    at nj.changed (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:400:48436)
+    at /private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:401:5792
+    at #L (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:400:31913)
+    at /private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:400:19145
+    at #X (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:72:3541)
+    at #Y (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:72:3474)
+    at Object.onStateChange (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:72:2578)
+Error sending from webContents:  Error: Render frame was disposed before WebFrameMain could be accessed
+    at WebContents.send (node:electron/js2c/browser_init:1:94985)
+    at ue (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:401:6569)
+    at /private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:401:9279
+    at #L (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:400:31913)
+    at /private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:400:19145
+    at #X (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:72:3541)
+    at #Y (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:72:3474)
+    at Object.onStateChange (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:72:2578)
+    at #z (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:71:946)
+    at #A (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/.vite/build/main.cjs:69:9042)
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: {"code":1,"signal":null}
+
+1 !== 0
+
+    at file:///Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-3b1/tests/desktop/declarative-ui-browser-run.mjs:146:8 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 1,
+  expected: 0,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.13.0

@@ -254,17 +254,13 @@ try {
     await js("document.querySelector('[data-tree-path=\"sample.toy\"]').click()");
     for (let attempt = 0; attempt < 50; attempt++) {
       if (
-        await js(
-          "Boolean(document.querySelector('.editor-stage .editor[data-mode-id=\"toy\"]'))",
-        )
+        await js("Boolean(document.querySelector('.editor-stage .editor[data-mode-id=\"toy\"]'))")
       )
         break;
       await pause(100);
     }
     assert.equal(
-      await js(
-        "Boolean(document.querySelector('.editor-stage .editor[data-mode-id=\"toy\"]'))",
-      ),
+      await js("Boolean(document.querySelector('.editor-stage .editor[data-mode-id=\"toy\"]'))"),
       true,
     );
     assert.match(

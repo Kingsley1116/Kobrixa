@@ -91,3 +91,38 @@ it.each([2499, 2500, 2501])("F12 freshness %i uses inclusive sample boundary", a
   if (age <= 2500) expect((await result).firstFrame.sequence).toBe(1);
   else await expect(result).rejects.toThrow();
 });
+it("owner retirement grants only newly ended recordings, never an old completed reservation", async () => {
+  let now = 0;
+  const owner = pluginPrincipal().owner,
+    reservations = new Reservations(() => now);
+  const reserve = () =>
+    reservations.reserve({
+      owner,
+      sessionId: ID,
+      providerGeneration: 1,
+      channels: [channel()],
+      sourceRevision: 1,
+      check: () => {},
+      fresh: async () => ({
+        sessionId: ID,
+        revision: 1,
+        status: "fresh" as const,
+        ageMs: 0,
+        frame: frame(),
+      }),
+    });
+  const a = await reserve(),
+    original = reservations.end(a.reservation.reservationId, "released", true)!;
+  now = 20000;
+  expect(reservations.endOwner(owner, "retired", true)).toEqual([]);
+  expect(reservations.end(a.reservation.reservationId, "retired", true)).toBe(original);
+  const b = await reserve();
+  const ended = reservations.endOwner(owner, "retired", true);
+  expect(ended).toHaveLength(1);
+  expect(ended[0]).toMatchObject({
+    reservationId: b.reservation.reservationId,
+    drain: { expiresMonotonicMs: 30000 },
+  });
+  expect(original.drain?.expiresMonotonicMs).toBe(10000);
+  expect(reservations.endOwner(owner, "retired", true)).toEqual([]);
+});

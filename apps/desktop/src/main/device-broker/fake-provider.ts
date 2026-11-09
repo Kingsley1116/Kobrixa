@@ -327,6 +327,7 @@ export class FakeProvider implements BuiltinDeviceProvider {
     this.call("motion");
     if (this.maximum && motion.mode === "timed") {
       await ctx.exchange("motion-pulse", async () => {});
+      ctx.publishProgress({ stage: "moving", elapsedMs: 0, angle: null, displacement: null });
       // Device runtime is not transport time: keep the existing pulse budget.
       // Resolve on cancellation so the broker retains dispatch evidence and runs cleanup.
       const completed = await new Promise<boolean>((resolve) => {
@@ -501,6 +502,8 @@ import type { Handle, DispatchOutcome } from "@kobrixa/plugin-protocol";
 import type { ProviderCatalogPort, ProviderStep } from "./provider.js";
 export type FakeProviderPoint = "before-exchange" | "after-exchange" | "before-stop-readback";
 export interface FakeProviderControl {
+  /** Acceptance-only loss through the provider's real onDisconnect notification. */
+  lose(): void;
   block(point: FakeProviderPoint, step: ProviderStep): void;
   reached(point: FakeProviderPoint, step: ProviderStep): Promise<void>;
   release(point: FakeProviderPoint, step: ProviderStep): void;
@@ -518,6 +521,8 @@ export function createFakeDeviceProvider(input: {
   now: () => number;
   profile?: "maximum";
   providerId?: string;
+  /** Acceptance-only exchange sequence; ordinary fixtures retain their minimal behavior. */
+  motionProfile?: "staged";
 }): { provider: BuiltinDeviceProvider; control: FakeProviderControl } {
   type Barrier = { hit: Promise<void>; mark: () => void; wait: Promise<void>; release: () => void };
   const barriers = new Map<string, Barrier>();
@@ -535,6 +540,9 @@ export function createFakeDeviceProvider(input: {
   };
   const key = (point: FakeProviderPoint, step: ProviderStep) => `${point}:${step}`;
   const control: FakeProviderControl = {
+    lose() {
+      provider.lose();
+    },
     block(point, step) {
       const id = key(point, step);
       if (barriers.has(id)) throw new Error("Barrier already blocked");
@@ -663,12 +671,25 @@ export function createFakeDeviceProvider(input: {
     ) {
       return super.setInputMode(session, request, work(ctx));
     }
-    override executeFiniteMotion(
+    override async executeFiniteMotion(
       session: ProviderSessionKey,
       motion: MotionAdmission["motion"],
       ctx: ProviderOperationContext,
     ) {
-      return super.executeFiniteMotion(session, motion, work(ctx));
+      const guarded = work(ctx);
+      if (input.motionProfile !== "staged")
+        return super.executeFiniteMotion(session, motion, guarded);
+      await guarded.exchange("preflight", async () => {});
+      if (motion.mode === "relative-angle") {
+        for (const step of ["helper-upload", "helper-run", "helper-arm"] as const)
+          await guarded.exchange(step, async () => {});
+      } else await guarded.exchange("motion-pulse", async () => {});
+      // Even the final held reply must revalidate before reporting completion.
+      guarded.assertContinuation("readback");
+      return {
+        ...success<MotionCompletion>({ movement: "completed", angle: 90, displacement: 90 }),
+        dispatch: "sent" as const,
+      };
     }
     override async stopAndReadback(
       session: ProviderSessionKey,

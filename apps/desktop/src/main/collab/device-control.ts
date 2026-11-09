@@ -11,8 +11,6 @@ const writes = new Set([
   "device:deploy",
   "device:run",
   "device:delete",
-  "device:motor-test-start",
-  "device:motor-test-keepalive",
   "device:set-input-mode",
 ]);
 const fileWrites = new Set(["upload", "mkdir", "rename", "delete"]);

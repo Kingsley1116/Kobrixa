@@ -1,3 +1,10 @@
+import { deviceRequestSchemas } from "./device-methods.js";
+import { eventEnvelopeSchema } from "./events.js";
+import { connectionRecoverySnapshotSchema } from "./device-connection-recovery.js";
+import { uiResourceV2Schema } from "./ui-v2-resource.js";
+import { uiRequestSchemas } from "./ui-methods.js";
+import { settingsResourceV1Schema } from "./settings.js";
+import { uiResourceV1Schema } from "./ui-resource.js";
 import { z } from "zod";
 import { resourceOwnerSchema } from "./device-types.js";
 import { commonFailureSchema } from "./business-result.js";
@@ -13,6 +20,19 @@ import {
 } from "./static-languages.js";
 
 export const SCHEMA_DEFINITIONS: Record<string, z.ZodType> = {
+  "connection-recovery-snapshot": connectionRecoverySnapshotSchema,
+  "events/deliver.v170.params": eventEnvelopeSchema,
+  "devices/subscribe.v170.params": deviceRequestSchemas["devices/subscribe"].params,
+  "devices/subscribe.v170.result": deviceRequestSchemas["devices/subscribe"].result,
+  "settings-resource-v1": settingsResourceV1Schema,
+  "ui-resource-v1": uiResourceV1Schema,
+  "ui-resource-v2": uiResourceV2Schema,
+  ...Object.fromEntries(
+    Object.entries(uiRequestSchemas).flatMap(([method, schemas]) => [
+      [`${method}.v1.params`, schemas.params],
+      [`${method}.v1.result`, schemas.result],
+    ]),
+  ),
   resourceOwner: resourceOwnerSchema,
   commonFailure: commonFailureSchema,
   manifest: pluginManifestSchema,

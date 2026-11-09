@@ -84,12 +84,18 @@ import { ProjectTree, type ProjectTreeHandle } from "./workspace/project-tree.js
 import { ExecutionController, filesToSave } from "./execution/execution.js";
 import { Welcome } from "./workbench/welcome.js";
 import { Toolbar } from "./workbench/toolbar.js";
-import { DevicePanel } from "./device/device-panel.js";
+import { DevicePanel, DevicePreferenceCaptureNotice } from "./device/device-panel.js";
 import { BottomPanel } from "./workbench/bottom-panel.js";
 import { isModalOpen, subscribeModals } from "./components/modal.js";
-import { settingsStore, useSettings } from "./settings/settings-state.js";
+import { pluginUiWindow, settingsStore, useSettings } from "./settings/settings-state.js";
 import { useFilePreferences } from "./settings/file-settings.js";
 import { PluginRecoveryNotice } from "./settings/plugin-recovery.js";
+import { pluginRecoveryPort } from "./settings/plugins-panel.js";
+import { pluginUiCopy } from "./settings/plugin-copy.js";
+import { PluginToolsPane } from "./plugin-ui/panel-host.js";
+import { PluginStatusHost } from "./plugin-ui/status-host.js";
+import { CoreRecoveryView } from "./plugin-ui/core-recovery.js";
+import { CorePersistenceRecovery } from "./plugin-ui/core-persistence-detail.js";
 import type { Settings } from "./settings/settings.js";
 import {
   SettingsPanel,
@@ -100,13 +106,9 @@ import {
 import { ToolsPanel, ActivityPanel } from "./device/tools-panel.js";
 import { RemoteFilesPanel } from "./device/remote-files-panel.js";
 import { RemoteFilesController } from "./device/remote-files.js";
-import { motorTestActive } from "../shared/motor-test.js";
-import { MotorTestController } from "./device/motor-test-controller.js";
 import { BatteryStatus } from "./device/battery-status.js";
 import { MonitorController } from "./device/monitor-controller.js";
 import { MonitorWorkspace } from "./device/monitor-workspace.js";
-import { SensorLabController } from "./device/sensor-lab-controller.js";
-import { RecordingStatus } from "./device/recording-status.js";
 import { CollabStore } from "./collab/store.js";
 import { applyMinimalDiff, canShareFile, CollabFileSyncManager } from "./collab/file-sync.js";
 import { preserveRoom } from "./collab/preserve-room.js";
@@ -164,6 +166,28 @@ type HistoryReview = {
 
 export function App(): React.JSX.Element {
   const { runtime: staticLanguages, snapshot: staticLanguageState } = useStaticLanguages();
+  const pluginUi = pluginUiWindow();
+  const deviceMigration = useSyncExternalStore(
+    pluginUi.deviceMigration.subscribe,
+    pluginUi.deviceMigration.getSnapshot,
+  );
+  const openDeviceTools = () => {
+    const entry = pluginUi.session.catalog
+      .getSnapshot()
+      .entries.find(
+        (item) =>
+          item.kind === "panel" &&
+          item.pluginId === "kobrixa.device-ev3" &&
+          item.availability === "available",
+      );
+    if (entry) pluginUi.session.select(entry);
+    settingsStore.set("rightPanel", "plugins");
+    void pluginUi.deviceMigration.retry();
+  };
+  const recoveryRequest = useSyncExternalStore(
+    pluginUi.session.subscribe,
+    pluginUi.session.getRecoveryRequest,
+  );
   const [simulator, setSimulator] = useState<{
     workspaceId: string;
     projectName: string;
@@ -224,17 +248,33 @@ export function App(): React.JSX.Element {
   } = settings;
   const deviceOpen = rightPanel !== null;
   const t = copy[locale];
+  const uiLabels = pluginUiCopy[locale];
   const [settingsCategory, setSettingsCategory] = useState<{
     category: "appearance" | "shortcuts" | "updates" | "plugins";
     request: number;
   }>({ category: "appearance", request: 0 });
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsActive, setSettingsActive] = useState(false);
+  const [settingsActive, updateSettingsActive] = useState(false);
+  const setSettingsActive = (next: boolean): void => {
+    pluginUi.gate("settings", next);
+    updateSettingsActive(next);
+  };
+  const recoveryPort = useMemo(
+    () =>
+      pluginRecoveryPort(pluginUi.recovery, () => {
+        pluginUi.gate("settings", true);
+        setSettingsCategory((previous) => ({ category: "plugins", request: previous.request + 1 }));
+        setSettingsOpen(true);
+        updateSettingsActive(true);
+        document.getElementById("settings-title")?.focus({ preventScroll: true });
+      }),
+    [pluginUi],
+  );
   const [sidebarMode, setSidebarMode] = useState<"files" | "search">("files");
   const [searchFocusRequest, setSearchFocusRequest] = useState(0);
   const [quickOpenWorkspace, setQuickOpenWorkspace] = useState<string>();
   const setToolTab = (value: Settings["ev3Tab"]): void => settingsStore.set("ev3Tab", value);
-  const toggleRightPanel = (panel: "ev3" | "collab"): void =>
+  const toggleRightPanel = (panel: "ev3" | "collab" | "plugins"): void =>
     settingsStore.set("rightPanel", (previous) => (previous === panel ? null : panel));
   const setFilesOpen = (
     value: Settings["filesOpen"] | ((previous: Settings["filesOpen"]) => Settings["filesOpen"]),
@@ -285,8 +325,6 @@ export function App(): React.JSX.Element {
   const execution = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const executionLocked =
     controller.editingLockedFor(activeSession?.workspace.id) || updatePreparing || closingProject;
-  const [motorTest] = useState(() => new MotorTestController(window.kobrixa.device));
-  const motorBusy = useSyncExternalStore(motorTest.subscribe, motorTest.getBusy);
   const [remoteFiles] = useState(() => new RemoteFilesController(window.kobrixa, controller));
   const [monitor] = useState(
     () =>
@@ -297,7 +335,6 @@ export function App(): React.JSX.Element {
       }),
   );
   const remoteState = useSyncExternalStore(remoteFiles.subscribe, remoteFiles.getSnapshot);
-  const [sensorLab] = useState(() => new SensorLabController(window.kobrixa.sensorLab));
   const [monitorView, setMonitorView] = useState<"readings" | "lab">("readings");
   const [collab] = useState(
     () =>
@@ -377,18 +414,10 @@ export function App(): React.JSX.Element {
     [controller, controlNotice],
   );
   useEffect(() => {
-    void sensorLab.initialize();
-    void motorTest.initialize();
-    const stopMotorActivity = motorTest.subscribe(() =>
-      controller.recordMotorTest(motorTest.getSnapshot()),
-    );
     return () => {
-      sensorLab.dispose();
-      stopMotorActivity();
-      void motorTest.dispose();
       void monitor.dispose().catch(() => {});
     };
-  }, [sensorLab, monitor, motorTest, controller]);
+  }, [monitor]);
   const [deviceOverlay, setDeviceOverlay] = useState(false);
   useEffect(() => {
     remoteFiles.setSession(execution.session?.id, execution.deployed?.path);
@@ -418,7 +447,7 @@ export function App(): React.JSX.Element {
   }, [batteryState.low]);
   useEffect(() => window.kobrixa.device.onEvent(remoteFiles.onEvent), [remoteFiles]);
   const setConnectionMode = (mode: Settings["connectionMode"]) =>
-    settingsStore.set("connectionMode", mode);
+    deviceMigration === "inactive" && settingsStore.set("connectionMode", mode);
   const connectionModeRef = useRef(connectionMode);
   connectionModeRef.current = connectionMode;
   const [projectBusy, setProjectBusy] = useState(false);
@@ -676,8 +705,6 @@ export function App(): React.JSX.Element {
     setUpdatePreparing(true);
     try {
       await restoration.current;
-      await window.kobrixa.sensorLab.stop("close");
-      await motorTest.drain();
       await monitor.drain();
       editorRef.current?.captureView();
       await flushDrafts();
@@ -695,7 +722,7 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     restoration.current ??= (async () => {
       try {
-        await staticLanguages.ready;
+        await Promise.all([staticLanguages.ready, pluginUi.ready]);
         const saved = await window.kobrixa.workspace.restoreSession();
         setSessionIssues(saved.issues);
         for (const summary of saved.workspaces)
@@ -741,6 +768,9 @@ export function App(): React.JSX.Element {
     historyReview ||
     (workspace && quickOpenWorkspace === workspace.id),
   );
+  useLayoutEffect(() => {
+    pluginUi.gate("modal", modalOpen || updatePreparing);
+  }, [pluginUi, modalOpen, updatePreparing]);
   const diagnostics = useMemo(() => {
     const seen = new Set<string>();
     return [...liveDiagnostics, ...buildDiagnostics].filter((item) => {
@@ -1793,7 +1823,7 @@ export function App(): React.JSX.Element {
     selected: WorkspaceSummary,
     view?: WorkspaceView,
   ): Promise<ProjectSession> {
-    await staticLanguages.ready;
+    await Promise.all([staticLanguages.ready, pluginUi.ready]);
     const existing = sessions.get(selected.id);
     if (existing) return existing;
     const project = sessions.add(selected, view);
@@ -2000,7 +2030,7 @@ export function App(): React.JSX.Element {
     file: string,
     replaceTabs = false,
   ): Promise<boolean> {
-    await staticLanguages.ready;
+    await Promise.all([staticLanguages.ready, pluginUi.ready]);
     const target = `${current.id}\0${file}`;
     if (fileOpenRequest.current.target !== target) {
       fileOpenRequest.current.target = target;
@@ -2056,7 +2086,7 @@ export function App(): React.JSX.Element {
     workspaceId = workspaceStateRef.current?.id,
     reviewed?: WorkspaceFileSnapshot,
   ): Promise<boolean> {
-    await staticLanguages.ready;
+    await Promise.all([staticLanguages.ready, pluginUi.ready]);
     const project = sessions.get(workspaceId);
     if (!project || !workspaceId || !canMutateWorkspace(workspaceId)) return false;
     const sharedSync = collabFiles.for(workspaceId);
@@ -2773,8 +2803,6 @@ export function App(): React.JSX.Element {
     setUpdatePreparing(true);
     setConfirmUpdate(false);
     try {
-      await window.kobrixa.sensorLab.stop("update");
-      await motorTest.drain();
       await monitor.drain();
       await flushSharedRoom();
       await window.kobrixa.updates.prepareInstall();
@@ -2803,11 +2831,10 @@ export function App(): React.JSX.Element {
   }, [updates?.phase]);
 
   function runCommand(command: AppCommand): void {
-    if (
-      command === "stop" &&
-      (motorTestActive(motorTest.getSnapshot()) || motorTest.getSnapshot().phase === "unconfirmed")
-    ) {
-      void motorTest.stop();
+    // Trusted core Stop also owns public motion; keep it ahead of UI fences.
+    if (command === "stop") {
+      if (execution.phase === "building") void controller.cancelBuild();
+      else void controller.stop();
       return;
     }
     if (updatePreparingRef.current || closingProjectRef.current) return;
@@ -2824,10 +2851,6 @@ export function App(): React.JSX.Element {
     }
     if (command === "nextTab" || command === "previousTab") {
       cycleTabs(command === "nextTab" ? 1 : -1);
-      return;
-    }
-    if (command === "stop" && execution.phase === "building") {
-      void controller.cancelBuild();
       return;
     }
     if (command === "collab") {
@@ -2896,14 +2919,10 @@ export function App(): React.JSX.Element {
       case "run":
         if (!controller.deviceControlBlocked) requestExecution(true);
         break;
-      case "stop":
-        if (execution.session && !controller.locked) void controller.stop();
-        break;
     }
   }
 
   function requestExecution(run: boolean): void {
-    if (run && motorTestActive(motorTest.getSnapshot())) return;
     if (
       !workspace ||
       controller.locked ||
@@ -3094,7 +3113,11 @@ export function App(): React.JSX.Element {
       const previous = controller.getSnapshot().session?.id;
       void controller.connect(address).then(() => {
         const session = controller.getSnapshot().session;
-        if (session?.transport === "wifi" && session.id !== previous)
+        if (
+          deviceMigration === "inactive" &&
+          session?.transport === "wifi" &&
+          session.id !== previous
+        )
           settingsStore.rememberAddress(address);
       });
     }
@@ -3140,6 +3163,7 @@ export function App(): React.JSX.Element {
 
   const settingsPage = (
     <SettingsPanel
+      externalDevicePreferences={deviceMigration !== "inactive"}
       filePreferences={filePreferences}
       reducedMotion={reducedMotion}
       settings={settings}
@@ -3203,12 +3227,7 @@ export function App(): React.JSX.Element {
           }
           deviceControlNotice={controlNotice}
           deviceLocked={
-            updatePreparing ||
-            controller.locked ||
-            motorBusy ||
-            managingEntries ||
-            projectBusy ||
-            modalOpen
+            updatePreparing || controller.locked || managingEntries || projectBusy || modalOpen
           }
           projectLocked={
             restoring || updatePreparing || managingEntries || projectBusy || modalOpen
@@ -3217,7 +3236,6 @@ export function App(): React.JSX.Element {
           locked={executionLocked || managingEntries || projectBusy || modalOpen}
           canSave={Boolean(!settingsActive && active && active.dirty)}
           state={execution}
-          motorTesting={motorBusy}
           onNew={() => runCommand("newProject")}
           onOpen={() => runCommand("openProject")}
           onSave={() => runCommand("save")}
@@ -3232,13 +3250,22 @@ export function App(): React.JSX.Element {
           devicePanelOpen={rightPanel === "ev3"}
           onDevice={() => toggleRightPanel("ev3")}
           collab={
-            <CollabStatusChip
-              store={collab}
-              locale={locale}
-              active={rightPanel === "collab"}
-              pending={deviceControl?.state.requests.length ?? 0}
-              onOpen={() => toggleRightPanel("collab")}
-            />
+            <>
+              <button
+                className="plugin-tools-toggle"
+                aria-pressed={rightPanel === "plugins"}
+                onClick={() => toggleRightPanel("plugins")}
+              >
+                {uiLabels.tools}
+              </button>
+              <CollabStatusChip
+                store={collab}
+                locale={locale}
+                active={rightPanel === "collab"}
+                pending={deviceControl?.state.requests.length ?? 0}
+                onOpen={() => toggleRightPanel("collab")}
+              />
+            </>
           }
         />
         <ProjectTabs
@@ -3325,6 +3352,16 @@ export function App(): React.JSX.Element {
               }}
             />
           )}
+        <CoreRecoveryView
+          port={recoveryPort}
+          locale={locale}
+          labels={uiLabels}
+          request={recoveryRequest}
+        />
+        <CorePersistenceRecovery
+          port={window.kobrixa.plugins.persistenceRecovery}
+          labels={uiLabels}
+        />
         <PluginRecoveryNotice
           locale={locale}
           onOpenSettings={() => {
@@ -4026,6 +4063,23 @@ export function App(): React.JSX.Element {
           className={`sidebar device-panel ${deviceOpen ? "" : "collapsed"}`}
           aria-hidden={!deviceOpen}
         >
+          <div
+            className="right-pane-content plugin-pane"
+            hidden={rightPanel !== "plugins" || settingsActive}
+          >
+            {deviceMigration === "pending" && (
+              <DevicePreferenceCaptureNotice
+                locale={locale}
+                retry={() => void pluginUi.deviceMigration.retry()}
+              />
+            )}
+            <PluginToolsPane
+              session={pluginUi.session}
+              locale={locale}
+              labels={uiLabels}
+              onClose={() => settingsStore.set("rightPanel", null)}
+            />
+          </div>
           <div className="right-pane-content" hidden={rightPanel !== "ev3"}>
             <ToolsPanel
               tab={toolTab}
@@ -4036,14 +4090,19 @@ export function App(): React.JSX.Element {
               }}
               monitor={
                 <MonitorWorkspace
-                  lab={sensorLab}
-                  motor={motorTest}
+                  plugins={pluginUi.session}
+                  onOpenTools={() => settingsStore.set("rightPanel", "plugins")}
                   view={monitorView}
                   onView={setMonitorView}
                   controller={monitor}
                   locale={locale}
                   sessionId={execution.session?.id}
-                  active={toolTab === "monitor" && !updatePreparing}
+                  active={
+                    rightPanel === "ev3" &&
+                    !settingsActive &&
+                    toolTab === "monitor" &&
+                    !updatePreparing
+                  }
                   locked={updatePreparing || controller.locked}
                   controlNotice={controlNotice}
                   onConnect={() => setToolTab("connection")}
@@ -4061,12 +4120,15 @@ export function App(): React.JSX.Element {
                     </p>
                   )}
                   <DevicePanel
+                    {...(deviceMigration !== "inactive"
+                      ? { onOpenConnectionTools: openDeviceTools }
+                      : {})}
                     t={t}
                     locale={locale}
                     state={execution}
                     devices={devices}
                     discovering={discovering}
-                    locked={updatePreparing || controller.locked || motorBusy}
+                    locked={updatePreparing || controller.locked}
                     mode={connectionMode}
                     onMode={(mode) => {
                       setConnectionMode(mode);
@@ -4092,7 +4154,7 @@ export function App(): React.JSX.Element {
                   state={remoteState}
                   active={toolTab === "files"}
                   locale={locale}
-                  locked={updatePreparing || controller.locked || motorBusy}
+                  locked={updatePreparing || controller.locked}
                   controlNotice={controlNotice}
                   deployedPath={execution.deployed?.path}
                   onConnect={() => setToolTab("connection")}
@@ -4519,6 +4581,7 @@ export function App(): React.JSX.Element {
         />
       )}
       <footer>
+        <PluginStatusHost session={pluginUi.session} locale={locale} labels={uiLabels} />
         <div className="status-group">
           {active ? (
             <span className={active.dirty || activeConflict ? "dirty" : ""}>
@@ -4539,15 +4602,6 @@ export function App(): React.JSX.Element {
           {locked ? t.phases[execution.phase] : checking ? t.checking : status}
         </span>
         <div className="status-group status-details">
-          <RecordingStatus
-            controller={sensorLab}
-            locale={locale}
-            onOpen={() => {
-              setDeviceOpen(true);
-              setToolTab("monitor");
-              setMonitorView("lab");
-            }}
-          />
           {active && !settingsActive && (
             <>
               <CursorPosition store={cursorStore} lineLabel={t.line} columnLabel={t.column} />

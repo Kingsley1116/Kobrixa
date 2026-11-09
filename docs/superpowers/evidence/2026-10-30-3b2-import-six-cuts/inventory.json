@@ -1,0 +1,926 @@
+[
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-marker-deleted.candidate.json",
+    "archive": "import-after-marker-deleted.candidate.json.gz",
+    "rawBytes": 3161817,
+    "rawSha256": "85950683c0cc19672d03ae333374819387f4aaf14b33583c14b6f62d82198df5",
+    "archiveSha256": "3efff92c129485c9b4e2b8040e60626e4153a12ef0997a1cb2b6ca1c2d2532b5"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-marker-deleted.json",
+    "archive": "import-after-marker-deleted.json.gz",
+    "rawBytes": 1234,
+    "rawSha256": "c879d8c8c1ce7a686ba708244c93e813b6088b0e7349abe4674ee84a52b725ed",
+    "archiveSha256": "060de53a1fd6b759bed363e8dbe1676ed332fd3155c12b6c4e878c6581e7c5f0"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-marker-deleted.receipt.json",
+    "archive": "import-after-marker-deleted.receipt.json.gz",
+    "rawBytes": 3162453,
+    "rawSha256": "5904f65d0a1f83fe2fd8b640889c5abf69c32cb6c37615fb6ec664ec5a681b4c",
+    "archiveSha256": "5533eeeedbc338071d14565d72358ac675cd030c3e071da004423dea21e371c5"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-marker-deleted.wire.jsonl",
+    "archive": "import-after-marker-deleted.wire.jsonl.gz",
+    "rawBytes": 2861738,
+    "rawSha256": "51152ef60a619af70f243d0640a02a2ce5ad6fb1e79875840ae3d13e04e52601",
+    "archiveSha256": "f324570e7ea49444f6650e6d84209a74b608935300c430e4576aa8fe41dee8db"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-marker-kill.candidate.json",
+    "archive": "import-after-marker-kill.candidate.json.gz",
+    "rawBytes": 414763,
+    "rawSha256": "7cbe2d7abf74e6e28cb089d8dc4611dcbfe2c6d4579d662a6087bf9202d7590e",
+    "archiveSha256": "fe5cf439ae728aa6a9a78ec4ff795690d9afdd7811e5f8f0c794381a98d0d9f0"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-marker-kill.json",
+    "archive": "import-after-marker-kill.json.gz",
+    "rawBytes": 1225,
+    "rawSha256": "1c6776fedbbdb1a11c330a1e8202db6e8620976ec33c68d7933409136823150f",
+    "archiveSha256": "102230c98873daee854afd59648b00f4ce07021845f4d1e9ab940de1300bd587"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-marker-kill.receipt.json",
+    "archive": "import-after-marker-kill.receipt.json.gz",
+    "rawBytes": 415404,
+    "rawSha256": "d1425c84905e6211cafecf1b04da2ad70d55913ae867c647e17e100c8b872d98",
+    "archiveSha256": "8596ddc845b9e43086b98c9523c4beb41ad7586912ff067a19e0270db9cfe009"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-marker-reopen1.candidate.json",
+    "archive": "import-after-marker-reopen1.candidate.json.gz",
+    "rawBytes": 3241591,
+    "rawSha256": "afc275f0923e682a3603f431ceff4a7722934f2e4b39c07e9dbe11511c603058",
+    "archiveSha256": "2c041dd3f3b82e9ebc6a1a0537d083f3c94db8a70e6cacd8f94330c6934394b4"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-marker-reopen1.json",
+    "archive": "import-after-marker-reopen1.json.gz",
+    "rawBytes": 1234,
+    "rawSha256": "9bae40b887a2d546df021863a9fec440a64b15e8d7ac80b94f19364928f51b94",
+    "archiveSha256": "caa9ffc514e0aa8d1b23fa2e52a52041b8cbc20b8597d7912b6689bbde009214"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-marker-reopen1.receipt.json",
+    "archive": "import-after-marker-reopen1.receipt.json.gz",
+    "rawBytes": 3242227,
+    "rawSha256": "5ca1ac58dd6d5696c2fbf9c32c7413e6ccb6422a2aa2b0ced04a1229ff541828",
+    "archiveSha256": "0a6f124426c2434a5ab94031539c2ce7f525fc6b5962ac828f5791ac34714917"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-marker-reopen1.wire.jsonl",
+    "archive": "import-after-marker-reopen1.wire.jsonl.gz",
+    "rawBytes": 2940146,
+    "rawSha256": "ce4247c22f7fa827d3b401fbfdcdb742084b2eafeed4846d7d36b236eafe19c5",
+    "archiveSha256": "e576f478026d00d6079a98beed9ab77631024b031c893ba88a8ca99da593155b"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-marker-reopen2.candidate.json",
+    "archive": "import-after-marker-reopen2.candidate.json.gz",
+    "rawBytes": 3240225,
+    "rawSha256": "6a95bc2c3aab857b50596992686d05fbac5cad8954c8b34735d4725f5d1f966d",
+    "archiveSha256": "63d064c7b2dd3d1a63b9543e3eeb5ae1874a631a720d8c1d138fb2d31f94d2ad"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-marker-reopen2.json",
+    "archive": "import-after-marker-reopen2.json.gz",
+    "rawBytes": 1234,
+    "rawSha256": "80b68155233117cb0f39ac6670541318f6712a49dc4419861ab03f6c7c43b872",
+    "archiveSha256": "1165da53d140083d819151a53f876c8a8214b29967ff4223ebe81e6430fd6129"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-marker-reopen2.receipt.json",
+    "archive": "import-after-marker-reopen2.receipt.json.gz",
+    "rawBytes": 3240861,
+    "rawSha256": "db0b68349b8b19686c5287e16c2537d6024038eb64b352180ebb022a1c178a7b",
+    "archiveSha256": "9c79583f295c56dd813c6117c7a3524b539c5c2e0a8c5f3cf96c9997be9e63bb"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-marker-reopen2.wire.jsonl",
+    "archive": "import-after-marker-reopen2.wire.jsonl.gz",
+    "rawBytes": 2940146,
+    "rawSha256": "f34189acf1d5e13d691a71a99b46c417dc81edef2ed7dcab9c9b8dc1a134359e",
+    "archiveSha256": "9e6ee3ed8c86333a2efecc0c303823306cb4ef1ba93704b76fda6a2f3943a564"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-marker-reopen3.candidate.json",
+    "archive": "import-after-marker-reopen3.candidate.json.gz",
+    "rawBytes": 3263697,
+    "rawSha256": "a717b503dd9f3942cede84a47c013f27d0862f63174ec914e4fbb85ef8fe52dc",
+    "archiveSha256": "5bacf6e0b6088a7de84ac7bb34953445f20a1038d2364bc5468ca9588752c666"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-marker-reopen3.json",
+    "archive": "import-after-marker-reopen3.json.gz",
+    "rawBytes": 1234,
+    "rawSha256": "df7ab11633c9440e5b7b3e364e118861f04877a955a7d375f71333474aea30d9",
+    "archiveSha256": "8d910c81c296a1ea0d7bc31f8192b7d2e553b49800f70527facd29cf2ca8e5e2"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-marker-reopen3.receipt.json",
+    "archive": "import-after-marker-reopen3.receipt.json.gz",
+    "rawBytes": 3264333,
+    "rawSha256": "655ce5ccd5825a52c87ad792a8973de535319ce316ebd47fa31a76c728c389f9",
+    "archiveSha256": "d551425f7c4fe268e2af732bea27449d54d1e322790ec16fc9913f02c05a9b1d"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-marker-reopen3.wire.jsonl",
+    "archive": "import-after-marker-reopen3.wire.jsonl.gz",
+    "rawBytes": 2962610,
+    "rawSha256": "1eec6116d412b4e40f16b107f673ad4bed84918307a030f9afdb503df1c8eb9f",
+    "archiveSha256": "6a62ae8c642edc19584112206c123846c22a0270e6aa76526d790aa0263906b8"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-publish-deleted.candidate.json",
+    "archive": "import-after-publish-deleted.candidate.json.gz",
+    "rawBytes": 3161839,
+    "rawSha256": "98579046d9b52941acc909894aa500e0a9b83f2f62137660c9e02778d6086d17",
+    "archiveSha256": "c8d1c1444d2bcef66786035fe6f4d9b7a8c9b4e961a303c7fc6d2236180806ca"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-publish-deleted.json",
+    "archive": "import-after-publish-deleted.json.gz",
+    "rawBytes": 1239,
+    "rawSha256": "1f7a085538604a32ba41d369c1220516adcf6ded3418521368ac29f6820f4f54",
+    "archiveSha256": "8f137aedc0e09e6052b8e0e0ec7ea32ddcfcd01584b7f23a4950b905e1f0eb61"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-publish-deleted.receipt.json",
+    "archive": "import-after-publish-deleted.receipt.json.gz",
+    "rawBytes": 3162454,
+    "rawSha256": "2fc1fef57789fdd53194ceb8ec1bf0c6a7cb738550d2837fd04d4182eb97d3da",
+    "archiveSha256": "74fa886dc0753c582b8a3b662ab0b48a932ec09bce0d5650aed591075c614c4c"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-publish-deleted.wire.jsonl",
+    "archive": "import-after-publish-deleted.wire.jsonl.gz",
+    "rawBytes": 2861738,
+    "rawSha256": "2bf75878e7fa9b2933bd58269070d5985e4984a564a592cc09857db217d09cb8",
+    "archiveSha256": "a9ddf4fa7a46d3ee56eb5a7d156c8778bd30070bb0798f62ff5e6d78841f5ec6"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-publish-kill.candidate.json",
+    "archive": "import-after-publish-kill.candidate.json.gz",
+    "rawBytes": 253092,
+    "rawSha256": "2bd0966dbecc5b1c59ff4239889637039df8040fdb39b80a1e99a796e01ba8f8",
+    "archiveSha256": "8aa87798ef938120d3ea126e2928b1b1d557a2f9ad48fa6607fcef074a5bff2c"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-publish-kill.json",
+    "archive": "import-after-publish-kill.json.gz",
+    "rawBytes": 1230,
+    "rawSha256": "5719478d3bd281ea82fd8685be049f0dc8075c9322a848703615cdf20a3e54c6",
+    "archiveSha256": "85d3dbdaa54ac2a006db6932539d2abe1f4d02a3afdb232bd2b536fdbd3e8961"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-publish-kill.receipt.json",
+    "archive": "import-after-publish-kill.receipt.json.gz",
+    "rawBytes": 253713,
+    "rawSha256": "f14e1b866087c45a99d0dd94e3d5b31fdd6bbf92b0ff8c0c01144fb9db9b4f95",
+    "archiveSha256": "74799dbc899db4601014d3fa8516ec2512f8f998b286a9e812aa7049caf16f47"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-publish-reopen1.candidate.json",
+    "archive": "import-after-publish-reopen1.candidate.json.gz",
+    "rawBytes": 3426497,
+    "rawSha256": "61495ad4f6de064c063d225178e24736a59f5448ce33d0a4416b7eced836fdf2",
+    "archiveSha256": "5b95b5a62b8082a364f476f53a342a6067f2c5fa40b71f2b942f77c9456ba6ef"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-publish-reopen1.json",
+    "archive": "import-after-publish-reopen1.json.gz",
+    "rawBytes": 1239,
+    "rawSha256": "4ebcb329ce540203115c1d9a731f1f018e011eb9ffecf5ae0a4dc832dda02499",
+    "archiveSha256": "cdf3abe6e1010e26b783ebc163848699adec6689f819d80b8e74cccae319ce40"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-publish-reopen1.receipt.json",
+    "archive": "import-after-publish-reopen1.receipt.json.gz",
+    "rawBytes": 3427112,
+    "rawSha256": "bdb19d33997381f311aee94d37969a7a0be9b61ea240f45518a6faeb4fb043d8",
+    "archiveSha256": "3e80f4da9c5e9c465b5faee207f2d4d88f9289eea58f9869f4b58c9bf1063847"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-publish-reopen1.wire.jsonl",
+    "archive": "import-after-publish-reopen1.wire.jsonl.gz",
+    "rawBytes": 2940146,
+    "rawSha256": "854af9572f7dcf9c057334669e05a8c6705e15779e420ca205f4522219b4270c",
+    "archiveSha256": "cd8dbe1e3c47cae8d7fff24eb03584f18e76c76df6d82a7fc694a5bb4ab441ec"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-publish-reopen2.candidate.json",
+    "archive": "import-after-publish-reopen2.candidate.json.gz",
+    "rawBytes": 3240247,
+    "rawSha256": "d9b66b31e3e3aa5afde90e34c16514c32f53105081c73a47d7124205a3b5e90a",
+    "archiveSha256": "41a9ce407222e1072a043ff7fb85c51b379d45f7c4a204013e13a35fbe1f05f1"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-publish-reopen2.json",
+    "archive": "import-after-publish-reopen2.json.gz",
+    "rawBytes": 1239,
+    "rawSha256": "8af190e555e16032d9028d52f63f90770b45654b0c3d2ecc0bf23f2768bfc7e0",
+    "archiveSha256": "8b804130956965dcb7c927e39cba3e433658a68004c24ebdfabdefc06dab07f7"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-publish-reopen2.receipt.json",
+    "archive": "import-after-publish-reopen2.receipt.json.gz",
+    "rawBytes": 3240862,
+    "rawSha256": "e380a463ae58651a9c6a6908cc22780f127d5c6dc149312a9e88b745bbd42a7a",
+    "archiveSha256": "07dbbc5c6b884ed5e4e78ff7951972153ea7c8009034fd5d9c0a25eeca4d1b69"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-publish-reopen2.wire.jsonl",
+    "archive": "import-after-publish-reopen2.wire.jsonl.gz",
+    "rawBytes": 2940146,
+    "rawSha256": "c72bee30b9dab45c43c36d84ff982da0601b4e1743abd81da23c38971875a9b6",
+    "archiveSha256": "77f236e9321310bf8c845aa9661ede4d5a960361fda8921883c421c7b8f3e50a"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-publish-reopen3.candidate.json",
+    "archive": "import-after-publish-reopen3.candidate.json.gz",
+    "rawBytes": 3263719,
+    "rawSha256": "aca81c09e9ee564bd05edd5a885accbb3ed522e55752bcb2cd2e4d55a2b1e1b9",
+    "archiveSha256": "23fd5eb15e20e3ae8d90b35b73254f3ad82669923406f203a9f5f8124a450b70"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-publish-reopen3.json",
+    "archive": "import-after-publish-reopen3.json.gz",
+    "rawBytes": 1239,
+    "rawSha256": "444976fe3a7c97976626fd8ddaa05f6758339477ef5913269073067c347745a9",
+    "archiveSha256": "bcc2ce4ecac8619898e0dfede5e43c69d258bc26bb89d5dbd5fd92eb9fd56069"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-publish-reopen3.receipt.json",
+    "archive": "import-after-publish-reopen3.receipt.json.gz",
+    "rawBytes": 3264328,
+    "rawSha256": "3c273875de08fd0ff25e16ce2b3c9848348d80e8a94ee1de0ee4a0824e5dc11d",
+    "archiveSha256": "4bb5c24d04aa2cbdc474f615277d2fa7273a264a61d12164fc971baf235e1578"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-publish-reopen3.wire.jsonl",
+    "archive": "import-after-publish-reopen3.wire.jsonl.gz",
+    "rawBytes": 2962610,
+    "rawSha256": "6255838fd84d424dc8781cdb432398e96df3e1a2fe7f6afcd636a2b40aacfe4a",
+    "archiveSha256": "151609fe16763edb0c6e52d6f15b0a8b97220aee301298e185be8030b548ee7c"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-receipt-deleted.candidate.json",
+    "archive": "import-after-receipt-deleted.candidate.json.gz",
+    "rawBytes": 3161831,
+    "rawSha256": "6c40226510871942d33430a5d86605a0b3ee1a4d0815d291258706e4e7009932",
+    "archiveSha256": "e9234a2a14f8de6f737dea2342737607bda01251d10063ec7b74ab0f162ef8d8"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-receipt-deleted.json",
+    "archive": "import-after-receipt-deleted.json.gz",
+    "rawBytes": 1239,
+    "rawSha256": "da84f82c7f0cf135abe168e5c6b2b63fd9952d4276443b0c52e96728c2180278",
+    "archiveSha256": "feb54cd03a509d75177b776dba23acc8ea218a73e88bb9acf1cb6a7aa80230c5"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-receipt-deleted.receipt.json",
+    "archive": "import-after-receipt-deleted.receipt.json.gz",
+    "rawBytes": 3162446,
+    "rawSha256": "e8b87fc219c91b9d38029743c1085bc1d82c954af7cdc731db9ddd3e4da57631",
+    "archiveSha256": "c8d5d4e79019de0cf3787589ed888af47c9f473ffe12688cfbe358a2fd762959"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-receipt-deleted.wire.jsonl",
+    "archive": "import-after-receipt-deleted.wire.jsonl.gz",
+    "rawBytes": 2861738,
+    "rawSha256": "2d91dd043e2fefc109720e1b7697e7354dea3ca2df8e09bfff89ed06d9770115",
+    "archiveSha256": "9c352b934467de04f7f3a137cc0fece598cc25089e89347d98e9de0f6d1c969f"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-receipt-kill.candidate.json",
+    "archive": "import-after-receipt-kill.candidate.json.gz",
+    "rawBytes": 322037,
+    "rawSha256": "e43aff5482d9d65fc5bfe5102cca3117f878b483a8f181867cf24afd05a1e476",
+    "archiveSha256": "dc53120a54f8b9215a29fe7b956b4bed0b7730e3001456116a65f535185b65c7"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-receipt-kill.json",
+    "archive": "import-after-receipt-kill.json.gz",
+    "rawBytes": 1230,
+    "rawSha256": "e16d46ab586d0778ca12a8b69b866b4eb43bd875733e70b601a7cbd51e002de3",
+    "archiveSha256": "11cddf63140fb8fec394749b1113ba744172e1f6314890c832d31aa981e12697"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-receipt-kill.receipt.json",
+    "archive": "import-after-receipt-kill.receipt.json.gz",
+    "rawBytes": 322658,
+    "rawSha256": "93a072df6bb2999ec3b5526c2b251c9e09082da8400b41666b56f9e5a25e4219",
+    "archiveSha256": "dc4cae4690eaceab2a2742bcf6e39179d921327966e7badecdf93fb0af1a577a"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-receipt-reopen1.candidate.json",
+    "archive": "import-after-receipt-reopen1.candidate.json.gz",
+    "rawBytes": 3425686,
+    "rawSha256": "c0bdd57d1c7234d267b5b2633886991b4c662667f350cbe64058b61d034aecbc",
+    "archiveSha256": "ad8afece5d42f0f25d8d0b64f4907dd7dc3032ff8df940d53c5aadbf813eab3e"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-receipt-reopen1.json",
+    "archive": "import-after-receipt-reopen1.json.gz",
+    "rawBytes": 1239,
+    "rawSha256": "3ce7320fbaa6eeb3d59fba3bca33816ad7ff39ca36386b4b3549412f2d6f84d8",
+    "archiveSha256": "010a9c61bfb79bf8c6e086cf6df6102588c6cb9abe1fbb12e0c249fd56cbbe33"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-receipt-reopen1.receipt.json",
+    "archive": "import-after-receipt-reopen1.receipt.json.gz",
+    "rawBytes": 3426295,
+    "rawSha256": "6d9e2bff64c141c81f84e033ceb920033ccc8e54c9f8bd5b114fa8133f98feb2",
+    "archiveSha256": "43b36a38b9f1c4aa0c8709979f47f442637a81e51e64f3b0aa6f0d5e0ddf44d7"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-receipt-reopen1.wire.jsonl",
+    "archive": "import-after-receipt-reopen1.wire.jsonl.gz",
+    "rawBytes": 2940146,
+    "rawSha256": "3827d246378ce088a86049632a0621f19f50acd912d20c042bbbd0a4d9587252",
+    "archiveSha256": "260ad5581daf65688469bc925b4fc03fdeddb850757a4f34cf189fae969c3ed6"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-receipt-reopen2.candidate.json",
+    "archive": "import-after-receipt-reopen2.candidate.json.gz",
+    "rawBytes": 3240239,
+    "rawSha256": "e90375cf73cee5052229f3038f9e98e74fbd344314de4046d46a3ceb271bd0e1",
+    "archiveSha256": "172b7e9b5000311d412749f8640baf1cf7f8da92d5126b651cee5a13b92007f8"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-receipt-reopen2.json",
+    "archive": "import-after-receipt-reopen2.json.gz",
+    "rawBytes": 1239,
+    "rawSha256": "8524e6b665a8243dac4eb6842eade1c8c1eaccf5c876575b834ef9e571330be7",
+    "archiveSha256": "034631a6ce8a95c4bc1422f48e3211d161094330566f527fce89056df0a3e008"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-receipt-reopen2.receipt.json",
+    "archive": "import-after-receipt-reopen2.receipt.json.gz",
+    "rawBytes": 3240854,
+    "rawSha256": "e3944274a6ef29cba2fa0d17141e70aff500b4cc1731fb821b2cc70c83c2e936",
+    "archiveSha256": "6aced4b8a850a195f062fa9f41d9fbcee1e03a7552e0b4481a3ae07cbee421d3"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-receipt-reopen2.wire.jsonl",
+    "archive": "import-after-receipt-reopen2.wire.jsonl.gz",
+    "rawBytes": 2940146,
+    "rawSha256": "b8b1f05523cca8264b3daf3daf701aeb1bddfb5f659a2169f422b5687bb72e48",
+    "archiveSha256": "03c0e209e93c0c528923cfdb3d22159bf37739f0a647e747282895b5b11ce907"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-receipt-reopen3.candidate.json",
+    "archive": "import-after-receipt-reopen3.candidate.json.gz",
+    "rawBytes": 3263710,
+    "rawSha256": "f2c949c72a94a2f3b63cea98c3bc4f775dc586844c2c8f7a258f54acc916daa2",
+    "archiveSha256": "fbd440a78f2e4324c89a6cf60005a747c785cb4d018cdffee2df3466979ce6c8"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-receipt-reopen3.json",
+    "archive": "import-after-receipt-reopen3.json.gz",
+    "rawBytes": 1239,
+    "rawSha256": "c5ad7d38dd7373d7bdca080afee1f2c3571d379356890738a94b3cd6e1f8d9b6",
+    "archiveSha256": "b3aca0cd47361ad9b22d8f0529346fd66e3dbbcc6c1376306cc96624fb456ccc"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-receipt-reopen3.receipt.json",
+    "archive": "import-after-receipt-reopen3.receipt.json.gz",
+    "rawBytes": 3264325,
+    "rawSha256": "4241d0067ae3529e6a3d50d9cddc1d0c0a4c5f37a2d4aebe358e49dc4b947bd1",
+    "archiveSha256": "79a4cb7a510a34bcd0b3126b2b0464945002045254e2a82651bb786149ace301"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-after-receipt-reopen3.wire.jsonl",
+    "archive": "import-after-receipt-reopen3.wire.jsonl.gz",
+    "rawBytes": 2962610,
+    "rawSha256": "1afb6711cc56506a6aa197eb92390bad7e8e6efabbc54a35decb7ba0c2775b07",
+    "archiveSha256": "595b8f5d604cd2d9a0f2efff2c3d0bc2e874736ea487305a10c2363b1457d214"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-marker-deleted.candidate.json",
+    "archive": "import-before-marker-deleted.candidate.json.gz",
+    "rawBytes": 3161814,
+    "rawSha256": "cffa3de856e9b88a643f2124a73f6ece47485084f4fd0ea6f539d39c9665fa20",
+    "archiveSha256": "aa41d1fcbb364e4bb05775ed1b5f276e93b86067dd6bb03fe66e6369f9ad1025"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-marker-deleted.json",
+    "archive": "import-before-marker-deleted.json.gz",
+    "rawBytes": 1239,
+    "rawSha256": "f28faf36f0764e702fee54eed610eb850c1f605528501b89216878994c41ce76",
+    "archiveSha256": "172fc2e42343529b980f8996330487655808427ffbbf4fa8e2460f280fb86cf6"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-marker-deleted.receipt.json",
+    "archive": "import-before-marker-deleted.receipt.json.gz",
+    "rawBytes": 3162450,
+    "rawSha256": "6d1fb7b95eecb46df72ad76f1957710ca2051b7e3763aabaccc36c941822c234",
+    "archiveSha256": "fde1fa338412bd07bc3405d7929b7075a52271798abef32f8a1f97a61e0d70d5"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-marker-deleted.wire.jsonl",
+    "archive": "import-before-marker-deleted.wire.jsonl.gz",
+    "rawBytes": 2861738,
+    "rawSha256": "9fdb48ff3be6ccfda47dbc5cf097865d6f99174456dd9ee96d4a7a1a6b9b3371",
+    "archiveSha256": "c8048d2f71a36e4d2f1cdb131ba8b73c1f117131f6f1d8e6f6d9181ad280cb80"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-marker-kill.candidate.json",
+    "archive": "import-before-marker-kill.candidate.json.gz",
+    "rawBytes": 415339,
+    "rawSha256": "f2c6a49ed55b31da17fb2afc817ebaa773dbb7d76ef7547eda3dc8473096bc9c",
+    "archiveSha256": "1196f5df712a6453ba14653a47acce7fac83ed70fe859acfb1d74ab5a41f6ebd"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-marker-kill.json",
+    "archive": "import-before-marker-kill.json.gz",
+    "rawBytes": 1230,
+    "rawSha256": "1970f22b7ee112672d0ebe547f910e7e870ba9d7d3de9635c5b30678c52490be",
+    "archiveSha256": "044dd2501e3eb3121b0f1a1f39cfd8a5a574c97ceda8762c0612adbc02279f75"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-marker-kill.receipt.json",
+    "archive": "import-before-marker-kill.receipt.json.gz",
+    "rawBytes": 415960,
+    "rawSha256": "b8424181783bf7cd1d53a51304cee5efcead6f1d885f6672e530fe18aace8cb2",
+    "archiveSha256": "82274a36cb0377035fcc9162353bf6ddbf539d50ff3f10432aeb30bd0a557871"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-marker-reopen1.candidate.json",
+    "archive": "import-before-marker-reopen1.candidate.json.gz",
+    "rawBytes": 3242445,
+    "rawSha256": "16b520f1780d50238a84b0c450ced740fc2679f009ebf82aed207a631f44b435",
+    "archiveSha256": "aa1c2408a2cf0aa45f136d4bd3a4522a69580dfd87ad95f066264804f7702431"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-marker-reopen1.json",
+    "archive": "import-before-marker-reopen1.json.gz",
+    "rawBytes": 1239,
+    "rawSha256": "859aa37fb9ede67618a26afc6ed77f76e1389ec27d5abf3232950f075f5cd984",
+    "archiveSha256": "f711bf1aa8cda9e518069a601d32b56ef32e68c2bbcc7e421c06558c969b24e3"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-marker-reopen1.receipt.json",
+    "archive": "import-before-marker-reopen1.receipt.json.gz",
+    "rawBytes": 3243081,
+    "rawSha256": "7b1b7899a7ed78d18c9e60c67b8ec40d7ef920f7d3d498ef270910f044d28e9b",
+    "archiveSha256": "f57f4c745b2fb0f884c33f1c3f67127077cdbf5eb5949c812811a502588b4c1e"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-marker-reopen1.wire.jsonl",
+    "archive": "import-before-marker-reopen1.wire.jsonl.gz",
+    "rawBytes": 2940146,
+    "rawSha256": "a9319ba192a458f4a90ed7cc30064274915545eb72bb148e5f23050778082562",
+    "archiveSha256": "79a80b249977dc62dcc935dd34dcbc315b529b87e6820e38fb53c5146f5a2285"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-marker-reopen2.candidate.json",
+    "archive": "import-before-marker-reopen2.candidate.json.gz",
+    "rawBytes": 3240222,
+    "rawSha256": "ba35fe07a082d9a132e96c7b4819a4e2d4a3d2bf387fddcdc0549ae1b077815f",
+    "archiveSha256": "5b34e7f75bfbc862248c99de29cd6f5254c40156b7bb6a5e4bf0756a2628234b"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-marker-reopen2.json",
+    "archive": "import-before-marker-reopen2.json.gz",
+    "rawBytes": 1239,
+    "rawSha256": "d9f1e5ad23478ad415905948f64b96c70172001fecd416d8445a5cc8f3391659",
+    "archiveSha256": "bb3bf0d781b39258ba1948d1928fc320742877431d3e6ee8870357b0986aaf52"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-marker-reopen2.receipt.json",
+    "archive": "import-before-marker-reopen2.receipt.json.gz",
+    "rawBytes": 3240858,
+    "rawSha256": "7dba05edcc7fd0099f3b663a4d57b31b71e2b44a809db89d609e3ccbd910bea8",
+    "archiveSha256": "76d35fe063a04e65fdd963f4a5a156cb326920f7aa1f6304e21856602aab7e01"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-marker-reopen2.wire.jsonl",
+    "archive": "import-before-marker-reopen2.wire.jsonl.gz",
+    "rawBytes": 2940146,
+    "rawSha256": "0d8d3cc028d3f8e8148785c6e5181d5c574e2969053cd00f530b46f61d7280da",
+    "archiveSha256": "62fb85df997fac63f97ef8a7379a9edb7d6199fd073d2370b1bc4b896b462ece"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-marker-reopen3.candidate.json",
+    "archive": "import-before-marker-reopen3.candidate.json.gz",
+    "rawBytes": 3263694,
+    "rawSha256": "9e8020cfe1eddbb57c83ff5146014c36575a77eba714754e628f0e1667cd172c",
+    "archiveSha256": "afb5d598d8f9fffdecdd5d18c7240d69010ad2ef3a816f4f1bf14370d496d947"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-marker-reopen3.json",
+    "archive": "import-before-marker-reopen3.json.gz",
+    "rawBytes": 1239,
+    "rawSha256": "7d022d8681653353f4394ce54081f4a1aa083c783ca861c3b7b1981d553dd76f",
+    "archiveSha256": "243a20c9d459241b23b3dbb040993e46b4dc7ad2f9b1fe425f7551778d27a022"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-marker-reopen3.receipt.json",
+    "archive": "import-before-marker-reopen3.receipt.json.gz",
+    "rawBytes": 3264330,
+    "rawSha256": "20cde14aa06c41886d5d8bc276a2248cd35dbd67f75855acd0d744eba3d8618a",
+    "archiveSha256": "7e587a0d5c0241686cabb68f1be5eb3e4b91736e9044df0b6f20cfc80aa4418d"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-marker-reopen3.wire.jsonl",
+    "archive": "import-before-marker-reopen3.wire.jsonl.gz",
+    "rawBytes": 2962610,
+    "rawSha256": "36d28faef31908cbf1fd54c1b54218662321412f7054018996fb46d34387386a",
+    "archiveSha256": "0a0b2aff81975e8ab2edde75619b07096278cc45b1ceff0e6fe278882f5c3e9d"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-publish-deleted.candidate.json",
+    "archive": "import-before-publish-deleted.candidate.json.gz",
+    "rawBytes": 3161851,
+    "rawSha256": "d39d769ccde62406fe2b2a672b86a871b6042df1244ff5ea487a9a3f2df06047",
+    "archiveSha256": "82280b40e76bbb3768b6363e0a683e3bd52b3031ded2959f8d0ba2ee89cf67a1"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-publish-deleted.json",
+    "archive": "import-before-publish-deleted.json.gz",
+    "rawBytes": 1244,
+    "rawSha256": "a6f01f4b5583743c05647bd6c0afcc612697e6bac03cd0339cbcb8c3fddf27ad",
+    "archiveSha256": "4f7c7c2745cb41ebdacb1513e623f131c1231e3650cc0c1ee432cecdb61fde30"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-publish-deleted.receipt.json",
+    "archive": "import-before-publish-deleted.receipt.json.gz",
+    "rawBytes": 3162466,
+    "rawSha256": "db8531dbd31bd33e7fa7fcf77c7a930180176e846aedaa3c40dacf55421b0f15",
+    "archiveSha256": "1697d70009f7770ddc7ac4038b6413022081a7980a36e107c7d2d9a714d9fa80"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-publish-deleted.wire.jsonl",
+    "archive": "import-before-publish-deleted.wire.jsonl.gz",
+    "rawBytes": 2861738,
+    "rawSha256": "eb751ef6c363cc94e3e8f8559960166996928de0da045b6e321623038d4db846",
+    "archiveSha256": "104c0af087436901ec8bf79efa8f4f5b294285181aff969ef61239f7654f8df5"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-publish-kill.candidate.json",
+    "archive": "import-before-publish-kill.candidate.json.gz",
+    "rawBytes": 253008,
+    "rawSha256": "9b588b5f05840822ec13712f8336d62aeb976f77e64fa6c1b1f83e09694991dc",
+    "archiveSha256": "26543da4c67a7034a17be3b9d4d0af39cfd4daf2aa75a4438cbca30227934494"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-publish-kill.json",
+    "archive": "import-before-publish-kill.json.gz",
+    "rawBytes": 1235,
+    "rawSha256": "d8efc80ada255f88001b91a754b285fb41805959faa5e92b5bac3837b390e01e",
+    "archiveSha256": "f8a96a1273a727c248a8afddeb8f8dc641b342affa5410ad16a8071d278cb27e"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-publish-kill.receipt.json",
+    "archive": "import-before-publish-kill.receipt.json.gz",
+    "rawBytes": 253609,
+    "rawSha256": "86623bd9e289efdbadc1181269769f6566396eedcf25fc9dbc8b447d4612cc87",
+    "archiveSha256": "74cb0075fe35f5f059ebe4f23f548411cc9b36804c22a5f5f7ad3b0ae72507ad"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-publish-reopen1.candidate.json",
+    "archive": "import-before-publish-reopen1.candidate.json.gz",
+    "rawBytes": 3430073,
+    "rawSha256": "3d15ec19a9f69d681a6e2c1b2a29cf10286134f3ca15e3497577c464a9ee4e01",
+    "archiveSha256": "7078c5bb236f5b6d798a9538763bcb5a3709dca75566f2c179d743a13e6a779a"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-publish-reopen1.json",
+    "archive": "import-before-publish-reopen1.json.gz",
+    "rawBytes": 1244,
+    "rawSha256": "21fd16eeed02d2e9d90d663ed612bff21edbed4e27f9d6fab0703f648c4e4f60",
+    "archiveSha256": "32794689d7877ad39c9da102ed552fde2f73175b9b48c7ff67ecedddd3903c19"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-publish-reopen1.receipt.json",
+    "archive": "import-before-publish-reopen1.receipt.json.gz",
+    "rawBytes": 3430668,
+    "rawSha256": "e7dd2a65b09f861df7d67ecbf719981b0cdda9c338ed930c0efc3f3927ea3013",
+    "archiveSha256": "f26ac3507361664f48c6e7b0371a7ecf0febd8fbacaf8cbdd8eb75d0eed094fe"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-publish-reopen1.wire.jsonl",
+    "archive": "import-before-publish-reopen1.wire.jsonl.gz",
+    "rawBytes": 2940146,
+    "rawSha256": "5680b5de5c66bc03d6243f66c61c071ee3becc7c31739670ac2572caa1950223",
+    "archiveSha256": "e341433652cc6fd3dd562cc06808559ca20a239cd8b9df8505698b82815f30dc"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-publish-reopen2.candidate.json",
+    "archive": "import-before-publish-reopen2.candidate.json.gz",
+    "rawBytes": 3240259,
+    "rawSha256": "b1a05a4973660a7cb4d60929acec2f0caa1802c0e0200268403d7fa1d20f277a",
+    "archiveSha256": "1005dc24e3149cc8e44c0331c996e416a676fa785eafa420a0573482cc3b20a2"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-publish-reopen2.json",
+    "archive": "import-before-publish-reopen2.json.gz",
+    "rawBytes": 1244,
+    "rawSha256": "2494b38f20c7253d1dd636e8a49e447119885c7968ae4b1b86c7d7e021dfe102",
+    "archiveSha256": "f8cb7658e90a41d07147ee70d351692f76973f0c665f566fd3ae60999cdf1562"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-publish-reopen2.receipt.json",
+    "archive": "import-before-publish-reopen2.receipt.json.gz",
+    "rawBytes": 3240874,
+    "rawSha256": "6d9c5e6bdb98b9e84fddda9e092b82884c290b96b9881b455a684a68c52e7f01",
+    "archiveSha256": "11d7cac2180050f301f91dc2944e7f2518249264015687cff2bdd39b0824f919"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-publish-reopen2.wire.jsonl",
+    "archive": "import-before-publish-reopen2.wire.jsonl.gz",
+    "rawBytes": 2940146,
+    "rawSha256": "25f3914052f38fb257be325a93dc0ce4e8bab328c21cf1c1948f6d9b49731181",
+    "archiveSha256": "3ef6be2eb09444eaf2a66dcb3bcd5a9c2b32ffd4cfdcc368321c91abc1db66bf"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-publish-reopen3.candidate.json",
+    "archive": "import-before-publish-reopen3.candidate.json.gz",
+    "rawBytes": 3263731,
+    "rawSha256": "9b3b58495a8e0677829ca634037611e4b309564d8d23bade0974400d7bbaa663",
+    "archiveSha256": "dbfc48aa7af3290bec3f07e1f402892516e132869c374c7e6bbd6c03d822a2aa"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-publish-reopen3.json",
+    "archive": "import-before-publish-reopen3.json.gz",
+    "rawBytes": 1244,
+    "rawSha256": "210769c98b41f7089df07252964b105db2a739285459644b0be6c780c8e82305",
+    "archiveSha256": "a4a2eb03d1eef3c13b5f742064a15b949818b996f7cc52eef8f6b54c7a6c5f2d"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-publish-reopen3.receipt.json",
+    "archive": "import-before-publish-reopen3.receipt.json.gz",
+    "rawBytes": 3264346,
+    "rawSha256": "bfcb25abdfea69855f1018e45d594227f5162ef0e254aa5f919feafd954ef574",
+    "archiveSha256": "a0fb8c5c039a10f1d445832f9e5726dcce76ae9775b4004003520e98a60b2762"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-publish-reopen3.wire.jsonl",
+    "archive": "import-before-publish-reopen3.wire.jsonl.gz",
+    "rawBytes": 2962610,
+    "rawSha256": "363671d8535bf35c40f98ce4ac94c64342a5bf6cfa5376e3dd3dca76e75a1304",
+    "archiveSha256": "51d56f3c6c24cf26939ba4717686734ca99c87b311ac3ccf9cfe6826a314eb8d"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-receipt-deleted.candidate.json",
+    "archive": "import-before-receipt-deleted.candidate.json.gz",
+    "rawBytes": 3161837,
+    "rawSha256": "1b2c6d5800c02f439722c4af8ee56cb6b29aef5b98c2eafcedd5b57baf03b3dd",
+    "archiveSha256": "1b5b5ee59c7e85da4a3c1941240a285ab9fd76b70193e80a8b1bbe6f78b81dba"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-receipt-deleted.json",
+    "archive": "import-before-receipt-deleted.json.gz",
+    "rawBytes": 1244,
+    "rawSha256": "d688ffc7900470f0292bf52c862906f054c825225b1a404218d972b38c9d7d73",
+    "archiveSha256": "0ca4558659c8ff352314f09635ad832eb41678e43589c8dcc40a5db5d6939c4f"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-receipt-deleted.receipt.json",
+    "archive": "import-before-receipt-deleted.receipt.json.gz",
+    "rawBytes": 3162452,
+    "rawSha256": "0e5a6514937892c7f97b3305cb86e1103207ab2f1ffd874572116f26c3a6cf8f",
+    "archiveSha256": "d380fd3aab81d93267b77a7bd9551d3751a08d1a834e2fd077088ba2cb9cd924"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-receipt-deleted.wire.jsonl",
+    "archive": "import-before-receipt-deleted.wire.jsonl.gz",
+    "rawBytes": 2861738,
+    "rawSha256": "9151f9480d6e63cf1c97f58dd51ed151a7679e12f87290c3fb6742150488953e",
+    "archiveSha256": "273a41296d74d52c7acef3f77a1f6a6428e4fbd2cb634decc08a26da2aaa4b9b"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-receipt-kill.candidate.json",
+    "archive": "import-before-receipt-kill.candidate.json.gz",
+    "rawBytes": 321954,
+    "rawSha256": "8c9459c776df07ce0cf5174b3d4f0a83f136c85f644dfde13a493b32b4dd0ef6",
+    "archiveSha256": "08cf979d32462c3d88f25f39fe31e07d4c25c53b1dc5ba39c82fc6675ff92995"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-receipt-kill.json",
+    "archive": "import-before-receipt-kill.json.gz",
+    "rawBytes": 1235,
+    "rawSha256": "3d6f578f35c555d066ff0815467dacda8c14ac53aac19033cb2059788be4ddac",
+    "archiveSha256": "96724bc465752dca09a804e3a2b26efc45f06bb923b88690916665c354d46519"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-receipt-kill.receipt.json",
+    "archive": "import-before-receipt-kill.receipt.json.gz",
+    "rawBytes": 322575,
+    "rawSha256": "2b0928727a04f60b5d02fc7cb7f6f3c244e496c27a9b6d22a7866b3de9fc5ade",
+    "archiveSha256": "3b98a2cb3e2381ded74314b859a96e7d0b88d8d6fe7c7b6372d318e451a2f442"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-receipt-reopen1.candidate.json",
+    "archive": "import-before-receipt-reopen1.candidate.json.gz",
+    "rawBytes": 3426347,
+    "rawSha256": "82bae3a23baa26b7c54df0a9f64b3bd912050facd0fae01dbdabab47080a6790",
+    "archiveSha256": "78e09284ef38ec08fa52027c2b2859d754a93a4481b388599b68fb918c5de686"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-receipt-reopen1.json",
+    "archive": "import-before-receipt-reopen1.json.gz",
+    "rawBytes": 1244,
+    "rawSha256": "3f817fa5a49433e9ff4132a68768f41274a8f4aac3f7c8cf3e10671c77807ade",
+    "archiveSha256": "e3a4332b97ecc780086304bbd50cff48e145b4081da6867b525b73d1aaae9965"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-receipt-reopen1.receipt.json",
+    "archive": "import-before-receipt-reopen1.receipt.json.gz",
+    "rawBytes": 3426962,
+    "rawSha256": "0198503e5995f2ab57b714f0f29765adffc762be5e7cb5a7705fbae27920a902",
+    "archiveSha256": "493f1e9a2dcdc60b011c40aa6e3a12d23741d414379327178812fe5d9d94a8cf"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-receipt-reopen1.wire.jsonl",
+    "archive": "import-before-receipt-reopen1.wire.jsonl.gz",
+    "rawBytes": 2940146,
+    "rawSha256": "0efb1d40f526ba1880151b962bf8eb932b5e7bce3a5d64f553b1dd01c3db5d6d",
+    "archiveSha256": "fde35eed94a7ce326421dbc96bc4f2d725e94cf6ec0e83258af64e25a3dab709"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-receipt-reopen2.candidate.json",
+    "archive": "import-before-receipt-reopen2.candidate.json.gz",
+    "rawBytes": 3240245,
+    "rawSha256": "0fffaf36b869f49d3996c39b50fbd6d5d0818c3cbad92f57b7081ed3361861d8",
+    "archiveSha256": "0bcb76b2c0bf5e70222471b0bd8ba4cb28aba87cfed0205804e20dcd1371bb6d"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-receipt-reopen2.json",
+    "archive": "import-before-receipt-reopen2.json.gz",
+    "rawBytes": 1244,
+    "rawSha256": "b5992b183777345770f3bb8e16897e58dfbece9096faca566a92ec4ae756c2b8",
+    "archiveSha256": "48b9c63fb4ecd0e1d6173e9cde5d12e1593f9bb7d515a75c3699cd64dcefced5"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-receipt-reopen2.receipt.json",
+    "archive": "import-before-receipt-reopen2.receipt.json.gz",
+    "rawBytes": 3240860,
+    "rawSha256": "e1a6bb034c57f47b063b2bffb0d33a014d7833cfbba4cfdff289dece19b7444a",
+    "archiveSha256": "5e9158c4d3f9fdc2989afbf1ffdf7f0fab9c8629c3c04e3a00db858b354aa5d1"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-receipt-reopen2.wire.jsonl",
+    "archive": "import-before-receipt-reopen2.wire.jsonl.gz",
+    "rawBytes": 2940146,
+    "rawSha256": "5891da9b4e3cd44ee74db1c905a2ae19e71728b1630ac18a5d10d2add6bc7824",
+    "archiveSha256": "62eeb076941f8bd7f08510c62b609a1dec77c92c4090a6ee8fe69d79bdbc66e5"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-receipt-reopen3.candidate.json",
+    "archive": "import-before-receipt-reopen3.candidate.json.gz",
+    "rawBytes": 3263716,
+    "rawSha256": "baf18ce04694f396207f664d43691d19dfdb6b5c4956380a0491235c8cf6df8f",
+    "archiveSha256": "0612751d5298a3ec761b07298195f72b0717333f0cb81d7f53fa74a138b4b270"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-receipt-reopen3.json",
+    "archive": "import-before-receipt-reopen3.json.gz",
+    "rawBytes": 1244,
+    "rawSha256": "56bf396b7f6e02f84e9975c5e66697664e6bf7a7d0ee7efbd8debb894bd580a4",
+    "archiveSha256": "9dfb0039bb4a92bed21559c7673ee10047bf486498da6c8126a90b89dbd698d6"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-receipt-reopen3.receipt.json",
+    "archive": "import-before-receipt-reopen3.receipt.json.gz",
+    "rawBytes": 3264331,
+    "rawSha256": "94e911907a2df77dfd26528b2ceec27b7f1c22c6523f31e55ad70db21869a034",
+    "archiveSha256": "c85f56e344d0ad5984b1e9c8a5634af39ba43d2a2ad10d8eda16581084b49496"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-persistence-CIUKSV/import-before-receipt-reopen3.wire.jsonl",
+    "archive": "import-before-receipt-reopen3.wire.jsonl.gz",
+    "rawBytes": 2962610,
+    "rawSha256": "124b80b34c0f40240936020d0804ee75f1240b7fec8a9d10bc226b15d18065d8",
+    "archiveSha256": "cecdc97c59fa33ce3358d53747c17dc5213ab54f2a9cd5a48c6430db4827750b"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-import-controller-7FfHTz/evidence.json",
+    "archive": "evidence.json.gz",
+    "rawBytes": 80186908,
+    "rawSha256": "d6dfcd82699a959d21d6c10b2b6a32f5a854ec2a7a1cb2da9bc713ffe33650c5",
+    "archiveSha256": "6609148e07ccdd1165a62daa12c725c7ec2188747ee1004c70b0ec810c3077cd"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-import-controller-7FfHTz/handoffs.json",
+    "archive": "handoffs.json.gz",
+    "rawBytes": 1340,
+    "rawSha256": "7103c03f958e4c79f49b219a4dda1a381009b163ecb99d691cc09a827874d02d",
+    "archiveSha256": "aac75ada23dfe9d691cbbfd37c5b588f2fbfd53bc9e1ece9a79f61128c9258d7"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-6f2496c/kobrixa-import-controller-7FfHTz/renderer-build/renderer-artifact.json",
+    "archive": "renderer-artifact.json.gz",
+    "rawBytes": 23409,
+    "rawSha256": "02ca74f8c07b8deb897f6e6c92e0f039a6f3dff5cebb443bc2334539a4edce29",
+    "archiveSha256": "9c03d775790549b7a52601f3450d41f8fb866b417ea71169b74d1d95b7fd82fa"
+  },
+  {
+    "source": "/private/tmp/b2-import-six-native2.log",
+    "archive": "native.log.gz",
+    "rawBytes": 60836,
+    "rawSha256": "f1874360d47f1629443f07a3d4daa54eaa18fd51f670a066fa584e0114340eea",
+    "archiveSha256": "41a8169af17539e6805733afe2dbb80288eac9165d7e4ff0f0631dcfae017f3a"
+  },
+  {
+    "source": "/private/tmp/b2-import-six-controller.mjs",
+    "archive": "controller.mjs.gz",
+    "rawBytes": 1438,
+    "rawSha256": "42b5add7a1c6bd947a94e10a4be4647a2be793ae45190643966a6c3328ade235",
+    "archiveSha256": "a2e036555867f8a4666cafbcc3a5ac894acb0c24dd3471d3faa2ce7e249d00d0"
+  },
+  {
+    "source": "/private/tmp/b2-import-six-verified.json",
+    "archive": "independent-verification.json.gz",
+    "rawBytes": 1076,
+    "rawSha256": "65a499d9e1ba9e1bb90193db4e40c643138afaf26f75abafa1600763e6362b58",
+    "archiveSha256": "e9efda676a183ed228367893957a2fc6f675afb1fb30dcfaf492ebf9a0a051f4"
+  },
+  {
+    "source": "/private/tmp/verify-b2-import-six.mjs",
+    "archive": "independent-verifier.mjs.gz",
+    "rawBytes": 2937,
+    "rawSha256": "427ab189e8b8ef1aac0b8cbd92313267abba659603d33f7176c42cdce8ceaa04",
+    "archiveSha256": "8315c4cb5b66deaaae968e6335a0d74de3ab297143c225153e1dfc1faead8dc6"
+  },
+  {
+    "source": "/private/tmp/b2-prepublish-controller-check.log",
+    "archive": "product-recovery-tests.log.gz",
+    "rawBytes": 187,
+    "rawSha256": "ab92f669a57fb5de08e5fdfc3b5ee89d0d15e7ebb2aba21403a15664d7d5cfdc",
+    "archiveSha256": "2ea9ead9c6cf7b63a0ab085604a87b5015552e3cc2916865c7f9e66cc0f1eb7a"
+  },
+  {
+    "source": "/private/tmp/b2-marker-controller-check.log",
+    "archive": "fixture-tests.log.gz",
+    "rawBytes": 3898,
+    "rawSha256": "f04650f1ead09cfc8a0f96c4a47ba46f3c870422304164032f097de28caacbfe",
+    "archiveSha256": "a649487210fec319c05da01c7c8513d46beead464eb977b9dfb6c58d2db6dddf"
+  },
+  {
+    "source": "/private/tmp/b2-import-six-native1.log",
+    "archive": "failed-prepublish.log.gz",
+    "rawBytes": 20148,
+    "rawSha256": "3037c5d6c44ea4c15e52305538d242922b773af43f2af0375cd290f768cb3549",
+    "archiveSha256": "067e6485e8cbc41531f69a3af62c3b7179301faf6799030e37505326170cbdce"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-f0a8d07/kobrixa-persistence-0NehSd/import-before-publish-kill.receipt.json",
+    "archive": "failed-prepublish-import-before-publish-kill.receipt.json.gz",
+    "rawBytes": 253616,
+    "rawSha256": "15f3eaa56c08a31a982944a4e10c71ab8b7efbceceb5ad6535767becf83746f3",
+    "archiveSha256": "ee5842fa42a2a1c877adf51df907fe2eb724752159ad30af986ba0a8c91e4e3d"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-f0a8d07/kobrixa-persistence-0NehSd/import-before-publish-reopen1.candidate.json.controller-failure.json",
+    "archive": "failed-prepublish-import-before-publish-reopen1.candidate.json.controller-failure.json.gz",
+    "rawBytes": 3121,
+    "rawSha256": "5d220bfed505915e8601c344d9f2c57abeb8b83d3cfe780a9e70fa0fcd0ff45d",
+    "archiveSha256": "84af31afa02afa7f23571f0596f5b3e3aaa9bc0b73ff0177607ef202b0bb0500"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-import-six-f0a8d07/kobrixa-persistence-0NehSd/import-before-publish-reopen1.candidate.json.entry-failure.json",
+    "archive": "failed-prepublish-import-before-publish-reopen1.candidate.json.entry-failure.json.gz",
+    "rawBytes": 750,
+    "rawSha256": "6f0f8858fa390b7495324eea81a7b9ba94007c9615e0b7bcbd6649a2e0c614e9",
+    "archiveSha256": "ae8d3a6dd9ebfa4b87d0dc808057c5b7e6c901548821ec20db1cc7d38df06575"
+  },
+  {
+    "source": "/private/tmp/b2-import-marker-native1.log",
+    "archive": "failed-marker.log.gz",
+    "rawBytes": 20143,
+    "rawSha256": "9b8763ad07006dc84de88f54ba977aef42e5bd177c9c41a99fae416b9741978c",
+    "archiveSha256": "3af91fc143797b24935118f2ca9456fc06540ed9d91fc3e64068c629bdc7bdad"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-marker-f0a8d07/kobrixa-persistence-Yvge1N/import-before-marker-kill.receipt.json",
+    "archive": "failed-marker-import-before-marker-kill.receipt.json.gz",
+    "rawBytes": 415982,
+    "rawSha256": "391a72df6f0b41e40238d1e478c03f224bb93ecb883046886d996a55ce0f4940",
+    "archiveSha256": "8d2b914e5d6900c2f95cc718a53064b3a7db97101bb8839ed56cb68b4db51aea"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-marker-f0a8d07/kobrixa-persistence-Yvge1N/import-before-marker-reopen1.candidate.json.controller-failure.json",
+    "archive": "failed-marker-import-before-marker-reopen1.candidate.json.controller-failure.json.gz",
+    "rawBytes": 2922,
+    "rawSha256": "f4ecd5bc4af3a153df7f2a6d48706d381dbf88b70e2456618a9e085d525ab018",
+    "archiveSha256": "5ed02bb3b97a385c6143013334cb467b0b8a4c7ce39e7873cfcbae4290ef594f"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-marker-f0a8d07/kobrixa-persistence-Yvge1N/import-before-marker-reopen1.candidate.json.entry-failure-pending.json",
+    "archive": "failed-marker-import-before-marker-reopen1.candidate.json.entry-failure-pending.json.gz",
+    "rawBytes": 641,
+    "rawSha256": "d059353fb04d3e46b9b0c433067a68c3c0869fefa8d51e6bec17e8e5ef4fd6aa",
+    "archiveSha256": "9be9e953bc7ea9d48bc5abe27db2bbbc793d2bd6cb098899c2217eaccd13a65e"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-marker-f0a8d07/kobrixa-persistence-Yvge1N/import-before-marker-reopen1.candidate.json.entry-failure.json",
+    "archive": "failed-marker-import-before-marker-reopen1.candidate.json.entry-failure.json.gz",
+    "rawBytes": 641,
+    "rawSha256": "3de737dc54df9f5d7199f5bacc9e7f069c4aca8bcfcd75bf4fb3979d856a03ce",
+    "archiveSha256": "885c379734a3431d7a357918f92db2ff304e4505bff6e135061feb4c2e9cb847"
+  }
+]

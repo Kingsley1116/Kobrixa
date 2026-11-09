@@ -1,0 +1,15 @@
+import base from '/private/tmp/e4-assembly-vitest.config.mjs';
+const r='/Users/kingsley/.codex/worktrees/plugin-3e/Kobrixa', d='/Users/kingsley/.codex/worktrees/plugin-3d/Kobrixa/node_modules';
+export default {...base,root:r+'/apps/desktop',resolve:{dedupe:["yjs","lib0","react","react-dom"],alias:[
+{find:"../../../packages/backend-ev3/dist/index.js",replacement:r+"/packages/backend-ev3/src/index.ts"},
+{find:/^yjs$/,replacement:d+"/yjs/dist/yjs.mjs"},
+{find:"../../../../../packages/plugin-runtime/dist/ui-state.js",replacement:r+"/packages/plugin-runtime/src/ui-state.ts"},
+{find:/^esbuild$/,replacement:"/private/tmp/e6-esbuild-wrapper.mjs"},
+{find:/^@kobrixa\/basic-plus\/intelligence$/,replacement:r+'/frontends/basic-plus/src/intelligence.ts'},
+{find:/^@kobrixa\/compiler\/diagnostic-help$/,replacement:r+'/packages/compiler/src/diagnostic-help.ts'},
+{find:/^@kobrixa\/collab-protocol$/,replacement:r+'/packages/collab-protocol/src/index.ts'},
+{find:/^monaco-editor$/,replacement:d+'/monaco-editor/esm/vs/index.js'},
+{find:/^monaco-editor\/(.*)$/,replacement:d+'/monaco-editor/esm/vs/$1'},
+...['react','react-dom','yjs','y-protocols','lib0','planck','electron-updater','esbuild','typescript'].map(find=>({find,replacement:d+'/'+find})),
+...base.resolve.alias
+]},test:{...base.test,server:{deps:{inline:[/yjs/,/y-protocols/,/lib0/]}},maxWorkers:2,include:['src/**/*.test.ts']}};

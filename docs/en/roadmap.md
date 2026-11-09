@@ -29,7 +29,7 @@ Exit: every criterion in the [product specification](../en/product.md) and [devi
 
 - Plugin system phase 1 (development preview): protocol, JS/TS and Python SDKs, command and notification API, settings panel, and the Basic Plus frontend registered as a built-in plugin. Third-party plugins load only in development mode. See the [plugin design](../superpowers/specs/2026-10-14-plugin-system-design.md).
 - Plugin system stage 2 (implemented; acceptance pending): built-in frontend/backend selection, generic `artifacts[]`, diagnostic source/help, built-in language services and API 1.4.0 static languages. See [architecture and contracts](architecture.md) and [static language plugins](plugin-static-languages.md). External compiler and language-service RPC remain future work.
-- Plugin system stage 3 (future): public panel/settings/device APIs and migration of built-in features, including motor testing through public APIs.
+- Plugin system stage 3 (implementation and acceptance in progress): API 1.5–1.8 device broker, declarative panels/data views, settings/storage and public built-in feature migration. The EV3 panel is integrated on the feature branch; native/installed migration, legacy exit and manual closeout remain open. See the [3E implementation record](../superpowers/plans/2026-10-24-plugin-system-3e-device-ui.md) and [hardware/UI acceptance](../../tests/hardware/device-ui.md).
 - Plugin system stage 4 (future): formal plugin packaging, managed runtimes, generated Python bindings, dependency resolution/version rollback and general third-party release after acceptance.
 - Expand `.bp` compatibility cases and EV3 API coverage.
 - Improve completion, formatting, performance, accessibility, localization, and recovery UX.

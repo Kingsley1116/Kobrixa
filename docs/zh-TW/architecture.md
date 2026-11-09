@@ -338,3 +338,11 @@ Electron Forge 將 renderer、main 與 preload 入口封裝至 `app.asar`，原�
 - Main process 在每個具特權的檔案系統、編譯器或設備操作前，必須驗證 IPC sender 與 payload。
 
 這些邊界遵循 Electron 的[安全建議](https://www.electronjs.org/docs/latest/tutorial/security)。
+
+## Stage 3 開發整合
+
+API 1.8 開發分支整合內建 process UI、host 的設備仲裁，以及 typed settings／record storage。馬達測試、Sensor Lab 與 EV3 裝置在插件工具中各有獨立 optional source；原生 EV3 I/O 留在 main。provider availability 與 UI process lifetime 分開。公開連線以唯讀投影接上保留的核心部署／檔案 adapter，不額外授予 session 或 authority。
+
+設備啟動先凍結原偏好 writer，再收集每個視窗不可變的擷取資料。main 受理原始共同匯入並提供已提交設定給 provider；原匯入未解決前，一般設定寫入仍受 gate 限制。開面板、重送 snapshot 或恢復 process 都不重播使用者指令。休眠必須接上原停止／保存 receipt，喚醒後才可受理新工作。
+
+實作與驗收分別記錄於[3E 計畫](../superpowers/plans/2026-10-24-plugin-system-3e-device-ui.md)。部分 legacy UI 仍等待 replacement 證據；此處不宣告 Stage 3 或 stage-2 人工驗收完成。

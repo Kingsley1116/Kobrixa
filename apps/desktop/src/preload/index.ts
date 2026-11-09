@@ -1,10 +1,11 @@
+import type { UiBridgeEvent } from "../shared/plugin-ui.js";
+let nextUiListener = 0;
 import type { LanguageStatusEvent } from "../shared/language-services.js";
-import type { MotorTestState } from "../shared/motor-test.js";
 import type { UpdateState } from "../shared/updates.js";
 import type { PluginEvent } from "../shared/plugins.js";
 import { contextBridge, ipcRenderer } from "electron";
 import type { BuildEvent, DeviceEvent, KobrixaApi } from "../shared/api.js";
-import type { MonitorUpdate, SensorLabState } from "../shared/sensor-lab.js";
+import type { MonitorUpdate } from "../shared/sensor-lab.js";
 
 const api: KobrixaApi = {
   collab: {
@@ -36,25 +37,65 @@ const api: KobrixaApi = {
     prepare: (workspaceId, overlays, entries) =>
       ipcRenderer.invoke("simulator:prepare", workspaceId, overlays, entries),
   },
-  sensorLab: {
-    getState: () => ipcRenderer.invoke("sensor-lab:state"),
-    start: (request) => ipcRenderer.invoke("sensor-lab:start", request),
-    stop: (reason) => ipcRenderer.invoke("sensor-lab:stop", reason),
-    retrySave: () => ipcRenderer.invoke("sensor-lab:retry-save"),
-    list: () => ipcRenderer.invoke("sensor-lab:list"),
-    read: (id) => ipcRenderer.invoke("sensor-lab:read", id),
-    delete: (id) => ipcRenderer.invoke("sensor-lab:delete", id),
-    listCalibrations: () => ipcRenderer.invoke("sensor-lab:calibrations"),
-    saveCalibration: (profile) => ipcRenderer.invoke("sensor-lab:save-calibration", profile),
-    deleteCalibration: (id) => ipcRenderer.invoke("sensor-lab:delete-calibration", id),
-    exportCsv: (id) => ipcRenderer.invoke("sensor-lab:export", id),
-    onState: (listener) => {
-      const handler = (_event: Electron.IpcRendererEvent, state: SensorLabState) => listener(state);
-      ipcRenderer.on("sensor-lab:state", handler);
-      return () => ipcRenderer.removeListener("sensor-lab:state", handler);
-    },
-  },
   plugins: {
+    settings: createSettingsPreload170(),
+    persistenceRecovery: createPersistenceRecoveryPreload170(),
+    legacyPreferences: {
+      challenge: (descriptorId) => {
+        if (
+          typeof descriptorId !== "string" ||
+          descriptorId.length > 128 ||
+          !/^[a-z][a-z0-9-]*(?:[.:][a-z0-9-]+)+$/.test(descriptorId)
+        )
+          return Promise.reject(new Error("Invalid preference descriptor"));
+        return ipcRenderer.invoke("persistence:legacy-preferences-challenge", descriptorId);
+      },
+      submit: (snapshot) => {
+        if (!isLegacyPreferencesSnapshot(snapshot))
+          return Promise.reject(new Error("Invalid preference snapshot"));
+        return ipcRenderer.invoke("persistence:legacy-preferences-submit", snapshot);
+      },
+    },
+    ui: {
+      catalog: (input) => ipcRenderer.invoke("plugins:ui:catalog", input),
+      resource: (input) => ipcRenderer.invoke("plugins:ui:resource", input),
+      open: (input) => ipcRenderer.invoke("plugins:ui:open", input),
+      close: (input) => ipcRenderer.invoke("plugins:ui:close", input),
+      visibility: (input) => ipcRenderer.invoke("plugins:ui:visibility", input),
+      invoke: (input) => ipcRenderer.invoke("plugins:ui:invoke", input),
+      hold: (input) => ipcRenderer.invoke("plugins:ui:hold", input),
+      pulse: (input) => ipcRenderer.invoke("plugins:ui:pulse", input),
+      snapshot: (input) => ipcRenderer.invoke("plugins:ui:snapshot", input),
+      interact: (input) => ipcRenderer.invoke("plugins:ui:interact", input),
+      syncForm: (input) => ipcRenderer.invoke("plugins:ui:form-sync", input),
+      dataRead: (input) => ipcRenderer.invoke("plugins:ui:data-read", input),
+      dataSnapshot: (input) => ipcRenderer.invoke("plugins:ui:data-snapshot", input),
+      reportFailure: (input) => ipcRenderer.invoke("plugins:ui:report-failure", input),
+      onEvent: (listener) => {
+        const id = ++nextUiListener;
+        const channel = `plugins:ui:event:${id}`;
+        const receive = (_event: Electron.IpcRendererEvent, value: UiBridgeEvent) =>
+          listener(value);
+        ipcRenderer.on(channel, receive);
+        void ipcRenderer.invoke("plugins:ui:subscribe", id).catch(() => {});
+        let active = true;
+        return () => {
+          if (!active) return;
+          active = false;
+          ipcRenderer.removeListener(channel, receive);
+          void ipcRenderer.invoke("plugins:ui:unsubscribe", id).catch(() => {});
+        };
+      },
+    },
+    recovery: {
+      snapshot: (input) => ipcRenderer.invoke("plugins:recovery:snapshot", input),
+      act: (input) => ipcRenderer.invoke("plugins:recovery:act", input),
+      onChanged: (listener) => {
+        const receive = () => listener();
+        ipcRenderer.on("plugins:recovery:changed", receive);
+        return () => ipcRenderer.removeListener("plugins:recovery:changed", receive);
+      },
+    },
     state: () => ipcRenderer.invoke("plugins:state"),
     diagnosticHelp: () => ipcRenderer.invoke("plugins:diagnosticHelp"),
     staticLanguages: () => ipcRenderer.invoke("plugins:static-languages"),
@@ -174,15 +215,6 @@ const api: KobrixaApi = {
       ipcRenderer.invoke("language:diagnostics", workspaceId, overlays),
   },
   device: {
-    startMotorTest: (request) => ipcRenderer.invoke("device:motor-test-start", request),
-    keepMotorTestAlive: (ref) => ipcRenderer.invoke("device:motor-test-keepalive", ref),
-    stopMotorTest: (ref, brake) => ipcRenderer.invoke("device:motor-test-stop", ref, brake),
-    motorTestState: () => ipcRenderer.invoke("device:motor-test-state"),
-    onMotorTest: (listener) => {
-      const handler = (_event: Electron.IpcRendererEvent, state: MotorTestState) => listener(state);
-      ipcRenderer.on("device:motor-test-update", handler);
-      return () => ipcRenderer.removeListener("device:motor-test-update", handler);
-    },
     watchMonitor: (sessionId, enabled) =>
       ipcRenderer.invoke("device:watch-monitor", sessionId, enabled),
     onMonitor: (listener) => {
@@ -230,3 +262,128 @@ if (process.platform === "win32") {
 }
 
 contextBridge.exposeInMainWorld("kobrixa", api);
+
+function createSettingsPreload170(): PluginsApi["settings"] {
+  let nextWatch = 0;
+  return {
+    open: async (input) =>
+      ipcRenderer.invoke(
+        "plugins:settings:open",
+        z.strictObject({ sourceKey: source170, resourceDigest: digest170 }).parse(input),
+      ),
+    read: async (binding) => ipcRenderer.invoke("plugins:settings:read", binding170.parse(binding)),
+    update: async (binding, params) =>
+      ipcRenderer.invoke(
+        "plugins:settings:update",
+        binding170.parse(binding),
+        settingsRequestSchemas["settings/update"].params.parse(params),
+      ),
+    reset: async (binding, params) =>
+      ipcRenderer.invoke(
+        "plugins:settings:reset",
+        binding170.parse(binding),
+        settingsRequestSchemas["settings/reset"].params.parse(params),
+      ),
+    watch(value, changed) {
+      const binding = binding170.parse(value);
+      const watch = ++nextWatch;
+      let active = true;
+      const receive = (_event: Electron.IpcRendererEvent, value: unknown) => {
+        const event = z
+          .strictObject({ binding: binding170, watch: z.number().int().positive() })
+          .safeParse(value);
+        if (
+          active &&
+          event.success &&
+          event.data.watch === watch &&
+          JSON.stringify(event.data.binding) === JSON.stringify(binding)
+        )
+          changed();
+      };
+      ipcRenderer.on("plugins:settings:changed", receive);
+      void ipcRenderer.invoke("plugins:settings:watch", { binding, watch }).then(
+        () => {
+          if (active) changed();
+        },
+        () => {
+          if (active) changed();
+        },
+      );
+      return () => {
+        if (!active) return;
+        active = false;
+        ipcRenderer.removeListener("plugins:settings:changed", receive);
+        void ipcRenderer.invoke("plugins:settings:unwatch", { binding, watch }).catch(() => {});
+      };
+    },
+    dispose(binding) {
+      void ipcRenderer
+        .invoke("plugins:settings:dispose", binding170.parse(binding))
+        .catch(() => {});
+    },
+  };
+}
+// Add inside the existing plugins object in each preload:
+// settings: createSettingsPreload170(),
+
+function createPersistenceRecoveryPreload170(): PersistenceRecoveryBridge {
+  let listeners = 0;
+  function listen<T>(channel: string, callback: (value: T) => void): () => void {
+    let active = true;
+    const receive = (_event: Electron.IpcRendererEvent, value: T) => {
+      if (active) callback(value);
+    };
+    ipcRenderer.on(channel, receive);
+    if (listeners++ === 0)
+      void ipcRenderer.invoke("plugins:persistence-recovery:subscribe").catch(() => {});
+    return () => {
+      if (!active) return;
+      active = false;
+      ipcRenderer.removeListener(channel, receive);
+      if (--listeners === 0)
+        void ipcRenderer.invoke("plugins:persistence-recovery:unsubscribe").catch(() => {});
+    };
+  }
+  return {
+    snapshot: async (input) =>
+      ipcRenderer.invoke(
+        "plugins:persistence-recovery:snapshot",
+        recoverySelection170.parse(input),
+      ),
+    act: async (input) =>
+      ipcRenderer.invoke("plugins:persistence-recovery:act", recoveryAction170.parse(input)),
+    onOpen: (listener) =>
+      listen("plugins:persistence-recovery:open", (value) => {
+        const parsed = recoverySelection170.safeParse(value);
+        if (parsed.success) listener(parsed.data);
+      }),
+    onChanged: (listener) => listen("plugins:persistence-recovery:changed", listener),
+  };
+}
+// Inside the plugins object in both preloads:
+// persistenceRecovery: createPersistenceRecoveryPreload170(),
+
+import type { PluginsApi } from "../shared/plugins.js";
+import {
+  isLegacyPreferencesSnapshot,
+  type PersistenceRecoveryBridge,
+} from "../shared/plugin-persistence.js";
+
+import { z } from "zod";
+import { settingsRequestSchemas, handleSchema, namespacedIdSchema } from "@kobrixa/plugin-protocol";
+const source170 = z
+  .string()
+  .max(160)
+  .regex(/^(?:builtin:[a-z0-9.-]+|dev:[0-9a-f]{16})$/);
+const digest170 = z.string().regex(/^[a-f0-9]{64}$/);
+const binding170 = z.strictObject({
+  owner: z.strictObject({
+    sourceKey: source170,
+    pluginId: namespacedIdSchema,
+    uiResourceGeneration: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  }),
+  scope: z.strictObject({ hostEpoch: handleSchema, workbenchInstance: handleSchema }),
+  resourceDigest: digest170,
+});
+const recoverySelection170 = z.strictObject({ itemId: handleSchema });
+const recoveryAction170 = recoverySelection170.extend({ optionId: handleSchema });

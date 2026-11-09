@@ -1,4 +1,4 @@
-import { loadDevicePreferences } from "./device/preferences.js";
+import { DevicePreferencesStore } from "./device/preferences.js";
 import { createUpdateService } from "./updates/runtime.js";
 import { UpdateOperationGate, type UpdateService } from "./updates/service.js";
 import { attachKeyboard } from "./window/keyboard.js";
@@ -11,31 +11,35 @@ import {
   shell,
   powerMonitor,
   dialog,
+  ipcMain,
   type MessageBoxOptions,
 } from "electron";
 import { BuildService } from "./workspace/build.js";
 import { DeviceService } from "./device/device.js";
-import { registerIpc } from "./ipc.js";
+import { registerIpc, registerPersistenceWindow170, type IpcHandle } from "./ipc.js";
 import { LanguageService } from "./language/language.js";
 import { WorkspaceService } from "./workspace/workspace.js";
 import { CloseHandshake } from "./window/close.js";
 import { MonitorService } from "./device/monitor-service.js";
-import { MotorTestService } from "./device/motor-test-service.js";
-import { SensorLabService } from "./sensor-lab/service.js";
+import { WorkbenchLifecycle } from "./window/workbench-lifecycle.js";
 import { MainProcessCloseGuard } from "./window/main-close.js";
 import { rendererContentSecurityPolicy } from "./window/csp.js";
 import { resolveCollabServerUrl } from "./collab/server-url.js";
 import { createCollabService } from "./collab/runtime.js";
 import { CollabProjects } from "./collab/projects.js";
 import { registerCollabIpc } from "./collab/ipc.js";
-import { BUILTIN_PLUGIN_SOURCES } from "./plugins/builtin.js";
+import { assembleBuiltinPluginSources } from "./plugins/builtin.js";
 import { pluginLocale, pluginOptions } from "./plugins/options.js";
-import { registerPluginIpc } from "./plugins/ipc.js";
+import { registerPluginIpc, registerCoreRecoveryIpc } from "./plugins/ipc.js";
+import { registerUiIpc, registerUiEventIpc, trustedWorkbench } from "./plugins/ui-bridge.js";
+import { attachNativeLifecycle, requireCleanClose } from "./plugins/shutdown-coordinator.js";
 import { installPluginQuitCleanup, createQuitRecovery } from "./plugins/quit.js";
 import {
   composeDesktopMain,
   desktopLifecycle,
+  desktopUi,
   desktopDeviceAccess,
+  desktopDeviceSettings,
   createWindowRetirementHandler,
   createLegacyActionAdmission,
   trustedDeviceActions,
@@ -43,15 +47,24 @@ import {
   type PluginController,
 } from "./plugins/controller.js";
 import { createDesktopFoundation } from "./device-broker/lifecycle-coordinator.js";
+import { readDeviceRecoverySessions } from "./device-broker/broker.js";
 import { createJournal } from "./device-broker/journal.js";
 import { createJournalFilesystem } from "./device-broker/journal-filesystem.js";
-import { createCoreActionLedger } from "./plugins/core-recovery.js";
-import { createLegacyDevice, createLegacyMonitorFeed } from "./device-broker/legacy-device.js";
+import {
+  createCoreActionLedger,
+  CoreRecovery,
+  createRecoveryEntries,
+} from "./plugins/core-recovery.js";
+import {
+  createLegacyDevice,
+  createLegacyMonitorFeed,
+  createSessionPowerLifecycle,
+} from "./device-broker/legacy-device.js";
 import { LegacyFiles } from "./device-broker/legacy-files.js";
 import type { CoreWindowScope, Principal } from "@kobrixa/plugin-runtime";
 import type { Permission, ResourceOwner } from "@kobrixa/plugin-protocol";
 import { electronPluginDialogs } from "./plugins/dialogs.js";
-import { quitOnSignals, watchRendererHealth } from "./plugins/session.js";
+import { quitOnSignals } from "./plugins/session.js";
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -63,6 +76,7 @@ app.setPath(
     path.join(app.getPath("appData"), "@kobrixa/desktop"),
 );
 let updates: UpdateService | undefined;
+let cancelUpdate: () => Promise<void> = async () => {};
 let mainWindow: BrowserWindow | undefined;
 let quitting = false;
 let closeHandshake: CloseHandshake | undefined;
@@ -102,7 +116,7 @@ async function retryDeviceWork(error: unknown, window?: BrowserWindow): Promise<
   return result.response === 0;
 }
 
-function createWindow(flushSensorLab: () => Promise<void>): void {
+function createWindow(flushDeviceWork: () => Promise<void>): void {
   rendererCanFlush = false;
   mainWindow = new BrowserWindow({
     width: 1420,
@@ -128,7 +142,7 @@ function createWindow(flushSensorLab: () => Promise<void>): void {
     else window.close();
   };
   const mainClose = new MainProcessCloseGuard(
-    flushSensorLab,
+    flushDeviceWork,
     finish,
     (error) => retryDeviceWork(error, window),
     () => {
@@ -157,12 +171,12 @@ function createWindow(flushSensorLab: () => Promise<void>): void {
     } else handshake.request();
   });
   window.webContents.on("render-process-gone", () => {
-    updates?.cancelInstall();
+    void cancelUpdate().catch(console.error);
     handshake.reset();
   });
   window.webContents.on("did-start-loading", () => {
     rendererCanFlush = false;
-    updates?.cancelInstall();
+    void cancelUpdate().catch(console.error);
     handshake.reset();
   });
   attachKeyboard(mainWindow.webContents);
@@ -208,13 +222,22 @@ const primary = startPrimary(
     const pluginLanguage = pluginLocale(app.getLocale());
     const now = () => performance.now();
     const operationGate = new UpdateOperationGate(() => updates);
-    const preferences = await loadDevicePreferences(app.getPath("userData"));
+    const workbenchState: { current?: WorkbenchLifecycle } = {};
+    // The retired IPC writer starts empty and performs no startup file I/O.
+    // Only the admitted migration mapper may read/validate the original file;
+    // this store supplies the writer barrier, never authoritative preferences.
+    const preferences = new DevicePreferencesStore();
     const journal = createJournal(createJournalFilesystem(app.getPath("userData")), profile);
     const currentCorePrincipal = () => {
       if (!mainWindow || mainWindow.isDestroyed()) throw new Error("No current workbench.");
       return authority.principal(mainWindow.webContents.id, "recovery");
     };
     const currentCoreScope = (): CoreWindowScope => {
+      // Recovery and non-device UI can mount before the renderer reports its
+      // document. Establish only the host-owned window identity here; open()
+      // leaves device authority invalid until an actual document report arrives.
+      if (!mainWindow || mainWindow.isDestroyed()) throw new Error("No current workbench.");
+      authority.open(mainWindow.webContents);
       const principal = currentCorePrincipal();
       if (principal.kind !== "core") throw new Error("Core workbench required.");
       return { hostEpoch: principal.hostEpoch, workbenchInstance: principal.workbenchInstance };
@@ -256,20 +279,31 @@ const primary = startPrimary(
       }
       return { kind: "plugin", owner, authorityContext: null };
     };
-    const connectionPolicy = () => {
-      const value = preferences.get();
-      return {
-        wifiConnectTimeoutMs: value.wifiConnectTimeout,
-        wifiHandshakeTimeoutMs: value.wifiHandshakeTimeout,
-        usbAutoReconnect: value.usbAutoReconnect,
-        usbRetryInterval: value.usbRetryInterval,
-        usbRetryLimit: value.usbRetryLimit,
-      };
+    // composeDesktopMain replaces this with the migration-gated authoritative reader.
+    // Until attachment, no legacy/default policy can authorize optional I/O.
+    const connectionPolicy = (): never => {
+      throw new Error("Device settings are not attached.");
     };
     const reportCleanupError = (error: unknown) => {
       console.error("Device cleanup blocked.", error);
     };
-    const composition = await composeDesktopMain({
+    // The shipped plugin owns Lab from this release onward. Disabling it must
+    // never re-enable the old writer (including before an import is resumed).
+    // No legacy Lab runtime exists in this binary. These hooks perform no I/O;
+    // settled does not claim to flush another process or a live writer.
+    // Keep the durable migration barrier and its original read-only source roots.
+    const legacyLabWriter = Object.freeze({
+      sourceKey: "builtin:kobrixa.sensor-lab",
+      freezeAdmission() {},
+      async settled() {},
+    });
+    const pendingComposition = composeDesktopMain({
+      legacyDeviceWriter: {
+        sourceKey: "builtin:kobrixa.device-ev3",
+        freezeAdmission: () => preferences.freezeAdmission(),
+        settled: () => preferences.settleMigration(),
+      },
+      legacyLabWriter,
       createFoundation: createDesktopFoundation,
       foundationOptions: {
         profile,
@@ -283,6 +317,12 @@ const primary = startPrimary(
         operationGate: ({ operationClass }) => {
           try {
             operationGate.assertDevice(operationClass);
+            if (
+              workbenchState.current?.closing &&
+              operationClass !== "safety-stop" &&
+              operationClass !== "reconciliation"
+            )
+              throw new Error("The workbench is closing.");
             return { ok: true, value: null };
           } catch (error) {
             return {
@@ -303,7 +343,11 @@ const primary = startPrimary(
       },
       plugins: {
         userData: app.getPath("userData"),
-        builtins: BUILTIN_PLUGIN_SOURCES,
+        builtins: await assembleBuiltinPluginSources({
+          packaged: app.isPackaged,
+          appPath: app.getAppPath(),
+          buildRoot: __dirname,
+        }),
         commandLine: pluginSettings,
         dialogs: electronPluginDialogs(() => mainWindow, pluginLanguage),
         locale: pluginLanguage,
@@ -311,22 +355,13 @@ const primary = startPrimary(
       principal: pluginPrincipal,
       scope: currentCoreScope,
       currentScope: isCurrentCoreScope,
-      legacyFlush: async (reason) => {
-        // The coordinator has already ended reservations synchronously before this guard.
-        if (recording) recording.ended = true;
-        await motors.flush();
-        if (reason === "suspend") await sensorLab.suspend();
-        else await sensorLab.flush(reason);
-      },
+      legacyFlush: () => legacyLabWriter.settled(),
       report: reportCleanupError,
     });
-    const { broker } = composition.foundation;
-    const plugins = composition.plugins;
-    controller.current = plugins;
-    const coordinator = desktopLifecycle(composition);
     installPluginQuitCleanup(
       app,
       async () => {
+        const composition = await pendingComposition;
         await composition.dispose();
         await monitor.dispose();
       },
@@ -335,7 +370,69 @@ const primary = startPrimary(
         void quitRecovery.blocked(error).catch(reportCleanupError);
       },
     );
-    app.on("quit", () => plugins.finishSession());
+    const composition = await pendingComposition;
+    const { broker } = composition.foundation;
+    const plugins = composition.plugins;
+    controller.current = plugins;
+    const coordinator = desktopLifecycle(composition);
+    const ui = desktopUi(composition);
+    const focusRecovery = () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    };
+    ui.setRecoveryNavigation(focusRecovery);
+    const recovery = new CoreRecovery({
+      scope: currentCoreScope,
+      actions: coreActions,
+      now,
+      entries: createRecoveryEntries({
+        device: broker.recovery,
+        sessions: async () => readDeviceRecoverySessions(broker),
+        processes: () => plugins.state().plugins,
+        confirmDevice: async (device) => {
+          const window = mainWindow;
+          if (!window || window.isDestroyed()) return false;
+          const zh = pluginLanguage === "zh-TW";
+          const result = await dialog.showMessageBox(window, {
+            type: "warning",
+            defaultId: 1,
+            cancelId: 1,
+            noLink: true,
+            buttons: zh ? ["確認為同一設備", "取消"] : ["Confirm same device", "Cancel"],
+            message: zh ? "核對設備安全紀錄" : "Reconcile device safety record",
+            detail: zh
+              ? `請確認目前連線的「${device.name}」就是此紀錄的設備。核對會讀取停止狀態，不會重新執行動作。`
+              : `Confirm that the connected device “${device.name}” is the device in this record. Reconciliation reads its stopped state and does not replay movement.`,
+          });
+          return result.response === 0;
+        },
+      }),
+      openDetail: (_item, scope) => {
+        if (isCurrentCoreScope(scope)) focusRecovery();
+      },
+    });
+    const offDeviceRecovery = broker.recovery.subscribe(() => recovery.changed());
+    const offProcessRecovery = plugins.onEvent((event) => {
+      if (event.type === "state") recovery.changed();
+    });
+    let persistenceHandle: IpcHandle | undefined;
+    let offPersistenceWindow: (() => void) | undefined;
+    let offUi: (() => void) | undefined;
+    // The persistence window outlives reloads: it retires and reattaches each
+    // document itself, so only quit or a replacement window disposes it.
+    const detachUi = () => {
+      offUi?.();
+    };
+    app.on("quit", () => {
+      detachUi();
+      offPersistenceWindow?.();
+      offPersistenceWindow = undefined;
+      offDeviceRecovery();
+      offProcessRecovery();
+      plugins.finishSession();
+    });
     quitOnSignals(process, () => app.quit());
     const renderer = () => {
       // Reading webContents itself throws once its BrowserWindow is destroyed.
@@ -368,7 +465,29 @@ const primary = startPrimary(
       language.cancel();
       builds.cancelAll();
     });
-    const devices = new DeviceService(builds, renderer, preferences);
+    const deviceSettings = desktopDeviceSettings(composition);
+    const devices = new DeviceService(builds, renderer, preferences, undefined, () => {
+      const snapshot = deviceSettings.getSnapshot();
+      if (snapshot.state !== "ready") throw new Error(snapshot.problem);
+      // Preserve the existing six-field IPC shape; renderer-only preferences stay private
+      // to the contributed settings resource. Core deploy reads this same committed view.
+      const {
+        skipUnchangedAssets,
+        usbAutoReconnect,
+        usbRetryInterval,
+        usbRetryLimit,
+        wifiConnectTimeout,
+        wifiHandshakeTimeout,
+      } = snapshot.values;
+      return {
+        skipUnchangedAssets,
+        usbAutoReconnect,
+        usbRetryInterval,
+        usbRetryLimit,
+        wifiConnectTimeout,
+        wifiHandshakeTimeout,
+      };
+    });
     const send = (channel: string, value: unknown) => {
       const target = renderer();
       if (target && !target.isDestroyed()) target.send(channel, value);
@@ -402,79 +521,10 @@ const primary = startPrimary(
       }),
     });
     const monitor = new MonitorService(legacy, (update) => send("device:monitor-update", update));
-    // P150 has no declarative motion scope. The service refuses starts until D160 supplies it.
-    const motors = new MotorTestService({
-      publish: (state) => send("device:motor-test-update", state),
-    });
-    let recording: { reservationId: string; principal: Principal; ended?: boolean } | undefined;
-    let labBusy = false;
-    const sensorLab = new SensorLabService({
-      directory: path.join(app.getPath("userData"), "sensor-lab"),
-      device: (id) => devices.descriptor(id),
-      acquire: async (id, channels) => {
-        if (motors.busy) throw new Error("Stop the motor test before recording.");
-        const principal = currentCorePrincipal();
-        const { sources } = await legacy.request("devices/session", { sessionId: id });
-        const channelIds = channels.map((channel) => {
-          const source = sources.channels.find(
-            (source) =>
-              source.portId === `${channel.kind}:${channel.port}` &&
-              source.typeId === `ev3:${channel.type}` &&
-              source.component === channel.channel &&
-              (channel.kind === "output" || source.modeId === `mode:${channel.mode}`),
-          );
-          if (!source) throw new Error("Recording source changed.");
-          return source.channelId;
-        });
-        const result = await broker.request(
-          principal,
-          "devices/recording/reserve",
-          {
-            sessionId: id,
-            channelIds,
-            expectedSourceRevision: sources.sourceRevision,
-          },
-          new AbortController().signal,
-        );
-        if (!result.ok) throw new Error(result.error.message);
-        recording = { reservationId: result.value.reservation.reservationId, principal };
-        try {
-          await monitor.watch(id, true, -1);
-        } catch (error) {
-          await broker.request(
-            principal,
-            "devices/recording/release",
-            { reservationId: recording.reservationId },
-            new AbortController().signal,
-          );
-          recording = undefined;
-          throw error;
-        }
-      },
-      release: async (id) => {
-        if (recording && !recording.ended) {
-          const result = await broker.request(
-            recording.principal,
-            "devices/recording/release",
-            { reservationId: recording.reservationId },
-            new AbortController().signal,
-          );
-          if (!result.ok) throw new Error(result.error.message);
-          recording = undefined;
-        }
-        recording = undefined;
-        await monitor.watch(id, false, -1);
-      },
-      latest: monitor.latest,
-      publish: (state) => {
-        labBusy = state.active || !state.saved;
-        send("sensor-lab:state", state);
-      },
-    });
     // On macOS the application can outlive its last window. A quit in that state
     // still has to finish any crash recovery / background checkpoint writes.
     const mainQuit = new MainProcessCloseGuard(
-      () => coordinator.close("close"),
+      () => requireCleanClose(ui.coordinator, "shutdown"),
       () => app.quit(),
       (error) => retryDeviceWork(error),
       () => {
@@ -492,58 +542,56 @@ const primary = startPrimary(
         void mainQuit.request();
       }
     });
-    monitor.subscribe((update) => sensorLab.observe(update));
     devices.subscribe(
       createDeviceLossHandler(
         (id) => {
-          motors.disconnected(id);
-          sensorLab.onDisconnect(id);
           void monitor.disconnect(id).catch(reportCleanupError);
         },
-        (id) => {
-          void motors.reconnected(id).catch(reportCleanupError);
-        },
+        () => {},
       ),
     );
+    const powerSessions = createSessionPowerLifecycle({
+      sessionIds: () => legacy.sessionIds(),
+      suspend: (id) => coordinator.suspend(id),
+      resume: (id) => coordinator.resume(id),
+    });
     powerMonitor.on("suspend", () => {
-      for (const id of legacy.sessionIds()) void coordinator.suspend(id).catch(reportCleanupError);
-      void sensorLab.suspend().catch(reportCleanupError);
+      ui.intent.dispose();
+      void powerSessions.suspend().catch(reportCleanupError);
     });
     powerMonitor.on("resume", () => {
-      for (const id of legacy.sessionIds()) void coordinator.resume(id).catch(reportCleanupError);
-    });
-    void sensorLab.getState().catch(reportCleanupError);
-    app.on("web-contents-created", (_event, contents) => {
-      if (contents.getType() !== "window") return;
-      const handler = createWindowRetirementHandler({
-        composition,
-        coreActions,
-        scope: () => {
-          const principal = authority.principal(contents.id, "recovery");
-          if (principal.kind !== "core") throw new Error("Core workbench required.");
-          return { hostEpoch: principal.hostEpoch, workbenchInstance: principal.workbenchInstance };
-        },
-        invalidate: () => authority.invalidate(contents.id),
-        flush: () => sensorLab.flush("close"),
-        pause: () => monitor.pause(),
-      });
-      const retire = (destroyed: boolean) => {
-        void handler(destroyed).catch(reportCleanupError);
-      };
-      contents.on("destroyed", () => retire(true));
-      contents.on("render-process-gone", () => retire(false));
-      contents.on("did-start-navigation", (_event, _url, inPlace, isMainFrame) => {
-        if (isMainFrame && !inPlace) retire(false);
-      });
+      // Resume only the original suspended receipts, never a newly connected replacement.
+      void powerSessions.resume().catch(reportCleanupError);
     });
     const collab = await createCollabService(app.getPath("userData"), collabServerUrl);
     updates = await createUpdateService(
       renderer,
-      () =>
-        operationGate.busy || builds.busy || devices.busy || monitor.busy || motors.busy || labBusy,
+      () => operationGate.busy || builds.busy || devices.busy || monitor.busy,
     );
-    updates.onInstallationFailed(() => void plugins.resume());
-    registerIpc(
+    const workbench = new WorkbenchLifecycle({
+      sessions: async () => {
+        currentCoreScope();
+        const result = await broker.request(
+          currentCorePrincipal(),
+          "devices/list",
+          {},
+          new AbortController().signal,
+        );
+        if (!result.ok) throw new Error(result.error.message);
+        return result.value.sessions
+          .filter((session) => session.state !== "disconnected")
+          .map((session) => session.sessionId);
+      },
+      suspend: (id) => coordinator.suspend(id),
+      verify: (id) => coordinator.confirmSuspended(id),
+      retire: (reason) => (reason === "update" ? ui.prepareUpdate() : ui.prepareWindowClose()),
+      resume: (id) => coordinator.resume(id),
+      readmit: () => plugins.resume(),
+    });
+    workbenchState.current = workbench;
+    const flushDeviceWork = () =>
+      quitting ? requireCleanClose(ui.coordinator, "shutdown") : workbench.close();
+    const installation = registerIpc(
       renderer,
       workspaces,
       builds,
@@ -556,8 +604,9 @@ const primary = startPrimary(
       },
       () => {
         rendererCanFlush = true;
+        devices.publishSessionCatalog();
       },
-      { monitor, lab: sensorLab, motors },
+      { monitor },
       [
         (handle) => {
           if (process.platform === "win32") registerWindowChromeIpc(handle, () => mainWindow);
@@ -569,38 +618,144 @@ const primary = startPrimary(
             new CollabProjects(collab, workspaces, app.getPath("userData")),
           ),
         (handle) => {
+          persistenceHandle = handle;
           registerPluginIpc(handle, plugins, (event) => send("plugins:event", event));
+          registerUiIpc({
+            handle,
+            bridge: ui.bridge,
+            trusted: (event) => {
+              const current = renderer();
+              return !!current && trustedWorkbench(event, current);
+            },
+          });
+          const offRecovery = registerCoreRecoveryIpc(handle, recovery, () =>
+            send("plugins:recovery:changed", null),
+          );
+          app.once("quit", offRecovery);
+          offUi = registerUiEventIpc({
+            handle,
+            bridge: ui.bridge,
+            trusted: (event) => {
+              const current = renderer();
+              return !!current && trustedWorkbench(event, current);
+            },
+            send,
+          });
         },
       ],
-      () => coordinator.close("update"),
+      () => workbench.close("update"),
       plugins,
       {
         authority,
         stop: admittedDeviceActions.stop,
         disconnect: admittedDeviceActions.disconnect,
-        beforeClose: () => coordinator.close("close"),
+        beforeClose: flushDeviceWork,
+      },
+      flushDeviceWork,
+      () => ui.prepareUpdate(),
+      async () => {
+        await workbench.reopen();
+        await plugins.resume();
       },
     );
-    const flushDeviceWork = () => coordinator.close("close");
-    const openWindow = () => {
-      createWindow(flushDeviceWork);
-      primary?.windowReady();
-      if (mainWindow) watchRendererHealth(mainWindow, () => plugins.markRendererUnresponsive());
-      mainWindow?.on("blur", () => {
-        void motors.stopAll();
-      });
-      mainWindow?.on("hide", () => {
-        void motors.stopAll();
-      });
-      mainWindow?.on("minimize", () => {
-        void motors.stopAll();
-      });
+    cancelUpdate = () => installation.cancel();
+    updates.onInstallationFailed(() => {
+      void installation.failed().catch(reportCleanupError);
+    });
+    const attachPersistenceWindow = () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        const facets = plugins.persistence170;
+        if (!facets || !persistenceHandle) throw new Error("P170 persistence not attached");
+        offPersistenceWindow?.();
+        // Native windows are recreated while global services stay alive. Replace only
+        // these dedicated handlers and bind them to this original document and frame.
+        const handle: IpcHandle = (channel, action) => {
+          ipcMain.removeHandler(channel);
+          persistenceHandle!(channel, action);
+        };
+        offPersistenceWindow = registerPersistenceWindow170({
+          handle,
+          facets,
+          coreRecovery: recovery,
+          renderer,
+        });
+      }
     };
-    reopenWindow = openWindow;
-    openWindow();
+    let opening: Promise<void> | undefined;
+    const openWindow = () => {
+      if (opening) return opening;
+      const work = (async () => {
+        await workbench.openWindow(() => {
+          createWindow(flushDeviceWork);
+          attachPersistenceWindow();
+        }, reportCleanupError);
+        primary?.windowReady();
+        if (mainWindow) {
+          const window = mainWindow,
+            contents = window.webContents;
+          const scope = () => {
+            const principal = authority.principal(contents.id, "recovery");
+            if (principal.kind !== "core") throw new Error("Core workbench required.");
+            return {
+              hostEpoch: principal.hostEpoch,
+              workbenchInstance: principal.workbenchInstance,
+            };
+          };
+          const retire = createWindowRetirementHandler({
+            composition,
+            coreActions,
+            scope,
+            invalidate: () => authority.invalidate(contents.id),
+            flush: () => legacyLabWriter.settled(),
+            pause: () => monitor.pause(),
+          });
+          const offNative = attachNativeLifecycle({
+            window,
+            contents,
+            scope,
+            owners: () => [],
+            sessions: () => legacy.sessionIds(),
+            revokeIntent: () => ui.intent.dispose(),
+            revokeActions: (value) => {
+              coreActions.retire(value);
+              ui.actions.revokeWindow(value);
+              detachUi();
+            },
+            windowLost: (_scope, destroyed) => retire(destroyed),
+            replaceWorkbench: () => {},
+            markUnresponsive: () => plugins.markRendererUnresponsive(),
+            retire: (owner, reason) => coordinator.retire(owner, reason),
+            suspend: (id) => coordinator.suspend(id),
+            resume: (id) => coordinator.resume(id),
+            failed: reportCleanupError,
+          });
+          contents.once("destroyed", offNative);
+        }
+        mainWindow?.on("blur", () => {
+          ui.intent.dispose();
+        });
+        mainWindow?.on("hide", () => {
+          ui.intent.dispose();
+        });
+        mainWindow?.on("minimize", () => {
+          ui.intent.dispose();
+        });
+      })();
+      opening = work;
+      void work
+        .finally(() => {
+          if (opening === work) opening = undefined;
+        })
+        .catch(reportCleanupError);
+      return work;
+    };
+    reopenWindow = () => {
+      void openWindow().catch(reportCleanupError);
+    };
+    await openWindow();
     updates.start();
     app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) openWindow();
+      if (BrowserWindow.getAllWindows().length === 0) void openWindow().catch(reportCleanupError);
     });
   },
   quitRecovery.focus,

@@ -22,6 +22,7 @@ export function DevicePanel({
   onConnect,
   onDisconnect,
   onCancel,
+  onOpenConnectionTools,
 }: {
   t: Copy;
   locale: Locale;
@@ -39,6 +40,7 @@ export function DevicePanel({
   onConnect(): void;
   onDisconnect(): void;
   onCancel(): void;
+  onOpenConnectionTools?: () => void;
 }): React.JSX.Element {
   const connectionBusy = locked && state.phase !== "awaitingDevice";
   const found = devices.filter((device) => device.transport === mode);
@@ -88,6 +90,10 @@ export function DevicePanel({
       {state.recovery ? (
         <button className="wide" onClick={onDisconnect}>
           {t.cancelRecovery}
+        </button>
+      ) : !state.session && onOpenConnectionTools ? (
+        <button className="wide" onClick={onOpenConnectionTools}>
+          {locale === "zh-TW" ? "開啟 EV3 插件工具" : "Open EV3 plugin tools"}
         </button>
       ) : !state.session ? (
         <>
@@ -184,5 +190,24 @@ export function DevicePanel({
         {state.deployed && <code>{state.deployed.path}</code>}
       </div>
     </>
+  );
+}
+
+/** Capture observation is not authoritative import readiness: completed profiles
+ * deliberately reject fresh challenges. Keep the retry action neutral. */
+export function DevicePreferenceCaptureNotice({
+  locale,
+  retry,
+}: {
+  locale: Locale;
+  retry(): void;
+}): React.JSX.Element {
+  return (
+    <div>
+      {locale === "zh-TW"
+        ? "需要時可重試匯入裝置偏好；已完成的匯入不會重做。"
+        : "You can retry importing device preferences if needed. Completed imports are not repeated."}
+      <button onClick={retry}>{locale === "zh-TW" ? "檢查匯入" : "Check import"}</button>
+    </div>
   );
 }

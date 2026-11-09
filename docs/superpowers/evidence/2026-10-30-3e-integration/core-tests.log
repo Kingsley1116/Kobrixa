@@ -1,0 +1,12 @@
+
+ RUN  v5.0.4 /Users/kingsley/.codex/worktrees/plugin-3e/Kobrixa
+
+
+ Test Files  36 passed (36)
+      Tests  852 passed (852)
+   Start at  02:37:59
+   Duration  17.81s (tests 81%, import 13%, transform 5%)
+
+    Isolate  36 workers spawned · ~47ms startup each (spawn + environment, per file)
+             at least ~1.64s faster with isolate: false — reuses workers across files instead of one per file
+

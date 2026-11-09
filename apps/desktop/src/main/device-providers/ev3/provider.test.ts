@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { expect, it, vi } from "vitest";
-import { EV3DeviceSession } from "@kobrixa/device";
+import { expect, it, onTestFinished, vi } from "vitest";
+import { DeviceOperationError, EV3DeviceSession } from "@kobrixa/device";
 import { createContexts, ExchangeLane } from "../../device-broker/provider.js";
 import type { ProviderOperationContext, ProviderStep } from "../../device-broker/provider.js";
 import { buildEv3Provider } from "./provider.js";
@@ -228,19 +228,31 @@ it("F09 a lost chunk reply stays unknown even after successful original-handle c
   expect(commands).toEqual([0x92, 0x93, 0x98]);
 });
 it.each([false, true])(
-  "F09 no-reply program launch has one dispatch; failed write=%s",
+  "F09 unconfirmed program launch sends stop once and never loads or starts; failed write=%s",
   async (fail) => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     const descriptor = {
       id: "usb:p",
       name: "Brick",
       transport: "usb" as const,
       metadata: { path: "p" },
     };
-    const transmit = vi.fn(async () => {
+    const exchange = vi.fn(async (_payload: Uint8Array, _signal: AbortSignal, timeoutMs = 5000) => {
       if (fail) throw new Error("disconnected");
+      // Model the transport's bounded wait without ever replying to the stop.
+      return new Promise<Uint8Array>((_resolve, reject) => {
+        setTimeout(
+          () => reject(new DeviceOperationError("timeout", "Operation timed out.")),
+          timeoutMs,
+        );
+      });
     });
+    const transmit = vi.fn(async () => {});
     const raw = new EV3DeviceSession(descriptor, {
-      exchange: async () => Uint8Array.of(2),
+      exchange,
       transmit,
       close: async () => {},
     });
@@ -261,14 +273,30 @@ it.each([false, true])(
     );
     const candidates = await provider.discover(ctx()),
       connection = await provider.connect(candidates.value![0]!.key, ctx());
-    const result = await provider.legacy(
+    const pending = provider.legacy(
       connection.value!.key,
       { kind: "run", remotePath: "/home/root/lms2012/prjs/a.rbf" },
       ctx(randomUUID()),
     );
-    expect(transmit).toHaveBeenCalledOnce();
-    expect(result.dispatch).toBe(fail ? "unknown" : "sent");
-    expect(result.value).toEqual(fail ? null : { kind: "launch", sent: true });
+    const settled = vi.fn();
+    void pending.then(settled);
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(exchange).toHaveBeenCalledExactlyOnceWith(
+      Uint8Array.of(0, 1, 0, 0x02, 1, 0x0c, 22, 1, 0x60),
+      expect.any(AbortSignal),
+      5000,
+    );
+    if (!fail) expect(settled).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    const result = await pending;
+    expect(result.dispatch).toBe("unknown");
+    expect(result.value).toBeNull();
+    expect(result.error?.reason).toBe(fail ? "disconnected" : "provider-failure");
+    // No retry or later load/start command, including after the timeout has settled.
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(exchange).toHaveBeenCalledOnce();
+    expect(transmit).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
   },
 );
 

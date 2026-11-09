@@ -1,0 +1,162 @@
+{
+  "id": "kobrixa.device-ev3",
+  "version": "1.0.0",
+  "apiVersion": "^1.8.0",
+  "displayName": {
+    "en": "EV3 device",
+    "zh-TW": "EV3 裝置"
+  },
+  "runtime": {
+    "kind": "node",
+    "entry": "main.cjs"
+  },
+  "permissions": [
+    "devices.read",
+    "devices.connect",
+    "devices.control",
+    "ui.panels",
+    "settings.read",
+    "settings.write"
+  ],
+  "requires": {
+    "devices": [
+      {
+        "capability": "connection.v1",
+        "required": true
+      },
+      {
+        "capability": "telemetry.v1",
+        "required": true
+      },
+      {
+        "capability": "inputModes.v1",
+        "required": false
+      }
+    ]
+  },
+  "activationEvents": ["onPanel:kobrixa.device-ev3.panel"],
+  "contributes": {
+    "commands": [
+      {
+        "id": "kobrixa.device-ev3.discover",
+        "title": {
+          "en": "Discover",
+          "zh-TW": "搜尋"
+        },
+        "invocation": "context-v1",
+        "arguments": {}
+      },
+      {
+        "id": "kobrixa.device-ev3.connect",
+        "title": {
+          "en": "Connect address",
+          "zh-TW": "連線至位址"
+        },
+        "invocation": "context-v1",
+        "arguments": {}
+      },
+      {
+        "id": "kobrixa.device-ev3.candidate",
+        "title": {
+          "en": "Connect selected device",
+          "zh-TW": "連線所選裝置"
+        },
+        "invocation": "context-v1",
+        "arguments": {
+          "key": {
+            "type": "string",
+            "maxLength": 128,
+            "nullable": false
+          },
+          "version": {
+            "type": "string",
+            "maxLength": 128,
+            "nullable": true
+          },
+          "dataset": {
+            "type": "number",
+            "min": 0,
+            "max": 9007199254740991,
+            "integer": true,
+            "nullable": false
+          }
+        }
+      },
+      {
+        "id": "kobrixa.device-ev3.modes",
+        "title": {
+          "en": "Query input modes",
+          "zh-TW": "查詢輸入模式"
+        },
+        "invocation": "context-v1",
+        "arguments": {}
+      },
+      {
+        "id": "kobrixa.device-ev3.mode",
+        "title": {
+          "en": "Set input mode",
+          "zh-TW": "設定輸入模式"
+        },
+        "invocation": "context-v1",
+        "arguments": {
+          "key": {
+            "type": "string",
+            "maxLength": 128,
+            "nullable": false
+          },
+          "version": {
+            "type": "string",
+            "maxLength": 128,
+            "nullable": true
+          },
+          "dataset": {
+            "type": "number",
+            "min": 0,
+            "max": 9007199254740991,
+            "integer": true,
+            "nullable": false
+          }
+        }
+      },
+      {
+        "id": "kobrixa.device-ev3.refresh",
+        "title": {
+          "en": "Refresh observations",
+          "zh-TW": "重新整理觀察"
+        },
+        "invocation": "context-v1",
+        "arguments": {}
+      }
+    ],
+    "panels": [
+      {
+        "id": "kobrixa.device-ev3.panel",
+        "title": {
+          "en": "EV3 device",
+          "zh-TW": "EV3 裝置"
+        },
+        "location": "right",
+        "resource": {
+          "version": 2,
+          "path": "ui/panel.json"
+        }
+      }
+    ],
+    "settings": {
+      "version": 1,
+      "path": "settings/preferences.json"
+    },
+    "deviceProviders": [
+      {
+        "id": "kobrixa.device-ev3",
+        "capabilities": [
+          "connection.v1",
+          "telemetry.v1",
+          "inputModes.v1",
+          "finiteMotion.v1",
+          "recordingReservation.v1"
+        ]
+      }
+    ]
+  }
+}

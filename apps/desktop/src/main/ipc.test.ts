@@ -4,7 +4,7 @@ import type {
 } from "@kobrixa/plugin-runtime";
 import type { AuthorityPort as ImportedAuthorityPort } from "./device-broker/authority-port.js";
 import type { CorePrincipal as ImportedCorePrincipal } from "./device-broker/broker-port.js";
-import { afterEach, beforeEach, expect, expectTypeOf, it, vi } from "vitest";
+import { afterAll, beforeAll, afterEach, beforeEach, expect, expectTypeOf, it, vi } from "vitest";
 const fileDialog = vi.hoisted(() => ({ showOpenDialog: vi.fn() }));
 const handlers = vi.hoisted(() => new Map<string, (...args: unknown[]) => unknown>());
 vi.mock("electron", () => ({
@@ -34,8 +34,6 @@ function fixture() {
     stop = vi.fn(async (_session: string, _principal: ImportedPrincipal) => {}),
     beforeClose = vi.fn(async () => {}),
     finish = vi.fn();
-  const motors = { flush: vi.fn(async () => {}) },
-    lab = { flush: vi.fn(async () => {}) };
   registerIpc(
     () => renderer as never,
     {} as never,
@@ -46,7 +44,7 @@ function fixture() {
     new UpdateOperationGate(() => undefined),
     finish,
     undefined,
-    { monitor: {} as never, lab: lab as never, motors: motors as never },
+    { monitor: {} as never },
     [],
     undefined,
     undefined,
@@ -60,8 +58,6 @@ function fixture() {
     stop,
     beforeClose,
     finish,
-    motors,
-    lab,
     call: (name: string, ...args: unknown[]) => handlers.get(name)!(event, ...args),
   };
 }
@@ -107,11 +103,8 @@ it("F03 report needs the main-issued document and cannot carry an owner or scope
     expect.objectContaining({ kind: "core", adapter: "recovery", hostEpoch: id(1) }),
   );
 });
-it("F17 renderer flush success cannot skip legacy or foundation save blockers", async () => {
+it("F17 renderer flush success cannot skip foundation save blockers", async () => {
   const f = fixture();
-  f.lab.flush.mockRejectedValueOnce(new Error("legacy disk full"));
-  await expect(f.call("workspace:finish-close", id(2), true)).rejects.toThrow("disk full");
-  expect(f.finish).not.toHaveBeenCalled();
   f.beforeClose.mockRejectedValueOnce(new Error("journal unconfirmed"));
   await expect(f.call("workspace:finish-close", id(2), true)).rejects.toThrow("journal");
   expect(f.finish).not.toHaveBeenCalled();
@@ -497,138 +490,149 @@ async function foundationIpc(legacyMetadata = false) {
   const shutdown = vi.fn(() => null),
     commands = vi.fn(() => null);
   const legacyFlush = vi.fn(async () => {});
-  const composition = await composeDesktopMain({
-    createFoundation: createDesktopFoundation,
-    foundationOptions: {
-      profile,
-      authority: contexts,
-      journal,
-      coreActions: ledger,
-      now,
-      hasPermission: (candidate, permission) =>
-        candidate.kind === "core"
-          ? candidate.hostEpoch === scope.hostEpoch &&
-            candidate.workbenchInstance === scope.workbenchInstance &&
-            ["devices.read", "devices.connect", "devices.control"].includes(permission)
-          : !!controllerRef.current &&
-            desktopDeviceAccess(controllerRef.current).hasPermission(candidate.owner, permission),
-      requirements: (candidate) =>
-        controllerRef.current
-          ? desktopDeviceAccess(controllerRef.current).requirements(candidate)
-          : null,
-      operationGate: ({ operationClass }) => {
-        try {
-          assertDeviceUpdateAdmission(update, operationClass);
-          return { ok: true, value: null };
-        } catch {
-          return {
-            ok: false,
-            error: {
-              code: "PLUGIN_E_DEVICE_BUSY",
-              message: "update preparing",
-              detail: {
-                kind: "device",
-                reason: "foreground",
-                dispatch: "not-sent",
-                stopConfirmation: "not-required",
+  let workerControl: PersistenceFaultControl170 | undefined;
+  const composition = await composeDesktopMain(
+    {
+      createFoundation: createDesktopFoundation,
+      foundationOptions: {
+        profile,
+        authority: contexts,
+        journal,
+        coreActions: ledger,
+        now,
+        hasPermission: (candidate, permission) =>
+          candidate.kind === "core"
+            ? candidate.hostEpoch === scope.hostEpoch &&
+              candidate.workbenchInstance === scope.workbenchInstance &&
+              ["devices.read", "devices.connect", "devices.control"].includes(permission)
+            : !!controllerRef.current &&
+              desktopDeviceAccess(controllerRef.current).hasPermission(candidate.owner, permission),
+        requirements: (candidate) =>
+          controllerRef.current
+            ? desktopDeviceAccess(controllerRef.current).requirements(candidate)
+            : null,
+        operationGate: ({ operationClass }) => {
+          try {
+            assertDeviceUpdateAdmission(update, operationClass);
+            return { ok: true, value: null };
+          } catch {
+            return {
+              ok: false,
+              error: {
+                code: "PLUGIN_E_DEVICE_BUSY",
+                message: "update preparing",
+                detail: {
+                  kind: "device",
+                  reason: "foreground",
+                  dispatch: "not-sent",
+                  stopConfirmation: "not-required",
+                },
               },
+            };
+          }
+        },
+        connectionPolicy: () => ({
+          wifiConnectTimeoutMs: 3000,
+          wifiHandshakeTimeoutMs: 1000,
+          usbAutoReconnect: false,
+          usbRetryInterval: 2000,
+          usbRetryLimit: 3,
+        }),
+        providerFactory(catalog) {
+          catalogs.push(catalog);
+          expect(() =>
+            catalog.identify({
+              sessionId: id(99),
+              portId: "1",
+              typeId: "29",
+              modeId: "0",
+              component: 0,
+              unit: "%",
+            }),
+          ).toThrow();
+          const fake = createFakeDeviceProvider({ catalog, now });
+          control = fake.control;
+          controls.push(control);
+          const connect = fake.provider.connect.bind(fake.provider);
+          vi.spyOn(fake.provider, "connect").mockImplementation((target, ctx) =>
+            connect(target, {
+              ...ctx,
+              exchange: (step, invoke) =>
+                ctx.exchange(step, (signal, timeout) => {
+                  connectionBudgets.push(timeout);
+                  return invoke(signal, timeout);
+                }),
+            }),
+          );
+          if (legacyMetadata) {
+            // Formal transport and barriers are unchanged; supply the EV3 metadata the
+            // legacy Lab adapter expects, as in the T5 compatibility fixture.
+            const sources = fake.provider.sources.bind(fake.provider);
+            vi.spyOn(fake.provider, "sources").mockImplementation(async (...args) => {
+              const value = await sources(...args);
+              if (value.value)
+                for (const channel of value.value.channels)
+                  Object.assign(channel, { portId: "input:0", typeId: "ev3:29", modeId: "mode:0" });
+              return value;
+            });
+          }
+          return fake.provider;
+        },
+      },
+      plugins: {
+        userData: root,
+        builtins: BUILTIN_PLUGIN_SOURCES,
+        commandLine: { developmentDirectories: [directory], safeMode: false },
+        locale: "en",
+        dialogs: {
+          confirmDeveloperMode: async () => false,
+          chooseFolder: async () => undefined,
+          confirmLink: async () => false,
+          confirmUnlink: async () => false,
+          choosePython: async () => undefined,
+        },
+        launcher: () => async (plugin) => {
+          owner = plugin.channelOwner!;
+          const memory = memoryPlugin((remote, process) => {
+            peer = remote;
+            remote.handle("initialize", () => ({
+              apiVersion: "1.5.0",
+              sdk: { name: "test", version: "1" },
+            }));
+            remote.handle("command/execute", commands);
+            remote.handle("shutdown", shutdown);
+            remote.onNotification("exit", () => process.exit());
+          });
+          const send = memory.process.send.bind(memory.process);
+          return {
+            ...memory.process,
+            send(text) {
+              const message = JSON.parse(text);
+              if (dropStartReply && message.result?.value?.operation) {
+                dropStartReply = false;
+                droppedReplies++;
+                return;
+              }
+              send(text);
             },
           };
-        }
+        },
       },
-      connectionPolicy: () => ({
-        wifiConnectTimeoutMs: 3000,
-        wifiHandshakeTimeoutMs: 1000,
-        usbAutoReconnect: false,
-        usbRetryInterval: 2000,
-        usbRetryLimit: 3,
-      }),
-      providerFactory(catalog) {
-        catalogs.push(catalog);
-        expect(() =>
-          catalog.identify({
-            sessionId: id(99),
-            portId: "1",
-            typeId: "29",
-            modeId: "0",
-            component: 0,
-            unit: "%",
-          }),
-        ).toThrow();
-        const fake = createFakeDeviceProvider({ catalog, now });
-        control = fake.control;
-        controls.push(control);
-        const connect = fake.provider.connect.bind(fake.provider);
-        vi.spyOn(fake.provider, "connect").mockImplementation((target, ctx) =>
-          connect(target, {
-            ...ctx,
-            exchange: (step, invoke) =>
-              ctx.exchange(step, (signal, timeout) => {
-                connectionBudgets.push(timeout);
-                return invoke(signal, timeout);
-              }),
-          }),
-        );
-        if (legacyMetadata) {
-          // Formal transport and barriers are unchanged; supply the EV3 metadata the
-          // legacy Lab adapter expects, as in the T5 compatibility fixture.
-          const sources = fake.provider.sources.bind(fake.provider);
-          vi.spyOn(fake.provider, "sources").mockImplementation(async (...args) => {
-            const value = await sources(...args);
-            if (value.value)
-              for (const channel of value.value.channels)
-                Object.assign(channel, { portId: "input:0", typeId: "ev3:29", modeId: "mode:0" });
-            return value;
-          });
-        }
-        return fake.provider;
+      principal: (candidate) => contexts.plugin(renderer.id, candidate),
+      scope: () => scope,
+      currentScope: (value) => value.workbenchInstance === scope.workbenchInstance,
+      legacyFlush,
+      report: vi.fn(),
+    },
+    {
+      worker: {
+        entry: ipcWorkerEntry170,
+        control: (value) => {
+          workerControl = value;
+        },
       },
     },
-    plugins: {
-      userData: root,
-      builtins: BUILTIN_PLUGIN_SOURCES,
-      commandLine: { developmentDirectories: [directory], safeMode: false },
-      locale: "en",
-      dialogs: {
-        confirmDeveloperMode: async () => false,
-        chooseFolder: async () => undefined,
-        confirmLink: async () => false,
-        confirmUnlink: async () => false,
-        choosePython: async () => undefined,
-      },
-      launcher: () => async (plugin) => {
-        owner = plugin.channelOwner!;
-        const memory = memoryPlugin((remote, process) => {
-          peer = remote;
-          remote.handle("initialize", () => ({
-            apiVersion: "1.5.0",
-            sdk: { name: "test", version: "1" },
-          }));
-          remote.handle("command/execute", commands);
-          remote.handle("shutdown", shutdown);
-          remote.onNotification("exit", () => process.exit());
-        });
-        const send = memory.process.send.bind(memory.process);
-        return {
-          ...memory.process,
-          send(text) {
-            const message = JSON.parse(text);
-            if (dropStartReply && message.result?.value?.operation) {
-              dropStartReply = false;
-              droppedReplies++;
-              return;
-            }
-            send(text);
-          },
-        };
-      },
-    },
-    principal: (candidate) => contexts.plugin(renderer.id, candidate),
-    scope: () => scope,
-    currentScope: (value) => value.workbenchInstance === scope.workbenchInstance,
-    legacyFlush,
-    report: vi.fn(),
-  });
+  );
   const controller = composition.plugins;
   controllerRef.current = controller;
   expect(await controller.execute("test.consumer.start")).toMatchObject({ ok: true });
@@ -715,8 +719,12 @@ async function foundationIpc(legacyMetadata = false) {
         if (blocked) {
           await expect(composition.dispose()).rejects.toThrow("disposition");
           expect(shutdown).not.toHaveBeenCalled();
-          await controller.shutdown(); // Dispose the in-memory test process only.
+          // Process teardown cannot turn unresolved provider evidence into success.
+          await expect(controller.shutdown()).rejects.toThrow("disposition");
           coordinator.dispose();
+          // Test-only cleanup after asserting the real disposition blocker. No
+          // production lock is released or successful shutdown receipt invented.
+          await workerControl!.terminate();
         } else await composition.dispose();
       } finally {
         update.dispose();
@@ -1392,7 +1400,7 @@ it("D150 Disconnect also waits for a concurrent current-stop's final journal pub
   }
 });
 
-it.each(["shutdown", "disconnect", "provider"] as const)(
+it.each(["shutdown", "disconnect", "provider", "reload"] as const)(
   "D150 later recovery after blocked Disconnect keeps %s pending through its final journal",
   async (teardown) => {
     const f = await foundationIpc();
@@ -1426,9 +1434,11 @@ it.each(["shutdown", "disconnect", "provider"] as const)(
       pending = Promise.resolve(
         teardown === "shutdown"
           ? f.composition.dispose()
-          : teardown === "provider"
-            ? f.broker.resources.retireProvider("kobrixa.device-ev3", f.providerGeneration)
-            : f.call("device:disconnect", f.sessionId),
+          : teardown === "reload"
+            ? f.controller.reload("builtin:kobrixa.device-ev3")
+            : teardown === "provider"
+              ? f.broker.resources.retireProvider("kobrixa.device-ev3", f.providerGeneration)
+              : f.call("device:disconnect", f.sessionId),
       ).finally(() => {
         settled = true;
       });
@@ -1454,7 +1464,10 @@ it.each(["shutdown", "disconnect", "provider"] as const)(
       ).toHaveLength(1);
       if (teardown === "shutdown") expect(f.shutdown).toHaveBeenCalledOnce();
       else if (teardown === "disconnect") expect(physical).toHaveBeenCalledOnce();
-      else
+      else if (teardown === "reload") {
+        await expect(pending).resolves.toMatchObject({ ok: true });
+        expect(f.catalogs).toHaveLength(2);
+      } else
         await expect(pending).resolves.toMatchObject({
           stopConfirmed: true,
           journalCommitted: true,
@@ -1555,4 +1568,401 @@ it("D150 catalog rejects foreign sessions and invalidates its allocator on real 
   } finally {
     await f.cleanup();
   }
+});
+
+import { WorkbenchLifecycle } from "./window/workbench-lifecycle.js";
+import { UpdateInstallation } from "./updates/installation.js";
+import { desktopUi } from "./plugins/controller.js";
+it.each(["window", "update"] as const)(
+  "real composition %s retirement preserves the host for safe lazy readmission",
+  async (reason) => {
+    const f = await foundationIpc();
+    const ui = desktopUi(f.composition);
+    const shutdown = vi.spyOn(f.broker.resources, "beginShutdown");
+    const workbench = new WorkbenchLifecycle({
+      sessions: () => [f.sessionId],
+      suspend: (id) => f.coordinator.suspend(id),
+      verify: (id) => f.coordinator.confirmSuspended(id),
+      retire: (mode) => (mode === "update" ? ui.prepareUpdate() : ui.prepareWindowClose()),
+      resume: (id) => f.coordinator.resume(id),
+      readmit: () => f.controller.resume(),
+    });
+    try {
+      const operationId = await prepareMotion(f);
+      f.control.block("after-exchange", "motion-pulse");
+      expect((await f.peer.request("devices/motion/start", { operationId })).ok).toBe(true);
+      await f.control.reached("after-exchange", "motion-pulse");
+      const closing = workbench.close(reason);
+      f.control.release("after-exchange", "motion-pulse");
+      await closing;
+      expect(f.shutdown).toHaveBeenCalledOnce();
+      expect(shutdown).not.toHaveBeenCalled();
+      expect(f.controller.acceptingUi).toBe(false);
+      expect(f.journal.snapshot().blockers).toEqual([]);
+      expect(
+        f.control.trace().some((row) => row.step === "readback" && row.dispatch === "sent"),
+      ).toBe(true);
+      const commands = f.commands.mock.calls.length;
+      await workbench.reopen();
+      expect(f.controller.acceptingUi).toBe(true);
+      expect(f.commands).toHaveBeenCalledTimes(commands);
+      expect(
+        await f.broker.request(f.principal, "devices/list", {}, new AbortController().signal),
+      ).toMatchObject({
+        ok: true,
+        value: { sessions: [{ sessionId: f.sessionId, state: "connected" }] },
+      });
+      expect(await f.controller.execute("test.consumer.start")).toMatchObject({ ok: true });
+      expect(f.commands).toHaveBeenCalledTimes(commands + 1);
+      expect(shutdown).not.toHaveBeenCalled();
+    } finally {
+      await f.cleanup();
+    }
+  },
+);
+it("real update backend failure can readmit after stop/save/process exit without reviving old consumers", async () => {
+  const f = await foundationIpc();
+  const ui = desktopUi(f.composition);
+  const shutdown = vi.spyOn(f.broker.resources, "beginShutdown");
+  const workbench = new WorkbenchLifecycle({
+    sessions: () => [f.sessionId],
+    suspend: (id) => f.coordinator.suspend(id),
+    verify: (id) => f.coordinator.confirmSuspended(id),
+    retire: () => ui.prepareUpdate(),
+    resume: (id) => f.coordinator.resume(id),
+    readmit: () => f.controller.resume(),
+  });
+  const installation = new UpdateInstallation(
+    f.update,
+    () => ui.prepareUpdate(),
+    () => workbench.close("update"),
+    async () => {
+      await workbench.reopen();
+      await f.controller.resume();
+    },
+  );
+  const off = f.update.onInstallationFailed(() => {
+    void installation.failed();
+  });
+  try {
+    await f.update.check();
+    await installation.prepare();
+    f.installer.mockImplementationOnce(() => {
+      expect(f.shutdown).toHaveBeenCalledOnce();
+      expect(f.journal.snapshot().blockers).toEqual([]);
+      throw new Error("installer failed");
+    });
+    await expect(installation.install()).rejects.toThrow("installer failed");
+    await installation.failed();
+    expect(shutdown).not.toHaveBeenCalled();
+    expect(f.controller.acceptingUi).toBe(true);
+    expect(f.commands).toHaveBeenCalledOnce();
+    expect(await f.controller.execute("test.consumer.start")).toMatchObject({ ok: true });
+  } finally {
+    off();
+    await f.cleanup();
+  }
+});
+
+import { registerPersistenceWindow170 } from "./ipc.js";
+import type { IpcMainInvokeEvent } from "electron";
+import { CoreRecovery } from "./plugins/core-recovery.js";
+function persistenceWindowFixture170() {
+  const scope = { hostEpoch: id(1), workbenchInstance: id(2) };
+  let current = scope;
+  const events = new EventEmitter();
+  const renderer = Object.assign(events, {
+    id: 71,
+    mainFrame: {},
+    isDestroyed: () => false,
+    send: vi.fn(),
+  });
+  const challenge = {
+    descriptorId: "test.preferences",
+    nonce: id(3),
+    scope,
+    keys: ["fixture.value"],
+  };
+  const issuePreferences = vi.fn(async () => challenge),
+    acceptPreferencesEvidence = vi.fn(async () => ({ state: "accepted" as const })),
+    retirePreferences = vi.fn();
+  const unexpected = () => {
+    throw new Error("Unexpected domain operation");
+  };
+  const imports = {
+    issuePreferences,
+    acceptPreferencesEvidence,
+    retirePreferences,
+    run: unexpected,
+    acceptPreferences: unexpected,
+  };
+  const settings: NonNullable<PluginController["persistence170"]>["settings"] = {
+    open: vi.fn<NonNullable<PluginController["persistence170"]>["settings"]["open"]>(
+      async (input) => ({
+        binding: {
+          owner: { sourceKey: input.sourceKey, pluginId: "test.settings", uiResourceGeneration: 1 },
+          scope: input.scope,
+          resourceDigest: input.resourceDigest,
+        },
+        resource: {
+          schemaVersion: 1,
+          title: { en: "Settings" },
+          fields: [{ key: "enabled", label: { en: "Enabled" }, type: "boolean", default: false }],
+        },
+        snapshot: { schemaVersion: 1, revision: null, values: [] },
+      }),
+    ),
+    read: unexpected,
+    update: unexpected,
+    reset: unexpected,
+    watch: unexpected,
+    dispose: vi.fn(),
+  };
+  const offOpen = vi.fn(),
+    offChanged = vi.fn();
+  const bridge: PluginsApi["persistenceRecovery"] = {
+    snapshot: vi.fn(async () => ({ ok: true as const, value: { revision: 0, items: [] } })),
+    act: unexpected,
+    onOpen: vi.fn(() => offOpen),
+    onChanged: vi.fn(() => offChanged),
+  };
+  const facets: NonNullable<PluginController["persistence170"]> = {
+    settings,
+    imports,
+    scope: () => current,
+    detail: { bridge, entries: () => [], openDetail: unexpected, dispose: vi.fn() },
+  };
+  const actions = createCoreActionLedger({
+    now: () => 0,
+    current: (candidate) => candidate.workbenchInstance === current.workbenchInstance,
+  });
+  const coreRecovery = new CoreRecovery({
+    actions,
+    scope: () => current,
+    entries: () => [],
+    now: () => 0,
+    openDetail: unexpected,
+  });
+  let currentRenderer: Electron.WebContents | undefined =
+    renderer as unknown as Electron.WebContents;
+  let dispose!: () => void;
+  registerIpc(
+    () => currentRenderer,
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    new UpdateOperationGate(() => undefined),
+    undefined,
+    undefined,
+    undefined,
+    [
+      (handle) => {
+        dispose = registerPersistenceWindow170({
+          handle,
+          facets,
+          coreRecovery,
+          renderer: () => currentRenderer,
+        });
+      },
+    ],
+  );
+  const event = {
+    sender: renderer,
+    senderFrame: renderer.mainFrame,
+  } as unknown as IpcMainInvokeEvent;
+  return {
+    renderer,
+    offOpen,
+    offChanged,
+    facets,
+    challenge,
+    event,
+    dispose,
+    issuePreferences,
+    acceptPreferencesEvidence,
+    retirePreferences,
+    call: (name: string, ...args: unknown[]) => handlers.get(name)!(event, ...args),
+    replace() {
+      current = { ...scope, workbenchInstance: id(4) };
+    },
+    replaceRenderer() {
+      currentRenderer = undefined;
+    },
+  };
+}
+it("persistence window validates the actual invoking sender/frame before settings, legacy or recovery calls", async () => {
+  const f = persistenceWindowFixture170();
+  try {
+    for (const event of [
+      { ...f.event, sender: { id: 999 } },
+      { ...f.event, senderFrame: {} },
+    ]) {
+      for (const [name, input] of [
+        ["persistence:legacy-preferences-challenge", "test.preferences"],
+        [
+          "plugins:settings:open",
+          { sourceKey: "builtin:test.settings", resourceDigest: "a".repeat(64) },
+        ],
+        ["plugins:persistence-recovery:snapshot", { itemId: id(6) }],
+      ] as const)
+        expect(() => handlers.get(name)!(event, input)).toThrow("untrusted");
+    }
+    expect(f.issuePreferences).not.toHaveBeenCalled();
+    expect(f.facets.settings.open).not.toHaveBeenCalled();
+    expect(f.facets.detail.bridge.snapshot).not.toHaveBeenCalled();
+    expect(await f.call("persistence:legacy-preferences-challenge", "test.preferences")).toEqual(
+      f.challenge,
+    );
+    expect(f.issuePreferences).toHaveBeenCalledExactlyOnceWith({
+      descriptorId: "test.preferences",
+      scope: f.challenge.scope,
+    });
+    const snapshot = {
+      nonce: f.challenge.nonce,
+      scope: f.challenge.scope,
+      entries: [{ key: "fixture.value", raw: null }],
+    };
+    expect(await f.call("persistence:legacy-preferences-submit", snapshot)).toEqual({
+      state: "accepted",
+    });
+    await expect(
+      f.call("persistence:legacy-preferences-submit", {
+        ...snapshot,
+        scope: { ...snapshot.scope, workbenchInstance: id(5) },
+      }),
+    ).rejects.toThrow();
+    expect(f.acceptPreferencesEvidence).toHaveBeenCalledOnce();
+    f.replace();
+    expect(() => f.call("persistence:legacy-preferences-challenge", "test.preferences")).toThrow(
+      "Stale",
+    );
+  } finally {
+    f.dispose();
+    f.dispose();
+  }
+  expect(f.retirePreferences).toHaveBeenCalledExactlyOnceWith(f.challenge.scope);
+});
+it.each(["destroyed", "render-process-gone", "did-start-navigation"])(
+  "persistence window %s retires old handlers and the original scope once",
+  async (event) => {
+    const f = persistenceWindowFixture170();
+    await f.call("plugins:persistence-recovery:subscribe");
+    f.renderer.emit(event, {}, "app://new", false, true);
+    f.dispose();
+    expect(f.retirePreferences).toHaveBeenCalledExactlyOnceWith(f.challenge.scope);
+    expect(() => f.call("persistence:legacy-preferences-challenge", "test.preferences")).toThrow(
+      "Stale",
+    );
+    expect(() => f.call("plugins:persistence-recovery:snapshot", { itemId: id(6) })).toThrow(
+      "Stale",
+    );
+    expect(f.renderer.listenerCount("destroyed")).toBe(0);
+    expect(f.renderer.listenerCount("render-process-gone")).toBe(0);
+    expect(f.renderer.listenerCount("did-start-navigation")).toBe(0);
+  },
+);
+import type { PluginsApi } from "../shared/plugins.js";
+
+import { build as buildIpcWorker170 } from "vite";
+import { fileURLToPath as ipcFileURL170 } from "node:url";
+let ipcWorkerDirectory170: string, ipcWorkerEntry170: string;
+beforeAll(async () => {
+  ipcWorkerDirectory170 = await realpath(await mkdtemp(join(tmpdir(), "d170-ipc-worker-")));
+  const entry = join(ipcWorkerDirectory170, "entry.ts");
+  const worker = ipcFileURL170(new URL("./plugins/persistence/worker.ts", import.meta.url));
+  await writeFile(
+    entry,
+    `import {runPersistenceWorker} from ${JSON.stringify(worker)};runPersistenceWorker({mappers:new Map()});`,
+  );
+  await buildIpcWorker170({
+    configFile: false,
+    logLevel: "error",
+    build: {
+      target: "node24",
+      outDir: join(ipcWorkerDirectory170, "bundle"),
+      emptyOutDir: true,
+      lib: { entry, formats: ["cjs"], fileName: () => "worker.cjs" },
+      rollupOptions: { external: [/^node:/] },
+      minify: false,
+    },
+  });
+  ipcWorkerEntry170 = join(ipcWorkerDirectory170, "bundle", "worker.cjs");
+}, 60000);
+afterAll(async () => {
+  await rm(ipcWorkerDirectory170, { recursive: true, force: true });
+});
+
+import type { PersistenceFaultControl as PersistenceFaultControl170 } from "./plugins/persistence/worker.js";
+
+it("persistence routes survive in-place/subframe navigation and admit only a fresh document scope after reload", async () => {
+  const f = persistenceWindowFixture170();
+  try {
+    await f.call("plugins:persistence-recovery:subscribe");
+    for (const [inPlace, mainFrame] of [
+      [true, true],
+      [false, false],
+    ]) {
+      f.renderer.emit("did-start-navigation", {}, "app://page#part", inPlace, mainFrame);
+      await f.call("persistence:legacy-preferences-challenge", "test.preferences");
+    }
+    expect(f.retirePreferences).not.toHaveBeenCalled();
+    const oldSettings = (await f.call("plugins:settings:open", {
+      sourceKey: "builtin:test.settings",
+      resourceDigest: "a".repeat(64),
+    })) as { binding: unknown };
+    const oldFrame = f.event.senderFrame;
+    f.renderer.emit("did-start-navigation", {}, "app://page", false, true);
+    expect(f.retirePreferences).toHaveBeenCalledExactlyOnceWith(f.challenge.scope);
+    expect(() => f.call("persistence:legacy-preferences-challenge", "test.preferences")).toThrow(
+      "Stale",
+    );
+    expect(f.offOpen).toHaveBeenCalledOnce();
+    expect(f.offChanged).toHaveBeenCalledTimes(2);
+    expect(f.facets.settings.dispose).toHaveBeenCalledOnce();
+    f.replace();
+    // The authority epoch can rotate at navigation start, before the new document commits.
+    expect(() => f.call("persistence:legacy-preferences-challenge", "test.preferences")).toThrow(
+      "Stale",
+    );
+    f.renderer.mainFrame = {};
+    f.renderer.emit("did-navigate", {}, "app://page");
+    const freshEvent = { ...f.event, senderFrame: f.renderer.mainFrame };
+    expect(() =>
+      handlers.get("persistence:legacy-preferences-challenge")!(
+        { ...f.event, senderFrame: oldFrame },
+        "test.preferences",
+      ),
+    ).toThrow("untrusted");
+    await handlers.get("persistence:legacy-preferences-challenge")!(freshEvent, "test.preferences");
+    await expect(
+      handlers.get("persistence:legacy-preferences-submit")!(freshEvent, {
+        nonce: f.challenge.nonce,
+        scope: f.challenge.scope,
+        entries: [],
+      }),
+    ).rejects.toThrow("scope");
+    await expect(
+      handlers.get("plugins:settings:read")!(freshEvent, oldSettings.binding),
+    ).rejects.toThrow("Stale");
+    await handlers.get("plugins:settings:open")!(freshEvent, {
+      sourceKey: "builtin:test.settings",
+      resourceDigest: "a".repeat(64),
+    });
+    await handlers.get("plugins:persistence-recovery:subscribe")!(freshEvent);
+    await handlers.get("plugins:persistence-recovery:snapshot")!(freshEvent, { itemId: id(6) });
+    expect(f.facets.detail.bridge.onOpen).toHaveBeenCalledTimes(2);
+    expect(f.renderer.listenerCount("did-start-navigation")).toBe(1);
+  } finally {
+    f.dispose();
+    f.dispose();
+  }
+  expect(f.retirePreferences).toHaveBeenCalledTimes(2);
+});
+
+it("has no private Lab IPC but retains the monitor subscription endpoint", () => {
+  fixture();
+  expect([...handlers.keys()].filter((name) => name.startsWith("sensor-lab:"))).toEqual([]);
+  expect(handlers.has("device:watch-monitor")).toBe(true);
 });

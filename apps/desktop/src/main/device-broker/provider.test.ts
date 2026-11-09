@@ -74,6 +74,51 @@ it("A-RF1 stop after upload wins over late arm and brake never downgrades", asyn
   expect(sent).toEqual(["upload", "stop"]);
   expect(c.cleanup.signal.aborted).toBe(false);
 });
+it("a rejected in-flight exchange does not cancel the queued safety stop", async () => {
+  const lane = new ExchangeLane(() => 0);
+  lane.reserve(ID);
+  let rejectExchange!: (error: Error) => void;
+  let entered!: () => void;
+  const reached = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const c = createContexts({
+    id: ID,
+    sessionId: ID,
+    generation: 1,
+    operationClass: "finite-motion",
+    deadline: 30000,
+    now: () => 0,
+    lane,
+    check: () => {},
+    progress: () => {},
+    onStop: () => {},
+  });
+  const pending = c.work.exchange("preflight", () => {
+    entered();
+    return new Promise<void>((_resolve, reject) => {
+      rejectExchange = reject;
+    });
+  });
+  const failedWork = expect(pending).rejects.toThrow("cancelled original exchange");
+  await reached;
+  c.stop("cancelled", true);
+  const stop = vi.fn(async () => "confirmed");
+  const cleanup = c.cleanup.exchange("stop", stop);
+  // Observe a rejection without an unhandled promise while arranging the race.
+  const outcome = cleanup.then(
+    (value) => ({ value }),
+    (error: unknown) => ({ error }),
+  );
+  await Promise.resolve();
+  expect(stop).not.toHaveBeenCalled();
+  rejectExchange(new Error("cancelled original exchange"));
+  await failedWork;
+  expect(await outcome).toEqual({ value: "confirmed" });
+  expect(stop).toHaveBeenCalledOnce();
+  expect(c.cleanup.signal.aborted).toBe(false);
+  expect(lane.occupied).toBe(false);
+});
 
 import { exchangeBudget } from "./provider.js";
 it.each([
@@ -191,3 +236,95 @@ it.each([Infinity, Number.MAX_SAFE_INTEGER, NaN])(
     }
   },
 );
+
+it("contract2 recovery lease requires released foreground and settled transport, and retains quarantine", async () => {
+  const lane = new ExchangeLane(() => 0);
+  lane.reserve("original");
+  lane.quarantined = true;
+  expect(() => lane.reserveRecovery("recovery")).toThrow();
+  let release!: () => void;
+  const calls: string[] = [];
+  const original = lane.exchange(
+    "original",
+    10000,
+    5000,
+    () => {},
+    async () => {
+      calls.push("original");
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    },
+  );
+  await Promise.resolve();
+  await Promise.resolve();
+  lane.release("original");
+  expect(() => lane.reserveRecovery("recovery")).toThrow();
+  release();
+  await original;
+  lane.reserveRecovery("recovery");
+  expect(lane.quarantined).toBe(true);
+  expect(() => lane.reserveRecovery("concurrent")).toThrow();
+  expect(() => lane.reserve("ordinary")).toThrow();
+  await expect(
+    lane.exchange(
+      "original",
+      10000,
+      5000,
+      () => {},
+      async () => {
+        calls.push("late-original");
+      },
+    ),
+  ).rejects.toThrow();
+  await lane.exchange(
+    "recovery",
+    10000,
+    5000,
+    () => {},
+    async () => {
+      calls.push("recovery");
+    },
+  );
+  lane.releaseRecovery("wrong-lease");
+  expect(() => lane.reserveRecovery("concurrent")).toThrow();
+  lane.releaseRecovery("recovery");
+  expect(calls).toEqual(["original", "recovery"]);
+  expect(lane.quarantined).toBe(true);
+  expect(() => lane.reserve("ordinary")).toThrow();
+});
+it("contract2 releasing a timed-out recovery never waives its underlying transport", async () => {
+  vi.useFakeTimers();
+  try {
+    const lane = new ExchangeLane(() => Date.now());
+    lane.quarantined = true;
+    lane.reserveRecovery("recovery");
+    let release!: () => void;
+    const pending = lane.exchange(
+      "recovery",
+      Date.now() + 100,
+      100,
+      () => {},
+      async () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const rejected = expect(pending).rejects.toThrow();
+    await vi.advanceTimersByTimeAsync(100);
+    await rejected;
+    lane.releaseRecovery("recovery");
+    expect(lane.occupied).toBe(true);
+    expect(() => lane.reserveRecovery("second")).toThrow();
+    release();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(lane.occupied).toBe(false);
+    lane.reserveRecovery("second");
+    lane.releaseRecovery("second");
+    expect(lane.quarantined).toBe(true);
+  } finally {
+    vi.useRealTimers();
+  }
+});

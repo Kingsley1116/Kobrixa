@@ -1,21 +1,26 @@
 import { journalDocument } from "./journal.js";
+import { isDeepStrictEqual } from "node:util";
 import { randomUUID } from "node:crypto";
 import {
   channelDefinitionSchema,
-  deviceRequestSchemas,
+  deviceRequestSchemasV180 as deviceRequestSchemas,
+  validDeviceResultV180,
+  validateConnectionRecoverySnapshot,
+  type ConnectionRecovery,
+  type ConnectionRecoverySnapshot,
   sourceCatalogSchema,
   telemetryFrameSchema,
   validateDeviceWire,
   RpcError,
   RPC_ERRORS,
-  type DeviceMethod,
-  type DeviceParams,
-  type DeviceResult,
+  type DeviceMethodV180 as DeviceMethod,
+  type DeviceParamsV180 as DeviceParams,
+  type DeviceResultV180 as DeviceResult,
   type DeviceSessionSnapshot,
   type SourceCatalog,
   type DeviceCandidate,
-  type DeviceSubscriptionParams,
-  type DeviceSubscriptionSnapshot,
+  type DeviceSubscriptionParamsV180 as DeviceSubscriptionParams,
+  type DeviceSubscriptionSnapshotV180 as DeviceSubscriptionSnapshot,
   type Permission,
   type ResourceOwner,
   type AuthoritySnapshot,
@@ -63,7 +68,10 @@ import { OperationStore, type MotionAdmission } from "./operations.js";
 import { Sampler, CoreTelemetryLedger } from "./sampler.js";
 import { Reservations } from "./reservations.js";
 import type { createDeviceRecovery, RecoveryDriver } from "./recovery-port.js";
+import { isIdle, samePhysical } from "./recovery-port.js";
 import type { createDeviceResourceParticipant, ResourceDriver } from "./resource-participant.js";
+import { settleProviderRetirementLifecycle } from "./resource-participant.js";
+import { ProviderRetirementBlocked } from "./broker-port.js";
 export type BrokerLifecycleEvent =
   | { kind: "lost"; session: DeviceSessionSnapshot; message: string }
   | {
@@ -76,6 +84,50 @@ const lifecycleListeners = new WeakMap<
   DeviceBrokerPort,
   Set<(event: BrokerLifecycleEvent) => void>
 >();
+export type BrokerSessionCatalog = {
+  hostEpoch: string;
+  revision: number;
+  cause: "snapshot" | "changed" | "connected" | "recovered" | "lost";
+  origin: "core" | "plugin" | "recovery";
+  session: DeviceSessionSnapshot | null;
+};
+const sessionCatalogs = new WeakMap<
+  DeviceBrokerPort,
+  {
+    read(): BrokerSessionCatalog;
+    listeners: Set<(snapshot: BrokerSessionCatalog) => void>;
+  }
+>();
+/** Main-only, read-only projection. Does not acquire a principal, owner, sampler or native handle. */
+export function readBrokerSessionCatalog(
+  broker: DeviceBrokerPort,
+): BrokerSessionCatalog | undefined {
+  return sessionCatalogs.get(broker)?.read();
+}
+export function observeBrokerSessions(
+  broker: DeviceBrokerPort,
+  listener: (snapshot: BrokerSessionCatalog) => void,
+): () => void {
+  const entry = sessionCatalogs.get(broker);
+  if (!entry) return () => {};
+  entry.listeners.add(listener);
+  try {
+    listener(entry.read());
+  } catch {
+    entry.listeners.delete(listener);
+    throw new Error("Session observer failed.");
+  }
+  return () => {
+    entry.listeners.delete(listener);
+  };
+}
+const recoverySessions = new WeakMap<DeviceBrokerPort, () => DeviceSessionSnapshot[]>();
+/** Main-only recovery observation; never grants session ownership or starts device work. */
+export function readDeviceRecoverySessions(broker: DeviceBrokerPort): DeviceSessionSnapshot[] {
+  const read = recoverySessions.get(broker);
+  if (!read) throw new Error("Device recovery observation is unavailable.");
+  return read();
+}
 export function observeBrokerLifecycle(
   broker: DeviceBrokerPort,
   listener: (event: BrokerLifecycleEvent) => void,
@@ -148,8 +200,24 @@ export function observeCoreTelemetryClosed(
 }
 type Options = DeviceBrokerOptions;
 type Session = {
+  /** Storage may outlive an already-ended reservation. */
+  hadReservations: boolean;
+  initialization?: Promise<void>;
+  connectionClosed?: boolean;
   recoveryDisposition?: Promise<DeviceDisposition>;
   recoveryClosed?: boolean;
+  recoveryHistory: Array<{
+    sequence: number;
+    owner: string;
+    settled: Promise<DeviceDisposition>;
+    faultIds?: readonly string[];
+  }>;
+  recoveryProofs: Map<
+    string,
+    { sequence: number; valid(): boolean; covers(owner: string): boolean }
+  >;
+  originalDisposition?: Promise<DeviceDisposition[]>;
+  providerPending: Set<Promise<unknown>>;
   snapshot: DeviceSessionSnapshot;
   sources: SourceCatalog;
   connection: ProviderConnection;
@@ -167,7 +235,20 @@ type Session = {
   users: Set<string>;
   unregister: () => void;
 };
-type Candidate = { candidate: ProviderCandidate; generation: number; expires: number };
+type ConnectionCustody = {
+  generation: number;
+  closed: boolean;
+  attempted: boolean;
+  close(): Promise<boolean>;
+};
+type Candidate = {
+  candidate: ProviderCandidate;
+  generation: number;
+  expires: number;
+  recoveryCapture?: (custody: ConnectionCustody) => void;
+  recoveryCheck?: () => void;
+  recoveryAdopt?: (snapshot: DeviceSessionSnapshot) => void;
+};
 const merge = async (promises: Promise<DeviceDisposition>[]): Promise<DeviceDisposition> => {
   const all = await Promise.all(promises);
   return {
@@ -180,22 +261,86 @@ const merge = async (promises: Promise<DeviceDisposition>[]): Promise<DeviceDisp
 // explicit recovery can add evidence, but never restarts those operations/clocks.
 async function settleRecovery(
   current: Session,
-  original: Promise<DeviceDisposition>,
+  original: Promise<DeviceDisposition[]>,
   close = false,
   observe?: (disposition: DeviceDisposition, recovery: Session["recoveryDisposition"]) => void,
 ): Promise<DeviceDisposition> {
   for (;;) {
     const recovery = current.recoveryDisposition;
-    const disposition = await merge(recovery ? [original, recovery] : [original]);
+    const history = [...current.recoveryHistory];
+    const originals = await original;
+    const receipts = [
+      ...originals.map((value) => ({ sequence: 0, value })),
+      ...(await Promise.all(
+        history.map(async (row) => ({
+          sequence: row.sequence,
+          value: await row.settled,
+        })),
+      )),
+    ];
     if (recovery !== current.recoveryDisposition) continue;
-    // A clean teardown receipt must not be invalidated by a newly admitted Stop
-    // while its caller awaits storage or process exit. Existing recovery is done.
+    // Supersede each obligation separately: a no-fault failure cannot borrow
+    // another receipt's fault IDs. Original receipts and deadlines never change.
+    const effective = receipts.map(({ sequence, value }) => {
+      if (
+        !value.faultIds.length ||
+        !value.faultIds.every((id) => {
+          const proof = current.recoveryProofs.get(id);
+          return proof && proof.sequence > sequence && proof.valid();
+        })
+      )
+        return value;
+      return { stopConfirmed: true, journalCommitted: true, faultIds: [] };
+    });
+    const disposition = {
+      stopConfirmed: effective.every((value) => value.stopConfirmed),
+      journalCommitted: effective.every((value) => value.journalCommitted),
+      faultIds: [...new Set(effective.flatMap((value) => value.faultIds))],
+    };
+    // Every quarantining owner needs its own fault-bound proof. In particular,
+    // an unrelated journal fault cannot cover a passive transport timeout.
+    if (
+      current.lane.quarantined &&
+      !current.lane.quarantineOwners.every(
+        (owner) =>
+          owner !== null &&
+          [...current.recoveryProofs.values()].some(
+            (proof) => proof.covers(owner) && proof.valid(),
+          ),
+      )
+    )
+      disposition.stopConfirmed = false;
+    if (
+      disposition.faultIds.length ||
+      (close && (current.lane.occupied || current.providerPending.size))
+    )
+      disposition.stopConfirmed = false;
     if (close && disposition.stopConfirmed && disposition.journalCommitted)
       current.recoveryClosed = true;
-    // Record wake evidence in the same turn as the recovery-identity check.
     observe?.(disposition, recovery);
     return disposition;
   }
+}
+/** Track the actual provider promises, including work outliving a caller timeout.
+ * A transport drain alone cannot prove that an old provider continuation ended. */
+function trackedProvider(provider: BuiltinDeviceProvider, pending: Set<Promise<unknown>>) {
+  return new Proxy(provider, {
+    get(target, property) {
+      const value: unknown = Reflect.get(target, property, target);
+      if (typeof value !== "function") return value;
+      return (...args: unknown[]) => {
+        const result: unknown = Reflect.apply(value, target, args);
+        if (result instanceof Promise) {
+          pending.add(result);
+          void result.then(
+            () => pending.delete(result),
+            () => pending.delete(result),
+          );
+        }
+        return result;
+      };
+    },
+  });
 }
 const permissionFailure = (): never => {
   throw new BrokerFailure({
@@ -229,6 +374,24 @@ export function createBroker(
     participant: typeof createDeviceResourceParticipant;
   },
 ): DeviceBrokerPort & LegacyOperationPort {
+  const heldProviders = new Map<number, string>();
+  const providerHeld = (id: string) => [...heldProviders.values()].includes(id);
+  const getProvider = (id: string) => {
+    if (providerHeld(id)) return deviceFailure("PLUGIN_E_DEVICE_UNAVAILABLE", "provider-disabled");
+    return providers.get(id);
+  };
+  const providerWork = new Map<number, Set<Promise<unknown>>>();
+  const trackProviderWork = <T>(generation: number, work: Promise<T>): Promise<T> => {
+    const pending = providerWork.get(generation) ?? new Set<Promise<unknown>>();
+    providerWork.set(generation, pending);
+    pending.add(work);
+    const done = () => {
+      pending.delete(work);
+      if (!pending.size) providerWork.delete(generation);
+    };
+    void work.then(done, done);
+    return work;
+  };
   const wallNow = () => Date.now(); // Broker has no injected wall clock; recovery determinism is pinned through RecoveryDriver.wallNow test doubles.
   input.profile.assertHeld();
   const lifecycle = new Set<(event: BrokerLifecycleEvent) => void>();
@@ -271,43 +434,224 @@ export function createBroker(
     closing = false,
     revision = 0;
   const connectionLane = new ExchangeLane(input.now);
+  let retainedConnection: ConnectionCustody | null = null;
   const coreTelemetry = new CoreTelemetryLedger(input.now);
-  const changed = (sourcesChanged = false) => {
+  let catalogRevision = 0;
+  let sessionOrigin: BrokerSessionCatalog["origin"] = "core";
+  const sessionObservers = new Set<(snapshot: BrokerSessionCatalog) => void>();
+  const sessionCatalog = (
+    cause: BrokerSessionCatalog["cause"] = "snapshot",
+  ): BrokerSessionCatalog => ({
+    hostEpoch: input.profile.hostEpoch,
+    revision: catalogRevision,
+    cause,
+    origin: sessionOrigin,
+    session: session && !session.initialization ? sessionSnapshot(session) : null,
+  });
+  let publishedSession: string | undefined = JSON.stringify(null);
+  const changed = (sourcesChanged = false, cause: BrokerSessionCatalog["cause"] = "changed") => {
+    catalogRevision++;
+    // Synchronous publication updates host adapters before any power/window callback.
+    const snapshot = sessionCatalog(cause);
+    const identity = JSON.stringify(snapshot.session);
+    // Discovery/provider catalog churn is not a disconnected session transition.
+    if (cause !== "changed" || identity !== publishedSession) {
+      publishedSession = identity;
+      for (const listener of [...sessionObservers])
+        try {
+          listener(structuredClone(snapshot));
+        } catch {
+          /* Observers never block cleanup. */
+        }
+    }
     for (const row of [...subscriptions.values()])
       if (row.params.topic === "catalog" || row.params.topic === "session")
         row.notify(sourcesChanged);
   };
   const attemptPolicies = new Map<string, ReturnType<Options["connectionPolicy"]>>();
-  const lostUsb = new Map<
-    string,
-    {
-      principal: Principal;
+  type Episode = {
+    principal: Principal;
+    providerId: string;
+    generation: number;
+    digest: string;
+    settled: Promise<DeviceDisposition>;
+    policy: ReturnType<Options["connectionPolicy"]>;
+    attempts: number;
+    timer: ReturnType<typeof setTimeout> | null;
+    pending: boolean;
+    control: AbortController;
+    ref: {
+      recoveryId: string;
       providerId: string;
-      generation: number;
-      digest: string;
-      settled: Promise<DeviceDisposition>;
-      policy: ReturnType<Options["connectionPolicy"]>;
-      attempts: number;
-      timer: ReturnType<typeof setTimeout> | null;
-      pending: boolean;
-    }
-  >();
-
-  const forgetUsb = (id: string, state: "cancelled" | "exhausted" | null = "cancelled") => {
+      providerGeneration: number;
+      previousSessionId: string;
+    };
+    name: string;
+    due: number;
+    done: Promise<void>;
+    custody?: ConnectionCustody;
+    cancelDeadline?: number;
+    cancellation?: Promise<void>;
+  };
+  const lostUsb = new Map<string, Episode>();
+  let latestEpisode: Episode | null = null;
+  let projection: ConnectionRecovery | null = null;
+  let recoveryRevision = 0;
+  type Phase = ConnectionRecovery extends infer T
+    ? T extends ConnectionRecovery
+      ? Omit<
+          T,
+          | "recoveryId"
+          | "providerId"
+          | "providerGeneration"
+          | "previousSessionId"
+          | "name"
+          | "attemptsStarted"
+          | "retryLimit"
+        >
+      : never
+    : never;
+  const recoverySnapshot = (): ConnectionRecoverySnapshot =>
+    validateConnectionRecoverySnapshot({
+      hostEpoch: input.profile.hostEpoch,
+      revision: recoveryRevision,
+      recovery:
+        projection?.phase === "waiting" && latestEpisode
+          ? {
+              ...projection,
+              retryAfterMs: Math.max(
+                0,
+                Math.min(10000, Math.ceil(latestEpisode.due - input.now())),
+              ),
+            }
+          : projection,
+    });
+  const publishRecovery = (row: Episode, phase: Phase) => {
+    if (latestEpisode !== row) return;
+    const next = {
+      ...row.ref,
+      name: row.name,
+      attemptsStarted: row.attempts,
+      retryLimit: row.policy.usbRetryLimit,
+      ...phase,
+    } as ConnectionRecovery;
+    validateConnectionRecoverySnapshot({
+      hostEpoch: input.profile.hostEpoch,
+      revision: recoveryRevision + 1,
+      recovery: next,
+    });
+    projection = next;
+    recoveryRevision++;
+    for (const sub of [...subscriptions.values()])
+      if (sub.params.topic === "connectionRecovery") sub.notify();
+  };
+  const clearRecovery = () => {
+    latestEpisode = null;
+    projection = null;
+    recoveryRevision++;
+    for (const sub of [...subscriptions.values()])
+      if (sub.params.topic === "connectionRecovery") sub.notify();
+  };
+  const revokeEpisode = (row: Episode) => {
+    if (row.timer) clearTimeout(row.timer);
+    row.timer = null;
+    lostUsb.delete(row.ref.previousSessionId);
+    row.cancelDeadline ??= input.now() + 15000;
+    row.control.abort();
+  };
+  const cancelEpisode = (
+    row: Episode,
+    reason: Extract<ConnectionRecovery, { phase: "cancelled" }>["reason"],
+  ): Promise<void> => {
+    if (row.cancellation) return row.cancellation;
+    const retry = projection?.phase === "cancel-failed";
+    // Keep both the original pending attempt and its cleanup context. A timeout
+    // publishes uncertainty, and cannot free the connection lane or mint a grant.
+    // Install the joinable operation before publishing to synchronous observers.
+    row.cancellation = Promise.resolve()
+      .then(async () => {
+        let confirmed = false;
+        try {
+          if (row.pending) await bounded(row.done, Math.max(0, row.cancelDeadline! - input.now()));
+          confirmed =
+            !row.pending &&
+            (!row.custody ||
+              row.custody.closed ||
+              ((!row.custody.attempted || retry) && (await row.custody.close())));
+        } catch {
+          /* The exact retained attempt is still unresolved. */
+        }
+        publishRecovery(
+          row,
+          confirmed
+            ? { phase: "cancelled", reason }
+            : {
+                phase: "cancel-failed",
+                error: {
+                  reason: row.pending ? "cleanup-pending" : "cleanup-failed",
+                  message: row.pending
+                    ? "The original connection attempt is still settling."
+                    : "The original connection cleanup is unconfirmed.",
+                },
+              },
+        );
+      })
+      .finally(() => {
+        delete row.cancellation;
+      });
+    revokeEpisode(row);
+    publishRecovery(row, { phase: "cancelling" });
+    return row.cancellation;
+  };
+  const forgetUsb = (
+    id: string,
+    state: "cancelled" | "exhausted" | "unavailable" | null = "cancelled",
+    reason: Extract<ConnectionRecovery, { phase: "cancelled" }>["reason"] = "authority-lost",
+  ) => {
     const row = lostUsb.get(id);
-    if (row?.timer) clearTimeout(row.timer);
+    if (!row) return;
+    if (row.timer) clearTimeout(row.timer);
+    row.timer = null;
     lostUsb.delete(id);
-    if (row && state) recoveryState(id, state);
+    if (state === "cancelled" || state === "unavailable") void cancelEpisode(row, reason);
+    else {
+      row.control.abort();
+      if (state === "exhausted") publishRecovery(row, { phase: "retry-exhausted" });
+    }
+    if (state) recoveryState(id, state);
+  };
+  const readRecoveryPolicy = (row: Episode) => {
+    try {
+      return Object.freeze({ ...input.connectionPolicy() });
+    } catch {
+      // The last admitted policy may describe this episode, but cannot grant
+      // another discovery/connect continuation while authoritative storage is unavailable.
+      forgetUsb(row.ref.previousSessionId, "cancelled", "policy");
+      return null;
+    }
   };
   const usbLive = (row: NonNullable<ReturnType<typeof lostUsb.get>>) => {
-    if (closing || !input.connectionPolicy().usbAutoReconnect) return false;
+    if (closing) return false;
+    const policy = readRecoveryPolicy(row);
+    if (!policy) return false;
+    if (!policy.usbAutoReconnect) {
+      forgetUsb(row.ref.previousSessionId, "cancelled", "policy");
+      return false;
+    }
     try {
       assertPrincipal(row.principal);
-      const registration = providers.get(row.providerId);
+      const registration = getProvider(row.providerId);
       if (registration.generation !== row.generation) return false;
       const ref = row.principal.authorityContext?.ref;
       const context = ref ? input.authority.current(row.principal, ref) : null;
-      if (!context || context.state === "invalid") return false;
+      if (
+        !context ||
+        context.state === "invalid" ||
+        context.epoch !== row.principal.authorityContext?.epoch
+      )
+        return false;
+      permission(row.principal, "devices.connect");
+      input.authority.assertContinuation(row.principal, ref!);
       gate(row.principal, "connection", null, "admission");
       return true;
     } catch {
@@ -317,13 +661,18 @@ export function createBroker(
   const scheduleUsb = (id: string) => {
     const row = lostUsb.get(id);
     if (!row || row.timer || row.pending) return;
+    const policy = readRecoveryPolicy(row);
+    if (!policy) return;
+    row.policy = policy;
     if (!row.policy.usbAutoReconnect || !usbLive(row)) {
       const initial = row.attempts === 0;
-      forgetUsb(id, initial ? null : "cancelled");
-      if (initial) recoveryState(id, "unavailable");
+      forgetUsb(
+        id,
+        initial ? "unavailable" : "cancelled",
+        !row.policy.usbAutoReconnect ? "policy" : "authority-lost",
+      );
       return;
     }
-    const policy = input.connectionPolicy();
     if (policy.usbRetryLimit !== "unlimited" && row.attempts >= policy.usbRetryLimit) {
       forgetUsb(id, "exhausted");
       return;
@@ -332,6 +681,8 @@ export function createBroker(
       policy.usbRetryInterval === "backoff"
         ? [1000, 2000, 5000][Math.min(row.attempts, 2)]!
         : policy.usbRetryInterval;
+    row.due = input.now() + delay;
+    publishRecovery(row, { phase: "waiting", retryAfterMs: delay });
     if (row.attempts === 0) recoveryState(id, "waiting");
     row.timer = setTimeout(() => {
       row.timer = null;
@@ -339,10 +690,19 @@ export function createBroker(
         forgetUsb(id);
         return;
       }
-      row.attempts++;
       void broker
         .reconnectForRecovery({ previousSessionId: id, signal: new AbortController().signal })
-        .finally(() => scheduleUsb(id));
+        .then(
+          () => scheduleUsb(id),
+          () => {
+            // Unexpected provider errors must not leave a live retry or an
+            // unobserved rejection. The original episode stays unavailable.
+            if (lostUsb.get(id) !== row) return;
+            forgetUsb(id, null);
+            publishRecovery(row, { phase: "manual-required", reason: "cleanup-required" });
+            recoveryState(id, "unavailable");
+          },
+        );
     }, delay);
     row.timer.unref();
   };
@@ -391,10 +751,17 @@ export function createBroker(
   };
   const getSession = (principal: Principal, id: string, admission = true): Session => {
     const current = session;
-    if (!current || current.snapshot.sessionId !== id || !current.users.has(ownerKey(principal)))
+    if (!current || current.snapshot.sessionId !== id) return stale();
+    // A real host binding may act on a public session after current authority
+    // validation. Observation itself never enrolls an owner or grants I/O.
+    if (
+      !current.users.has(ownerKey(principal)) &&
+      (principal.kind !== "core" || !validCore(principal, current))
+    )
       return stale();
     if (admission) {
       assertPrincipal(principal);
+      getProvider(current.provider.id);
       if (current.quiescence) return deviceFailure("PLUGIN_E_DEVICE_UNAVAILABLE", "disconnected");
       if (current.snapshot.state !== "connected" || current.lane.quarantined)
         return deviceFailure("PLUGIN_E_DEVICE_UNAVAILABLE", "quarantined");
@@ -406,6 +773,7 @@ export function createBroker(
     const context = ref ? input.authority.current(principal, ref) : null;
     return (
       !closing &&
+      !providerHeld(current.provider.id) &&
       session === current &&
       !current.quiescence &&
       principal.hostEpoch === input.profile.hostEpoch &&
@@ -508,11 +876,12 @@ export function createBroker(
     id = randomUUID(),
     validate: () => void = () => {},
     rearmMs?: number,
+    generation = current?.generation ?? 0,
   ) =>
     createContexts({
       id,
       sessionId: current?.snapshot.sessionId ?? null,
-      generation: current?.generation ?? 0,
+      generation,
       operationClass,
       deadline: input.now() + duration,
       ...(rearmMs === undefined ? {} : { rearmMs }),
@@ -523,7 +892,7 @@ export function createBroker(
         validate();
         if (current) {
           getSession(principal, current.snapshot.sessionId);
-          providers.get(current.provider.id);
+          getProvider(current.provider.id);
           ensureCapability(
             current,
             operationClass === "mode-write" || operationClass === "mode-read"
@@ -627,7 +996,7 @@ export function createBroker(
       });
     if (reason === "disconnected" && current.snapshot.transport === "usb" && !recoveryFollows)
       recoveryState(current.snapshot.sessionId, "unavailable");
-    changed();
+    changed(false, reason === "disconnected" ? "lost" : "changed");
     coreReservations.endSession(current.snapshot.sessionId, reason, true);
     const ended = reservations.endSession(current.snapshot.sessionId, reason, true);
     const promises = operations.stopSession(current.snapshot.sessionId);
@@ -636,7 +1005,7 @@ export function createBroker(
     const deadline = input.now() + 15000;
     promises.push(
       Promise.all([current.lane.drain(deadline), current.sampler.settled(deadline)]).then(
-        () => ({ stopConfirmed: !current.lane.quarantined, journalCommitted: true, faultIds: [] }),
+        () => ({ stopConfirmed: true, journalCommitted: true, faultIds: [] }),
         () => ({ stopConfirmed: false, journalCommitted: true, faultIds: [] }),
       ),
     );
@@ -645,7 +1014,8 @@ export function createBroker(
         void operation.cancel();
         promises.push(operation.done);
       }
-    const original = merge(promises);
+    const original = Promise.all(promises);
+    current.originalDisposition = original;
     const receipt: SessionQuiescence = {
       sessionId: current.snapshot.sessionId,
       ended,
@@ -682,7 +1052,7 @@ export function createBroker(
         const quiescence = current.quiescence;
         if (!quiescence) return actionFailure();
         current.suspendOnly = false;
-        const disposition = await settleRecovery(current, quiescence.settled, true);
+        const disposition = await settleRecovery(current, current.originalDisposition!, true);
         if (!disposition.stopConfirmed || !disposition.journalCommitted)
           return deviceFailure("PLUGIN_E_DEVICE_STOP_UNCONFIRMED", "readback-failed", "unknown");
         const core: Principal = {
@@ -724,6 +1094,7 @@ export function createBroker(
         evidence.disposition.faultIds.length ||
         current.lane.quarantined ||
         current.lane.occupied ||
+        current.providerPending.size ||
         current.lane.foreground !== null
       )
         return;
@@ -731,7 +1102,7 @@ export function createBroker(
       if (journal.journalHealth !== "ready" || journal.blockers.length) return;
       try {
         input.profile.assertHeld();
-        if (providers.get(current.provider.id).generation !== current.generation) return;
+        if (getProvider(current.provider.id).generation !== current.generation) return;
         current.provider.describe(current.connection.key);
       } catch {
         return;
@@ -793,27 +1164,32 @@ export function createBroker(
     },
     revokeProvider(id, generation) {
       for (const [ref, row] of lostUsb)
-        if (row.providerId === id && row.generation === generation) forgetUsb(ref);
+        if (row.providerId === id && row.generation === generation)
+          forgetUsb(ref, "cancelled", "provider-retired");
       const current = session;
       if (!current || current.provider.id !== id || current.generation !== generation) return [];
       current.quiescence ??= finishSession(current, "disconnected");
       current.suspendOnly = false;
-      return [settleRecovery(current, current.quiescence.settled, true)];
+      return [settleRecovery(current, current.originalDisposition!, true)];
     },
     revokeAll() {
       closing = true;
-      for (const id of lostUsb.keys()) forgetUsb(id);
+      for (const id of lostUsb.keys()) forgetUsb(id, "cancelled", "shutdown");
+      disposeRecoveryObservers();
       coreTelemetry.dispose();
       events.dispose();
       if (!session) return [];
       session.quiescence ??= finishSession(session, "suspended");
       session.suspendOnly = false;
-      return [settleRecovery(session, session.quiescence.settled, true)];
+      return [settleRecovery(session, session.originalDisposition!, true)];
     },
   };
   const resources = factories.participant(resourceDriver);
+  const retainedRecoveryEvidence = new Map<number, Set<string>>();
   const recoveryDriver: RecoveryDriver = {
     wallNow: () => wallNow(),
+    canClearResolved: (ids) =>
+      ![...retainedRecoveryEvidence.values()].some((entries) => ids.some((id) => entries.has(id))),
     describe(sessionId) {
       const current = session;
       return current && current.snapshot.sessionId === sessionId
@@ -824,27 +1200,79 @@ export function createBroker(
           }
         : null;
     },
-    async occupy(sessionId, work) {
+    async occupy(sessionId, work, binding) {
       const current = session;
       if (!current || current.snapshot.sessionId !== sessionId) return stale();
       if (current.recoveryClosed)
         return deviceFailure("PLUGIN_E_DEVICE_UNAVAILABLE", "disconnected");
       if (reservations.active || coreReservations.active)
         return deviceFailure("PLUGIN_E_DEVICE_BUSY", "recording");
+      const originalPhysical = structuredClone(current.connection.physical);
+      const originalGeneration = current.generation,
+        originalKey = current.connection.key;
+      const validIdentity = () => {
+        input.profile.assertHeld();
+        const live = current.provider.describe(current.connection.key);
+        return (
+          session === current &&
+          current.generation === originalGeneration &&
+          current.connection.key === originalKey &&
+          !current.connectionClosed &&
+          live.key === current.connection.key &&
+          samePhysical(live.physical, originalPhysical)
+        );
+      };
+      if (
+        binding &&
+        (binding.session.sessionId !== sessionId ||
+          binding.session.providerGeneration !== current.generation ||
+          !samePhysical(binding.session.physical, originalPhysical) ||
+          !isDeepStrictEqual(
+            input.journal.snapshot().faults.find((e) => e.id === binding.fault.id),
+            binding.fault,
+          ) ||
+          binding.fault.state === "resolved" ||
+          !validIdentity())
+      )
+        return stale();
+      if (
+        current.lane.quarantined &&
+        (!binding ||
+          binding.fault.sessionId !== sessionId ||
+          binding.fault.providerGeneration !== current.generation ||
+          !samePhysical(binding.fault.physical, originalPhysical))
+      )
+        return stale();
+      if (binding && current.providerPending.size)
+        return deviceFailure("PLUGIN_E_DEVICE_BUSY", "foreground");
       const id = randomUUID();
-      current.lane.reserve(id);
+      if (binding) current.lane.reserveRecovery(id);
+      else current.lane.reserve(id);
+      if (binding) {
+        // Pin before resolution publication: journal subscribers may immediately
+        // request a clear, before the final proof has been installed.
+        const retained = retainedRecoveryEvidence.get(current.generation) ?? new Set<string>();
+        retained.add(binding.fault.id);
+        retainedRecoveryEvidence.set(current.generation, retained);
+      }
       // Session teardown must join recovery through final journal publication, not
       // merely wait for the last transport exchange to leave the lane.
       let settle!: (value: DeviceDisposition) => void;
       const disposition = new Promise<DeviceDisposition>((resolve) => {
         settle = resolve;
       });
-      current.recoveryDisposition = current.recoveryDisposition
-        ? merge([current.recoveryDisposition, disposition])
-        : disposition;
+      const sequence = current.recoveryHistory.length + 1;
+      const receipt: Session["recoveryHistory"][number] = {
+        sequence,
+        owner: id,
+        settled: disposition,
+      };
+      current.recoveryHistory.push(receipt);
+      current.recoveryDisposition = disposition;
       let confirmed = false;
-      const originalGeneration = current.generation,
-        originalKey = current.connection.key;
+      let physicalProof = false;
+      let resolution: SafetyFaultEntry | undefined;
+      let recordedFault = false;
       const ctx = createContexts({
         id,
         sessionId,
@@ -858,25 +1286,74 @@ export function createBroker(
           if (
             session !== current ||
             current.generation !== originalGeneration ||
-            current.connection.key !== originalKey
+            current.connection.key !== originalKey ||
+            !validIdentity()
           )
             return stale();
+        },
+        checkCleanup: () => {
+          if (!validIdentity()) return stale();
         },
         progress: () => {},
         onStop: () => {},
       });
       try {
         const result = await work({
-          observe: () => current.provider.observeIdle(originalKey, ctx.work),
-          stop: () =>
-            current.provider.stopAndReadback(originalKey, { kind: "current-device" }, ctx.cleanup),
+          observe: async () => {
+            if (!validIdentity()) return stale();
+            const outcome = await current.provider.observeIdle(originalKey, ctx.work);
+            if (!validIdentity()) return stale();
+            physicalProof = !outcome.error && isIdle(outcome.value);
+            return outcome;
+          },
+          stop: async () => {
+            if (!validIdentity()) return stale();
+            const outcome = await current.provider.stopAndReadback(
+              originalKey,
+              { kind: "current-device" },
+              ctx.cleanup,
+            );
+            if (!validIdentity()) return stale();
+            physicalProof =
+              !outcome.error && outcome.stopConfirmation === "confirmed" && isIdle(outcome.value);
+            return outcome;
+          },
+          recorded: (entry) => {
+            if (
+              binding ||
+              entry.sessionId !== sessionId ||
+              entry.providerGeneration !== originalGeneration ||
+              !samePhysical(entry.physical, originalPhysical) ||
+              !isDeepStrictEqual(
+                input.journal.snapshot().faults.find((e) => e.id === entry.id),
+                entry,
+              )
+            )
+              return stale();
+            recordedFault = true;
+          },
+          resolved: (entry) => {
+            if (
+              !binding ||
+              !physicalProof ||
+              !validIdentity() ||
+              entry.id !== binding.fault.id ||
+              entry.revision !== binding.fault.revision + 1 ||
+              entry.state !== "resolved" ||
+              entry.stopConfirmation !== "confirmed" ||
+              entry.resolution?.sessionId !== sessionId ||
+              !isDeepStrictEqual(
+                input.journal.snapshot().faults.find((e) => e.id === entry.id),
+                entry,
+              )
+            )
+              return stale();
+            resolution = structuredClone(entry);
+          },
         });
-        confirmed = !(
-          typeof result === "object" &&
-          result !== null &&
-          "ok" in result &&
-          result.ok === false
-        );
+        confirmed =
+          physicalProof &&
+          !(typeof result === "object" && result !== null && "ok" in result && result.ok === false);
         if (!confirmed) current.lane.quarantined = true;
         return result;
       } catch (error) {
@@ -887,12 +1364,56 @@ export function createBroker(
           await current.lane.drain(ctx.cleanup.deadlineMonotonicMs);
         } finally {
           current.provider.releaseOperation(id);
-          current.lane.release(id);
+          if (binding) current.lane.releaseRecovery(id);
+          else current.lane.release(id);
           const snapshot = input.journal.snapshot();
+          if (
+            confirmed &&
+            resolution &&
+            !current.lane.occupied &&
+            !current.providerPending.size &&
+            snapshot.journalHealth === "ready"
+          ) {
+            const resolved = resolution;
+            current.recoveryProofs.set(resolved.id, {
+              sequence,
+              covers: (owner) =>
+                binding!.fault.operationId === owner ||
+                current.recoveryHistory.some(
+                  (row) =>
+                    row.owner === owner &&
+                    row.sequence < sequence &&
+                    row.faultIds?.includes(resolved.id),
+                ),
+              valid: () => {
+                try {
+                  const journal = input.journal.snapshot();
+                  return (
+                    validIdentity() &&
+                    journal.journalHealth === "ready" &&
+                    isDeepStrictEqual(
+                      journal.faults.find((e) => e.id === resolved.id),
+                      resolved,
+                    )
+                  );
+                } catch {
+                  return false;
+                }
+              },
+            });
+          }
+          const faultIds = binding
+            ? confirmed && resolution
+              ? []
+              : [binding.fault.id]
+            : recordedFault
+              ? snapshot.blockers
+              : [];
+          receipt.faultIds = faultIds;
           settle({
-            stopConfirmed: confirmed && !current.lane.quarantined,
+            stopConfirmed: confirmed && !current.lane.occupied && !current.providerPending.size,
             journalCommitted: snapshot.journalHealth === "ready",
-            faultIds: snapshot.blockers,
+            faultIds,
           });
         }
       }
@@ -922,11 +1443,12 @@ export function createBroker(
     };
   };
   const list = (principal: Principal) => {
-    if (session?.snapshot.state === "connected") session.users.add(ownerKey(principal));
+    if (session?.snapshot.state === "connected" && !session.initialization)
+      session.users.add(ownerKey(principal));
     return {
       revision,
-      providers: providers.list(),
-      sessions: session ? [sessionSnapshot(session)] : [],
+      providers: providers.list().filter((row) => !providerHeld(row.providerId)),
+      sessions: session && !session.initialization ? [sessionSnapshot(session)] : [],
     };
   };
   const ensureCapability = (
@@ -1030,6 +1552,7 @@ export function createBroker(
           .list()
           .find(
             (row) =>
+              !providerHeld(row.providerId) &&
               row.state === "available" &&
               row.capabilities.includes(capability as (typeof row.capabilities)[number]),
           );
@@ -1101,20 +1624,25 @@ export function createBroker(
           ? "devices.control"
           : "devices.read",
     );
+    if (method === "devices/connectionRecovery/read") return recoverySnapshot();
     if (method === "devices/list") return list(principal);
     if (method === "devices/discover") {
       const p = parse(method),
-        registration = providers.get(p.providerId),
-        ctx = contexts(principal, null, "connection", 10000);
+        registration = getProvider(p.providerId),
+        ctx = contexts(principal, null, "connection", 10000, randomUUID(), () => {
+          if (getProvider(p.providerId).generation !== registration.generation) return stale();
+        });
       if (!registration.provider.capabilities.includes("connection.v1"))
         return deviceFailure("PLUGIN_E_DEVICE_CAPABILITY", "unsupported-capability");
-      const found = value(await registration.provider.discover(ctx.work));
+      const found = value(
+        await trackProviderWork(registration.generation, registration.provider.discover(ctx.work)),
+      );
       ctx.work.assertContinuation("discover");
       if (found.length > 32) return quota("candidate", 32);
       const result: DeviceCandidate[] = [];
       for (const candidate of found) {
         providers.claim(p.providerId, candidate.physical);
-        providers.get(p.providerId);
+        getProvider(p.providerId);
         const id = candidates.add(ownerKey(principal), {
           candidate,
           generation: registration.generation,
@@ -1125,35 +1653,56 @@ export function createBroker(
       return { candidates: result };
     }
     if (method === "devices/connect") {
-      if (connecting || connectionLane.occupied || session?.snapshot.state === "connected")
+      if (
+        connecting ||
+        projection?.phase === "cancelling" ||
+        projection?.phase === "cancel-failed" ||
+        (retainedConnection !== null && !retainedConnection.closed) ||
+        connectionLane.occupied ||
+        session?.snapshot.state === "connected" ||
+        (session &&
+          !session.connectionClosed &&
+          (session.lane.quarantined || session.snapshot.state === "quarantined"))
+      )
         return deviceFailure("PLUGIN_E_DEVICE_BUSY", "connecting");
       // A pre-session timeout blocks admission only until its I/O actually settles.
       connectionLane.quarantined = false;
       connecting = true;
+      let removeAbort = () => {};
+      let custody: ConnectionCustody | undefined;
       try {
         const p = parse(method);
         let providerId: string,
           target: ProviderCandidate["key"] | { wifiAddress: string },
-          generation: number;
+          generation: number,
+          recoveryCapture: ((custody: ConnectionCustody) => void) | undefined,
+          recoveryCheck: (() => void) | undefined,
+          recoveryAdopt: ((snapshot: DeviceSessionSnapshot) => void) | undefined;
         if (p.target.kind === "candidate") {
           const row = candidates.get(ownerKey(principal), p.target.candidateId);
           if (input.now() >= row.expires) return stale("candidate");
           providerId = row.candidate.descriptor.providerId;
           target = row.candidate.key;
           generation = row.generation;
+          recoveryCapture = row.recoveryCapture;
+          recoveryCheck = row.recoveryCheck;
+          recoveryAdopt = row.recoveryAdopt;
+          recoveryCheck?.();
           candidates.remove(p.target.candidateId);
         } else {
           providerId = p.target.providerId;
           target = { wifiAddress: p.target.address };
-          generation = providers.get(providerId).generation;
+          generation = getProvider(providerId).generation;
         }
-        const registration = providers.get(providerId);
+        const registration = getProvider(providerId);
         if (generation !== registration.generation) return stale("candidate");
         if (!registration.provider.capabilities.includes("connection.v1"))
           return deviceFailure("PLUGIN_E_DEVICE_CAPABILITY", "unsupported-capability");
         const policy = Object.freeze({ ...input.connectionPolicy() });
         attemptPolicies.set(providerId, policy);
         gate(principal, "connection", null, "admission");
+        if (!recoveryCheck)
+          for (const id of lostUsb.keys()) forgetUsb(id, "cancelled", "superseded");
         const ctx = contexts(
           principal,
           null,
@@ -1161,21 +1710,104 @@ export function createBroker(
           policy.wifiConnectTimeoutMs + policy.wifiHandshakeTimeoutMs,
           randomUUID(),
           () => {
-            if (providers.get(providerId).generation !== generation) return stale();
+            recoveryCheck?.();
+            if (getProvider(providerId).generation !== generation) return stale();
           },
+          undefined,
+          generation,
         );
         const onAbort = () => ctx.stop("cancelled", true);
         signal.addEventListener("abort", onAbort, { once: true });
+        removeAbort = () => signal.removeEventListener("abort", onAbort);
         if (signal.aborted) onAbort();
-        let connection: ProviderConnection;
-        try {
-          connection = value(await registration.provider.connect(target, ctx.work));
-        } finally {
-          signal.removeEventListener("abort", onAbort);
-        }
+        const connection = value(
+          await trackProviderWork(generation, registration.provider.connect(target, ctx.work)),
+        );
+        // Capture the exact returned handle before any current-owner or cancellation
+        // check can throw. Cleanup uses this attempt's context, never a new grant.
+        let acquired: Session | undefined = undefined;
+        let cleanup: Promise<boolean> | undefined;
+        let disconnecting: Promise<ProviderOutcome<null>> | undefined;
+        const held: ConnectionCustody = {
+          generation,
+          closed: false,
+          attempted: false,
+          close() {
+            if (held.closed) return Promise.resolve(true);
+            if (cleanup) return cleanup;
+            held.attempted = true;
+            // Closing the handle cannot settle an earlier uncertain transport exchange.
+            const priorQuarantine = acquired?.lane.quarantined ?? false;
+            cleanup = (async () => {
+              let confirmed = false;
+              try {
+                ctx.stop("cancelled", true);
+                ctx.cleanup.assertCleanup("disconnect");
+                const deadline = ctx.cleanup.deadlineMonotonicMs;
+                if (acquired) {
+                  acquired.sampler.dispose();
+                  await bounded(
+                    Promise.all([...acquired.providerPending]),
+                    Math.max(0, deadline - input.now()),
+                  );
+                  await acquired.lane.drain(deadline);
+                }
+                if (!disconnecting) {
+                  disconnecting = trackProviderWork(
+                    generation,
+                    registration.provider.disconnect(connection.key, ctx.cleanup),
+                  );
+                  // A late confirmed receipt settles this exact retained handle even
+                  // after the caller timed out. It never touches a replacement session.
+                  void disconnecting.then(
+                    (result) => {
+                      if (
+                        result.error ||
+                        (result.stopConfirmation !== "confirmed" &&
+                          result.stopConfirmation !== "not-required")
+                      )
+                        return;
+                      held.closed = true;
+                      if (acquired) {
+                        acquired.connectionClosed = true;
+                        acquired.lane.quarantined = priorQuarantine;
+                        acquired.snapshot.state = "disconnected";
+                      }
+                      if (retainedConnection === held) retainedConnection = null;
+                    },
+                    () => {},
+                  );
+                }
+                const result = await bounded(disconnecting, Math.max(0, deadline - input.now()));
+                disconnecting = undefined;
+                confirmed =
+                  !result.error &&
+                  (result.stopConfirmation === "confirmed" ||
+                    result.stopConfirmation === "not-required");
+              } catch {
+                /* Retain the original handle and lane on uncertain cleanup. */
+              }
+              held.closed = confirmed;
+              if (acquired) {
+                acquired.connectionClosed = confirmed;
+                acquired.lane.quarantined = priorQuarantine || !confirmed;
+                acquired.snapshot.state = confirmed ? "disconnected" : "quarantined";
+              }
+              if (confirmed && retainedConnection === held) retainedConnection = null;
+              else if (!confirmed) connectionLane.quarantined = true;
+              return confirmed;
+            })().finally(() => {
+              cleanup = undefined;
+            });
+            return cleanup;
+          },
+        };
+        custody = held;
+        retainedConnection = custody;
+        recoveryCapture?.(custody);
         ctx.work.assertContinuation("connect");
         providers.claim(providerId, connection.physical);
-        providers.get(providerId);
+        getProvider(providerId);
         const id = randomUUID(),
           lane = new ExchangeLane(input.now);
         const snapshot: DeviceSessionSnapshot = {
@@ -1193,11 +1825,16 @@ export function createBroker(
         };
         const sampler = makeSampler(id, lane, () => current);
         session?.unregister();
+        const providerPending = new Set<Promise<unknown>>();
         const current: Session = {
+          hadReservations: false,
+          providerPending,
+          recoveryHistory: [],
+          recoveryProofs: new Map(),
           snapshot,
           sources: { sessionId: id, sourceRevision: 1, channels: [], actuators: [] },
           connection,
-          provider: registration.provider,
+          provider: trackedProvider(registration.provider, providerPending),
           generation,
           lane,
           sampler,
@@ -1207,22 +1844,45 @@ export function createBroker(
           unregister: () => {},
         };
         session = current;
+        acquired = current;
+        const initialize = async () => {
+          try {
+            const outcome = await current.provider.sources(
+              connection.key,
+              contexts(principal, current, "passive-read", 10000, randomUUID(), () =>
+                ctx.work.assertContinuation("connect"),
+              ).work,
+            );
+            // Preserve the provider's failure before an admission withdrawal can
+            // replace it with a cancellation. Native close is not transport proof.
+            if (
+              outcome.error &&
+              (outcome.dispatch === "unknown" ||
+                outcome.stopConfirmation === "unconfirmed" ||
+                outcome.error.reason === "provider-failure" ||
+                outcome.error.reason === "provider-contract")
+            )
+              current.lane.quarantined = true;
+            ctx.work.assertContinuation("connect");
+            if (
+              outcome.error?.reason === "provider-disabled" &&
+              outcome.dispatch !== "unknown" &&
+              outcome.stopConfirmation !== "unconfirmed"
+            )
+              deviceFailure("PLUGIN_E_DEVICE_UNAVAILABLE", "provider-disabled");
+            current.sources = sourceCatalogSchema.parse(value(outcome));
+            getSession(principal, id);
+            snapshot.sourceRevision = current.sources.sourceRevision;
+          } catch (error) {
+            current.sampler.dispose();
+            throw error;
+          }
+        };
+        current.initialization = initialize();
         try {
-          current.sources = sourceCatalogSchema.parse(
-            value(
-              await current.provider.sources(
-                connection.key,
-                contexts(principal, current, "passive-read", 10000).work,
-              ),
-            ),
-          );
-          getSession(principal, id);
-          snapshot.sourceRevision = current.sources.sourceRevision;
-        } catch (error) {
-          current.sampler.dispose();
-          current.lane.quarantined = true;
-          current.snapshot.state = "quarantined";
-          throw error;
+          await current.initialization;
+        } finally {
+          delete current.initialization;
         }
         current.unregister = current.provider.onDisconnect((key) => {
           if (key !== connection.key) return;
@@ -1235,36 +1895,80 @@ export function createBroker(
               message: "The EV3 connection was lost.",
             });
           else current.quiescence = finishSession(current, "disconnected", true);
-          const lossPolicy = input.connectionPolicy();
+          // Commit physical loss even when the subsequent authoritative policy
+          // read fails (including a previously quiesced session).
+          current.snapshot.state = "disconnected";
+          revision++;
+          changed(false, "lost");
+          // The retained automatic-recovery contract is USB-only. Wi-Fi loss
+          // already published the ordinary disconnected state above.
+          if (current.snapshot.transport !== "usb") return;
+          let lossPolicy: ReturnType<Options["connectionPolicy"]> | null = null;
+          try {
+            lossPolicy = Object.freeze({ ...input.connectionPolicy() });
+          } catch {
+            // The connect-admission policy is retained only to describe the
+            // cancelled episode below. It never admits retry work.
+          }
+          const row: Episode = {
+            principal,
+            providerId,
+            generation,
+            digest: current.connection.physical.digest ?? "",
+            settled: current.quiescence.settled,
+            policy: lossPolicy ?? policy,
+            attempts: 0,
+            timer: null,
+            pending: false,
+            control: new AbortController(),
+            ref: {
+              recoveryId: randomUUID(),
+              providerId,
+              providerGeneration: generation,
+              previousSessionId: id,
+            },
+            name: current.snapshot.name,
+            due: input.now(),
+            done: Promise.resolve(),
+          };
+          latestEpisode = row;
+          if (!lossPolicy) {
+            void cancelEpisode(row, "policy");
+            recoveryState(id, "unavailable");
+            return;
+          }
           if (
             current.snapshot.transport === "usb" &&
             current.connection.physical.basis === "serial" &&
             current.connection.physical.digest !== null &&
             lossPolicy.usbAutoReconnect
           ) {
-            lostUsb.set(id, {
-              principal,
-              providerId,
-              generation,
-              digest: current.connection.physical.digest,
-              settled: current.quiescence.settled,
-              policy: lossPolicy,
-              attempts: 0,
-              timer: null,
-              pending: false,
-            });
+            lostUsb.set(id, row);
             scheduleUsb(id);
-          } else if (current.snapshot.transport === "usb") {
+          } else {
+            publishRecovery(row, {
+              phase: "manual-required",
+              reason: !lossPolicy.usbAutoReconnect ? "auto-disabled" : "identity-unavailable",
+            });
             recoveryState(id, "unavailable");
           }
-          current.snapshot.state = "disconnected";
-          revision++;
-          changed();
         });
+        // Recovery adoption and its retained terminal publication share this
+        // synchronous turn. A later cancel cannot claim a connecting episode
+        // after the new usable session has already escaped to subscribers.
+        recoveryAdopt?.(snapshot);
+        retainedConnection = null;
+        custody = undefined;
+        if (!recoveryAdopt && latestEpisode) clearRecovery();
+        sessionOrigin = principal.kind;
         revision++;
-        changed();
+        changed(false, recoveryAdopt ? "recovered" : "connected");
         return { session: structuredClone(snapshot) };
+      } catch (error) {
+        if (custody && !custody.closed) await custody.close();
+        throw error;
       } finally {
+        removeAbort();
         connecting = false;
         attemptPolicies.clear();
       }
@@ -1309,6 +2013,8 @@ export function createBroker(
         owner = principal.owner;
       const read = (): DeviceSubscriptionSnapshot => {
         switch (params.topic) {
+          case "connectionRecovery":
+            return recoverySnapshot();
           case "catalog":
             return list(principal);
           case "session": {
@@ -1408,6 +2114,8 @@ export function createBroker(
         }
       };
       let notify = (_sourcesChanged = false) => {};
+      if (params.topic === "connectionRecovery")
+        notify = () => publish({ kind: "devices.connectionRecovery", data: recoverySnapshot() });
       if (params.topic === "catalog")
         notify = () => publish({ kind: "devices.catalog", data: list(principal) });
       if (params.topic === "session") {
@@ -1525,6 +2233,7 @@ export function createBroker(
               },
             });
       const store = principal.kind === "plugin" ? reservations : coreReservations;
+      current.hadReservations = true;
       const undemand = current.sampler.demand(result.reservation.reservationId, 500);
       const unlisten = store.onEnded((event) => {
         if (event.reservationId === result.reservation.reservationId) {
@@ -1630,7 +2339,7 @@ export function createBroker(
         id !== current.snapshot.sessionId
       )
         return stale();
-      providers.get(providerId);
+      getProvider(providerId);
       return current;
     };
     const tupleKey = (tuple: SourceTuple) => {
@@ -1714,29 +2423,122 @@ export function createBroker(
     sessions,
     resources,
     recovery,
+    connectionRecovery: {
+      snapshot: recoverySnapshot,
+      async cancel({ target, action }) {
+        const row = latestEpisode;
+        try {
+          if (
+            !row ||
+            !isDeepStrictEqual(row.ref, target) ||
+            !projection ||
+            !["waiting", "connecting", "cancelling", "cancel-failed"].includes(projection.phase)
+          )
+            return stale("rpc");
+          if (
+            !input.coreActions.claim(action, {
+              kind: "device-connection-recovery-cancel",
+              ...row.ref,
+            })
+          )
+            return actionFailure();
+          try {
+            await cancelEpisode(row, "user");
+            return { ok: true, value: recoverySnapshot() };
+          } finally {
+            input.coreActions.complete(action);
+          }
+        } catch (error) {
+          if (error instanceof BrokerFailure) return error.result;
+          throw error;
+        }
+      },
+    },
     events,
     providerCatalog,
     async reconnectForRecovery({ previousSessionId, signal }) {
       let attemptedConnection = false;
+      let admitted: Episode | undefined;
+      let settled = () => {};
+      let removeDiscoveryAbort = () => {};
       try {
         const previous = lostUsb.get(previousSessionId);
         if (!previous || previous.pending || signal.aborted || !usbLive(previous)) return stale();
+        signal = AbortSignal.any([signal, previous.control.signal]);
+        const policy = readRecoveryPolicy(previous);
+        if (!policy) return stale();
+        previous.policy = policy;
+        if (
+          previous.attempts >= Number.MAX_SAFE_INTEGER ||
+          (previous.policy.usbRetryLimit !== "unlimited" &&
+            previous.attempts >= previous.policy.usbRetryLimit)
+        ) {
+          forgetUsb(previousSessionId, "exhausted");
+          return stale();
+        }
+        admitted = previous;
         previous.pending = true;
+        previous.done = new Promise<void>((resolve) => {
+          settled = resolve;
+        });
+        previous.attempts++;
+        publishRecovery(previous, { phase: "connecting" });
         if (previous.timer) {
           clearTimeout(previous.timer);
           previous.timer = null;
         }
-        await previous.settled;
+        await new Promise<void>((resolve, reject) => {
+          const abort = () => {
+            try {
+              deviceFailure("PLUGIN_E_CANCELLED", "cancelled");
+            } catch (error) {
+              reject(error);
+            }
+          };
+          signal.addEventListener("abort", abort, { once: true });
+          void previous.settled.then(
+            () => {
+              signal.removeEventListener("abort", abort);
+              resolve();
+            },
+            (error: unknown) => {
+              signal.removeEventListener("abort", abort);
+              reject(error);
+            },
+          );
+          if (signal.aborted) abort();
+        });
         if (lostUsb.get(previousSessionId) !== previous || !usbLive(previous)) return stale();
         assertPrincipal(previous.principal);
         gate(previous.principal, "connection", null, "admission");
-        const registration = providers.get(previous.providerId);
+        const registration = getProvider(previous.providerId);
         if (registration.generation !== previous.generation) return stale();
-        const ctx = contexts(previous.principal, null, "connection", 10000);
-        const found = value(await registration.provider.discover(ctx.work));
+        const recoveryCheck = () => {
+          if (signal.aborted) return deviceFailure("PLUGIN_E_CANCELLED", "cancelled");
+          if (lostUsb.get(previousSessionId) !== previous || !usbLive(previous)) return stale();
+        };
+        const ctx = contexts(
+          previous.principal,
+          null,
+          "connection",
+          10000,
+          randomUUID(),
+          recoveryCheck,
+        );
+        const abortDiscovery = () => ctx.stop("cancelled", true);
+        signal.addEventListener("abort", abortDiscovery, { once: true });
+        removeDiscoveryAbort = () => signal.removeEventListener("abort", abortDiscovery);
+        if (signal.aborted) abortDiscovery();
+        const found = value(
+          await trackProviderWork(
+            registration.generation,
+            registration.provider.discover(ctx.work),
+          ),
+        );
         ctx.work.assertContinuation("discover");
         if (signal.aborted || lostUsb.get(previousSessionId) !== previous) return stale();
         const journal = await input.journal.load();
+        recoveryCheck();
         if (
           journal.entries.some(
             (entry) =>
@@ -1745,6 +2547,7 @@ export function createBroker(
           )
         ) {
           forgetUsb(previousSessionId, null);
+          publishRecovery(previous, { phase: "manual-required", reason: "identity-ambiguous" });
           recoveryState(previousSessionId, "unavailable");
           return deviceFailure("PLUGIN_E_DEVICE_OPERATION", "identity-ambiguous");
         }
@@ -1758,15 +2561,28 @@ export function createBroker(
           return deviceFailure("PLUGIN_E_DEVICE_UNAVAILABLE", "disconnected");
         if (matches.length > 1) {
           forgetUsb(previousSessionId, null);
+          publishRecovery(previous, { phase: "manual-required", reason: "identity-ambiguous" });
           recoveryState(previousSessionId, "unavailable");
           return deviceFailure("PLUGIN_E_DEVICE_OPERATION", "identity-ambiguous");
         }
         attemptedConnection = true;
         recoveryState(previousSessionId, "connecting");
+        let adopted = false;
         const candidateId = candidates.add(ownerKey(previous.principal), {
           candidate: matches[0]!,
           generation: previous.generation,
           expires: input.now() + 30000,
+          recoveryCheck,
+          recoveryCapture: (custody) => {
+            previous.custody = custody;
+          },
+          recoveryAdopt: (snapshot) => {
+            recoveryCheck();
+            adopted = true;
+            forgetUsb(previousSessionId, null);
+            publishRecovery(previous, { phase: "restored", sessionId: snapshot.sessionId });
+            recoveryState(previousSessionId, "restored", snapshot);
+          },
         });
         const connected = await broker.request(
           previous.principal,
@@ -1775,17 +2591,23 @@ export function createBroker(
           signal,
         );
         if (!connected.ok) return connected;
-        forgetUsb(previousSessionId, null);
-        recoveryState(previousSessionId, "restored", connected.value.session);
+        if (!adopted) return stale();
         return { ok: true, value: { sessionId: connected.value.session.sessionId } };
       } catch (error) {
         if (error instanceof BrokerFailure) return error.result;
         throw error;
       } finally {
+        removeDiscoveryAbort();
+        if (admitted) admitted.pending = false;
+        settled();
         const previous = lostUsb.get(previousSessionId);
         if (previous) {
-          previous.pending = false;
+          if (previous.custody && !previous.custody.closed) {
+            forgetUsb(previousSessionId, "cancelled");
+          }
+          if (signal.aborted) forgetUsb(previousSessionId);
           if (attemptedConnection && usbLive(previous)) recoveryState(previousSessionId, "waiting");
+          scheduleUsb(previousSessionId);
         }
       }
     },
@@ -1832,16 +2654,10 @@ export function createBroker(
             resolution: null,
           };
           await writeProgram(entry);
-          const outcome = await lane.stop(),
-            observation = outcome.value;
+          lane.recorded?.(entry);
+          const outcome = await lane.stop();
           const confirmed =
-            outcome.stopConfirmation === "confirmed" &&
-            !!observation &&
-            observation.programStopped &&
-            observation.outputs.length === 4 &&
-            observation.outputs.every(
-              (output) => output.known && output.busy === false && output.speed === 0,
-            );
+            !outcome.error && outcome.stopConfirmation === "confirmed" && isIdle(outcome.value);
           entry = {
             ...entry,
             revision: entry.revision + 1,
@@ -2011,6 +2827,8 @@ export function createBroker(
         };
         const parsed = deviceRequestSchemas[method].result.parse(result);
         validateDeviceWire(`${method}.result`, parsed);
+        if (!validDeviceResultV180(method, parsed, params))
+          throw new Error("Invalid device result");
         return parsed as DeviceResult<M>;
       } catch (error) {
         if (error instanceof BrokerFailure) return error.result as DeviceResult<M>;
@@ -2032,31 +2850,144 @@ export function createBroker(
     },
     registerProvider(provider) {
       input.profile.assertHeld();
+      if (providerHeld(provider.id)) throw new Error("Previous provider retirement is pending.");
       const remove = providers.add(provider);
+      const registration = providers.records.get(provider.id)!.at(-1)!;
       const binding = catalogBindings.get(provider.id);
       if (binding) {
         const registrations = providers.records.get(provider.id)!;
         if (registrations.length === 1) {
-          binding.generation = registrations[0]!.generation;
+          binding.generation = registration.generation;
           binding.retired = false;
         } else binding.retired = true;
       }
-      revision++;
-      changed();
-      return () => {
-        if (binding) {
-          binding.retired = true;
-          binding.ids.clear();
-          binding.observation = null;
+      let retiring = false,
+        removed = false;
+      let pending: Promise<void> | undefined;
+      let current: Session | null = null;
+      let hadReservations = false;
+      let disconnected = false;
+      const admission = (allowed: boolean) => {
+        if (removed || retiring) return;
+        const wasHeld = providerHeld(provider.id);
+        if (allowed) heldProviders.delete(registration.generation);
+        else heldProviders.set(registration.generation, provider.id);
+        if (!allowed)
+          for (const [id, row] of lostUsb)
+            if (row.providerId === provider.id && row.generation === registration.generation)
+              forgetUsb(id, "cancelled", "provider-retired");
+        if (wasHeld !== providerHeld(provider.id)) {
+          revision++;
+          changed();
         }
-        catalogBindings.delete(provider.id);
-        const current = session;
-        if (current?.provider === provider)
-          void resources.retireProvider(provider.id, current.generation);
-        remove();
+      };
+      const retire = (): Promise<void> => {
+        if (pending) return pending;
+        // Publish the promise and fence before any synchronous lifecycle callback.
+        let accept!: () => void, reject!: (error: unknown) => void;
+        const attempt = new Promise<void>((yes, no) => {
+          accept = yes;
+          reject = no;
+        });
+        pending = attempt;
+        heldProviders.set(registration.generation, provider.id);
+        if (!retiring) {
+          retiring = true;
+          current = session?.generation === registration.generation ? session : null;
+          hadReservations =
+            !!current &&
+            (current.hadReservations || reservations.active || coreReservations.active);
+          if (binding) {
+            binding.retired = true;
+            binding.ids.clear();
+            binding.observation = null;
+          }
+        }
+        const work = async () => {
+          // Initialization owns its withdrawal cleanup. Its failure is reflected
+          // in the lane/retained native close, never turned into a clean receipt.
+          if (current?.initialization)
+            await bounded(
+              current.initialization.catch(() => {}),
+              15000,
+            );
+          // Reuse the participant's original session receipt and recovery evidence.
+          const device = (async () =>
+            resources.retireProvider(provider.id, registration.generation))();
+          const storage = current
+            ? settleProviderRetirementLifecycle(
+                resources,
+                current.snapshot.sessionId,
+                hadReservations || !!current.quiescence?.ended.length,
+              )
+            : Promise.resolve();
+          const [deviceResult, storageResult] = await Promise.allSettled([device, storage]);
+          const errors: unknown[] = [];
+          if (deviceResult.status === "rejected") errors.push(deviceResult.reason);
+          else if (!deviceResult.value.stopConfirmed || !deviceResult.value.journalCommitted)
+            errors.push(new ProviderRetirementBlocked(deviceResult.value));
+          if (storageResult.status === "rejected") errors.push(storageResult.reason);
+          if (errors.length === 1) throw errors[0];
+          if (errors.length)
+            throw new AggregateError(errors, "Provider cleanup obligations failed.");
+          // A connect/discover admitted before the fence may still own native I/O.
+          // Drain its real promise before disposing even when no session exists yet.
+          await bounded(
+            Promise.allSettled([...(providerWork.get(registration.generation) ?? [])]),
+            15000,
+          );
+          // A settled native connect is not proof that its returned handle was
+          // closed. Withdrawal retains that exact handle across failed cleanup;
+          // disposing/replacing its provider would strand the only cleanup path.
+          if (
+            retainedConnection?.generation === registration.generation &&
+            !retainedConnection.closed
+          )
+            throw new ProviderRetirementBlocked({
+              stopConfirmed: false,
+              journalCommitted: input.journal.snapshot().journalHealth === "ready",
+              faultIds: [],
+            });
+          const ctx = contexts(samplerPrincipal, current, "connection", 15000);
+          if (current && session === current && !disconnected && !current.connectionClosed) {
+            const outcome = await current.provider.disconnect(current.connection.key, ctx.cleanup);
+            if (outcome.error) throw new Error("Provider disconnect failed.", { cause: outcome });
+            disconnected = true;
+          }
+          await provider.dispose(ctx.cleanup);
+          if (current && session === current) {
+            current.unregister();
+            session = null;
+          }
+          remove();
+          if (catalogBindings.get(provider.id) === binding) catalogBindings.delete(provider.id);
+          removed = true;
+          retainedRecoveryEvidence.delete(registration.generation);
+          heldProviders.delete(registration.generation);
+          revision++;
+          changed();
+        };
+        void work().then(accept, reject);
         revision++;
         changed();
+        // Synchronous legacy callers may ignore the result. Preserve rejection for
+        // awaiters, retain the registration, and permit only an explicit retry.
+        void attempt.catch(() => {
+          if (pending === attempt) pending = undefined;
+        });
+        return attempt;
       };
+      const unregister = Object.assign(
+        () => {
+          void retire();
+        },
+        {
+          retirement: { admission, retire },
+        },
+      );
+      revision++;
+      changed();
+      return unregister;
     },
     async begin({ principal, sessionId, operationClass, signal }) {
       assertPrincipal(principal);
@@ -2314,6 +3245,39 @@ export function createBroker(
       }
     },
   };
+  const offAuthority = input.authority.subscribe((ref) => {
+    for (const [id, row] of lostUsb)
+      if (row.principal.authorityContext?.ref === ref && !usbLive(row))
+        forgetUsb(id, "cancelled", "authority-lost");
+  });
+  const offPolicy = input.subscribeConnectionPolicy?.(() => {
+    for (const [id, row] of lostUsb) {
+      const policy = readRecoveryPolicy(row);
+      if (!policy) continue;
+      row.policy = policy;
+      if (!row.policy.usbAutoReconnect) forgetUsb(id, "cancelled", "policy");
+      else if (!row.pending) {
+        if (row.timer) clearTimeout(row.timer);
+        row.timer = null;
+        scheduleUsb(id);
+      }
+    }
+  });
+  const disposeRecoveryObservers = () => {
+    offAuthority();
+    offPolicy?.();
+  };
+  sessionCatalogs.set(broker, {
+    listeners: sessionObservers,
+    read() {
+      input.profile.assertHeld();
+      return structuredClone(sessionCatalog());
+    },
+  });
   lifecycleListeners.set(broker, lifecycle);
+  recoverySessions.set(broker, () => {
+    input.profile.assertHeld();
+    return session ? [structuredClone(sessionSnapshot(session))] : [];
+  });
   return broker;
 }

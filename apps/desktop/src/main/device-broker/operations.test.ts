@@ -77,6 +77,46 @@ it("F10 pending journal failure prevents risk; final failure retains a blocker",
       expect(store.query(h.admission.principal, op.operationId).stopConfirmation).toBe("confirmed");
   }
 });
+it.each(["completed", "interrupted"] as const)(
+  "late stop during final journal write preserves the %s terminal observation",
+  async (movement) => {
+    const h = operationHarness();
+    h.provider.motion = async () => ({ movement, angle: 0, displacement: 0 });
+    const commit = h.dependencies.journal.commit;
+    let reached!: () => void, release!: () => void;
+    const writing = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    h.dependencies.journal.commit = async (document) => {
+      if (document.revision === 2) {
+        reached();
+        await held;
+      }
+      await commit(document);
+    };
+    const store = new OperationStore(h.dependencies);
+    const op = store.prepare(h.admission);
+    store.start(h.admission.principal, op.operationId);
+    await writing;
+    try {
+      const before = store.query(h.admission.principal, op.operationId);
+      expect(before.stage).toBe("terminal");
+      expect(before.stopConfirmation).toBe("confirmed");
+      const late = store.stop(h.admission.principal, op.operationId, "brake");
+      expect(late.phase).toBe(before.phase);
+    } finally {
+      release();
+      await store.settled(op.operationId);
+    }
+    expect(store.query(h.admission.principal, op.operationId).phase).toBe(
+      movement === "completed" ? "completed" : "stopped",
+    );
+    expect(h.dependencies.journal.snapshot().blockers).toEqual([]);
+  },
+);
 it.each([
   "preflight",
   "helper-upload",

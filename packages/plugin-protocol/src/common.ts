@@ -23,6 +23,14 @@ export const pluginLocaleSchema = z.enum(["en", "zh-TW"]);
 export type PluginLocale = z.infer<typeof pluginLocaleSchema>;
 export const permissionSchema = z.enum([
   "ui.notifications",
+  "ui.panels",
+  "ui.status",
+  "settings.read",
+  "settings.write",
+  "storage.read",
+  "storage.write",
+  "storage.export",
+  "ui.clipboard",
   "devices.read",
   "devices.connect",
   "devices.control",

@@ -1426,3 +1426,7 @@ T0 後可用凍結 stubs 並行；虛線是正式整合的實際依賴，不要�
 ## 待使用者決定
 
 無。
+
+### EV3 zero-value input observation clarification (2026-10-30)
+
+An actually observed input port with no current values exposes one component-0 logical observation channel with its actual metadata/state and a null sample. This does not invent a measurement or an absent port. Ready/null is a recordable gap, not a calibration sample; non-ready channels remain nonreservable and cannot dispatch mode query/write. Existing native preflight and host authority still apply. Nonempty component numbering, host-issued identities, stale revisions and the38channel cap are unchanged. See the 3E plan P08 ruling and its provider/consumer tests for implementation evidence; no new public field/version is introduced.

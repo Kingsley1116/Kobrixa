@@ -1,0 +1,9 @@
+# Full installed product after private Motor retirement
+
+**PASS**: actual Linux arm64 full packaged product built at `81fee0c`, external runner `135a698`, run `WDFdmt`. Four scenarios: healthy original utility-process activation/disable, same-profile restart/re-enable, missing resource, tampered resource. All quit gracefully with no remaining owned PIDs. The actual persistence worker is observed constructed/online/ready/exit 0 in every scenario. Original and copied ASAR integrity is preserved (archive SHA-256 `3601f16a1ec007e18d0253f7a5a16fb5a46808511d947761fbc34dabeef0a13d`). This is the packaged application, not an acceptance-host replacement.
+
+The runner copies the original app outside the denied checkout, uses empty executable PATH, removes injected Node/Python environment, enforces source/dependency/network denial, and checks Chromium sandbox/context isolation. It observes the original fork before app readiness and verifies original shipped leaf hashes. Negative resources remain unavailable without fallback. No physical EV3 was connected.
+
+Earlier attempts failed with a worker readiness timeout under `--inspect-brk`. The same immutable product started without a main debugger. The final runner uses `--inspect`, asserts observer installation before readiness, and waits for the actual admitted preferences after renderer migration. No worker options, product guards, ASAR, or isolation rules were changed. Failed raw runs are retained externally; the initial failure archive remains in the C retirement receipt. Temporary child-debugger experiments were removed.
+
+The packaging test suite executed against this real receipt: 7 passed, no skips. Hardware/platform/manual and Stage3 aggregate gates remain separate. Later product changes need their own final packaged verification; this receipt is not relabelled as a later commit. Raw scenario logs and outside receipt are compressed unchanged with hashes in files.json.
