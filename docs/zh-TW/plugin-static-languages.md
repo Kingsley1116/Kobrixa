@@ -106,7 +106,7 @@ Extensions 為 1–16 筆不重複值，每筆 1–16 個小寫英數字、無�
 
 ## Ownership、純文字與問題回報
 
-副檔名比對使用最後一段檔名，不分大小寫。解析次序是核心 → 適用 selected binding 的同 owner static → 唯一 global extension → 純文字。所有已安裝的 Monaco 核心語言 ids（完整 `CORE_STATIC_LANGUAGE_IDS` 集合，包括 `json`、`plaintext`、`python`、`css`、`yaml`）均保留；只有 `.json` 是保留副檔名。Selected binding 的 owner 缺少語法時，不會借用另一插件。沒有適用 binding 時，不同語言共用 extension 使 global mapping ambiguous，不依載入順序選 winner；其他 extensions 與語言註冊仍保留。純靜態 id 重複時排除全部參與者。Alias 不決定 ownership。Frontend 語法失敗仍保留 logical id；同 owner 的 frontend／service／static extension 集合必須相等。
+副檔名比對使用最後一段檔名，不分大小寫。解析次序是核心 → 適用 selected binding 的同 owner static → 唯一 global extension → 純文字。所有已安裝的 Monaco 核心語言 ids（完整 `CORE_STATIC_LANGUAGE_IDS` 集合，包括 `json`、`plaintext`、`python`、`css`、`yaml`）均保留；只有 `.json` 是保留副檔名。Selected binding 的 owner 缺少語法時，不會借用另一插件。沒有適用 binding 時，不同語言共用 extension 使 global mapping ambiguous，不依載入順序選 winner；其他 extensions 與語言註冊仍保留。純靜態 id 重複時排除全部參與者。Alias 不決定 ownership。Frontend 語法失敗仍保留 logical id；同 owner 的 frontend／service／static extension 集合必須相等。出貨的工作區目前只列出並開啟 `.bp`、`.bpi`、`.bpm` 與 `.json` 檔案，因此第三方靜態語言的副檔名雖已向 Monaco 註冊，其檔案尚無法從專案樹開啟。
 
 停用、移除或失敗 reload 會把可見、隱藏與 review models 改為純文字，保留內容、undo、draft、cursor、view state；重新啟用後恢復符合條件的已開文件。Lexical revision 與 service epoch 分離；語法失敗不使健康的分析服務 unavailable。Fallback 清除 semantic coloring。Basic Plus Monaco id 為 `bp`，token postfix 保持 `.basic-plus`，keywords、comments、pairs、縮排與主題不變。內建不可停用，回 `PLUGIN_E_BUILTIN_REQUIRED`。
 
