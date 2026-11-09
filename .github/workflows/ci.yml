@@ -84,7 +84,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
-      KOBRIXA_TEST_PYTHON: ${{ runner.os == 'Windows' && 'python' || 'python3' }}
+      KOBRIXA_TEST_PYTHON: ${{ matrix.platform == 'win32' && 'python' || 'python3' }}
     steps:
       - uses: actions/checkout@v7
         with:
