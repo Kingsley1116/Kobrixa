@@ -109,7 +109,10 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          sandbox="$(dirname "$(node -e "console.log(require('electron'))")")/chrome-sandbox"
+          # Requiring electron may first download the binary and print a progress line.
+          electron="$(node -e "console.log(require('electron'))" | tail -n 1)"
+          sandbox="$(dirname "$electron")/chrome-sandbox"
+          test -f "$sandbox"
           sudo chown root:root "$sandbox"
           sudo chmod 4755 "$sandbox"
       - name: Static language boundary ledger (P5)
