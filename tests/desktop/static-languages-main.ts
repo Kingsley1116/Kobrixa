@@ -18,7 +18,9 @@ import { resolveLexicalLanguage } from "../../apps/desktop/src/renderer/editor/s
 import { checkStaticLanguageLifecycle } from "./static-languages-acceptance.mjs";
 import { STRESS_EVENT_PREFIX } from "./static-languages-stress.mjs";
 
-const [directory, phase] = process.argv.slice(-2) as [string, string];
+// Argument order is directory, phase, renderer URL: Electron on Windows refuses any
+// argument placed after a URL-like argument.
+const [directory, phase] = process.argv.slice(-3, -1) as [string, string];
 const fail = (error: unknown) => {
   console.error(error);
   app.exit(1);
@@ -63,7 +65,7 @@ void app.whenReady().then(async () => {
   });
   installPluginQuitCleanup(app, plugins);
   app.on("quit", () => plugins.finishSession());
-  const rendererUrl = process.argv.at(-3)!;
+  const rendererUrl = process.argv.at(-1)!;
   const windowOptions = {
     show: false,
     webPreferences: {
