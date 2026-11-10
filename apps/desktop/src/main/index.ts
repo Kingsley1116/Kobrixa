@@ -65,6 +65,7 @@ import type { CoreWindowScope, Principal } from "@kobrixa/plugin-runtime";
 import type { Permission, ResourceOwner } from "@kobrixa/plugin-protocol";
 import { electronPluginDialogs } from "./plugins/dialogs.js";
 import { quitOnSignals } from "./plugins/session.js";
+import { canonicalUserData } from "./user-data.js";
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -72,8 +73,10 @@ declare const MAIN_WINDOW_VITE_NAME: string;
 // Keep the profile used by existing Forge distributions, including drafts and localStorage.
 app.setPath(
   "userData",
-  app.commandLine.getSwitchValue("user-data-dir") ||
-    path.join(app.getPath("appData"), "@kobrixa/desktop"),
+  canonicalUserData(
+    app.commandLine.getSwitchValue("user-data-dir") ||
+      path.join(app.getPath("appData"), "@kobrixa/desktop"),
+  ),
 );
 let updates: UpdateService | undefined;
 let cancelUpdate: () => Promise<void> = async () => {};
