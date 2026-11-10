@@ -14,7 +14,10 @@ export function killStaticAcceptanceChild(child, rendererPid) {
     try {
       return process.kill(-child.pid, "SIGKILL");
     } catch (error) {
-      if (error.code !== "ESRCH") throw error;
+      // Darwin reports EPERM, not ESRCH, when the group only holds zombies that
+      // launchd has not reaped yet (the post-exit cleanup kill); fall through to
+      // the direct child, whose kill() reports false once it has exited.
+      if (error.code !== "ESRCH" && error.code !== "EPERM") throw error;
     }
   }
   // Windows has no process groups; explicitly kill the known renderer as well.
