@@ -889,6 +889,11 @@ async function prepareMotion(f: Awaited<ReturnType<typeof foundationIpc>>) {
 }
 it("D150 a journal write outliving the single panel pulse never reaches motion dispatch", async () => {
   const f = await foundationIpc(false, { now: () => 0, directoryBarrier: async () => {} });
+  const resolved = deferredIpc<void>();
+  const unsubscribe = f.journal.subscribe((snapshot) => {
+    if (snapshot.faults.some((fault) => fault.state === "resolved") && !snapshot.blockers.length)
+      resolved.resolve();
+  });
   try {
     const fileSync = f.fs.sync.bind(f.fs);
     vi.spyOn(f.fs, "sync").mockImplementationOnce(async (name) => {
@@ -905,9 +910,13 @@ it("D150 a journal write outliving the single panel pulse never reaches motion d
         value: { operation: { stage: "terminal", stopConfirmation: "confirmed" } },
       });
     });
+    // Terminal is published before the final journal commit. Its notification
+    // follows durable resolution, so wait for that before checking blockers.
+    await resolved.promise;
     expect(f.control.trace().some((row) => row.step === "motion-pulse")).toBe(false);
     expect(f.journal.snapshot().blockers).toEqual([]);
   } finally {
+    unsubscribe();
     await f.cleanup();
   }
 });
