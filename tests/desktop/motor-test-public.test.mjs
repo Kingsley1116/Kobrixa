@@ -15,7 +15,168 @@ import {
   selectNativeCases,
   caseName,
   loadMotorRenderer,
+  acknowledgeRendererPause,
+  observeNativeIpc,
+  requireMotionJournalFilesystem,
+  nativeClick,
 } from "./motor-test-public-run.mjs";
+
+test("motion journal probes the real barrier and identifies only Windows ENOTSUP as W02b", async () => {
+  let calls = 0;
+  await requireMotionJournalFilesystem(
+    {
+      async initialize() {
+        calls++;
+      },
+    },
+    "win32",
+  );
+  assert.equal(calls, 1, "Windows with an available adapter must run normally");
+  for (const [platform, code] of [
+    ["win32", "ENOTSUP"],
+    ["win32", "EIO"],
+    ["darwin", "ENOTSUP"],
+  ]) {
+    const original = Object.assign(new Error("barrier failed"), { code });
+    await assert.rejects(
+      requireMotionJournalFilesystem(
+        {
+          async initialize() {
+            throw original;
+          },
+        },
+        platform,
+      ),
+      (error) => {
+        if (platform === "win32" && code === "ENOTSUP") {
+          assert.match(error.message, /blocked-by-W02b.*ENOTSUP/);
+          assert.equal(error.cause, original);
+        } else assert.equal(error, original);
+        return true;
+      },
+    );
+  }
+});
+
+test("freeze acknowledges the paused event while execution remains pending until resume", async () => {
+  const debug = new EventEmitter();
+  let completeExecution;
+  let completed = false;
+  debug.sendCommand = (method, params) => {
+    assert.equal(method, "Runtime.evaluate");
+    assert.match(params.expression, /^debugger;/);
+    assert.equal(params.silent, false);
+    assert.equal(debug.listenerCount("message"), 1, "Observe before dispatch");
+    debug.emit("message", {}, "Debugger.paused", {});
+    return new Promise((resolve) => {
+      completeExecution = () => {
+        completed = true;
+        resolve({});
+      };
+    });
+  };
+  const invalid = [];
+  await acknowledgeRendererPause(debug, (reason) => invalid.push(reason));
+  assert.equal(completed, false);
+  assert.deepEqual(invalid, []);
+  assert.equal(debug.listenerCount("message"), 0);
+  assert.equal(debug.listenerCount("detach"), 0);
+  completeExecution();
+  await Promise.resolve();
+  assert.deepEqual(invalid, []);
+});
+
+for (const outcome of ["no-event", "detach", "rejection", "no-break", "exception"]) {
+  test(`freeze refuses ${outcome} without retry or synthetic acknowledgement`, async () => {
+    const debug = new EventEmitter();
+    let calls = 0;
+    debug.sendCommand = () => {
+      calls++;
+      if (outcome === "detach") debug.emit("detach", {}, "target closed");
+      if (outcome === "rejection") return Promise.reject(new Error("CDP failed"));
+      if (outcome === "no-break") return Promise.resolve({});
+      if (outcome === "exception") return Promise.resolve({ exceptionDetails: { text: "failed" } });
+      return new Promise(() => {});
+    };
+    const invalid = [];
+    await assert.rejects(
+      acknowledgeRendererPause(debug, (reason) => invalid.push(reason), 20),
+      /Invalid renderer-freeze injection/,
+    );
+    assert.equal(calls, 1);
+    assert.equal(invalid.length, 1);
+    assert.equal(debug.listenerCount("message"), 0);
+    assert.equal(debug.listenerCount("detach"), 0);
+  });
+}
+
+test("native IPC arrival survives deferred completion and synchronous frame disposal failure", async () => {
+  const receipts = [];
+  const row = {
+    at: 1,
+    received: 1,
+    channel: "plugins:ui:close",
+    args: [{ binding: { panelInstance: "original" } }],
+  };
+  let finish;
+  const result = observeNativeIpc(receipts, row, () => {
+    assert.equal(receipts[0], row, "Receipt precedes handler side effects");
+    return new Promise((resolve) => {
+      finish = resolve;
+    });
+  });
+  assert.equal(receipts.length, 1);
+  assert.equal("result" in row, false, "Arrival is not successful completion");
+  finish({ ok: true });
+  await result;
+  assert.deepEqual(row.result, { ok: true });
+  const failed = { at: 2, received: 2, channel: "plugins:ui:close", args: [] };
+  assert.throws(
+    () =>
+      observeNativeIpc(receipts, failed, () => {
+        throw new Error("Render frame was disposed");
+      }),
+    /Render frame was disposed/,
+  );
+  assert.equal(receipts[1], failed);
+  assert.match(failed.error, /Render frame was disposed/);
+  assert.equal("result" in failed, false);
+});
+
+test("close click waits for native down and IPC completion without a post-close renderer evaluation", async () => {
+  const events = [];
+  let downAck;
+  let closeAck;
+  let finished = false;
+  const click = nativeClick(
+    async () => ({ x: 10, y: 20, targetId: 7 }),
+    (type) => events.push(type),
+    async () => {
+      throw new Error("disposed frame evaluated");
+    },
+    {
+      down: () =>
+        new Promise((resolve) => {
+          downAck = resolve;
+        }),
+      up: () =>
+        new Promise((resolve) => {
+          closeAck = resolve;
+        }),
+    },
+  ).then((id) => {
+    finished = true;
+    return id;
+  });
+  await new Promise(setImmediate);
+  assert.deepEqual(events, ["mouseDown"]);
+  downAck();
+  await new Promise(setImmediate);
+  assert.deepEqual(events, ["mouseDown", "mouseUp"]);
+  assert.equal(finished, false);
+  closeAck();
+  assert.equal(await click, 7);
+});
 
 const requests = (c, name) =>
   c.wire.filter(

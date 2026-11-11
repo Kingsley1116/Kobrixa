@@ -121,6 +121,9 @@ export const matchingFreezeActivation = driver.matchingFreezeActivation;
 export const requireDeliberateResume = driver.requireDeliberateResume;
 export const classifyNativeFailure = driver.classifyNativeFailure;
 export const loadMotorRenderer = driver.loadMotorRenderer;
+export const acknowledgeRendererPause = driver.acknowledgeRendererPause;
+export const observeNativeIpc = driver.observeNativeIpc;
+export const requireMotionJournalFilesystem = driver.requireMotionJournalFilesystem;
 export async function compose() {
   const artifacts = await motorArtifacts();
   const composition = await driver.composeMotor({

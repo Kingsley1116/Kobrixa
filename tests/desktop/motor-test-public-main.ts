@@ -47,14 +47,20 @@ export async function nativeClick(
   locate: () => Promise<{ x: number; y: number; targetId: number }>,
   mouse: (type: "mouseDown" | "mouseUp", point: { x: number; y: number }) => void,
   paint: () => Promise<void>,
+  acknowledgement?: {
+    down(targetId: number): Promise<void>;
+    up(targetId: number): Promise<void>;
+  },
 ) {
   const down = await locate();
   mouse("mouseDown", down);
-  await paint();
+  if (acknowledgement) await acknowledgement.down(down.targetId);
+  else await paint();
   const up = await locate();
   assert.equal(up.targetId, down.targetId, "Native click target replaced during gesture");
   mouse("mouseUp", up);
-  await paint();
+  if (acknowledgement) await acknowledgement.up(up.targetId);
+  else await paint();
   return down.targetId;
 }
 type IpcReceipt = {
@@ -65,6 +71,26 @@ type IpcReceipt = {
   result?: unknown;
   error?: string;
 };
+// Capture arrival before calling a handler: completion (or a synchronous throw)
+// must not erase the IPC that caused teardown. Keep result/error separately.
+export function observeNativeIpc<T>(receipts: IpcReceipt[], row: IpcReceipt, action: () => T): T {
+  receipts.push(row);
+  try {
+    const result = action();
+    void Promise.resolve(result).then(
+      (value) => {
+        row.result = value;
+      },
+      (error) => {
+        row.error = String(error);
+      },
+    );
+    return result;
+  } catch (error) {
+    row.error = String(error);
+    throw error;
+  }
+}
 type HoldInput = { binding: object; inputToken: string; nodeId: string; phase: string };
 export function matchingHoldEnd(
   inputs: InputReceipt[],
@@ -102,6 +128,58 @@ export type PauseReceipt = {
   event: string;
   detail?: unknown;
 };
+// Runtime.evaluate stops at this explicit statement. Its command response is
+// pending until resume, so acknowledge the protocol event, never that response.
+export function acknowledgeRendererPause(
+  debug: Pick<Electron.Debugger, "on" | "removeListener" | "sendCommand">,
+  invalid: (reason: string) => void,
+  timeout = 10_000,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let paused = false;
+    const cleanup = () => {
+      clearTimeout(timer);
+      debug.removeListener("message", message);
+      debug.removeListener("detach", detach);
+    };
+    const fail = (reason: string) => {
+      const detail = `Invalid renderer-freeze injection: ${reason}`;
+      invalid(detail);
+      cleanup();
+      reject(new Error(detail));
+    };
+    const message = (_event: unknown, method: string) => {
+      if (method !== "Debugger.paused") return;
+      paused = true;
+      cleanup();
+      resolve();
+    };
+    const detach = (_event: unknown, reason: string) => fail(`debugger detached: ${reason}`);
+    const timer = setTimeout(
+      () => fail("Missing observation: Debugger.paused acknowledgement"),
+      timeout,
+    );
+    debug.on("message", message);
+    debug.on("detach", detach);
+    try {
+      void debug
+        .sendCommand("Runtime.evaluate", {
+          expression: "debugger; performance.now()",
+          silent: false,
+        })
+        .then(
+          (result: { exceptionDetails?: unknown }) => {
+            if (result.exceptionDetails) fail("pause execution threw");
+            else if (!paused)
+              fail("pause execution completed without Debugger.paused acknowledgement");
+          },
+          (error: unknown) => fail(`pause execution failed: ${String(error)}`),
+        );
+    } catch (error) {
+      fail(`pause execution failed: ${String(error)}`);
+    }
+  });
+}
 export function requireSustainedPause(events: PauseReceipt[], through: number) {
   const paused = events.findIndex((r) => r.event === "Debugger.paused");
   assert.ok(
@@ -558,6 +636,8 @@ import {
 } from "../../apps/desktop/src/main/device-broker/provider.js";
 import { createJournal } from "../../apps/desktop/src/main/device-broker/journal.js";
 import { createJournalFilesystem } from "../../apps/desktop/src/main/device-broker/journal-filesystem.js";
+import { requireMotionJournalFilesystem } from "./declarative-ui-motion-journal.js";
+export { requireMotionJournalFilesystem } from "./declarative-ui-motion-journal.js";
 import { startPrimary } from "../../apps/desktop/src/main/plugins/profile-writer-lock.js";
 import {
   createRecoveryEntries,
@@ -832,10 +912,9 @@ export function runNativeMotor() {
           }
         };
         const actions = createCoreActionLedger({ now, current: currentScope });
-        const journal = createJournal(
-          createJournalFilesystem(await realpath(app.getPath("userData"))),
-          profile,
-        );
+        const journalFilesystem = createJournalFilesystem(await realpath(app.getPath("userData")));
+        if (!scenario.safeMode) await requireMotionJournalFilesystem(journalFilesystem);
+        const journal = createJournal(journalFilesystem, profile);
         await journal.load();
         main = await composeDesktopMain({
           async createFoundation(options) {
@@ -933,23 +1012,16 @@ export function runNativeMotor() {
           !window.isDestroyed() && trustedWorkbench(event, window.webContents);
         const handle: IpcHandle = (name, action) =>
           ipcMain.handle(name, (...args: Parameters<typeof action>) => {
-            assert.ok(trusted(args[0]), "Untrusted native sender");
             const row = {
               at: wall(),
               received: ++receiptSequence,
               channel: name,
               args: args.slice(1),
             };
-            const result = action(...args);
-            void Promise.resolve(result).then(
-              (value) => {
-                ipc.push({ ...row, result: value });
-              },
-              (error) => {
-                ipc.push({ ...row, error: String(error) });
-              },
-            );
-            return result;
+            return observeNativeIpc(ipc, row, () => {
+              assert.ok(trusted(args[0]), "Untrusted native sender");
+              return action(...args);
+            });
           });
         registerUiIpc({ handle, bridge: ui.bridge, trusted });
         let rendererAlive = true;
@@ -1187,6 +1259,48 @@ export function runNativeMotor() {
             modifiers: repeat ? ["isautorepeat"] : [],
           });
         };
+        // Finish shell startup before opening a panel can start its 350 ms intent
+        // lifetime. This observes renderer readiness; it never pulses or reopens.
+        const rendererReady = await bounded(
+          js<{ at: number }>("window.motorRendererReady"),
+          "committed motor renderer, session and initial paint",
+        );
+        assert.ok(Number.isFinite(rendererReady?.at), "Actual renderer readiness receipt required");
+        await until(
+          () => js<boolean>("document.hasFocus() && document.visibilityState === 'visible'"),
+          "renderer observed native focus and visibility before panel open",
+        );
+        native.push({ at: wall(), type: "renderer-ready", detail: rendererReady });
+        assert.ok(owner, "Actual SDK owner before panel open");
+        assert.equal(
+          ui.states.instances(owner).some((binding) => binding.kind === "panel"),
+          false,
+          "Renderer readiness must precede the first panel intent",
+        );
+        if (scenario.fault === "renderer-freeze") {
+          const debug = window.webContents.debugger;
+          debug.on("message", (_event, method, params) => {
+            if (!["Debugger.paused", "Debugger.resumed"].includes(method)) return;
+            debuggerEvents.push({ at: wall(), event: method, detail: params });
+            if (method === "Debugger.resumed" && !freezeReleaseRequested)
+              freezeInvalid = "Invalid renderer-freeze injection: unexpected Debugger.resumed";
+          });
+          debug.on("detach", (_event, reason) => {
+            debuggerEvents.push({ at: wall(), event: "detach", detail: reason });
+            if (!freezeReleaseRequested)
+              freezeInvalid = "Invalid renderer-freeze injection: debugger detached";
+          });
+          try {
+            debug.attach("1.3");
+            await bounded(
+              debug.sendCommand("Debugger.enable"),
+              "Invalid renderer-freeze injection: Debugger.enable",
+            );
+          } catch (error) {
+            freezeInvalid = `Invalid renderer-freeze injection: ${String(error)}`;
+            throw new Error(freezeInvalid, { cause: error });
+          }
+        }
         await click('.plugin-tools-pane [role="tabpanel"] > button');
         await until(
           () =>
@@ -1676,18 +1790,57 @@ export function runNativeMotor() {
               );
             const clickReceiptSequence = receiptSequence;
             const clickAt = wall();
-            const targetId = await click('[data-close-contribution="true"]');
-            const receipt = await until(
-              () =>
-                ipc.find(
-                  (r) =>
-                    r.at >= clickAt &&
-                    r.channel === "plugins:ui:close" &&
-                    (r.args[0] as { binding?: { panelInstance?: string } })?.binding
-                      ?.panelInstance === binding.panelInstance,
-                ),
-              "actual close IPC for original binding",
+            let receipt: IpcReceipt | undefined;
+            const targetId = await nativeClick(
+              () => target('[data-close-contribution="true"]'),
+              mouse,
+              paint,
+              {
+                async down(targetId) {
+                  await until(
+                    () =>
+                      inputReceipts.some(
+                        (r) =>
+                          r.received > clickReceiptSequence &&
+                          r.isTrusted &&
+                          r.close &&
+                          r.type === "pointerdown" &&
+                          r.targetId === targetId,
+                      ),
+                    "trusted close pointerdown",
+                  );
+                },
+                async up(targetId) {
+                  const release = await until(
+                    () =>
+                      inputReceipts.find(
+                        (r) =>
+                          r.received > clickReceiptSequence &&
+                          r.isTrusted &&
+                          r.close &&
+                          r.type === "pointerup" &&
+                          r.targetId === targetId,
+                      ),
+                    "trusted close pointerup",
+                  );
+                  receipt = await until(
+                    () =>
+                      ipc.find(
+                        (r) =>
+                          r.received > release.received &&
+                          r.channel === "plugins:ui:close" &&
+                          isDeepStrictEqual((r.args[0] as { binding?: object })?.binding, binding),
+                      ),
+                    "actual close IPC for original binding",
+                  );
+                  await until(
+                    () => receipt && ("result" in receipt || "error" in receipt),
+                    "original close IPC completion",
+                  );
+                },
+              },
             );
+            assert.ok(receipt);
             assert.equal(receipt.error, undefined);
             assert.ok((receipt.result as { ok?: boolean })?.ok, "Close IPC succeeded");
             await until(
@@ -1748,47 +1901,10 @@ export function runNativeMotor() {
             window.webContents.forcefullyCrashRenderer();
             break;
           case "renderer-freeze": {
-            const debug = window.webContents.debugger;
-            debug.on("message", (_event, method, params) => {
-              if (!["Debugger.paused", "Debugger.resumed"].includes(method)) return;
-              debuggerEvents.push({ at: wall(), event: method, detail: params });
-              if (method === "Debugger.resumed" && !freezeReleaseRequested)
-                freezeInvalid = "Invalid renderer-freeze injection: unexpected Debugger.resumed";
-            });
-            debug.on("detach", (_event, reason) => {
-              debuggerEvents.push({ at: wall(), event: "detach", detail: reason });
-              if (!freezeReleaseRequested)
-                freezeInvalid = "Invalid renderer-freeze injection: debugger detached";
-            });
             try {
-              debug.attach("1.3");
-              await bounded(
-                debug.sendCommand("Debugger.enable"),
-                "Invalid renderer-freeze injection: Debugger.enable",
-              );
-              await bounded(
-                debug.sendCommand("Debugger.pause"),
-                "Invalid renderer-freeze injection: Debugger.pause",
-              );
-              debuggerEvents.push({ at: wall(), event: "pause-command-returned" });
-              // pause schedules a break at the next actual JS statement. Do not
-              // await this execution while paused; it resolves only after resume.
-              void debug
-                .sendCommand("Runtime.evaluate", {
-                  expression: "(() => { return performance.now(); })()",
-                })
-                .catch((error: unknown) => {
-                  if (freezeVerifiedThrough === undefined)
-                    freezeInvalid = `Invalid renderer-freeze injection: execution trigger failed: ${String(error)}`;
-                });
-              await until(() => {
-                assert.equal(
-                  freezeInvalid,
-                  undefined,
-                  freezeInvalid ?? "Renderer pause remains valid",
-                );
-                return debuggerEvents.some((r) => r.event === "Debugger.paused");
-              }, "Invalid renderer-freeze injection: Debugger.paused acknowledgement");
+              await acknowledgeRendererPause(window.webContents.debugger, (reason) => {
+                freezeInvalid = reason;
+              });
               requireSustainedPause(debuggerEvents, debuggerEvents.length);
             } catch (error) {
               freezeInvalid = `Invalid renderer-freeze injection: ${String(error)}`;
@@ -2118,6 +2234,7 @@ export function runNativeMotor() {
                 (r) =>
                   r.at >= faultAt &&
                   r.channel === "plugins:ui:invoke" &&
+                  ("result" in r || "error" in r) &&
                   (r.args[0] as { nodeId?: string })?.nodeId === "stop",
               ),
             "actual core Stop IPC completion",

@@ -29,6 +29,7 @@ import type { ProviderStep } from "../../apps/desktop/src/main/device-broker/pro
 import { AuthorityContexts } from "../../apps/desktop/src/main/device-broker/authority-context.js";
 import { createJournal } from "../../apps/desktop/src/main/device-broker/journal.js";
 import { createJournalFilesystem } from "../../apps/desktop/src/main/device-broker/journal-filesystem.js";
+import { requireMotionJournalFilesystem } from "./declarative-ui-motion-journal.js";
 import { startPrimary } from "../../apps/desktop/src/main/plugins/profile-writer-lock.js";
 import {
   createCoreActionLedger,
@@ -280,10 +281,9 @@ async function run() {
         }
       };
       const actions = createCoreActionLedger({ now, current: currentScope });
-      const journal = createJournal(
-        createJournalFilesystem(await realpath(app.getPath("userData"))),
-        profile,
-      );
+      const journalFilesystem = createJournalFilesystem(await realpath(app.getPath("userData")));
+      if (!scenario.load) await requireMotionJournalFilesystem(journalFilesystem);
+      const journal = createJournal(journalFilesystem, profile);
       await journal.load();
       main = await composeDesktopMain({
         async createFoundation(options) {

@@ -75,12 +75,28 @@ for (const type of ["pointerdown", "pointerup", "pointercancel", "keydown", "key
 settingsStore.set("rightPanel", "plugins");
 settingsStore.set("locale", "en");
 const owner = pluginUiWindow();
+let markRendererReady: (value: { at: number }) => void;
+const rendererReady = new Promise<{ at: number }>((resolve) => {
+  markRendererReady = resolve;
+});
+Object.assign(window, { motorRendererReady: rendererReady });
 function Harness() {
   const { values } = useSettings();
   const [narrow, setNarrow] = useState(false);
   useEffect(() => {
     document.documentElement.lang = values.locale;
   }, [values.locale]);
+  useEffect(() => {
+    // Loading HTML does not acknowledge React's first commit, session bootstrap,
+    // or font/layout work. The native driver waits here before the first open.
+    void Promise.all([owner.ready, document.fonts.ready]).then(() => {
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          markRendererReady({ at: performance.timeOrigin + performance.now() });
+        }),
+      );
+    });
+  }, []);
   return (
     <>
       <nav aria-label="Test shell">
