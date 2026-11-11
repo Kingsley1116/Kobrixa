@@ -113,31 +113,26 @@ it("shows disabled dependent settings in search results, with a usable reset", a
   await click('[aria-label="Reset Auto save delay"]');
   expect(values.autoSaveDelay).toBe(1000);
 });
-it("keeps acknowledged device values after a failed save and retries the same patch", async () => {
-  await search("device.usbAutoReconnect");
-  patch.mockRejectedValueOnce(new Error("disk full"));
-  await click("#setting-usbAutoReconnect");
-  expect(container.querySelector("#setting-usbAutoReconnect")!.getAttribute("aria-checked")).toBe(
-    "true",
-  );
-  expect(container.querySelector('[role="alert"]')!.textContent).toContain(
-    "Existing values remain active",
-  );
-  await click('[role="alert"] button');
-  expect(patch).toHaveBeenLastCalledWith({ usbAutoReconnect: false });
-  expect(container.querySelector("#setting-usbAutoReconnect")!.getAttribute("aria-checked")).toBe(
-    "false",
-  );
+it("never reads or writes retired device preferences, including after failed legacy APIs", async () => {
+  vi.mocked(window.kobrixa.device.getPreferences).mockRejectedValue(new Error("disk full"));
+  patch.mockRejectedValue(new Error("disk full"));
+  for (const query of ["device.", "kobrixa.connectionMode", "kobrixa.rememberWifiAddress"]) {
+    await search(query);
+    expect(container.querySelectorAll(".setting-entry")).toHaveLength(0);
+  }
+  expect(window.kobrixa.device.getPreferences).not.toHaveBeenCalled();
+  expect(patch).not.toHaveBeenCalled();
+  expect(container.querySelector('[role="alert"]')).toBeNull();
 });
 it("preserves search text while switching languages", async () => {
-  await search("USB 重試 interval");
+  await search("外部 interval");
   values = { ...values, locale: "zh-TW" };
   await act(async () => render());
   expect(container.querySelector<HTMLInputElement>('input[type="search"]')!.value).toBe(
-    "USB 重試 interval",
+    "外部 interval",
   );
   expect(container.querySelectorAll(".setting-entry")).toHaveLength(1);
-  expect(container.textContent).toContain("USB 重試間隔");
+  expect(container.textContent).toContain("外部變更檢查間隔");
 });
 it("shares acknowledged file preferences across categories and resets one modified value", async () => {
   await search("files.externalChangesEnabled");
@@ -558,9 +553,9 @@ it("mounted typed choice keeps the conflicting dotted-key draft until explicit r
   }
 });
 
-it("external device settings remove frozen legacy writers while keeping unrelated settings", async () => {
+it("device retirement removes legacy writers unconditionally while keeping unrelated settings", async () => {
   vi.mocked(window.kobrixa.device.getPreferences).mockClear();
-  await act(async () => render({ externalDevicePreferences: true }));
+  await act(async () => render());
   await search("connection");
   expect(container.querySelector("#setting-connectionMode")).toBeNull();
   expect(container.querySelector("#setting-rememberWifiAddress")).toBeNull();

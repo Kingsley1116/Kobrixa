@@ -31,7 +31,6 @@ import {
   type SettingDefinition,
   type SettingsCategory,
 } from "./settings-catalog.js";
-import { useDevicePreferences } from "./device-settings.js";
 import type { FilePreferencesState } from "./file-settings.js";
 import type { Theme } from "./theme.js";
 import type { UpdatePreferences } from "../../shared/updates.js";
@@ -321,11 +320,9 @@ export function SettingsPanel({
   reducedMotion,
   filePreferences,
   legacyDescriptorId,
-  externalDevicePreferences = false,
   contributedSettings,
 }: {
   legacyDescriptorId?: string;
-  externalDevicePreferences?: boolean;
   contributedSettings?: { sourceKey: string; resourceDigest: Sha256; scope: CoreWindowScope };
   filePreferences: FilePreferencesState;
   updates: UpdateState | undefined;
@@ -358,7 +355,6 @@ export function SettingsPanel({
   const [query, setQuery] = useState("");
   const [modified, setModified] = useState(false);
   const [defaults] = useState(() => defaultSettings(navigator.language));
-  const device = useDevicePreferences(!externalDevicePreferences);
   const [updateSaving, setUpdateSaving] = useState(false);
   const [updateError, setUpdateError] = useState(false);
   const updateFlight = useRef(false);
@@ -384,12 +380,10 @@ export function SettingsPanel({
   const context: CatalogContext = {
     settings,
     defaults,
-    device: device.value,
     files: filePreferences.value,
     updates: updates?.preferences,
     reducedMotion,
     onChange,
-    onDeviceChange: device.change,
     onFileChange: filePreferences.change,
     onUpdateChange: (patch) => {
       void changeUpdates(patch);
@@ -410,15 +404,7 @@ export function SettingsPanel({
     content.current?.scrollTo({ top: 0 });
   }, [category, query, modified]);
   const entries = filterSettings(context, query, modified).filter(
-    (entry) =>
-      (category === "all" || entry.category === category) &&
-      (!externalDevicePreferences ||
-        (entry.source !== "device" &&
-          ![
-            "kobrixa.connectionMode",
-            "kobrixa.rememberWifiAddress",
-            "kobrixa.lastWifiAddress",
-          ].includes(entry.id))),
+    (entry) => category === "all" || entry.category === category,
   );
   const searching = Boolean(query.trim() || modified);
   const labelValue = (entry: SettingDefinition, value: string | number | boolean | null) =>
@@ -447,7 +433,6 @@ export function SettingsPanel({
     const loading = value === undefined;
     const resetDisabled =
       loading ||
-      (entry.source === "device" && device.busy) ||
       (entry.source === "files" && filePreferences.busy) ||
       (entry.source === "updates" &&
         (updateSaving || updates?.phase === "preparing" || updates?.phase === "installing"));
@@ -571,7 +556,7 @@ export function SettingsPanel({
         )}
       </header>
       {saveError && <SettingsError locale={settings.locale} onRetry={onRetry} />}
-      {externalDevicePreferences && category === "device" && (
+      {category === "device" && (
         <p role="status">
           {local(
             "裝置與連線偏好已移至插件設定。",
@@ -587,19 +572,6 @@ export function SettingsPanel({
             {local("開啟插件設定", "Open plugin settings")}
           </button>
         </p>
-      )}
-      {device.error && (
-        <div role="alert" className="settings-save-error">
-          <span>
-            {local(
-              "設備設定載入或保存失敗，既有值仍有效。",
-              "Could not load or save device preferences. Existing values remain active.",
-            )}
-          </span>
-          <button disabled={device.busy} onClick={device.retry}>
-            {t.retry}
-          </button>
-        </div>
       )}
       {updateError && (
         <div role="alert" className="settings-save-error">

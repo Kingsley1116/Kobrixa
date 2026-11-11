@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DeviceInputModes, DeviceMonitorSnapshot } from "@kobrixa/device";
 import type { MonitorResult } from "../../shared/api.js";
-import { MonitorController } from "./monitor-controller.js";
+import { CoreBatteryMonitor, MonitorController } from "./monitor-controller.js";
 import type { MonitorUpdate } from "../../shared/sensor-lab.js";
 
 const samplers: Array<{ dispose(): Promise<void> }> = [];
@@ -420,5 +420,126 @@ describe("monitor modes", () => {
     expect(controller.getSnapshot().modes).toEqual({});
     await vi.advanceTimersByTimeAsync(5_000);
     expect(api.monitor).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("retained core battery demand", () => {
+  function core() {
+    let publish!: (update: MonitorUpdate) => void;
+    const off = vi.fn();
+    const watchMonitor = vi.fn(
+      async (sessionId: string, enabled: boolean): Promise<MonitorUpdate> => ({
+        sessionId,
+        sequence: 0,
+        status: enabled ? "waiting" : "paused",
+      }),
+    );
+    const battery = new CoreBatteryMonitor({
+      onMonitor(listener) {
+        publish = listener;
+        return off;
+      },
+      watchMonitor,
+    });
+    return { battery, watchMonitor, off, publish: (update: MonitorUpdate) => publish(update) };
+  }
+  it("uses one host demand and no renderer clock; fences old sessions and sequences", async () => {
+    const f = core();
+    const timers = vi.getTimerCount();
+    f.battery.setSession("one");
+    await Promise.resolve();
+    await Promise.resolve();
+    f.battery.setSession("one");
+    expect(f.watchMonitor).toHaveBeenCalledExactlyOnceWith("one", true);
+    f.publish({ sessionId: "one", sequence: 2, status: "live", snapshot: snapshot() });
+    expect(f.battery.getSnapshot()).toMatchObject({ percent: 78, voltage: 7.5, low: false });
+    f.publish({
+      sessionId: "one",
+      sequence: 1,
+      status: "live",
+      snapshot: { ...snapshot(), battery: { percent: 0, voltage: 0 } },
+    });
+    expect(f.battery.getSnapshot().percent).toBe(78);
+    f.battery.setSession("two");
+    f.publish({ sessionId: "one", sequence: 3, status: "live", snapshot: snapshot() });
+    expect(f.battery.getSnapshot().percent).toBeNull();
+    await vi.waitFor(() => expect(f.watchMonitor).toHaveBeenLastCalledWith("two", true));
+    f.publish({
+      sessionId: "two",
+      sequence: 1,
+      status: "live",
+      snapshot: { ...snapshot(), battery: { percent: 0, voltage: 0 } },
+    });
+    expect(f.battery.getSnapshot()).toMatchObject({ percent: 0, voltage: 0, low: true });
+    expect(vi.getTimerCount()).toBe(timers);
+    await f.battery.dispose();
+    expect(f.watchMonitor.mock.calls).toEqual([
+      ["one", true],
+      ["one", false],
+      ["two", true],
+      ["two", false],
+    ]);
+    expect(f.off).toHaveBeenCalledOnce();
+    f.battery.setSession("three");
+    expect(f.battery.getSnapshot().sessionId).toBeUndefined();
+    expect(f.watchMonitor).toHaveBeenCalledTimes(4);
+  });
+  it("drains an in-flight host watch before disabling it and never revives a superseded session", async () => {
+    const f = core();
+    let release!: (update: MonitorUpdate) => void;
+    f.watchMonitor.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    f.battery.setSession("one");
+    await Promise.resolve();
+    await Promise.resolve();
+    f.battery.setSession("two");
+    let drained = false;
+    const drain = f.battery.drain().then(() => {
+      drained = true;
+    });
+    await Promise.resolve();
+    expect(drained).toBe(false);
+    release({ sessionId: "one", sequence: 1, status: "live", snapshot: snapshot() });
+    await drain;
+    expect(f.watchMonitor.mock.calls).toEqual([
+      ["one", true],
+      ["one", false],
+    ]);
+    expect(f.battery.getSnapshot().percent).toBeNull();
+    await f.battery.dispose();
+  });
+  it("keeps failed host release visible to close/update instead of reporting a successful drain", async () => {
+    const f = core();
+    f.battery.setSession("one");
+    await Promise.resolve();
+    await Promise.resolve();
+    f.watchMonitor.mockRejectedValueOnce(new Error("host release failed"));
+    await expect(f.battery.drain()).rejects.toThrow("host release failed");
+    await expect(f.battery.dispose()).rejects.toThrow("host release failed");
+    expect(f.off).toHaveBeenCalledOnce();
+  });
+  it("does not activate a replacement while the previous host demand cannot be released", async () => {
+    const f = core();
+    f.battery.setSession("one");
+    await vi.waitFor(() => expect(f.watchMonitor).toHaveBeenCalledWith("one", true));
+    f.watchMonitor.mockRejectedValueOnce(new Error("release failed"));
+    f.battery.setSession("two");
+    await vi.waitFor(() => expect(f.watchMonitor).toHaveBeenCalledWith("one", false));
+    await flush();
+    expect(f.watchMonitor).not.toHaveBeenCalledWith("two", true);
+    expect(f.battery.getSnapshot().percent).toBeNull();
+    f.battery.setSession("three");
+    await vi.waitFor(() => expect(f.watchMonitor).toHaveBeenLastCalledWith("three", true));
+    expect(f.watchMonitor.mock.calls).toEqual([
+      ["one", true],
+      ["one", false],
+      ["one", false],
+      ["three", true],
+    ]);
+    await f.battery.dispose();
   });
 });

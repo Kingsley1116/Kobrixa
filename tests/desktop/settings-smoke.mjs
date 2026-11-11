@@ -44,18 +44,25 @@ export async function checkExpandedSettings({
   );
   assert.equal(await js("ed.getRawOptions().suggestOnTriggerCharacters"), true);
   await js(
-    'document.querySelector(".settings-search input[type=checkbox]").click();searchSettings("USB 重試 interval")',
+    'document.querySelector(".settings-search input[type=checkbox]").click();searchSettings("device.")',
   );
-  await until('Boolean(document.querySelector("#setting-usbRetryInterval"))');
-  await js('document.querySelector("#setting-usbRetryInterval").focus()');
-  await key("Enter");
-  await key("End");
-  await key("Enter");
-  await until('!document.querySelector("#setting-usbRetryInterval").disabled');
-  assert.equal(
-    await js("window.kobrixa.device.getPreferences().then(p=>p.usbRetryInterval)"),
-    10000,
-  );
+  await until('document.querySelectorAll(".setting-entry").length===0');
+  for (const id of [
+    "connectionMode",
+    "rememberWifiAddress",
+    "usbAutoReconnect",
+    "usbRetryInterval",
+    "usbRetryLimit",
+    "wifiConnectTimeout",
+    "wifiHandshakeTimeout",
+    "skipUnchangedAssets",
+  ]) {
+    assert.equal(
+      await js(`document.querySelector('#setting-${id}')`),
+      null,
+      `Retired setting ${id} must be absent`,
+    );
+  }
   await js('searchSettings("autoSaveDelay")');
   await until('Boolean(document.querySelector("#setting-autoSaveDelay"))');
   assert.equal(await js('document.querySelector("#setting-autoSaveDelay").disabled'), true);
@@ -109,13 +116,12 @@ export async function checkExpandedSettings({
   );
   assert.equal(await js("ed.getValue()"), content);
   await js(
-    `for(const [key,value] of Object.entries(${JSON.stringify(original)})) smoke.settingsStore.set(key,value);`,
+    `for(const [key,value] of Object.entries(${JSON.stringify(original)})) { if (!["connectionMode","rememberWifiAddress"].includes(key)) smoke.settingsStore.set(key,value); }`,
   );
-  await js('window.kobrixa.device.setPreferences({usbRetryInterval:"backoff"})');
   systemTheme("system");
   win.setSize(1420, 900);
   await js("ed.focus()");
   console.log(
-    "expanded settings: bilingual search, reset focus, live editor options, device presets, system theme, reduced motion and minimum-size screenshots pass",
+    "expanded settings: bilingual search, reset focus, live editor options, retired device controls absent, system theme, reduced motion and minimum-size screenshots pass",
   );
 }

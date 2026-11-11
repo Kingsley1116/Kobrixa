@@ -53,7 +53,6 @@ import {
 } from "react";
 import type {
   Diagnostic,
-  DeviceDescriptor,
   WorkspaceEntry,
   WorkspaceMutationResult,
   WorkspaceSummary,
@@ -106,8 +105,7 @@ import {
 import { ToolsPanel, ActivityPanel } from "./device/tools-panel.js";
 import { RemoteFilesPanel } from "./device/remote-files-panel.js";
 import { RemoteFilesController } from "./device/remote-files.js";
-import { BatteryStatus } from "./device/battery-status.js";
-import { MonitorController } from "./device/monitor-controller.js";
+import { CoreBatteryMonitor } from "./device/monitor-controller.js";
 import { MonitorWorkspace } from "./device/monitor-workspace.js";
 import { CollabStore } from "./collab/store.js";
 import { applyMinimalDiff, canShareFile, CollabFileSyncManager } from "./collab/file-sync.js";
@@ -166,6 +164,8 @@ type HistoryReview = {
 
 export function App(): React.JSX.Element {
   const { runtime: staticLanguages, snapshot: staticLanguageState } = useStaticLanguages();
+  // Retired writers stay frozen even when optional plugin migration is unavailable.
+  settingsStore.freezeDevicePreferences();
   const pluginUi = pluginUiWindow();
   const deviceMigration = useSyncExternalStore(
     pluginUi.deviceMigration.subscribe,
@@ -233,7 +233,6 @@ export function App(): React.JSX.Element {
   const { values: settings, saveError, reducedMotion, resolvedTheme } = useSettings();
   const {
     locale,
-    connectionMode,
     uiScale,
     codeSize,
     ev3Tab: toolTab,
@@ -326,16 +325,7 @@ export function App(): React.JSX.Element {
   const executionLocked =
     controller.editingLockedFor(activeSession?.workspace.id) || updatePreparing || closingProject;
   const [remoteFiles] = useState(() => new RemoteFilesController(window.kobrixa, controller));
-  const [monitor] = useState(
-    () =>
-      new MonitorController({
-        ...window.kobrixa.device,
-        setInputMode: (...args) =>
-          controller.withMonitor(() => window.kobrixa.device.setInputMode(...args)),
-      }),
-  );
   const remoteState = useSyncExternalStore(remoteFiles.subscribe, remoteFiles.getSnapshot);
-  const [monitorView, setMonitorView] = useState<"readings" | "lab">("readings");
   const [collab] = useState(
     () =>
       new CollabStore((connection) =>
@@ -413,29 +403,22 @@ export function App(): React.JSX.Element {
     () => controller.setDeviceControlBlocked(Boolean(controlNotice)),
     [controller, controlNotice],
   );
-  useEffect(() => {
-    return () => {
-      void monitor.dispose().catch(() => {});
-    };
-  }, [monitor]);
   const [deviceOverlay, setDeviceOverlay] = useState(false);
   useEffect(() => {
     remoteFiles.setSession(execution.session?.id, execution.deployed?.path);
   }, [remoteFiles, execution.session?.id, execution.deployed?.path]);
-  const [battery] = useState(() => new BatteryStatus(window.kobrixa.device));
+  const [battery] = useState(() => new CoreBatteryMonitor(window.kobrixa.device));
   const batteryState = useSyncExternalStore(battery.subscribe, battery.getSnapshot);
-  useEffect(() => battery.setSession(execution.session?.id), [battery, execution.session?.id]);
-  useEffect(() => {
-    const observe = () => {
-      const state = monitor.getSnapshot();
-      battery.observe(state.sessionId, state.snapshot);
-    };
-    const unsubscribe = monitor.subscribe(observe);
-    return () => {
-      unsubscribe();
-      battery.dispose();
-    };
-  }, [battery, monitor]);
+  useEffect(
+    () => battery.setSession(updatePreparing ? undefined : execution.session?.id),
+    [battery, execution.session?.id, updatePreparing],
+  );
+  useEffect(
+    () => () => {
+      void battery.dispose().catch(() => {});
+    },
+    [battery],
+  );
   useEffect(() => {
     if (batteryState.low)
       setStatus(
@@ -446,10 +429,6 @@ export function App(): React.JSX.Element {
     // Announce only when the brick first crosses the threshold.
   }, [batteryState.low]);
   useEffect(() => window.kobrixa.device.onEvent(remoteFiles.onEvent), [remoteFiles]);
-  const setConnectionMode = (mode: Settings["connectionMode"]) =>
-    deviceMigration === "inactive" && settingsStore.set("connectionMode", mode);
-  const connectionModeRef = useRef(connectionMode);
-  connectionModeRef.current = connectionMode;
   const [projectBusy, setProjectBusy] = useState(false);
   const projectBusyRef = useRef(false);
   useEffect(() => controller.attach(), [controller]);
@@ -568,13 +547,6 @@ export function App(): React.JSX.Element {
   const [liveDiagnostics, setLiveDiagnostics] = useState<Diagnostic[]>([]);
   const [buildDiagnostics, setBuildDiagnostics] = useState<Diagnostic[]>([]);
   const [status, setStatus] = useState<string>(t.ready);
-  const [devices, setDevices] = useState<DeviceDescriptor[]>([]);
-  const [discovering, setDiscovering] = useState(false);
-  const [selectedDevice, setSelectedDevice] = useState<string>();
-  const [wifiAddress, setWifiAddress] = useState(() => settingsStore.getWifiAddress());
-  useEffect(() => {
-    setSelectedDevice(undefined);
-  }, [connectionMode]);
   const [focusTarget, setFocusTarget] = useState<EditorFocusTarget>();
   const [cursorStore] = useState(() => new CursorStore());
   const [diagnosticIndex, setDiagnosticIndex] = useState(-1);
@@ -705,7 +677,7 @@ export function App(): React.JSX.Element {
     setUpdatePreparing(true);
     try {
       await restoration.current;
-      await monitor.drain();
+      await battery.drain();
       editorRef.current?.captureView();
       await flushDrafts();
       await flushSharedRoom();
@@ -2803,7 +2775,7 @@ export function App(): React.JSX.Element {
     setUpdatePreparing(true);
     setConfirmUpdate(false);
     try {
-      await monitor.drain();
+      await battery.drain();
       await flushSharedRoom();
       await window.kobrixa.updates.prepareInstall();
       await saveAllChanges();
@@ -3086,43 +3058,6 @@ export function App(): React.JSX.Element {
     return result.prepared;
   }
 
-  async function discover(): Promise<void> {
-    if (discovering) return;
-    try {
-      setDiscovering(true);
-      setStatus(t.searching);
-      const found = await window.kobrixa.device.discover();
-      setDevices(found);
-      setSelectedDevice(found.find((device) => device.transport === connectionModeRef.current)?.id);
-      const count = found.filter((device) => device.transport === connectionModeRef.current).length;
-      setStatus(count ? t.devicesFound(count) : t.noDevice);
-    } catch (error) {
-      report(error);
-    } finally {
-      setDiscovering(false);
-    }
-  }
-
-  function connect(): void {
-    const descriptor = devices.find(
-      (device) => device.id === selectedDevice && device.transport === connectionMode,
-    );
-    if (descriptor) void controller.connect(descriptor);
-    else if (connectionMode === "wifi" && wifiAddress.trim()) {
-      const address = wifiAddress.trim();
-      const previous = controller.getSnapshot().session?.id;
-      void controller.connect(address).then(() => {
-        const session = controller.getSnapshot().session;
-        if (
-          deviceMigration === "inactive" &&
-          session?.transport === "wifi" &&
-          session.id !== previous
-        )
-          settingsStore.rememberAddress(address);
-      });
-    }
-  }
-
   function report(error: unknown): void {
     setStatus(error instanceof Error ? error.message : String(error));
   }
@@ -3163,7 +3098,6 @@ export function App(): React.JSX.Element {
 
   const settingsPage = (
     <SettingsPanel
-      externalDevicePreferences={deviceMigration !== "inactive"}
       filePreferences={filePreferences}
       reducedMotion={reducedMotion}
       settings={settings}
@@ -4092,20 +4026,7 @@ export function App(): React.JSX.Element {
                 <MonitorWorkspace
                   plugins={pluginUi.session}
                   onOpenTools={() => settingsStore.set("rightPanel", "plugins")}
-                  view={monitorView}
-                  onView={setMonitorView}
-                  controller={monitor}
                   locale={locale}
-                  sessionId={execution.session?.id}
-                  active={
-                    rightPanel === "ev3" &&
-                    !settingsActive &&
-                    toolTab === "monitor" &&
-                    !updatePreparing
-                  }
-                  locked={updatePreparing || controller.locked}
-                  controlNotice={controlNotice}
-                  onConnect={() => setToolTab("connection")}
                 />
               }
               connection={
@@ -4120,29 +4041,11 @@ export function App(): React.JSX.Element {
                     </p>
                   )}
                   <DevicePanel
-                    {...(deviceMigration !== "inactive"
-                      ? { onOpenConnectionTools: openDeviceTools }
-                      : {})}
+                    onOpenConnectionTools={openDeviceTools}
                     t={t}
                     locale={locale}
                     state={execution}
-                    devices={devices}
-                    discovering={discovering}
                     locked={updatePreparing || controller.locked}
-                    mode={connectionMode}
-                    onMode={(mode) => {
-                      setConnectionMode(mode);
-                      setSelectedDevice(undefined);
-                    }}
-                    selected={selectedDevice}
-                    onSelect={setSelectedDevice}
-                    address={wifiAddress}
-                    onAddress={(address) => {
-                      setWifiAddress(address);
-                      setSelectedDevice(undefined);
-                    }}
-                    onDiscover={() => void discover()}
-                    onConnect={connect}
                     onDisconnect={() => void controller.disconnect()}
                     onCancel={() => controller.cancelWaiting()}
                   />
