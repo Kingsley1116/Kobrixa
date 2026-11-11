@@ -150,7 +150,7 @@ function inspect() {
       kind: entry.kind,
       availability: entry.availability,
       failed: owner.session.failed(entry),
-      binding: owner.session.record(entry)?.state.form().binding,
+      binding: owner.session.record(entry)?.state.form().binding ?? null,
       active: owner.session.record(entry)?.state.getSnapshot().active ?? false,
     })),
   };
@@ -270,7 +270,7 @@ async function cycles(count: number) {
 }
 Object.assign(window, {
   uiLoad: {
-    ready: owner.ready,
+    ready: owner.ready.then(() => true),
     inspect,
     count: () => entries().length,
     openAll,
@@ -292,6 +292,7 @@ Object.assign(window, {
       observations.length = 0;
       inputPaints.length = 0;
       hides.length = 0;
+      return null;
     },
     pruneRetired() {
       check(entries().length === 0, "pruning requires an actually empty catalog");
@@ -305,21 +306,23 @@ Object.assign(window, {
     },
     show() {
       owner.session.showPane(true, "tab");
+      return null;
     },
     slowState() {
       const selected = entries().find((entry) => owner.session.selectedKey()?.includes(entry.id));
       const state = selected && owner.session.record(selected)?.state.getSnapshot();
       const field = document.querySelector<HTMLInputElement>('input[inputmode="decimal"]');
       return {
-        raw: field?.value,
+        raw: field?.value ?? null,
         focused: field === document.activeElement,
-        panelInstance: state?.snapshot.binding.panelInstance,
-        revision: state?.snapshot.revision,
-        active: state?.active,
+        panelInstance: state?.snapshot.binding.panelInstance ?? null,
+        revision: state?.snapshot.revision ?? null,
+        active: state?.active ?? false,
       };
     },
     closeSelected() {
       document.querySelector<HTMLButtonElement>("[data-close-contribution]")!.click();
+      return null;
     },
     hasInstance(id: string) {
       return entries().some(

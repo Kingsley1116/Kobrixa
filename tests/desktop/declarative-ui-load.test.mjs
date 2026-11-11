@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { assertLoadCatalog, waitForLoad, waitLoadInterval } from "./declarative-ui-load-fixture.ts";
+import { runInNewContext } from "node:vm";
+import { transformSync } from "esbuild";
+import {
+  loadEvaluation,
+  loadReadiness,
+  loadResult,
+  assertLoadCatalog,
+  waitForLoad,
+  waitLoadInterval,
+} from "./declarative-ui-load-fixture.ts";
 import { readFile } from "node:fs/promises";
 import { gunzipSync } from "node:zlib";
 import { assertMeasurements, summary } from "./declarative-ui-harness.mjs";
@@ -21,6 +30,167 @@ function loadCatalog() {
     ),
   ).flat();
 }
+
+// Execute the actual renderer projections with host/DOM doubles. The doubles
+// deliberately contain functions, so returning the API or an element fails.
+async function loadRenderer() {
+  const entries = loadCatalog();
+  const opened = new Set(entries.map((entry) => entry.id));
+  let selected = entries[0].id;
+  const element = {
+    disabled: false,
+    value: "-",
+    textContent: "Hold",
+    click() {
+      opened.delete(selected);
+    },
+    scrollIntoView() {},
+    setAttribute() {},
+    getBoundingClientRect: () => ({ x: 2, y: 4, width: 10, height: 20 }),
+  };
+  const binding = { panelInstance: "panel-1" };
+  const state = {
+    form: () => ({ binding }),
+    getSnapshot: () => ({ active: true, snapshot: { binding, revision: 3 } }),
+  };
+  const subscribe = () => () => {};
+  const owner = {
+    ready: Promise.resolve(),
+    dispose() {},
+    host: {},
+    session: {
+      catalog: { getSnapshot: () => ({ phase: "ready", entries }), subscribe },
+      environment() {},
+      subscribe,
+      selectedKey: () => selected,
+      failed: () => false,
+      record: (entry) => (opened.has(entry.id) ? { state } : undefined),
+      open: async (entry) => {
+        opened.add(entry.id);
+        selected = entry.id;
+      },
+      close: (entry) => {
+        opened.delete(entry.id);
+      },
+      select(entry) {
+        selected = entry.id;
+      },
+      showPane() {},
+    },
+  };
+  const diagnostics = () => ({ snapshot: () => ({ bindings: 1 }), onEvent: subscribe });
+  const document = {
+    hidden: false,
+    hasFocus: () => true,
+    activeElement: element,
+    addEventListener() {},
+    removeEventListener() {},
+    getElementById: () => element,
+    querySelector: () => element,
+    querySelectorAll: () => [element],
+  };
+  const window = {
+    kobrixa: { plugins: { ui: {}, recovery: {} } },
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  const code = transformSync(
+    await readFile(new URL("./declarative-ui-load-renderer.tsx", import.meta.url), "utf8"),
+    {
+      loader: "tsx",
+      format: "cjs",
+      jsx: "automatic",
+    },
+  ).code;
+  runInNewContext(code, {
+    window,
+    document,
+    performance,
+    setTimeout,
+    requestAnimationFrame: (callback) => queueMicrotask(callback),
+    require(id) {
+      if (id.includes("load-fixture")) return { assertLoadCatalog, waitForLoad };
+      if (id.includes("settings-state"))
+        return { createPluginUiWindow: () => owner, settingsStore: { set() {} } };
+      if (id.includes("host-ports") || id.includes("state-store"))
+        return { diagnosticsFor: diagnostics };
+      if (id === "react-dom/client") return { createRoot: () => ({ render() {}, unmount() {} }) };
+      if (id === "react/jsx-runtime") return { jsx() {}, jsxs() {} };
+      return {};
+    },
+  });
+  return { window, document, entries, element };
+}
+
+function assertPlainClone(value) {
+  // Also reject undefined, prototypes and values JSON would silently discard.
+  assert.deepEqual(structuredClone(value), JSON.parse(JSON.stringify(value)));
+}
+
+test("every renderer readiness and diagnostic projection is plain cloneable data", async () => {
+  const context = await loadRenderer();
+  const api = context.window.uiLoad;
+  assert.throws(() => structuredClone(api), /could not be cloned/);
+  assert.throws(() => structuredClone(context.element), /could not be cloned/);
+  for (const source of ["window.uiLoad", "document.querySelector('input')", "false", "undefined"]) {
+    const value = runInNewContext(loadReadiness(source), context);
+    assert.equal(typeof value, "boolean");
+    assertPlainClone(value);
+  }
+  for (const value of [
+    await api.ready,
+    api.inspect(),
+    api.count(),
+    api.sample(),
+    await api.openAll(),
+    api.slowState(),
+    api.start(),
+    api.stop(),
+    api.clear(),
+    api.show(),
+    api.closeSelected(),
+    api.hasInstance("panel-1"),
+    await api.reopenFirst(),
+    await api.cycles(2),
+    ...(await Promise.all(["input", "hold", "hide", "number"].map((kind) => api.bounds(kind)))),
+  ])
+    assertPlainClone(value);
+  context.entries.length = 0;
+  assertPlainClone(api.inspect());
+  assertPlainClone(api.slowState());
+  assertPlainClone(api.pruneRetired());
+  assertPlainClone(await api.dispose());
+});
+
+test("evaluation settles promises and serializes diagnostic errors before IPC", async () => {
+  for (const source of [
+    "true",
+    "42",
+    "'text'",
+    "undefined",
+    "Promise.resolve({ ready: true })",
+    "({ nested: [new TypeError('diagnostic'), null] })",
+    "Promise.reject(new Error('readiness failed'))",
+    "(() => { throw new Error('inspection failed'); })()",
+  ]) {
+    const wire = await runInNewContext(loadEvaluation(source));
+    assert.equal(typeof wire, "string");
+    assertPlainClone(wire);
+    const result = JSON.parse(wire);
+    assertPlainClone(result);
+    if (result.ok) {
+      assertPlainClone(loadResult(wire));
+      if (result.value?.nested) {
+        assert.equal(result.value.nested[0].name, "TypeError");
+        assert.equal(result.value.nested[0].message, "diagnostic");
+        assert.equal(typeof result.value.nested[0].stack, "string");
+      }
+    } else {
+      assert.deepEqual(Object.keys(result.error), ["name", "message", "stack"]);
+      assert.throws(() => loadResult(wire), { name: "Error", message: result.error.message });
+    }
+  }
+});
 
 test("orphan observation waits at least five measured seconds even when a timer wakes early", async () => {
   let now = 0;

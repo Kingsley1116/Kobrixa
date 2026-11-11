@@ -61,3 +61,39 @@ export async function waitForLoad<T>(
     await pause();
   }
 }
+
+/** Evaluate and settle inside the renderer. Only a JSON string crosses Electron
+ * IPC, including failures; Error instances must not become IPC payloads. */
+export function loadEvaluation(source: string): string {
+  return `(async () => {
+    const errorData = (error) => ({
+      name: String(error?.name ?? "Error"),
+      message: String(error?.message ?? error),
+      stack: typeof error?.stack === "string" ? error.stack : "",
+    });
+    try {
+      const value = await (${source});
+      return JSON.stringify({ ok: true, value: value ?? null },
+        (_key, item) => item instanceof Error ? errorData(item) : item);
+    } catch (error) {
+      return JSON.stringify({ ok: false, error: errorData(error) });
+    }
+  })()`;
+}
+
+export function loadResult<T = unknown>(json: string): T {
+  const result = JSON.parse(json);
+  if (!result.ok) {
+    const error = new Error(result.error.message);
+    error.name = result.error.name;
+    error.stack = result.error.stack;
+    throw error;
+  }
+  return result.value as T;
+}
+
+/** Truthiness must be projected before IPC, never after cloning a harness API
+ * (functions/promises) or a DOM element. */
+export function loadReadiness(source: string): string {
+  return `Boolean(${source})`;
+}

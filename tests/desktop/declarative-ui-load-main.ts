@@ -12,7 +12,12 @@ import { desktopUi } from "../../apps/desktop/src/main/plugins/controller.js";
 import { diagnosticsFor as mainDiagnostics } from "../../apps/desktop/src/main/plugins/ui-bridge.js";
 import { diagnosticsFor as stateDiagnostics } from "../../packages/plugin-runtime/src/ui-state.js";
 import { measureSlowRenderer, type SnapshotDelay } from "./declarative-ui-slow-main.js";
-import { waitForLoad } from "./declarative-ui-load-fixture.js";
+import {
+  loadEvaluation,
+  loadReadiness,
+  loadResult,
+  waitForLoad,
+} from "./declarative-ui-load-fixture.js";
 
 const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const wall = () => performance.timeOrigin + performance.now();
@@ -39,10 +44,11 @@ export async function runUiLoad(input: {
   const snapshots = () => diag.map((value, id) => ({ id, counters: value.snapshot() }));
   const js = async <T = unknown>(source: string): Promise<T> => {
     try {
-      return await window.webContents.executeJavaScript(source);
+      return loadResult<T>(await window.webContents.executeJavaScript(loadEvaluation(source)));
     } catch (error) {
       const state = await window.webContents
-        .executeJavaScript("window.uiLoad?.inspect()")
+        .executeJavaScript(loadEvaluation("window.uiLoad?.inspect() ?? null"))
+        .then((json: string) => loadResult(json))
         .catch(String);
       throw new Error(`${source}: ${String(error)}; load state: ${JSON.stringify(state)}`, {
         cause: error,
@@ -50,7 +56,7 @@ export async function runUiLoad(input: {
     }
   };
   const wait = async (source: string, label: string) => {
-    await waitForLoad(() => js(source), Boolean, label);
+    await waitForLoad(() => js(loadReadiness(source)), Boolean, label);
   };
   const requestForeground = () => {
     // BrowserWindow.focus alone does not activate a background macOS app.
@@ -145,7 +151,7 @@ export async function runUiLoad(input: {
     await window.loadFile(path.join(directory, "renderer/index.html"));
     await foreground();
     await wait("window.uiLoad", "load shell ready");
-    await js("window.uiLoad.ready");
+    await js("window.uiLoad.ready.then(() => true)");
     assert.equal(await js("window.uiLoad.count()"), 0);
     const coldCounters = { main: snapshots(), renderer: await js("window.uiLoad.sample()") };
     const coldHeap = await heap("cold");
@@ -312,7 +318,7 @@ export async function runUiLoad(input: {
     await pause(50);
     await writeFile(
       path.join(directory, "renderer-events.json"),
-      await js<string>("JSON.stringify(window.uiLoad.stop())"),
+      JSON.stringify(await js("window.uiLoad.stop()")),
     );
     await js("window.uiLoad.clear()");
     await foreground();
