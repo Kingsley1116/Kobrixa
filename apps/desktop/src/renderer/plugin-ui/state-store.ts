@@ -102,11 +102,17 @@ export function diagnosticsFor(instance: object): FoundationDiagnostics {
   if (!diagnostics) throw new Error("Unknown renderer state instance");
   return diagnostics;
 }
+// Catalog resources are immutable for their admitted generation. Share their
+// index across reopen cycles; retired diagnostic records must not each retain
+// another 256-entry index of the same resource.
+const nodeIndexes = new WeakMap<PanelResourceV1 | PanelResourceV2, ReadonlyMap<string, UiNodeV2>>();
 export class UiStateStore {
   private deadlines = new Map<ReturnType<typeof setTimeout>, () => void>();
   private retained = new Map<object, number>();
   private diagnosticListeners = new Set<(event: FoundationDiagnosticEvent) => void>();
   private diagnosticOwner: ResourceOwner | undefined;
+  private received: { revision: number; at: number } | undefined;
+  private applyTiming: FoundationDiagnosticEvent["applyTiming"];
   private committedRevision = -1;
   private inputTimers = new Set<ReturnType<typeof setTimeout>>();
   private inputQueue: string | undefined;
@@ -124,12 +130,15 @@ export class UiStateStore {
     this.diagnosticOwner = owner;
   }
   private observe(kind: "apply" | "revoke"): void {
-    if (!this.diagnosticOwner) return;
+    if (!this.diagnosticOwner || !this.diagnosticListeners.size) return;
     const event: FoundationDiagnosticEvent = {
       kind,
       owner: this.diagnosticOwner,
       binding: this.view.snapshot.binding,
       time: performance.timeOrigin + performance.now(),
+      ...(kind === "apply" && this.applyTiming?.revision === this.view.snapshot.revision
+        ? { applyTiming: { ...this.applyTiming } }
+        : {}),
     };
     this.diagnosticListeners.forEach((listener) => listener(event));
   }
@@ -143,6 +152,7 @@ export class UiStateStore {
     this.committedRevision = revision;
     this.retained.clear();
     this.observe("apply");
+    this.applyTiming = undefined;
   }
   intentRevoked(): void {
     this.observe("revoke");
@@ -190,6 +200,13 @@ export class UiStateStore {
   readonly formSync: boolean;
   private visible: boolean;
   private corePending = new Set<string>();
+  private readonly nodes: ReadonlyMap<string, UiNodeV2>;
+  private presentations = new Map<
+    string,
+    ReadonlyMap<string, { visible: boolean; enabled: boolean }>
+  >();
+  private presentationData: StateView["snapshot"]["data"] | undefined;
+  private presentationDraft: StateView["draft"] | undefined;
   onEdit: () => void = () => {};
   onAccepted: (nodeId: string) => void = () => {};
   constructor(
@@ -198,6 +215,12 @@ export class UiStateStore {
     initial: UiStateSnapshot,
     restored?: DraftPayload,
   ) {
+    let nodes = nodeIndexes.get(resource);
+    if (!nodes) {
+      nodes = new Map(resource.nodes.map((node) => [node.id, node]));
+      nodeIndexes.set(resource, nodes);
+    }
+    this.nodes = nodes;
     stateDiagnostics.set(
       this,
       Object.freeze({
@@ -450,11 +473,25 @@ export class UiStateStore {
     this.refreshForm ||= force;
     return this.invalidate(this.view.snapshot.revision);
   }
-  presentation(dialogId?: string | null): Map<string, { visible: boolean; enabled: boolean }> {
+  presentation(
+    dialogId?: string | null,
+  ): ReadonlyMap<string, { visible: boolean; enabled: boolean }> {
+    // Every control asks about the same immutable data/draft. Walk the admitted
+    // tree once per pair, rather than once per enabled/valid check during render.
+    if (
+      this.presentationData !== this.view.snapshot.data ||
+      this.presentationDraft !== this.view.draft
+    ) {
+      this.presentations.clear();
+      this.presentationData = this.view.snapshot.data;
+      this.presentationDraft = this.view.draft;
+    }
+    const dialog = dialogId && this.nodes.get(dialogId)?.type === "dialog" ? dialogId : "";
+    const cached = this.presentations.get(dialog);
+    if (cached) return cached;
     const result = new Map<string, { visible: boolean; enabled: boolean }>();
-    const nodes = new Map(this.resource.nodes.map((node) => [node.id, node]));
     const walk = (id: string, visible: boolean, enabled: boolean): void => {
-      const node = nodes.get(id);
+      const node = this.nodes.get(id);
       if (!node || result.has(id)) return;
       const state = {
         visible: visible && condition(node.visibleWhen, this.view.snapshot.data, this.view.draft),
@@ -465,7 +502,8 @@ export class UiStateStore {
         node.children.forEach((child) => walk(child, state.visible, state.enabled));
     };
     walk(this.resource.root, true, true);
-    if (dialogId) walk(dialogId, true, true);
+    if (dialog) walk(dialog, true, true);
+    if (this.view.active) this.presentations.set(dialog, result);
     return result;
   }
   nodeEnabled(id: string): boolean {
@@ -519,7 +557,7 @@ export class UiStateStore {
     );
   }
   safetyAction(id: string): boolean {
-    const node = this.resource.nodes.find((node) => node.id === id);
+    const node = this.nodes.get(id);
     return (
       node?.type === "action" &&
       node.action.kind === "core" &&
@@ -622,6 +660,8 @@ export class UiStateStore {
     };
   }
   invalidate(revision: number): Promise<void> {
+    if (this.diagnosticListeners.size && (!this.received || revision > this.received.revision))
+      this.received = { revision, at: performance.timeOrigin + performance.now() };
     this.target = Math.max(this.target, revision);
     if (
       !this.view.active ||
@@ -642,6 +682,8 @@ export class UiStateStore {
         ) {
           const forced = this.refreshForm;
           this.refreshForm = false;
+          const received = this.diagnosticListeners.size ? this.received : undefined;
+          const requestedAt = received ? performance.timeOrigin + performance.now() : 0;
           const result = await this.deadline(
             this.bridge.snapshot({ binding: this.view.snapshot.binding }),
           );
@@ -655,6 +697,15 @@ export class UiStateStore {
               !forced)
           )
             throw new Error("Stale UI state");
+          this.applyTiming = received
+            ? {
+                requestedRevision: received.revision,
+                revision: result.value.revision,
+                receivedAt: received.at,
+                snapshotRequestedAt: requestedAt,
+                snapshotReceivedAt: performance.timeOrigin + performance.now(),
+              }
+            : undefined;
           this.retained.clear();
           this.retained.set(
             result.value,
@@ -747,6 +798,8 @@ export class UiStateStore {
     }
   }
   retire(): void {
+    this.received = undefined;
+    this.applyTiming = undefined;
     if (!this.view.active) return;
     this.onEdit();
     this.serial++;
@@ -759,5 +812,8 @@ export class UiStateStore {
     this.retained.clear();
     this.listeners.clear();
     this.diagnosticListeners.clear();
+    this.presentations.clear();
+    this.presentationData = undefined;
+    this.presentationDraft = undefined;
   }
 }

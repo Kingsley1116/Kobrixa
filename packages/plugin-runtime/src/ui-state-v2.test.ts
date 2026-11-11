@@ -117,3 +117,45 @@ it("publishes monotonic presentation through scalar CAS without changing drafts 
   state.retireExecution(owner, "process-gone");
   expect(state.dataAuthority(owner, binding)).toBeNull();
 });
+it("retains admitted progress constraints across patches and rebuilds them for a replacement resource", async () => {
+  const state = new UiStateRegistry({ current: () => true, supportedResourceVersions: [2] });
+  const request = input();
+  const progress = {
+    id: "progress",
+    type: "progress" as const,
+    value: { ref: { scope: "data" as const, key: "presentation" } },
+    max: 10,
+    label: { en: "Progress" },
+  };
+  request.resource.nodes.push(progress);
+  const root = request.resource.nodes[0]!;
+  if (root.type !== "group") throw new Error("root");
+  root.children.push(progress.id);
+  const opened = await state.open(request);
+  if (!opened.ok) throw new Error("open failed");
+  const binding = opened.value.binding;
+  progress.max = 100; // The caller cannot relax a live registration's projection.
+  expect(state.patch(owner, { binding, baseRevision: 0, set: { presentation: 5 } }).ok).toBe(true);
+  expect(state.patch(owner, { binding, baseRevision: 1, set: { presentation: 11 } }).ok).toBe(
+    false,
+  );
+  expect(state.state(owner, binding)).toMatchObject({
+    ok: true,
+    value: { revision: 1, data: { presentation: 5 } },
+  });
+  state.retireResource(uiOwner, "resource-replaced");
+  const replacement = await state.open({
+    ...request,
+    owner: { ...uiOwner, uiResourceGeneration: 2 },
+  });
+  if (!replacement.ok) throw new Error("replacement failed");
+  expect(
+    state.patch(owner, {
+      binding: replacement.value.binding,
+      baseRevision: 0,
+      set: { presentation: 11 },
+    }).ok,
+  ).toBe(true);
+  expect(state.patch(owner, { binding, baseRevision: 1, set: { presentation: 6 } }).ok).toBe(false);
+  state.retireExecution(owner, "process-gone");
+});

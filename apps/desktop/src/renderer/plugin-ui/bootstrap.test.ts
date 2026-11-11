@@ -11,6 +11,63 @@ import {
 } from "./contract.test.js";
 import { RendererSession, bootstrapPluginUi } from "./bootstrap.js";
 afterEach(() => vi.useRealTimers());
+it("routes patches by full binding identity without copying unrelated drafts, and removes retired routes", async () => {
+  const f = fixture();
+  const entries = Array.from({ length: 16 }, (_, i) => ({
+    ...entry,
+    id: `acme.ui.panel-${i}`,
+    sourceKey: `builtin:source-${Math.floor(i / 4)}`,
+  }));
+  f.bridge.catalog.mockResolvedValue({
+    ok: true,
+    value: { hostEpoch: handle(1), revision: 1, entries, nextCursor: null },
+  });
+  f.bridge.resource.mockImplementation(async ({ id }) => ({
+    ok: true,
+    value: {
+      owner: entries.find((entry) => entry.id === id)!,
+      id,
+      version: 1,
+      resource: panel,
+      validationContext,
+      rawBytes: 1000,
+    },
+  }));
+  f.bridge.open.mockImplementation(async ({ id }) => ({
+    ok: true,
+    value: { ...snapshot(), binding: { ...binding, contributionId: id, panelInstance: id } },
+  }));
+  f.bridge.snapshot.mockImplementation(async ({ binding }) => ({
+    ok: true,
+    value: { ...snapshot(1), binding },
+  }));
+  const session = new RendererSession(f.bridge);
+  try {
+    await session.start();
+    session.showPane(true, "tab");
+    for (const entry of entries) await session.open(entry);
+    const records = entries.map((entry) => session.record(entry)!);
+    const forms = records.map((record) => vi.spyOn(record.state, "form"));
+    const target = records.at(-1)!;
+    const targetBinding = target.state.getSnapshot().snapshot.binding;
+    f.emit({ type: "state", binding: targetBinding, revision: 1 });
+    await target.state.invalidate(1);
+    expect(f.bridge.snapshot).toHaveBeenCalledExactlyOnceWith({ binding: targetBinding });
+    for (const form of forms) expect(form).not.toHaveBeenCalled();
+    expect(
+      records.slice(0, -1).every((record) => record.state.getSnapshot().snapshot.revision === 0),
+    ).toBe(true);
+    f.emit({ type: "state", binding: { ...targetBinding, generation: 2 }, revision: 2 });
+    expect(f.bridge.snapshot).toHaveBeenCalledTimes(1);
+    session.close(entries.at(-1)!);
+    f.emit({ type: "state", binding: targetBinding, revision: 2 });
+    await session.setVisibility(targetBinding, true, "tab");
+    expect(f.bridge.snapshot).toHaveBeenCalledTimes(1);
+    expect(target.state.getSnapshot().active).toBe(false);
+  } finally {
+    session.dispose();
+  }
+});
 it("unfocused or hidden panel opens do not activate; blur disables holds without losing the record", async () => {
   const f = fixture();
   const session = new RendererSession(f.bridge);

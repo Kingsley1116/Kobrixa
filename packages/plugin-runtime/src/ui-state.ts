@@ -62,6 +62,7 @@ type Live = {
   uiOwner: UiOwner;
   scope: CoreWindowScope;
   resource: Resource;
+  scalarResource: ReturnType<typeof scalarResource>;
   version: 1 | 2;
   registration: object;
   state: UiStateSnapshot;
@@ -331,10 +332,11 @@ export class UiStateRegistry {
             return resolve(resourceFailure("stale"));
           const resource = structuredClone(input.resource);
           freezeResource(resource);
+          const scalar = scalarResource(resource);
           const data = Object.fromEntries(
             Object.entries(resource.data).map(([key, slot]) => [key, slot.initial]),
           );
-          const dataResult = validateUiData(scalarResource(resource), data);
+          const dataResult = validateUiData(scalar, data);
           if (!dataResult.ok) return resolve(dataResult);
           const form =
             resource.kind === "panel"
@@ -371,6 +373,7 @@ export class UiStateRegistry {
             uiOwner: structuredClone(input.owner),
             scope: structuredClone(input.scope),
             resource,
+            scalarResource: scalar,
             version,
             registration: Object.freeze({}),
             state,
@@ -454,7 +457,7 @@ export class UiStateRegistry {
       )
         return resourceFailure("stale");
     }
-    const valid = validateUiData(scalarResource(live.resource), next);
+    const valid = validateUiData(live.scalarResource, next);
     if (!valid.ok) return valid;
     live.state = { ...live.state, revision: live.state.revision + 1, data: valid.value };
     live.times.push(this.#now());

@@ -33,7 +33,6 @@ import {
   UiStateRegistry,
   UiDataHost,
   UiSubscriptions,
-  currentStatusBindings,
   type UiRuntimeAttachment,
   type Stage3ChannelContext,
   type Stage3ChannelBinding,
@@ -1481,22 +1480,15 @@ export function createUiExecutionAdapter(input: {
     snapshot: async ({ binding }) => {
       const value = resolve(binding);
       if (value) return { ok: true, value: value.state };
-      const status = currentStatusBindings(input.states, input.scope()).find((entry) =>
-        sameUiBinding(entry.binding, binding),
-      );
-      if (!status) return stale();
-      for (const owner of input.runtime.owners()) {
-        if (
-          !input.runtime.current(owner) ||
-          owner.hostEpoch !== binding.hostEpoch ||
-          owner.processEpoch !== binding.processEpoch ||
-          owner.generation !== binding.generation
-        )
-          continue;
-        const result = input.states.state(owner, binding);
-        if (result.ok) return result;
-      }
-      return stale();
+      // Initialized statuses have no execution metadata until their first action.
+      // Resolve this exact live binding, without cloning all statuses per update.
+      if (binding.kind !== "status") return stale();
+      const owner = input.states.executionOwner(binding);
+      return owner &&
+        input.runtime.current(owner) &&
+        input.states.inScope(owner, binding, input.scope())
+        ? input.states.state(owner, binding)
+        : stale();
     },
     acceptForm: (binding, revision, values) => {
       const value = resolve(binding);

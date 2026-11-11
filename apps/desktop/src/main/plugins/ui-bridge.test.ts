@@ -707,6 +707,40 @@ it("negotiated command activation creates status before ready without another ac
     h.dispose();
   }
 });
+it("reads only the requested initialized status while retaining scope, epoch and retirement checks", async () => {
+  const h = await channelFixture();
+  try {
+    await h.binding.initialized(h.controller.signal);
+    const binding = h.states.instances(h.owner)[0]!;
+    const scan = vi.spyOn(h.states, "currentStatus");
+    const owners = vi.spyOn(h.runtime, "owners");
+    for (let i = 0; i < 100; i++) {
+      const result = await h.bridge.snapshot({ binding });
+      expect(result).toMatchObject({ ok: true, value: { binding } });
+      if (result.ok) result.value.data.untrusted = "must not alter registry";
+    }
+    expect(scan).not.toHaveBeenCalled();
+    expect(owners).not.toHaveBeenCalled();
+    expect(h.states.state(h.owner, binding)).not.toHaveProperty("value.data.untrusted");
+    for (const forged of [
+      { ...binding, generation: binding.generation + 1 },
+      { ...binding, uiResourceGeneration: binding.uiResourceGeneration + 1 },
+      { ...binding, kind: "panel" as const },
+      { ...binding, processEpoch: h.scope().workbenchInstance },
+      { ...binding, contributionId: "test.ui.other" },
+    ])
+      expect((await h.bridge.snapshot({ binding: forged })).ok).toBe(false);
+    const previous = h.scope().workbenchInstance;
+    h.scope().workbenchInstance = h.owner.processEpoch;
+    expect((await h.bridge.snapshot({ binding })).ok).toBe(false);
+    h.scope().workbenchInstance = previous;
+    expect((await h.bridge.snapshot({ binding })).ok).toBe(true);
+    h.replace();
+    expect((await h.bridge.snapshot({ binding })).ok).toBe(false);
+  } finally {
+    h.dispose();
+  }
+});
 it("v1 activation refuses a version-2 catalog reply before creating state or activating a process", async () => {
   const h = await channelFixture();
   const original = h.catalog.resource.bind(h.catalog);

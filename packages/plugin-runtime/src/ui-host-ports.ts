@@ -23,6 +23,16 @@ export type FoundationDiagnosticEvent = {
   owner: ResourceOwner;
   binding?: UiBinding;
   time: number;
+  /** Host-only renderer diagnostics, present only with an attached observer.
+   * requestedRevision can differ from revision when a snapshot coalesces patches.
+   * These timestamps use the same renderer wall clock as time. */
+  applyTiming?: {
+    requestedRevision: number;
+    revision: number;
+    receivedAt: number;
+    snapshotRequestedAt: number;
+    snapshotReceivedAt: number;
+  };
 };
 export type FoundationCounters = Readonly<{
   owners: number;

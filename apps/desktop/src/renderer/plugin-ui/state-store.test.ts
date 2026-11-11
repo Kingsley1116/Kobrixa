@@ -10,6 +10,80 @@ import {
   validationContext,
 } from "./contract.test.js";
 import { UiStateStore, scalarValid, diagnosticsFor } from "./state-store.js";
+it("reports receipt and snapshot timing only at the actual commit, identifying coalesced revisions", async () => {
+  const f = fixture();
+  const pending = deferred<Awaited<ReturnType<typeof f.bridge.snapshot>>>();
+  f.bridge.snapshot.mockReturnValueOnce(pending.promise);
+  const state = new UiStateStore(f.bridge, panel, snapshot());
+  state.setDiagnosticOwner({ ...entry, ...binding });
+  const observe = vi.fn();
+  const off = diagnosticsFor(state).onEvent(observe);
+  try {
+    const work = state.invalidate(1);
+    void state.invalidate(2);
+    pending.resolve({ ok: true, value: snapshot(2) });
+    await work;
+    expect(observe).not.toHaveBeenCalled();
+    state.renderCommitted(1);
+    expect(observe).not.toHaveBeenCalled();
+    state.renderCommitted(2);
+    expect(observe).toHaveBeenCalledTimes(1);
+    const event = observe.mock.calls[0]![0];
+    expect(event).toMatchObject({
+      kind: "apply",
+      applyTiming: { requestedRevision: 1, revision: 2 },
+    });
+    expect(event.applyTiming.receivedAt).toBeLessThanOrEqual(event.applyTiming.snapshotRequestedAt);
+    expect(event.applyTiming.snapshotRequestedAt).toBeLessThanOrEqual(
+      event.applyTiming.snapshotReceivedAt,
+    );
+    expect(event.applyTiming.snapshotReceivedAt).toBeLessThanOrEqual(event.time);
+    state.renderCommitted(2);
+    expect(observe).toHaveBeenCalledTimes(1);
+  } finally {
+    off();
+    state.retire();
+  }
+});
+it("walks a 256-node presentation once per data/draft pair, retaining live control fences", async () => {
+  const f = fixture();
+  const resource = structuredClone(panel);
+  const root = resource.nodes[0]!;
+  if (root.type !== "group") throw new Error("root");
+  while (resource.nodes.length < 256) {
+    const id = `leaf-${resource.nodes.length}`;
+    resource.nodes.push({ id, type: "text", value: { text: { en: id } }, emphasis: "normal" });
+    root.children.push(id);
+  }
+  const reads = vi.fn(() => undefined);
+  for (const node of resource.nodes) Object.defineProperty(node, "visibleWhen", { get: reads });
+  resource.nodes.find((node) => node.id === "go")!.enabledWhen = {
+    op: "gt",
+    left: { scope: "data", key: "count" },
+    right: 0,
+  };
+  const state = new UiStateStore(f.bridge, resource, snapshot());
+  const first = state.presentation();
+  for (let i = 0; i < 100; i++) {
+    state.valid();
+    expect(state.actionEnabled("go")).toBe(false);
+    expect(state.actionEnabled("hold")).toBe(true);
+    expect(state.presentation()).toBe(first);
+  }
+  expect(reads).toHaveBeenCalledTimes(256);
+  await state.invalidate(1);
+  expect(state.actionEnabled("go")).toBe(true);
+  expect(state.presentation()).not.toBe(first);
+  expect(reads).toHaveBeenCalledTimes(512);
+  state.edit("speed", null, "-");
+  expect(state.actionEnabled("go")).toBe(false);
+  expect(state.valid()).toBe(false);
+  expect(reads).toHaveBeenCalledTimes(768);
+  state.setVisible(false);
+  expect(state.actionEnabled("hold")).toBe(false);
+  state.retire();
+  expect(state.actionEnabled("go")).toBe(false);
+});
 it("U05 preserves invalid raw draft, focus identity and full form while reconciling one snapshot", async () => {
   const f = fixture();
   const pending = deferred<Awaited<ReturnType<typeof f.bridge.snapshot>>>();

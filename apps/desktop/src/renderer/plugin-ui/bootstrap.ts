@@ -94,6 +94,7 @@ export function assertRenderable(
 export class RendererSession {
   readonly catalog: UiCatalogStore;
   private records = new Map<string, PanelRecord>();
+  private bindings = new Map<string, PanelRecord>();
   private drafts = new DraftCache();
   private opening = new Map<string, Promise<void>>();
   private failures = new Set<string>();
@@ -157,6 +158,10 @@ export class RendererSession {
   }
   record(entry: UiCatalogEntry): PanelRecord | undefined {
     return this.records.get(contributionKey(entry));
+  }
+  private retain(record: PanelRecord): void {
+    this.records.set(contributionKey(record.entry), record);
+    this.bindings.set(bindingKey(record.state.getSnapshot().snapshot.binding), record);
   }
   selectedKey(): string | null {
     return this.selected;
@@ -255,9 +260,7 @@ export class RendererSession {
     visible: boolean,
     reason: VisibilityReason,
   ): Promise<void> {
-    const record = [...this.records.values()].find(
-      (item) => bindingKey(item.state.form().binding) === bindingKey(binding),
-    );
+    const record = this.bindings.get(bindingKey(binding));
     if (record) await record.intent.visibility(visible, reason);
   }
   open(entry: UiCatalogEntry): Promise<void> {
@@ -383,10 +386,10 @@ export class RendererSession {
             }
           };
           record.detachDatasets = state.subscribe(sync);
-          this.records.set(key, record);
+          this.retain(record);
           sync();
           if (this.records.get(key) === record) void datasets.invalidate();
-        } else this.records.set(key, record);
+        } else this.retain(record);
         if (this.records.get(key) !== record) return;
         void intent.visibility(true, "tab");
         this.publish();
@@ -426,6 +429,7 @@ export class RendererSession {
     record.intent.dispose();
     record.state.retire();
     this.records.delete(key);
+    this.bindings.delete(bindingKey(record.state.getSnapshot().snapshot.binding));
     this.publish();
     send(() => this.bridge.close({ binding: record.state.form().binding }));
   }
@@ -475,9 +479,7 @@ export class RendererSession {
         if (pending.binding.hostEpoch !== event.hostEpoch) this.statusEvents.delete(key);
       return;
     }
-    const record = [...this.records.values()].find(
-      (item) => bindingKey(item.state.form().binding) === bindingKey(event.binding),
-    );
+    const record = this.bindings.get(bindingKey(event.binding));
     if (event.type === "revoked") {
       const retired = [
         "generation-retired",
@@ -581,7 +583,7 @@ export class RendererSession {
         hostEpoch: result.value.binding.hostEpoch,
         processEpoch: result.value.binding.processEpoch,
       });
-      this.records.set(contributionKey(entry), {
+      this.retain({
         entry,
         resource,
         state,
