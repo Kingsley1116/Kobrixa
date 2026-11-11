@@ -1,0 +1,421 @@
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  chmodSync,
+  existsSync,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
+
+const require = createRequire(import.meta.url);
+const filename = fileURLToPath(import.meta.url);
+const addonPath = path.resolve(
+  process.env.KOBRIXA_JOURNAL_WIN32_ADDON ??
+    fileURLToPath(
+      new URL(
+        "../../apps/desktop/native/journal-win32/build/Release/journal_win32.node",
+        import.meta.url,
+      ),
+    ),
+);
+// On Windows an absent, wrong-ABI or unloadable addon is a hard test failure.
+const native = process.platform === "win32" ? require(addonPath) : undefined;
+const notRun = process.platform === "win32" ? false : "NOT RUN: requires real Windows Win32 I/O";
+
+function snapshot(revision, state) {
+  // Opaque filesystem fixtures, not a substitute for journal.ts schema/recovery tests.
+  const body = JSON.stringify({ revision, state });
+  return Buffer.from(
+    JSON.stringify({ body, digest: createHash("sha256").update(body).digest("hex") }),
+  );
+}
+const oldBytes = snapshot(1, "pending");
+const newBytes = snapshot(2, "resolved");
+function readSnapshot(file) {
+  const bytes = readFileSync(file);
+  const value = JSON.parse(bytes);
+  assert.equal(createHash("sha256").update(value.body).digest("hex"), value.digest);
+  return { bytes, ...JSON.parse(value.body) };
+}
+function fixture(t) {
+  const root = mkdtempSync(path.join(os.tmpdir(), "kobrixa-journal-win32-"));
+  const dir = path.join(root, "journal");
+  mkdirSync(dir);
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  return {
+    root,
+    dir,
+    current: path.join(dir, "faults.json"),
+    previous: path.join(dir, "faults.previous.json"),
+  };
+}
+function replace(dir, bytes, options = {}) {
+  return native.replaceCandidate(
+    dir,
+    options.name ?? "faults.json",
+    options.temp ?? `faults.next-${randomUUID()}.json`,
+    bytes,
+    options.dirId ?? native.inspect(dir, ""),
+    options.targetId ?? native.inspect(dir, options.name ?? "faults.json"),
+    options.hook ?? (() => {}),
+  );
+}
+function fault(code, nativeCode) {
+  return (error) => {
+    assert.equal(error.code, code);
+    if (nativeCode !== undefined) assert.equal(error.win32Code, nativeCode);
+    assert.equal(typeof error.phase, "string");
+    return true;
+  };
+}
+
+if (process.env.KOBRIXA_JOURNAL_WIN32_CHILD === "interrupt") {
+  const dir = process.env.KOBRIXA_JOURNAL_WIN32_DIR;
+  replace(dir, newBytes, {
+    hook(phase) {
+      if (phase !== process.env.KOBRIXA_JOURNAL_WIN32_PHASE) return;
+      writeFileSync(process.env.KOBRIXA_JOURNAL_WIN32_MARKER, phase);
+      // Parent kills the process while native publication is suspended here.
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+    },
+  });
+  throw new Error("interruption child unexpectedly completed");
+} else {
+  test(
+    "candidate capability never enables production durable replacement",
+    { skip: notRun },
+    (t) => {
+      const { dir, current } = fixture(t);
+      assert.equal(native.capabilities().prototypeAvailable, true);
+      assert.equal(native.capabilities().supported, false);
+      assert.throws(() => native.durableReplace(dir, newBytes), { code: "ENOTSUP" });
+      assert.equal(existsSync(current), false);
+      assert.deepEqual(readdirSync(dir), []);
+      t.diagnostic(`runtime=${JSON.stringify(process.versions)} addon=${addonPath}`);
+    },
+  );
+
+  test(
+    "missing native module is a load failure, never a successful barrier",
+    { skip: notRun },
+    (t) => {
+      const { root, dir } = fixture(t);
+      assert.throws(() => require(path.join(root, "missing.node")), { code: "MODULE_NOT_FOUND" });
+      assert.deepEqual(readdirSync(dir), []);
+      // W02b must translate loader failures to journal ENOTSUP; it is not implemented here.
+      assert.throws(() => native.durableReplace(), { code: "ENOTSUP" });
+    },
+  );
+
+  test(
+    "successful candidate durable-replacement sequence: flushed complete bytes and new identity",
+    { skip: notRun },
+    (t) => {
+      const { dir, current } = fixture(t);
+      const phases = [];
+      const initial = replace(dir, oldBytes);
+      assert.equal(initial.fileFlushed, true);
+      const firstId = native.inspect(dir, "faults.json");
+      const result = replace(dir, newBytes, { hook: (phase) => phases.push(phase) });
+      assert.deepEqual(phases, ["after-temp-flush", "after-move", "after-published-flush"]);
+      assert.deepEqual(readSnapshot(current).bytes, newBytes);
+      assert.notEqual(result.identity, firstId);
+      assert.equal(result.identity, native.inspect(dir, "faults.json"));
+      assert.equal(result.fileFlushed, true);
+      assert.equal(result.published, true);
+      assert.equal(result.supported, false);
+      assert.equal(result.primitive, "MoveFileExW(REPLACE_EXISTING|WRITE_THROUGH)");
+      assert.deepEqual(readdirSync(dir), ["faults.json"]);
+      t.diagnostic(
+        "Candidate syscalls succeeded; crash/power-loss durability is to be verified on a Windows runner.",
+      );
+    },
+  );
+
+  test(
+    "old and new snapshots survive close/reopen without a torn payload",
+    { skip: notRun },
+    (t) => {
+      const { dir, current, previous } = fixture(t);
+      replace(dir, oldBytes);
+      replace(dir, readFileSync(current), { name: "faults.previous.json" });
+      replace(dir, newBytes);
+      assert.equal(readSnapshot(previous).state, "pending");
+      assert.equal(readSnapshot(current).revision, 2);
+      // Model an unreadable current: retain previous as uncertain evidence, never a clean result.
+      writeFileSync(current, "torn");
+      assert.throws(() => readSnapshot(current), SyntaxError);
+      assert.deepEqual(readSnapshot(previous).bytes, oldBytes);
+    },
+  );
+
+  test(
+    "real Windows sharing violation preserves old bytes and staged evidence",
+    { skip: notRun },
+    (t) => {
+      const { dir, current } = fixture(t);
+      replace(dir, oldBytes);
+      const targetId = native.inspect(dir, "faults.json");
+      let attempted = false;
+      native.withExclusiveFile(dir, "faults.json", () => {
+        attempted = true;
+        assert.throws(() => replace(dir, newBytes, { targetId }), fault("EBUSY", 32));
+      });
+      assert.equal(attempted, true);
+      assert.deepEqual(readFileSync(current), oldBytes);
+      // Handle closure is real: the same operation must now succeed.
+      replace(dir, newBytes);
+      assert.deepEqual(readFileSync(current), newBytes);
+    },
+  );
+
+  test(
+    "real read-only destination access denial is not recast as unsupported",
+    { skip: notRun },
+    (t) => {
+      const { dir, current } = fixture(t);
+      replace(dir, oldBytes);
+      chmodSync(current, 0o444);
+      try {
+        assert.throws(() => replace(dir, newBytes), fault("EACCES", 5));
+        assert.deepEqual(readFileSync(current), oldBytes);
+      } finally {
+        chmodSync(current, 0o666);
+      }
+      replace(dir, newBytes);
+      assert.deepEqual(readFileSync(current), newBytes);
+    },
+  );
+
+  test(
+    "directory flush probe records the actual syscall outcome without declaring support",
+    { skip: notRun },
+    (t) => {
+      const { dir } = fixture(t);
+      let result;
+      try {
+        result = native.probeDirectoryFlush(dir);
+      } catch (error) {
+        assert.ok(["open-directory", "flush-directory"].includes(error.phase));
+        assert.ok(Number.isInteger(error.win32Code) && error.win32Code > 0);
+        t.diagnostic(
+          `DIRECTORY BARRIER UNVERIFIED: ${error.phase} ${error.code} Win32=${error.win32Code}`,
+        );
+      }
+      if (result) {
+        assert.equal(result.flushed, true);
+        assert.equal(result.supported, false);
+        t.diagnostic(
+          "Directory FlushFileBuffers returned success; namespace/power-loss guarantee still UNVERIFIED.",
+        );
+      }
+      assert.throws(() => native.durableReplace(), { code: "ENOTSUP" });
+    },
+  );
+
+  for (const phase of ["after-temp-flush", "after-move", "after-published-flush"]) {
+    test(
+      `killed publication child: ${phase}, recover complete old/new evidence`,
+      { skip: notRun, timeout: 30000 },
+      async (t) => {
+        const { root, dir, current, previous } = fixture(t);
+        replace(dir, oldBytes);
+        replace(dir, oldBytes, { name: "faults.previous.json" });
+        const marker = path.join(root, "phase.txt");
+        const child = spawn(process.execPath, [filename], {
+          env: {
+            ...process.env,
+            KOBRIXA_JOURNAL_WIN32_ADDON: addonPath,
+            KOBRIXA_JOURNAL_WIN32_CHILD: "interrupt",
+            KOBRIXA_JOURNAL_WIN32_DIR: dir,
+            KOBRIXA_JOURNAL_WIN32_PHASE: phase,
+            KOBRIXA_JOURNAL_WIN32_MARKER: marker,
+          },
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        let output = "";
+        child.stdout.on("data", (chunk) => {
+          output += chunk;
+        });
+        child.stderr.on("data", (chunk) => {
+          output += chunk;
+        });
+        let spawnError;
+        child.on("error", (error) => {
+          spawnError = error;
+        });
+        const closed = new Promise((resolve) => child.once("close", resolve));
+        try {
+          const deadline = Date.now() + 15000;
+          while (
+            !existsSync(marker) &&
+            child.exitCode === null &&
+            !spawnError &&
+            Date.now() < deadline
+          )
+            await delay(20);
+          assert.equal(spawnError, undefined);
+          assert.equal(existsSync(marker), true, `child never reached ${phase}: ${output}`);
+          assert.equal(readFileSync(marker, "utf8"), phase);
+          assert.equal(child.kill("SIGKILL"), true);
+          await closed;
+          assert.ok(child.exitCode !== null || child.signalCode !== null);
+          assert.deepEqual(readSnapshot(previous).bytes, oldBytes);
+          const staged = readdirSync(dir).filter((name) => name.startsWith("faults.next-"));
+          if (phase === "after-temp-flush") {
+            assert.deepEqual(readSnapshot(current).bytes, oldBytes);
+            assert.equal(staged.length, 1);
+            assert.deepEqual(readSnapshot(path.join(dir, staged[0])).bytes, newBytes);
+          } else {
+            assert.deepEqual(readSnapshot(current).bytes, newBytes);
+            assert.equal(staged.length, 0);
+          }
+        } finally {
+          if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+          await closed;
+        }
+      },
+    );
+  }
+
+  test(
+    "refuse stale target identity before publication and retain staged bytes",
+    { skip: notRun },
+    (t) => {
+      const { dir, current } = fixture(t);
+      replace(dir, oldBytes);
+      const alien = snapshot(99, "pending");
+      const temp = `faults.next-${randomUUID()}.json`;
+      assert.throws(
+        () =>
+          replace(dir, newBytes, {
+            temp,
+            hook(phase) {
+              if (phase !== "after-temp-flush") return;
+              renameSync(current, path.join(dir, "retained-old.json"));
+              writeFileSync(current, alien, { flag: "wx" });
+            },
+          }),
+        fault("ESTALE"),
+      );
+      assert.deepEqual(readFileSync(current), alien);
+      assert.deepEqual(readFileSync(path.join(dir, temp)), newBytes);
+    },
+  );
+
+  test(
+    "refuse directory identity replacement and existing temp collisions",
+    { skip: notRun },
+    (t) => {
+      const { root, dir } = fixture(t);
+      const dirId = native.inspect(dir, "");
+      renameSync(dir, path.join(root, "old-directory"));
+      mkdirSync(dir);
+      assert.throws(() => replace(dir, newBytes, { dirId }), fault("ESTALE"));
+      assert.deepEqual(readdirSync(dir), []);
+      const temp = `faults.next-${randomUUID()}.json`;
+      writeFileSync(path.join(dir, temp), oldBytes);
+      assert.throws(() => replace(dir, newBytes, { temp }), fault("EEXIST"));
+      assert.deepEqual(readFileSync(path.join(dir, temp)), oldBytes);
+    },
+  );
+
+  test("refuse a swapped temp identity at the pre-publication boundary", { skip: notRun }, (t) => {
+    const { dir, current } = fixture(t);
+    replace(dir, oldBytes);
+    const temp = `faults.next-${randomUUID()}.json`;
+    assert.throws(
+      () =>
+        replace(dir, newBytes, {
+          temp,
+          hook(phase) {
+            if (phase !== "after-temp-flush") return;
+            renameSync(path.join(dir, temp), path.join(dir, "retained-temp.json"));
+            writeFileSync(path.join(dir, temp), snapshot(99, "pending"), { flag: "wx" });
+          },
+        }),
+      fault("ESTALE"),
+    );
+    assert.deepEqual(readFileSync(current), oldBytes);
+  });
+
+  test(
+    "post-publication identity failure stays uncertain and retains previous evidence",
+    { skip: notRun },
+    (t) => {
+      const { dir, current, previous } = fixture(t);
+      replace(dir, oldBytes);
+      replace(dir, oldBytes, { name: "faults.previous.json" });
+      const alien = snapshot(99, "pending");
+      assert.throws(
+        () =>
+          replace(dir, newBytes, {
+            hook(phase) {
+              if (phase !== "after-move") return;
+              renameSync(current, path.join(dir, "published-before-swap.json"));
+              writeFileSync(current, alien, { flag: "wx" });
+            },
+          }),
+        (error) => {
+          assert.equal(error.code, "ESTALE");
+          assert.equal(error.phase, "flush-published");
+          assert.equal(error.publicationState, "uncertain");
+          return true;
+        },
+      );
+      assert.deepEqual(readFileSync(current), alien);
+      assert.deepEqual(readSnapshot(previous).bytes, oldBytes);
+      assert.deepEqual(readFileSync(path.join(dir, "published-before-swap.json")), newBytes);
+    },
+  );
+
+  test(
+    "refuse ancestor and leaf reparse points and hard-linked journal files",
+    { skip: notRun },
+    (t) => {
+      const { root, dir, current } = fixture(t);
+      const outside = path.join(root, "outside");
+      mkdirSync(outside);
+      const alias = path.join(root, "alias");
+      symlinkSync(dir, alias, "junction");
+      assert.throws(() => native.inspect(alias, ""), fault("EUNSAFE"));
+      const child = path.join(dir, "child");
+      mkdirSync(child);
+      assert.throws(() => native.inspect(path.join(alias, "child"), ""), fault("EUNSAFE"));
+      symlinkSync(outside, current, "junction");
+      assert.throws(() => replace(dir, newBytes), fault("EUNSAFE"));
+      assert.deepEqual(readdirSync(outside), []);
+      rmSync(current);
+      replace(dir, oldBytes);
+      linkSync(current, path.join(outside, "linked.json"));
+      assert.throws(() => replace(dir, newBytes), fault("EUNSAFE"));
+      assert.deepEqual(readFileSync(current), oldBytes);
+    },
+  );
+
+  test("refuse path aliases, traversal, ADS and nonlocal support", { skip: notRun }, (t) => {
+    const { dir } = fixture(t);
+    const dirId = native.inspect(dir, "");
+    for (const name of ["../faults.json", "faults.json:stream", "faults.json.", "other.json"]) {
+      assert.throws(() => replace(dir, newBytes, { name, targetId: "missing" }), fault("EINVAL"));
+    }
+    assert.throws(() => native.inspect("\\\\server\\share\\journal", ""), fault("ENOTSUP"));
+    assert.throws(() => native.inspect(`${dir}\\..\\journal`, ""), fault("EINVAL"));
+    assert.equal(native.inspect(dir, ""), dirId);
+    assert.deepEqual(readdirSync(dir), []);
+  });
+}

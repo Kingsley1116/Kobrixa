@@ -28,14 +28,18 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     env:
-      TMPDIR: ${{ runner.temp }}
-      TMP: ${{ runner.temp }}
-      TEMP: ${{ runner.temp }}
       KOBRIXA_TEST_PYTHON: ${{ matrix.os == 'windows-2022' && 'python' || 'python3' }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      # The runner context is not available in job-level env.
+      - name: Use the runner temp directory
+        shell: bash
+        run: |
+          echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+          echo "TMP=$RUNNER_TEMP" >> "$GITHUB_ENV"
+          echo "TEMP=$RUNNER_TEMP" >> "$GITHUB_ENV"
       - uses: ./.github/actions/setup
       - uses: actions/setup-python@v6
         with:
@@ -80,6 +84,52 @@ jobs:
         if: always()
         shell: bash
         run: echo 'This job does not sign B2 reports, maximum-load, hardware or human acceptance. Run dispatched B2 validation with actual complete reports.' >> "$GITHUB_STEP_SUMMARY"
+
+  journal-win32:
+    name: Windows safety-journal adapter prototype
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build against Electron headers and run the native suite
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $repo = (Get-Location).Path
+          $buildRoot = Join-Path $env:RUNNER_TEMP ('w02a-' + [guid]::NewGuid().ToString())
+          New-Item -ItemType Directory -Path $buildRoot | Out-Null
+          Copy-Item apps/desktop/native/journal-win32/binding.gyp $buildRoot
+          Copy-Item apps/desktop/native/journal-win32/journal.cc $buildRoot
+          $electronVersion = (& node -p "require('electron/package.json').version").Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve pinned Electron version' }
+          $electron = (& node -e "console.log(require('electron'))" | Select-Object -Last 1).Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned Electron binary is not installed' }
+          $nodeGyp = (& node -p "require.resolve('node-gyp/bin/node-gyp.js')").Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'Frozen install did not expose node-gyp' }
+          & node $nodeGyp rebuild "--directory=$buildRoot" "--target=$electronVersion" --arch=x64 --dist-url=https://electronjs.org/headers "--devdir=$buildRoot/headers" 2>&1 | Tee-Object (Join-Path $buildRoot 'build.log')
+          if ($LASTEXITCODE -ne 0) { throw 'Native Electron-header build failed' }
+          $env:KOBRIXA_JOURNAL_WIN32_ADDON = Join-Path $buildRoot 'build/Release/journal_win32.node'
+          $suite = Join-Path $repo 'tests/desktop/journal-win32-native.test.mjs'
+          Get-FileHash -Algorithm SHA256 $env:KOBRIXA_JOURNAL_WIN32_ADDON
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          & $electron --test --test-reporter=tap $suite 2>&1 | Tee-Object (Join-Path $buildRoot 'electron-test.tap')
+          if ($LASTEXITCODE -ne 0) { throw 'Windows Electron native suite failed' }
+          "W02A_BUILD_ROOT=$buildRoot" >> $env:GITHUB_ENV
+      - name: Retain build log and TAP output
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: journal-win32-prototype
+          path: |
+            ${{ env.W02A_BUILD_ROOT }}/build.log
+            ${{ env.W02A_BUILD_ROOT }}/electron-test.tap
+          if-no-files-found: warn
 
   b2-reports:
     name: Full B2 supplied report validation
