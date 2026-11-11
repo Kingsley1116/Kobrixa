@@ -1,6 +1,6 @@
 /** E0 legacy oracle at 590fd93. Test data only, never import into feature runtime.
  * Private DTOs here describe legacy inputs, not a proposed public contract.
- * Owners use design/plan §1 abbreviations. All public/v2/D1 evidence is UNRUN.
+ * Owners use design/plan §1 abbreviations. Historical E0 observations are separate from the W06 assertion inventory.
  */
 import type { CompileResult, DeviceDescriptor } from "../../shared/api.js";
 import type { DeviceInputModes, DeviceMonitorSnapshot } from "@kobrixa/device";
@@ -14,7 +14,7 @@ const execution = "renderer/execution/execution.ts";
 const monitor = "renderer/device/monitor-controller.ts";
 /** Paths below are relative to apps/desktop/src. Partial means only the named
  * legacy seam is exercised; it is not completion of the design row. */
-export const parityRows = [
+const legacyParityRows = [
   {
     id: "P01",
     behavior: "USB/Wi-Fi discovery and selection",
@@ -246,6 +246,93 @@ export const parityRows = [
     ],
   },
 ] as const;
+
+/** Executable assertion inventory, not a passing receipt. Run the named suites;
+ * native/installed and physical observations remain separate acceptance gates.
+ * Historical gaps above are preserved verbatim so partial coverage cannot erase scope. */
+const replacementAssertions = [
+  [
+    "public-transport.test.ts",
+    "P01: exact published candidate",
+    "Selection connects once; stale revision/replay cannot connect",
+    "Native discovery pending/error UI and Wi-Fi candidate filtering",
+  ],
+  [
+    "public-transport.test.ts",
+    "P02: explicit IP address",
+    "Invalid draft survives without I/O; valid address is trimmed",
+    "Native failed-connect draft/retry UI",
+  ],
+  [
+    "lifecycle.test.ts",
+    "E5 public USB recovery",
+    "Replacement session adopted without another stop/deploy/run",
+    "Physical USB reconnect and native open/reopen",
+  ],
+  [
+    "controller.test.ts",
+    "W06 P04",
+    "Progress, cancellation failure and terminal reasons remain distinguishable",
+    "Trusted recovery cancel identity and physical retry exhaustion",
+  ],
+  [
+    "lifecycle.test.ts",
+    "E5 real catalog cannot revive",
+    "Cancel, authority loss and workspace switch invalidate pending Run",
+    "Native workspace/Run interaction and consequential main-await coverage",
+  ],
+  [
+    "lifecycle.test.ts",
+    "W06 P06",
+    "Cross-owner recording blocks public disconnect; missing save coordinator blocks retirement",
+    "Trusted Disconnect stop/readback/save failure ordering",
+  ],
+  [
+    "controller.test.ts",
+    "W06 P07",
+    "Both battery units preserve null, missing and zero distinctly",
+    "Native battery/program labels and shared sampler demand",
+  ],
+  [
+    "controller.test.ts",
+    "P08 consumes actual zero-value",
+    "Provider catalog states and null measurements survive projection",
+    "Native eight-port rendering and foreground-file waiting",
+  ],
+  [
+    "public-transport.test.ts",
+    "P09/P10: mode rows bind",
+    "Stale dataset and authority loss cannot write modes",
+    "Native lock/source changes during mode selection",
+  ],
+  [
+    "controller.test.ts",
+    "W06 P10",
+    "Age cutoff, clock rollback, source/session mismatch refuse freshness",
+    "Native age progression and read-only Stop interaction",
+  ],
+  [
+    "public-transport.test.ts",
+    "W06 P11",
+    "Settings read failure blocks discovery/connection; recovery does not replay",
+    "Native reset/conflict/corrupt import; same-profile restart receipt",
+  ],
+  [
+    "lifecycle.test.ts",
+    "W06 P12",
+    "Matching files-changed invalidates deployment; other sessions/paths do not",
+    "Native build-version display and remote-file protocol acceptance",
+  ],
+] as const;
+export const parityRows = legacyParityRows.map((legacy, index) => {
+  const [file, assertion, expected, remaining] = replacementAssertions[index]!;
+  return {
+    ...legacy,
+    replacement: { file, assertion, expected },
+    remaining,
+    acceptance: "pending-native-and-integration" as const,
+  };
+});
 
 export const usb: DeviceDescriptor = { id: "usb", name: "EV3", transport: "usb" };
 export const buildResult: CompileResult = {

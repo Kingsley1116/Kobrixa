@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BuildEvent, DeviceEvent, KobrixaApi, MonitorResult } from "../../shared/api.js";
 import type { DeviceInputModes, DeviceMonitorSnapshot } from "@kobrixa/device";
@@ -559,7 +560,19 @@ describe("E0 preference oracle (P02/P11)", () => {
   });
 });
 
-// Explicitly skipped fixtures are reviewable inputs/outputs in parityRows, not
-// passing assertions over copied metadata or claims about the future runtime.
-for (const row of parityRows)
-  for (const gap of row.unrun) it.skip(`${row.id} UNRUN: ${gap.reason}`, () => {});
+// This checks inventory integrity only. Behavioral proof comes from executing
+// the referenced assertions, never from this metadata check.
+it("W06 inventories all twelve historical gaps without claiming native acceptance", () => {
+  expect(parityRows.map((row) => row.id)).toEqual(
+    Array.from({ length: 12 }, (_, index) => `P${String(index + 1).padStart(2, "0")}`),
+  );
+  for (const row of parityRows) {
+    expect(row.unrun).toHaveLength(1);
+    expect(row.replacement.expected.length).toBeGreaterThan(0);
+    expect(row.remaining.length).toBeGreaterThan(0);
+    expect(row.acceptance).toBe("pending-native-and-integration");
+    expect(readFileSync(new URL(row.replacement.file, import.meta.url), "utf8")).toContain(
+      row.replacement.assertion,
+    );
+  }
+});

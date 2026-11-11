@@ -25,5 +25,5 @@ it("ships an entry using runPlugin and imports only public SDK/protocol, local f
 it("does not pretend E0 pending parity is accepted", () => {
   const text = readFileSync(new URL("./parity-fixtures.ts", import.meta.url), "utf8");
   expect(text).toContain('publicParity: "unrun"');
-  expect(text).toContain("All public/v2/D1 evidence is UNRUN");
+  expect(text).toContain('acceptance: "pending-native-and-integration"');
 });

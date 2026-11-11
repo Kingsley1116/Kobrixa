@@ -460,3 +460,92 @@ it.each([
     expect(view.formRevision).toBe(2);
   },
 );
+
+it.each(["battery-percent", "battery-voltage"] as const)(
+  "W06 P07: %s distinguishes missing/null from measured zero",
+  (kind) => {
+    const unit = kind === "battery-percent" ? "%" : "V";
+    const catalog: SourceCatalog = {
+      ...sources,
+      channels: [{ ...sources.channels[0]!, kind, portId: null, unit }],
+    };
+    for (const value of [null, 0, 7.5]) {
+      const read = sample();
+      read.frame!.values[0]!.value = value;
+      expect(readings(catalog, read, 0, 0)[0]?.cells).toEqual([
+        kind,
+        "ready",
+        value === null ? "Unavailable" : String(value),
+        unit,
+        "0",
+      ]);
+    }
+    const missing = sample();
+    missing.frame!.values = [];
+    expect(readings(catalog, missing, 0, 0)[0]?.cells[2]).toBe("Unavailable");
+  },
+);
+
+it("W06 P10: unknown age, rollback and mismatched frames never authorize fresh operations", () => {
+  expect(fresh(session, sources, sample(null), 0, 0)).toBe(false);
+  expect(fresh(session, sources, sample(), 1, 0)).toBe(false);
+  expect(fresh(session, sources, sample(2499), 100, 101)).toBe(true);
+  expect(fresh(session, sources, sample(2499), 100, 102)).toBe(false);
+  const wrong = sample();
+  wrong.frame!.sourceRevision = 2;
+  expect(fresh(session, sources, wrong, 0, 0)).toBe(false);
+  expect(readings(sources, wrong, 0, 0)[0]?.cells[2]).toBe("Unavailable");
+  const absent = sample();
+  absent.frame = null;
+  expect(fresh(session, sources, absent, 0, 0)).toBe(false);
+  expect(readings(sources, absent, 0, 0)[0]?.cells[2]).toBe("Unavailable");
+});
+
+it("W06 P04: public recovery preserves progress, cleanup failure and terminal reasons", () => {
+  const base = {
+    recoveryId: id,
+    providerId: "kobrixa.device-ev3",
+    providerGeneration: 1,
+    previousSessionId: id,
+    name: "EV3",
+    attemptsStarted: 2,
+    retryLimit: 3 as const,
+  };
+  expect(
+    recoveryText({
+      hostEpoch: id,
+      revision: 1,
+      recovery: {
+        ...base,
+        phase: "waiting",
+        retryAfterMs: 1000,
+      },
+    }),
+  ).toBe("EV3: waiting · 2/3 · 1000 ms");
+  expect(
+    recoveryText({
+      hostEpoch: id,
+      revision: 2,
+      recovery: {
+        ...base,
+        phase: "cancel-failed",
+        error: { reason: "cleanup-failed", message: "Stop not confirmed" },
+      },
+    }),
+  ).toBe("EV3: cancel-failed · 2/3 · Stop not confirmed");
+  expect(
+    recoveryText({
+      hostEpoch: id,
+      revision: 3,
+      recovery: {
+        ...base,
+        phase: "cancelled",
+        reason: "user",
+      },
+    }),
+  ).toBe("EV3: cancelled · 2/3 · user");
+  expect(recoveryText({ hostEpoch: id, revision: 4, recovery: null })).toBe(
+    "No connection recovery / 無連線復原",
+  );
+  expect(recoveryText(undefined)).toBe("Recovery unavailable / 無法讀取復原狀態");
+});

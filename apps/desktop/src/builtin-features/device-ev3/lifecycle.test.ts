@@ -9,7 +9,7 @@ import {
 import { LegacyFiles } from "../../main/device-broker/legacy-files.js";
 import { DeviceService } from "../../main/device/device.js";
 import { ExecutionController } from "../../renderer/execution/execution.js";
-import type { BuildEvent, KobrixaApi } from "../../shared/api.js";
+import type { BuildEvent, DeviceEvent, KobrixaApi } from "../../shared/api.js";
 import type { BuildService } from "../../main/workspace/build.js";
 
 function fixture(autoReconnect = false) {
@@ -97,6 +97,7 @@ function fixture(autoReconnect = false) {
   const stop = vi.fn(service.stop.bind(service)),
     deploy = vi.fn(service.deploy.bind(service)),
     run = vi.fn(service.run.bind(service));
+  let deviceListener: (event: DeviceEvent) => void = () => {};
   const execution = new ExecutionController({
     build: {
       onEvent: (l: typeof listener) => {
@@ -131,7 +132,15 @@ function fixture(autoReconnect = false) {
         return "b1";
       },
     },
-    device: { onEvent: service.subscribe.bind(service), stop, deploy, run },
+    device: {
+      onEvent: (listener: (event: DeviceEvent) => void) => {
+        deviceListener = listener;
+        return service.subscribe(listener);
+      },
+      stop,
+      deploy,
+      run,
+    },
   } as unknown as KobrixaApi);
   const detach = execution.attach();
   execution.setWorkspace("workspace");
@@ -154,6 +163,7 @@ function fixture(autoReconnect = false) {
     legacy,
     service,
     execution,
+    emitFiles: (event: DeviceEvent) => deviceListener(event),
     save,
     stop,
     deploy,
@@ -346,5 +356,102 @@ it("E5 public USB recovery adopts replacement without replay and preserves once-
   } finally {
     await f.close();
     vi.useRealTimers();
+  }
+});
+
+it("W06 P12: real public session retains core deployment until matching remote files change", async () => {
+  const f = fixture();
+  try {
+    await f.execution.run(f.request);
+    const id = await f.connect();
+    await vi.waitFor(() => expect(f.run).toHaveBeenCalledOnce());
+    const deployed = f.execution.getSnapshot().deployed;
+    expect(deployed?.sessionId).toBe(id);
+    f.emitFiles({
+      type: "files-changed",
+      sessionId: "other",
+      requestId: "r",
+      paths: ["/robot/demo.rbf"],
+    });
+    expect(f.execution.getSnapshot().deployed).toEqual(deployed);
+    f.emitFiles({
+      type: "files-changed",
+      sessionId: id,
+      requestId: "r",
+      paths: ["/unrelated/file"],
+    });
+    expect(f.execution.getSnapshot().deployed).toEqual(deployed);
+    f.emitFiles({
+      type: "files-changed",
+      sessionId: id,
+      requestId: "r",
+      paths: ["/robot/demo.rbf"],
+    });
+    expect(f.execution.getSnapshot().deployed).toBeUndefined();
+    expect(f.run).toHaveBeenCalledOnce();
+  } finally {
+    await f.close();
+  }
+});
+
+it("W06 P06: public disconnect cannot bypass another owner's recording reservation", async () => {
+  const f = fixture();
+  let reservedSuccessfully = false;
+  try {
+    const sessionId = await f.connect();
+    const recorder = pluginPrincipal();
+    recorder.owner.pluginId = "acme.recorder";
+    recorder.owner.sourceKey = "builtin:acme.recorder";
+    const joined = await f.broker.request(
+      recorder,
+      "devices/list",
+      {},
+      new AbortController().signal,
+    );
+    expect(joined).toMatchObject({ ok: true, value: { sessions: [{ sessionId }] } });
+    const observed = await f.broker.request(
+      recorder,
+      "devices/session",
+      { sessionId },
+      new AbortController().signal,
+    );
+    if (!observed.ok) throw new Error(JSON.stringify(observed));
+    const reserved = await f.broker.request(
+      recorder,
+      "devices/recording/reserve",
+      {
+        sessionId,
+        channelIds: observed.value.sources.channels.map((channel) => channel.channelId),
+        expectedSourceRevision: observed.value.sources.sourceRevision,
+      },
+      new AbortController().signal,
+    );
+    expect(reserved, JSON.stringify(reserved)).toMatchObject({ ok: true });
+    reservedSuccessfully = true;
+    const result = await f.broker.request(
+      pluginPrincipal(),
+      "devices/disconnect",
+      {
+        sessionId,
+      },
+      new AbortController().signal,
+    );
+    expect(result).toMatchObject({ ok: false, error: { code: "PLUGIN_E_DEVICE_BUSY" } });
+    expect(f.provider.calls).not.toContain("disconnect");
+    if (reserved.ok) {
+      const released = await f.broker.request(
+        recorder,
+        "devices/recording/release",
+        {
+          reservationId: reserved.value.reservation.reservationId,
+        },
+        new AbortController().signal,
+      );
+      expect(released.ok).toBe(true);
+    }
+  } finally {
+    if (reservedSuccessfully)
+      await expect(f.close()).rejects.toThrow("requires the reservation coordinator");
+    else await f.close();
   }
 });

@@ -19,6 +19,7 @@ import panel from "../../../../../plugins/device-ev3/ui/panel.json" with { type:
 import prefs from "../../../../../plugins/device-ev3/settings/preferences.json" with { type: "json" };
 import { createDeviceBroker } from "../../main/device-broker/broker-port.js";
 import { operationHarness, pluginPrincipal, ID } from "../../main/device-broker/fake-provider.js";
+import type { BuiltinDeviceProvider } from "../../main/device-broker/provider.js";
 import { attachDeviceRpc } from "../../main/device-broker/rpc-router.js";
 import { bindEventChannel } from "../../../../../packages/plugin-sdk-js/src/events.js";
 const cleanups: Array<() => Promise<void>> = [];
@@ -735,4 +736,80 @@ it("E6: changed port invalidates a published mode even after returning to the or
   f.form({ port: "input:0" });
   await f.syncInvoke("mode", { key: row.key, version: row.version, dataset });
   expect(write).not.toHaveBeenCalled();
+});
+
+it("W06 P11: failed settings readiness blocks I/O and explicit recovery never replays connect", async () => {
+  const f = await setup();
+  f.host.handle("settings/read", () => {
+    throw new Error("Corrupt committed preferences");
+  });
+  await f.syncInvoke("refresh");
+  f.form({ transport: "wifi", "wifi-address": "192.168.1.2" });
+  await f.syncInvoke("discover");
+  await f.syncInvoke("connect");
+  expect(f.provider.calls).not.toContain("discover");
+  expect(f.provider.calls).not.toContain("connect");
+  expect(String(f.state.data.preferences)).toContain("unavailable");
+  f.host.handle("settings/read", () => ok(f.settings()));
+  await f.syncInvoke("refresh");
+  expect(f.provider.calls).not.toContain("connect");
+  expect(f.provider.calls).not.toContain("discover");
+  await f.syncInvoke("connect");
+  expect(f.provider.calls.filter((call) => call === "connect")).toHaveLength(1);
+});
+
+it("W06 P01: pending, empty and failed discovery publish distinct public states", async () => {
+  const f = await setup();
+  let release!: () => void;
+  const original = f.provider.discover.bind(f.provider);
+  vi.spyOn(f.provider, "discover").mockImplementationOnce(async (ctx) => {
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return original(ctx);
+  });
+  const pending = f.syncInvoke("discover");
+  await vi.waitFor(() => expect(f.state.data.discovery).toBe("Searching / 搜尋中"), {
+    timeout: 2500,
+  });
+  expect(f.rows.get("candidates")).toEqual([]);
+  release();
+  await pending;
+  await vi.waitFor(() => expect(f.state.data.discovery).toBe("No devices / 無裝置"), {
+    timeout: 2500,
+  });
+  vi.spyOn(f.provider, "discover").mockRejectedValueOnce(new Error("Discovery unavailable"));
+  await f.syncInvoke("discover");
+  await vi.waitFor(() => expect(String(f.state.data.error)).not.toBe(""), { timeout: 2500 });
+  expect(f.state.data.discovery).not.toBe("Searching / 搜尋中");
+  expect(f.rows.get("candidates")).toEqual([]);
+  expect(f.provider.calls).not.toContain("connect");
+});
+
+it("W06 P07: public telemetry retains unknown program and a null reading", async () => {
+  const f = await setup();
+  const provider: BuiltinDeviceProvider = f.provider;
+  const original = provider.read.bind(provider);
+  vi.spyOn(provider, "read").mockImplementation(async (...args) => {
+    const result = await original(...args);
+    if (result.value) {
+      result.value.program = "unknown";
+      for (const value of result.value.values) value.value = null;
+    }
+    return result;
+  });
+  f.form({ transport: "wifi", "wifi-address": "192.168.1.2" });
+  await f.syncInvoke("connect");
+  await f.syncInvoke("refresh");
+  await vi.waitFor(
+    () => {
+      expect(String(f.state.data.monitor)).toContain("program: unknown");
+      expect(
+        f.rows
+          .get("readings")
+          ?.some((row) => row.cells[2] === "Unavailable" && row.cells[3] === "%"),
+      ).toBe(true);
+    },
+    { timeout: 2500 },
+  );
 });
