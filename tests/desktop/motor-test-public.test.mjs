@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
+import { EventEmitter } from "node:events";
 import {
   compose,
   buildNative,
@@ -13,6 +14,7 @@ import {
   nativeCases,
   selectNativeCases,
   caseName,
+  loadMotorRenderer,
 } from "./motor-test-public-run.mjs";
 
 const requests = (c, name) =>
@@ -354,7 +356,7 @@ test(
     t.after(() => rm(directory, { recursive: true, force: true }));
     const { identity } = await buildNative(directory);
     assert.match(identity.nativeBuildSha256["persistence-worker.cjs"], /^[a-f0-9]{64}$/);
-    const root = path.join(directory, "store");
+    const root = path.join(directory, "profile/plugins/persistence-v1");
     await mkdir(path.join(root, "namespaces"), { recursive: true, mode: 0o700 });
     const held = new SharedArrayBuffer(16 + 1024 * 16 + 1024 * 4);
     Atomics.store(new Int32Array(held), 0, 1);
@@ -365,14 +367,33 @@ test(
     });
     await new Promise((resolve, reject) => {
       let ready = false;
+      let registered = false;
       worker.once("error", reject);
-      worker.once("message", (message) => {
+      worker.on("message", (message) => {
         try {
           assert.equal(message.version, 1);
-          assert.equal(message.kind, "ready");
-          assert.equal(message.recovery, "ready");
-          ready = true;
-          worker.postMessage({ version: 1, kind: "close" });
+          if (!ready) {
+            assert.equal(message.kind, "ready");
+            assert.equal(message.recovery, "ready");
+            ready = true;
+            worker.postMessage({
+              version: 1,
+              id: 1,
+              operation: "sources.register",
+              args: [
+                {
+                  descriptorId: "kobrixa.device-preferences",
+                  mapperId: "kobrixa.device-preferences",
+                  sourceKind: "renderer-preferences",
+                },
+              ],
+            });
+          } else {
+            assert.equal(message.id, 1);
+            assert.equal(message.ok, true, JSON.stringify(message));
+            registered = true;
+            worker.postMessage({ version: 1, kind: "close" });
+          }
         } catch (error) {
           reject(error);
         }
@@ -381,6 +402,7 @@ test(
         try {
           assert.equal(code, 0);
           assert.equal(ready, true);
+          assert.equal(registered, true, "Shipped device preference mapper must be installed");
           resolve();
         } catch (error) {
           reject(error);
@@ -396,3 +418,135 @@ test(
     });
   },
 );
+
+function persistenceWindowFixture() {
+  const scope = {
+    hostEpoch: "10000000-0000-4000-8000-000000000001",
+    workbenchInstance: "10000000-0000-4000-8000-000000000002",
+  };
+  const contents = Object.assign(new EventEmitter(), {
+    mainFrame: {},
+    isDestroyed: () => false,
+    send() {},
+  });
+  const calls = [],
+    retired = [],
+    handlers = new Map();
+  const facets = {
+    scope: () => scope,
+    imports: {
+      issuePreferences(input) {
+        calls.push(input);
+        // Unit domain port: preserve failures, including absent optional imports.
+        return Promise.reject(new Error("invalid-descriptor"));
+      },
+      retirePreferences: (value) => retired.push(value),
+    },
+    settings: {},
+    detail: { bridge: {} },
+  };
+  let attached = 0;
+  const persistence = {
+    facets,
+    handle(channel, action) {
+      assert.equal(handlers.has(channel), false, `Duplicate route: ${channel}`);
+      handlers.set(channel, action);
+    },
+    coreRecovery: {
+      attachPersistence170(detail) {
+        assert.equal(detail, facets.detail);
+        attached++;
+        return () => attached--;
+      },
+    },
+  };
+  const event = () => ({ sender: contents, senderFrame: contents.mainFrame });
+  const call = (channel, ...args) => handlers.get(channel)(event(), ...args);
+  return {
+    contents,
+    scope,
+    persistence,
+    calls,
+    retired,
+    handlers,
+    event,
+    call,
+    attached: () => attached,
+  };
+}
+
+test("motor document installs real persistence routes before renderer calls and retains rejection", async () => {
+  const f = persistenceWindowFixture();
+  const dispose = await loadMotorRenderer(
+    {
+      webContents: f.contents,
+      async loadFile() {
+        f.contents.emit("did-start-navigation", {}, "file:///motor.html", false, true);
+        assert.equal(f.handlers.size, 0, "Do not attach to the initial about:blank scope");
+        f.contents.mainFrame = {};
+        f.contents.emit("did-navigate");
+        await assert.rejects(
+          f.call("persistence:legacy-preferences-challenge", "kobrixa.device-preferences"),
+          /invalid-descriptor/,
+        );
+      },
+    },
+    "motor.html",
+    f.persistence,
+  );
+  assert.deepEqual(f.calls, [{ descriptorId: "kobrixa.device-preferences", scope: f.scope }]);
+  for (const channel of [
+    "persistence:legacy-preferences-submit",
+    "plugins:settings:open",
+    "plugins:settings:update",
+    "plugins:persistence-recovery:snapshot",
+    "plugins:persistence-recovery:act",
+  ])
+    assert.ok(f.handlers.has(channel), channel);
+  assert.equal(f.attached(), 1);
+  const challenge = f.handlers.get("persistence:legacy-preferences-challenge");
+  assert.throws(
+    () => challenge({ ...f.event(), sender: {} }, "test.preferences"),
+    /untrusted sender/,
+  );
+  assert.throws(
+    () => challenge({ ...f.event(), senderFrame: {} }, "test.preferences"),
+    /untrusted sender/,
+  );
+  assert.equal(f.calls.length, 1, "Untrusted calls never reach the domain port");
+  f.contents.emit("render-process-gone");
+  assert.equal(f.attached(), 0);
+  assert.deepEqual(f.retired, [f.scope]);
+  assert.throws(
+    () => f.call("persistence:legacy-preferences-challenge", "test.preferences"),
+    /Stale persistence window/,
+  );
+  dispose();
+  dispose();
+  assert.deepEqual(f.retired, [f.scope]);
+  for (const name of ["did-navigate", "did-start-navigation", "render-process-gone", "destroyed"])
+    assert.equal(f.contents.listenerCount(name), 0, name);
+});
+
+for (const committed of [false, true])
+  test(`motor renderer load failure cleans persistence listeners (committed=${committed})`, async () => {
+    const f = persistenceWindowFixture();
+    await assert.rejects(
+      loadMotorRenderer(
+        {
+          webContents: f.contents,
+          async loadFile() {
+            if (committed) f.contents.emit("did-navigate");
+            throw new Error("renderer load failed");
+          },
+        },
+        "motor.html",
+        f.persistence,
+      ),
+      /renderer load failed/,
+    );
+    assert.equal(f.attached(), 0);
+    assert.deepEqual(f.retired, committed ? [f.scope] : []);
+    for (const name of ["did-navigate", "did-start-navigation", "render-process-gone", "destroyed"])
+      assert.equal(f.contents.listenerCount(name), 0, name);
+  });

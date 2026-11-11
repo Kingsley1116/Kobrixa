@@ -120,6 +120,7 @@ export const requireSustainedPause = driver.requireSustainedPause;
 export const matchingFreezeActivation = driver.matchingFreezeActivation;
 export const requireDeliberateResume = driver.requireDeliberateResume;
 export const classifyNativeFailure = driver.classifyNativeFailure;
+export const loadMotorRenderer = driver.loadMotorRenderer;
 export async function compose() {
   const artifacts = await motorArtifacts();
   const composition = await driver.composeMotor({
@@ -955,7 +956,7 @@ export async function buildNative(directory) {
   await build({
     ...common,
     stdin: {
-      contents: `import {runPersistenceWorker} from ${JSON.stringify(path.join(root, "apps/desktop/src/main/plugins/persistence/worker.ts"))}; runPersistenceWorker({mappers:new Map()});`,
+      contents: `import {runShippedPersistenceWorker} from ${JSON.stringify(path.join(root, "apps/desktop/src/main/plugins/persistence/worker.ts"))}; runShippedPersistenceWorker();`,
       resolveDir: root,
       loader: "ts",
     },

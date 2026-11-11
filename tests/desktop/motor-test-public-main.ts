@@ -572,7 +572,36 @@ import {
 } from "../../apps/desktop/src/main/plugins/ui-bridge.js";
 import { BUILTIN_PLUGIN_SOURCES } from "../../apps/desktop/src/main/plugins/builtin.js";
 import { createDesktopLauncher } from "../../apps/desktop/src/main/plugins/launchers.js";
-import type { IpcHandle } from "../../apps/desktop/src/main/ipc.js";
+import { registerPersistenceWindow170, type IpcHandle } from "../../apps/desktop/src/main/ipc.js";
+
+// Bind the production routes to the first committed document, before its scripts
+// invoke the preload. The motor shell establishes its authority before loading;
+// attaching to about:blank would retire that same scope on the initial navigation.
+export async function loadMotorRenderer(
+  window: Pick<BrowserWindow, "webContents" | "loadFile">,
+  file: string,
+  persistence: Omit<Parameters<typeof registerPersistenceWindow170>[0], "renderer">,
+) {
+  const contents = window.webContents;
+  let dispose: (() => void) | undefined;
+  const attach = () => {
+    dispose = registerPersistenceWindow170({
+      ...persistence,
+      renderer: () => (contents.isDestroyed() ? undefined : contents),
+    });
+  };
+  contents.once("did-navigate", attach);
+  try {
+    await window.loadFile(file);
+    assert.ok(dispose, "Persistence routes require a committed motor document");
+    return dispose;
+  } catch (error) {
+    dispose?.();
+    throw error;
+  } finally {
+    contents.removeListener("did-navigate", attach);
+  }
+}
 
 export type NativeMotorScenario = {
   boundary: "prepare" | "start" | "arm" | "pulse";
@@ -665,6 +694,8 @@ export function runNativeMotor() {
   let win: BrowserWindow | undefined;
   let blurWindow: BrowserWindow | undefined;
   let main: DesktopMainComposition | undefined;
+  let offPersistenceWindow = () => {};
+  app.once("quit", () => offPersistenceWindow());
   let control: FakeProviderControl | undefined;
   let loseProvider: (() => void) | undefined;
   const childPids = new Set<number>();
@@ -945,9 +976,18 @@ export function runNativeMotor() {
             confirmDevice: async () => false,
           }),
           openDetail() {
-            throw new Error("No persistence in the P160 motion shell.");
+            throw new Error("Persistence detail must use the attached production window.");
           },
         });
+        const facets = composition.plugins.persistence170;
+        assert.ok(facets, "Motor composition must expose production persistence facets");
+        const loadRenderer = async () => {
+          offPersistenceWindow = await loadMotorRenderer(
+            window,
+            path.join(root, "renderer/index.html"),
+            { handle, facets, coreRecovery: recovery },
+          );
+        };
         const offRecovery = registerCoreRecoveryIpc(handle, recovery, () =>
           send("plugins:recovery:changed", null),
         );
@@ -1018,7 +1058,7 @@ export function runNativeMotor() {
           );
         });
         if (scenario.safeMode) {
-          await window.loadFile(path.join(root, "renderer/index.html"));
+          await loadRenderer();
           window.show();
           window.focus();
           native.push({ at: wall(), type: "cold-safe-mode-window" });
@@ -1031,6 +1071,7 @@ export function runNativeMotor() {
           assert.equal(pid, undefined);
           assert.ok(recovery, "Core recovery remains accessible");
           await composition.dispose();
+          offPersistenceWindow();
           const final = diagnostics.snapshot();
           counterSamples.push({ at: wall(), label: "disposed", counters: final });
           assert.ok(Object.values(final).every((v) => v === 0));
@@ -1076,7 +1117,7 @@ export function runNativeMotor() {
             new AbortController().signal,
           ),
         );
-        await window.loadFile(path.join(root, "renderer/index.html"));
+        await loadRenderer();
         window.show();
         window.focus();
         window.webContents.focus();
@@ -2156,6 +2197,7 @@ export function runNativeMotor() {
             JSON.stringify(final),
           );
         offEvents();
+        offPersistenceWindow();
         offRecovery();
         offDevice();
         offDiagnostics();
@@ -2242,6 +2284,7 @@ export function runNativeMotor() {
           operationId,
           owner,
           trace: control?.trace(),
+          recovery: main?.foundation.broker.recovery.snapshot(),
           pid,
           failures,
           debuggerEvents,
@@ -2299,6 +2342,16 @@ export function runNativeMotor() {
             operationId,
             owner,
             trace: control?.trace(),
+            recovery: main?.foundation.broker.recovery.snapshot(),
+            panelScopes:
+              main && owner
+                ? desktopUi(main)
+                    .states.instances(owner)
+                    .map((binding) => ({
+                      binding,
+                      motionScope: desktopUi(main!).intent.scope(binding),
+                    }))
+                : [],
             pid,
             failures,
             plugins: main?.plugins.state(),
@@ -2321,6 +2374,7 @@ export function runNativeMotor() {
         console.error(cleanup);
       }
       blurWindow?.destroy();
+      offPersistenceWindow();
       app.exit(1);
     });
 }
