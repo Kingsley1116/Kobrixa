@@ -34,6 +34,18 @@ import {
 
 import { copyDesktopBundle, verifyMacBundle } from "../../tools/release/macos-test-bundle.mjs";
 
+export function openInstalledArchive(
+  archive,
+  { hostPath = path, stat = statFile, extract = extractFile } = {},
+) {
+  // ASAR traversal splits on the host separator, while manifest/main entries
+  // and our receipt inventory use forward slashes. Normalize only at lookup.
+  return {
+    stat: (member) => stat(archive, hostPath.normalize(member)),
+    extract: (member) => extract(archive, hostPath.normalize(member)),
+  };
+}
+
 export function installedLayout(platform, names) {
   assert.ok(["darwin", "linux", "win32"].includes(platform), "Unsupported installed platform");
   const apps = names.filter((name) => name.endsWith(".app"));
@@ -1282,6 +1294,7 @@ export async function main() {
     const resources = path.join(installed, resourceRelative);
     executable = path.join(installed, executableRelative);
     archive = path.join(resources, "app.asar");
+    const installedArchive = openInstalledArchive(archive);
     sourceArchive = path.join(source, resourceRelative, "app.asar");
     originalArchive = sha256(await readFile(sourceArchive));
     originalExecutable = sha256(await readFile(path.join(source, executableRelative)));
@@ -1296,8 +1309,8 @@ export async function main() {
       ["kobrixa-plugin.json", "main.cjs", "panel.json", "status.json"],
     );
     for (const name of [...index.files.map((item) => item.path), "resource-index.json"])
-      assert.equal(statFile(archive, `.vite/build/plugins/motor-test/${name}`).unpacked, true);
-    const packageJson = JSON.parse(extractFile(archive, "package.json").toString("utf8"));
+      assert.equal(installedArchive.stat(`.vite/build/plugins/motor-test/${name}`).unpacked, true);
+    const packageJson = JSON.parse(installedArchive.extract("package.json").toString("utf8"));
     assert.equal(packageJson.name, "@kobrixa/desktop");
     assert.equal(packageJson.main, ".vite/build/main.cjs");
     const entries = (await import("@electron/asar"))
@@ -1342,7 +1355,10 @@ export async function main() {
       appAsarSha256: originalArchive,
       originalExecutableSha256: originalExecutable,
       shippedFiles: Object.fromEntries(
-        [packageJson.main, ...shipped].map((name) => [name, sha256(extractFile(archive, name))]),
+        [packageJson.main, ...shipped].map((name) => [
+          name,
+          sha256(installedArchive.extract(name)),
+        ]),
       ),
       payloadIndexSha256: sha256(await readFile(path.join(leaf, "resource-index.json"))),
       releasePayloadIndex: index,

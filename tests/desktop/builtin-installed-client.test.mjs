@@ -549,6 +549,34 @@ test("renderer discovery does not retry invalid responses or product failures", 
   }
 });
 
+test("an inspector listener with sandbox failures and no page cannot pass renderer discovery", async () => {
+  const evidence = {};
+  const diagnostics = {
+    workerInspector: { enabled: true, waitForDebuggerOnStart: false, targets: [] },
+    workerTimeline: [],
+    outputTail:
+      "DevTools listening on ws://127.0.0.1:49186/devtools/browser/unit\n" +
+      "sandbox initialization failed: Operation not permitted\n" +
+      "GPU process exited unexpectedly: exit_code=6\n" +
+      "Network service crashed or was terminated, restarting service.",
+  };
+  await assert.rejects(
+    waitForRendererTarget("ws://127.0.0.1:49186/devtools/browser/unit", {
+      evidence,
+      timeoutMs: 10,
+      diagnostics: () => diagnostics,
+      fetchImpl: async () => ({ ok: true, json: async () => [] }),
+    }),
+    (error) => {
+      assert.match(error.message, /Deadline: renderer \/json\/list target/);
+      assert.ok(error.message.includes(JSON.stringify(diagnostics.outputTail)));
+      assert.ok(error.message.includes(JSON.stringify(diagnostics.workerInspector)));
+      assert.deepEqual(evidence.targets, []);
+      return true;
+    },
+  );
+});
+
 test("Windows CIM process observation records creation identity without localized text parsing", async () => {
   const { processTable, parseWindowsProcessTable } = await import("./builtin-installed-client.mjs");
   const rows = [
@@ -567,9 +595,18 @@ test("Windows CIM process observation records creation identity without localize
     run: async (file, args, options) => {
       assert.equal(file, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
       assert.ok(args.includes("-NoProfile") && args.includes("-NonInteractive"));
-      assert.match(args.at(-1), /Get-CimInstance Win32_Process/);
-      assert.match(args.at(-1), /CreationDate.*ToUniversalTime/);
-      assert.equal(options.timeout, 5000);
+      assert.equal(args.at(-2), "-EncodedCommand");
+      assert.ok(!args.includes("-Command"));
+      const script = Buffer.from(args.at(-1), "base64").toString("utf16le");
+      assert.match(script, /Get-CimInstance Win32_Process/);
+      assert.match(script, /CreationDate.*ToUniversalTime/);
+      assert.match(script, /pid = \[uint32\]\$_\.ProcessId/);
+      assert.match(script, /ppid = \[uint32\]\$_\.ParentProcessId/);
+      assert.match(script, /ConvertTo-Json -InputObject \$rows -Compress/);
+      assert.match(script, /\[Console\]::Error.WriteLine\(\$_\.ToString\(\)\)/);
+      assert.equal(options.windowsHide, true);
+      assert.equal(options.timeout, 20_000);
+      assert.equal(options.maxBuffer, 16 * 1024 * 1024);
       return { stdout: "\uFEFF" + JSON.stringify(rows) };
     },
   });
@@ -578,6 +615,118 @@ test("Windows CIM process observation records creation identity without localize
   assert.throws(() => parseWindowsProcessTable('{"pid":"10","ppid":1}'), /Malformed/);
   assert.throws(() => parseWindowsProcessTable("not json"));
   assert.throws(() => parseWindowsProcessTable('{"pid":10,"ppid":1,"created":0}'));
+  assert.deepEqual(parseWindowsProcessTable("[]"), []);
+  for (const id of [-1, 1.5, 0x1_0000_0000])
+    assert.throws(
+      () => parseWindowsProcessTable(JSON.stringify({ ...rows[0], pid: id })),
+      /Malformed/,
+    );
+});
+
+test("Windows process table accepts uint32 IDs and output larger than the former buffer", async () => {
+  const { processTable } = await import("./builtin-installed-client.mjs");
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const execute = promisify(execFile);
+  // A real child exercises execFile's buffer, without requiring PowerShell.
+  const rows = await processTable({
+    platform: "win32",
+    env: { SystemRoot: "C:\\Windows" },
+    run: (_file, _args, options) =>
+      execute(
+        process.execPath,
+        [
+          "-e",
+          `process.stdout.write(JSON.stringify(Array.from({length: 256}, (_, i) => ({
+            pid: 4294967295 - i, ppid: 2147483648, created: '2026-11-11T01:00:00Z',
+            commandLine: 'x'.repeat(20 * 1024)
+          }))))`,
+        ],
+        options,
+      ),
+  });
+  assert.equal(rows.length, 256);
+  assert.equal(rows[0].pid, 0xffff_ffff);
+  assert.equal(rows[0].ppid, 0x8000_0000);
+  assert.equal(rows.at(-1).commandLine.length, 20 * 1024);
+});
+
+test("Windows process-table failures retain stderr and termination details in string-only monitors", async () => {
+  const { processTable } = await import("./builtin-installed-client.mjs");
+  for (const details of [
+    { code: 1, stderr: "CreationDate conversion failed", stdout: "partial" },
+    { code: null, signal: "SIGTERM", killed: true, stderr: "" },
+    { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER", stderr: "buffer exhausted", stdout: "partial" },
+  ]) {
+    const original = Object.assign(new Error("Command failed"), details);
+    await assert.rejects(
+      processTable({
+        platform: "win32",
+        env: { SystemRoot: "C:\\Windows" },
+        run: async () => {
+          throw original;
+        },
+      }),
+      (error) => {
+        assert.equal(error.cause, original);
+        assert.match(String(error), /Windows process-table query failed/);
+        for (const [key, value] of Object.entries(details)) {
+          assert.equal(error[key], value);
+          assert.ok(String(error).includes(`${JSON.stringify(key)}:${JSON.stringify(value)}`));
+        }
+        return true;
+      },
+    );
+  }
+  await assert.rejects(
+    processTable({
+      platform: "win32",
+      env: { SystemRoot: "C:\\Windows" },
+      run: async () => ({ stdout: "" }),
+    }),
+    SyntaxError,
+  );
+});
+
+test("installed ASAR lookups use host separators and keep the copied archive identity", async (t) => {
+  const { openInstalledArchive } = await import("./builtin-process-installed.mjs");
+  const path = (await import("node:path")).default;
+  const { mkdtemp, mkdir, writeFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { createPackageWithOptions } = await import("@electron/asar");
+  const directory = await mkdtemp(path.join(tmpdir(), "installed-asar-unit-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const stage = path.join(directory, "stage");
+  const manifest = ".vite/build/plugins/motor-test/kobrixa-plugin.json";
+  const main = ".vite/build/main.cjs";
+  await mkdir(path.dirname(path.join(stage, manifest)), { recursive: true });
+  await writeFile(path.join(stage, manifest), '{"id":"kobrixa.motor-test"}');
+  await writeFile(path.join(stage, main), "installed main fixture");
+  const archive = path.join(directory, "app.asar");
+  await createPackageWithOptions(stage, archive, { unpack: "kobrixa-plugin.json" });
+  const actual = openInstalledArchive(archive);
+  assert.equal(actual.stat(manifest).unpacked, true);
+  assert.equal(JSON.parse(actual.extract(manifest)).id, "kobrixa.motor-test");
+  assert.equal(actual.extract(main).toString(), "installed main fixture");
+  assert.throws(() => actual.stat("missing.json"), /not found/);
+
+  // Exercise Windows lookup semantics even on a POSIX unit-test host.
+  const windowsArchive = "C:\\copied app\\resources\\app.asar";
+  const windows = openInstalledArchive(windowsArchive, {
+    hostPath: path.win32,
+    stat: (file, member) => {
+      assert.equal(file, windowsArchive);
+      assert.equal(member, ".vite\\build\\plugins\\motor-test\\kobrixa-plugin.json");
+      return actual.stat(member.replaceAll("\\", "/"));
+    },
+    extract: (file, member) => {
+      assert.equal(file, windowsArchive);
+      assert.equal(member, ".vite\\build\\main.cjs");
+      return actual.extract(member.replaceAll("\\", "/"));
+    },
+  });
+  assert.equal(windows.stat(manifest).unpacked, true);
+  assert.equal(windows.extract(main).toString(), "installed main fixture");
 });
 
 test("Windows ancestry retains orphan identity and excludes reused PIDs and their children", () => {
