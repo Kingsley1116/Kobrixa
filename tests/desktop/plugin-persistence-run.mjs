@@ -1,4 +1,8 @@
 import {
+  processTable as installedProcessTable,
+  terminateProcess,
+} from "./builtin-installed-client.mjs";
+import {
   INTEROP_IDS,
   readInteropIdentity,
   interopOutputs,
@@ -34,6 +38,7 @@ import {
   IMPORT_SLICE,
   IMPORT_PUBLICATION_TRIALS,
   IMPORT_SIX,
+  joinImportRestart,
 } from "./plugin-persistence-import.ts";
 import { approvedHost, pins, versions } from "./plugin-persistence-compatibility.ts";
 import { assertOptionalPhaseReceipt } from "./plugin-persistence-optional-off.ts";
@@ -347,8 +352,8 @@ export function createOwnedProcessTracker(parentPid) {
         assert.ok(
           Number.isSafeInteger(row.pgid) &&
             row.pgid >= 0 &&
-            typeof row.start === "string" &&
-            row.start.length > 0,
+            ((typeof row.start === "string" && row.start.length > 0) ||
+              (row.pgid === 0 && row.start === null)),
         );
         assert.ok(!byPid.has(row.pid), "Duplicate process table PID");
         byPid.set(row.pid, row);
@@ -357,9 +362,11 @@ export function createOwnedProcessTracker(parentPid) {
       if (parent && !observedGroup) parentBirth = parent.start;
       if (parent && parentBirth !== undefined && parentBirth !== parent.start) groupEnded = true;
       const retain = (row) => {
+        assert.ok(row.start, `Missing creation identity for owned PID ${row.pid}`);
         owned.set(key(row), { ...row });
       };
-      if (!groupEnded) {
+      if (parent?.pgid === 0 && !groupEnded) retain(parent);
+      if (!groupEnded && parent?.pgid !== 0) {
         const group = rows.filter((row) => row.pgid === parentPid);
         if (!group.length) groupEnded = true;
         else {
@@ -378,7 +385,12 @@ export function createOwnedProcessTracker(parentPid) {
         changed = false;
         for (const row of rows) {
           const parent = byPid.get(row.ppid);
-          if (parent && owned.has(key(parent)) && !owned.has(key(row))) {
+          if (
+            (parent
+              ? owned.has(key(parent))
+              : [...owned.values()].some((old) => old.pid === row.ppid)) &&
+            !owned.has(key(row))
+          ) {
             retain(row);
             changed = true;
           }
@@ -405,9 +417,9 @@ export function parseProcessTable(text) {
       };
     });
 }
-function processTable() {
+async function processTable() {
   if (process.platform === "win32")
-    throw new Error("BLOCKED: Windows owned-process observer required");
+    return (await installedProcessTable()).map((row) => ({ ...row, start: row.created, pgid: 0 }));
   return parseProcessTable(
     execFileSync("ps", ["-axo", "pid=,ppid=,pgid=,lstart="], {
       encoding: "utf8",
@@ -595,6 +607,10 @@ export async function superviseCase(
   let receipt;
   if (!originalError)
     try {
+      assert.ok(
+        tracker.observed().some((row) => row.pid === child.pid && row.start),
+        "Primary creation identity was never observed",
+      );
       assert.equal(candidate.pid, child.pid);
       assert.equal(
         candidate.status,
@@ -692,8 +708,6 @@ async function launchCase(electron, entry, configFile, reportFile, config) {
     {
       now: Date.now,
       async start() {
-        if (process.platform === "win32")
-          throw new Error("BLOCKED: Windows owned-process observer required");
         const env = { ...process.env };
         delete env.ELECTRON_RUN_AS_NODE;
         delete env.PERSISTENCE_KILL_PROBE;
@@ -706,7 +720,7 @@ async function launchCase(electron, entry, configFile, reportFile, config) {
         const child = spawn(electron, [entry, `--persistence-config=${configFile}`], {
           stdio: "inherit",
           env,
-          detached: true,
+          detached: process.platform !== "win32",
         });
         let exit;
         child.once("exit", (code, signal) => {
@@ -723,8 +737,17 @@ async function launchCase(electron, entry, configFile, reportFile, config) {
       processes: async () => processTable(),
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       async killGroup(pgid, identities, parentAlive) {
+        if (process.platform === "win32") {
+          const errors = [];
+          const known = new Map(identities.map((row) => [row.pid, row.start]));
+          // A vanished parent cannot authorize killing a reused PID. Individual
+          // surviving descendants are handled by the supervisor below.
+          if (known.has(pgid)) await terminateProcess(pgid, "SIGKILL", errors, { known });
+          if (errors.length) throw new AggregateError(errors, "Windows tree termination failed");
+          return;
+        }
         if (!parentAlive) {
-          const current = processTable().filter((row) => row.pgid === pgid);
+          const current = (await processTable()).filter((row) => row.pgid === pgid);
           if (!current.length) return;
           assert.ok(
             current.some((row) =>
@@ -740,8 +763,17 @@ async function launchCase(electron, entry, configFile, reportFile, config) {
         }
       },
       async killProcess(identity) {
+        if (process.platform === "win32") {
+          const errors = [];
+          await terminateProcess(identity.pid, "SIGKILL", errors, {
+            known: new Map([[identity.pid, identity.start]]),
+          });
+          if (errors.length)
+            throw new AggregateError(errors, "Windows descendant termination failed");
+          return;
+        }
         // Recheck the birth identity immediately before signalling an escaped-group descendant.
-        const current = processTable().find((row) => row.pid === identity.pid);
+        const current = (await processTable()).find((row) => row.pid === identity.pid);
         if (!current || current.start !== identity.start) return;
         try {
           process.kill(identity.pid, "SIGKILL");
@@ -1325,9 +1357,7 @@ export async function runFoundationEvidence({
     );
   }
 
-  const preferenceTrial =
-    selectedCases.includes("import-restart") &&
-    selectImportTrials(importTrial).some((cut) => PREFERENCE_CUTS.includes(cut));
+  const preferenceTrial = selectedCases.includes("import-restart");
   let preferenceRenderer;
   const preferenceArtifacts = [];
   if (preferenceTrial) {
@@ -1434,6 +1464,12 @@ app.exit(code);
   );
   await bundle(source, entry);
   const sourceHashes = { ...bundledSources };
+  if (preferenceTrial)
+    for (const file of [
+      "tests/desktop/import-preferences-renderer.ts",
+      "tests/desktop/fixtures/plugin-persistence/import-kobrixa-plugin.json",
+    ])
+      sourceHashes[file] = digest(await readFile(path.join(root, file)));
   for (const hashes of [
     renderer.sourceSha256 ?? {},
     interop?.sourceHashes ?? {},
@@ -1654,6 +1690,8 @@ app.exit(code);
             : "partial-import-trial",
         rf5Complete: false,
         trial: importTrial,
+        sourceIdentity,
+        sourceHashes,
         trials,
         ...(trials.length === 1 ? { reports: trials[0].reports } : {}),
         artifact: entry,
@@ -1675,6 +1713,12 @@ app.exit(code);
           "full foundation import-restart case",
         ],
       };
+      for (const [file, hash] of Object.entries(sourceHashes))
+        assert.equal(
+          digest(await readFile(path.join(root, file))),
+          hash,
+          `Source changed during import run: ${file}`,
+        );
       await writeFile(output, JSON.stringify(partial), { flag: "wx" });
       return partial;
     }
@@ -1931,7 +1975,26 @@ app.exit(code);
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    if (process.argv.includes("--preflight")) await preflight();
+    if (process.argv.includes("--join-imports")) {
+      const manifest = process.env.PERSISTENCE_IMPORT_GROUPS;
+      assert.ok(
+        manifest && path.isAbsolute(manifest),
+        "PERSISTENCE_IMPORT_GROUPS must name an absolute JSON array of three report paths",
+      );
+      const files = JSON.parse(await readFile(manifest, "utf8"));
+      assert.ok(
+        Array.isArray(files) &&
+          files.length === 3 &&
+          files.every((file) => typeof file === "string" && path.isAbsolute(file)),
+      );
+      const groups = await Promise.all(files.map(readEvidenceForAggregate));
+      const joined = await joinImportRestart(groups);
+      assert.ok(
+        process.env.PERSISTENCE_EVIDENCE && path.isAbsolute(process.env.PERSISTENCE_EVIDENCE),
+        "PERSISTENCE_EVIDENCE must be absolute",
+      );
+      await writeFile(process.env.PERSISTENCE_EVIDENCE, JSON.stringify(joined), { flag: "wx" });
+    } else if (process.argv.includes("--preflight")) await preflight();
     else
       await runFoundationEvidence({
         interop: process.argv.includes("--interop"),

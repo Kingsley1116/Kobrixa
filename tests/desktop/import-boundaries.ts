@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 // @ts-expect-error Node pure-oracle imports the test-local TypeScript source.
 import { assertImportStorage } from "./plugin-persistence-import.ts";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import type { PersistenceBackend } from "../../apps/desktop/src/main/plugins/persistence/engine-port.js";
 import type { LegacyWriterPort } from "../../apps/desktop/src/main/plugins/persistence/import-sources.js";
 import type { DesktopMainComposition } from "../../apps/desktop/src/main/device-broker/lifecycle-coordinator.js";
@@ -18,6 +19,66 @@ export const SEMANTIC_IMPORT_BOUNDARIES = [
   "after-barrier",
 ] as const;
 export const TRUSTED_SKIP_REASON = "trusted-user-skip";
+/** A synthetic legacy writer with a real disk side effect behind its admission gate. */
+export function createImportWriter(sourceKey: string, destination: string) {
+  let frozen = false;
+  let active: Promise<void> | undefined;
+  const witness = observeImportWriter({
+    sourceKey,
+    freezeAdmission() {
+      frozen = true;
+    },
+    async settled() {
+      await active;
+    },
+  });
+  const start = () => {
+    if (frozen) throw Error("legacy-writer-frozen");
+    return (active = writeFile(destination, "unexpected legacy write"));
+  };
+  return {
+    ...witness,
+    start,
+    async attempt() {
+      const digest = async () =>
+        createHash("sha256")
+          .update(await readFile(destination))
+          .digest("hex");
+      const before = await digest();
+      const at = Date.now();
+      let admitted = false;
+      let error: string | null = null;
+      try {
+        await start();
+        admitted = true;
+      } catch (e) {
+        error = e instanceof Error ? e.message : String(e);
+      }
+      const proof = {
+        sourceKey,
+        events: clone(witness.events),
+        at,
+        admitted,
+        error,
+        before,
+        after: await digest(),
+      };
+      assertImportWriter(proof);
+      return proof;
+    },
+  };
+}
+export function assertImportWriter(proof: Wire) {
+  const freeze = proof.events.find(
+    (e: Wire) => e.kind === "freeze" && e.sourceKey === proof.sourceKey,
+  );
+  const restored = proof.events.find((e: Wire) => e.kind === "composition-returned");
+  assert.ok(freeze && restored && freeze.at <= restored.at && restored.at <= proof.at);
+  assert.equal(proof.admitted, false);
+  assert.equal(proof.error, "legacy-writer-frozen");
+  assert.match(proof.before, /^[a-f0-9]{64}$/);
+  assert.equal(proof.after, proof.before);
+}
 export function semanticBoundary(value: string) {
   assert.ok(
     (SEMANTIC_IMPORT_BOUNDARIES as readonly string[]).includes(value),
@@ -333,6 +394,8 @@ export async function produceSemanticImport(input: {
     identity,
     phase: config.importPhase,
     rf5Complete: false,
+    preferenceSeed: config.importPreferenceSeed ?? null,
+    writers: config.importWriterProofs,
     originals,
     pid: process.pid,
     hostEpoch: handles.profile.hostEpoch,

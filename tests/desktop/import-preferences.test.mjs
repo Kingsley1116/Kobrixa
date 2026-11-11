@@ -888,3 +888,171 @@ for (const message of [
     rows[1].error = String(error);
     assert.throws(() => assertCaptureIpc(rows, f.raw, true));
   });
+
+// Real Node host/worker regression, deliberately not an Electron/renderer or RF5 receipt.
+test(
+  "W12: four preference cuts survive actual SIGKILL and three fresh worker reopens",
+  {
+    timeout: 120000,
+    skip:
+      process.platform === "win32"
+        ? "Requires POSIX SIGKILL; native Windows termination remains a separate gate"
+        : false,
+  },
+  async (t) => {
+    const { build } = await import("esbuild");
+    const { fork } = await import("node:child_process");
+    const { mkdtemp, mkdir, writeFile, readFile, rm, realpath } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const path = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const root = fileURLToPath(new URL("../../", import.meta.url));
+    const directory = await realpath(await mkdtemp(path.join(tmpdir(), "w12-preference-worker-")));
+    const worker = path.join(directory, "worker.cjs"),
+      host = path.join(directory, "host.cjs");
+    const modulePath = (relative) => JSON.stringify(path.join(root, relative));
+    const bundle = (contents, outfile) =>
+      build({
+        stdin: { contents, resolveDir: root, loader: "ts" },
+        outfile,
+        bundle: true,
+        platform: "node",
+        format: "cjs",
+        target: "node24",
+        logLevel: "error",
+        tsconfig: path.join(root, "tsconfig.base.json"),
+      });
+    await bundle(
+      `import {runPersistenceWorker} from ${modulePath("apps/desktop/src/main/plugins/persistence/worker.ts")};
+import {syntheticPreferencesImportDescriptor as descriptor} from ${modulePath("apps/desktop/src/main/plugins/persistence/import-fixtures.ts")};
+runPersistenceWorker({mappers:new Map([[descriptor.id,descriptor]])});`,
+      worker,
+    );
+    await bundle(
+      `import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises'; import {randomUUID} from 'node:crypto';
+import {startPersistenceWorker} from ${modulePath("apps/desktop/src/main/plugins/persistence/worker.ts")};
+import {openStoreRoot} from ${modulePath("apps/desktop/src/main/plugins/persistence/filesystem.ts")};
+import {createLegacyWriterBarrier,importIdFor,parseNonceDocument} from ${modulePath("apps/desktop/src/main/plugins/persistence/import-sources.ts")};
+import {createLegacyImportCoordinator} from ${modulePath("apps/desktop/src/main/plugins/persistence/import-coordinator.ts")};
+import {syntheticPreferencesImportDescriptor as descriptor} from ${modulePath("apps/desktop/src/main/plugins/persistence/import-fixtures.ts")};
+import {armPreferenceCut,assertPreferenceTransition} from ${modulePath("tests/desktop/import-preferences.ts")};
+import {createImportWriter} from ${modulePath("tests/desktop/import-boundaries.ts")};
+import {observeImportRestart} from ${modulePath("tests/desktop/plugin-persistence-import.ts")};
+void(async()=>{
+const config=JSON.parse(await readFile(process.argv[2],'utf8'));
+const epoch=randomUUID(), scope={hostEpoch:epoch,workbenchInstance:randomUUID()};
+const profile={hostEpoch:epoch,assertHeld(){}};
+const root=await openStoreRoot({userData:config.profile,profile});
+const {backend,recovery}=await startPersistenceWorker({profile,root,workerEntry:config.worker,now:()=>performance.now()});
+assert.equal(recovery,'ready');
+const restart=observeImportRestart(backend);
+const owner={sourceKey:descriptor.targetSourceKey,pluginId:descriptor.id,generation:1,hostEpoch:epoch,processEpoch:randomUUID()};
+await backend.sources.register({descriptorId:descriptor.id,mapperId:descriptor.id,sourceKind:descriptor.sourceKind});
+const writer=createImportWriter(owner.sourceKey,config.sentinel);
+const barrier=createLegacyWriterBarrier({backend,descriptors:[descriptor],writers:[writer.writer],importOwner:()=>owner});
+await barrier.restore();writer.composed(); const writerProof=await writer.attempt();
+const imports=createLegacyImportCoordinator({backend,sources:backend.sources,barrier,descriptors:[descriptor],currentSource:()=>true,currentScope:s=>s.hostEpoch===epoch&&s.workbenchInstance===scope.workbenchInstance,importOwner:()=>owner});
+if(config.phase==='kill')armPreferenceCut({backend,cut:config.cut,pause:async transition=>{
+assertPreferenceTransition(transition);process.send({phase:'paused',pid:process.pid,epoch,transition,writerProof});return new Promise(()=>{});}});
+let pending;
+if(config.phase==='kill'||config.phase==='capture'){
+ if(config.phase==='capture'){
+ pending=await imports.run(descriptor,new AbortController().signal);assert.equal(pending.state,'pending');
+ await assert.rejects(imports.acceptPreferencesEvidence(config.prior.raw),/stale/);
+ }
+ const challenge=await imports.issuePreferences({descriptorId:descriptor.id,scope});
+ const snapshot={nonce:challenge.nonce,scope:challenge.scope,entries:[{key:'test.preference',raw:await readFile(config.original,'utf8')}]};
+ await imports.acceptPreferencesEvidence(snapshot);
+}
+const progress=await imports.run(descriptor,new AbortController().signal);assert.equal(progress.state,'complete');
+const journal=await backend.imports.load(owner,importIdFor(descriptor.id,owner.sourceKey));
+const documents=[];let cursor;
+do{const page=await backend.evidence.auxiliaryKeys(owner,'import',cursor);for(const key of page.keys.filter(k=>k.startsWith('nonce/'))){documents.push(parseNonceDocument(await backend.evidence.auxiliary(owner,'import',key)));}cursor=page.nextCursor??undefined;}while(cursor);
+const support=await restart.snapshot();
+await backend.dispose();
+process.send({phase:config.phase,pid:process.pid,epoch,progress,journal,documents,writerProof,pending,support});process.disconnect();
+})().catch(e=>{console.error(e);process.exit(1)});`,
+      host,
+    );
+    async function launch(config, kill = false) {
+      const file = path.join(directory, `${config.cut}-${config.phase}.json`);
+      await writeFile(file, JSON.stringify(config));
+      const child = fork(host, [file], { stdio: ["ignore", "pipe", "pipe", "ipc"], execArgv: [] });
+      let stderr = "",
+        message;
+      child.stderr.on("data", (bytes) => {
+        stderr += bytes;
+      });
+      child.stdout.resume();
+      const timeout = setTimeout(() => child.kill("SIGKILL"), 20000);
+      return new Promise((resolve, reject) => {
+        child.on("error", reject);
+        child.on("message", (value) => {
+          message = value;
+          if (kill) child.kill("SIGKILL");
+        });
+        child.on("exit", (code, signal) => {
+          clearTimeout(timeout);
+          try {
+            assert.ok(message, stderr);
+            assert.equal(code, kill ? null : 0, stderr);
+            assert.equal(signal, kill ? "SIGKILL" : null);
+            resolve(message);
+          } catch (error) {
+            reject(error);
+          }
+        });
+      });
+    }
+    try {
+      for (const cut of PREFERENCE_CUTS)
+        await t.test(cut, async () => {
+          const profile = path.join(directory, cut);
+          await mkdir(profile);
+          const original = path.join(profile, "original.txt"),
+            sentinel = path.join(profile, "legacy.txt");
+          await writeFile(original, ORIGINAL_PREFERENCE);
+          await writeFile(sentinel, "original writer bytes");
+          const config = { cut, profile, original, sentinel, worker };
+          const killed = await launch({ ...config, phase: "kill" }, true);
+          assertPreferenceTransition(killed.transition);
+          let captured;
+          if (cut === "before-raw") {
+            captured = await launch({
+              ...config,
+              phase: "capture",
+              prior: killed.transition.document,
+            });
+            assert.equal(captured.pending.state, "pending");
+          }
+          const reopens = [];
+          for (let i = 1; i <= 3; i++)
+            reopens.push(await launch({ ...config, phase: `reopen${i}` }));
+          assert.equal(new Set([killed.epoch, ...reopens.map((r) => r.epoch)]).size, 4);
+          assert.equal(new Set([killed.pid, ...reopens.map((r) => r.pid)]).size, 4);
+          const expected = (captured ?? reopens[0]).documents.find((d) => d.raw);
+          for (const r of reopens) {
+            const actual = r.documents.find((d) => d.raw);
+            assert.equal(actual.state, "consumed");
+            for (const key of ["nonce", "digest", "raw", "originalTicket"])
+              assert.deepEqual(actual[key], expected[key]);
+            assert.equal(r.journal.complete, true);
+            assert.deepEqual(r.journal.plan, reopens[0].journal.plan);
+            assert.equal(r.journal.items.length, 1);
+            assert.equal(r.journal.items[0].state, "committed");
+            assert.equal(r.writerProof.admitted, false);
+            assert.ok(r.support.budgets[0].bytes > 0 && r.support.budgets[0].bytes <= 2097152);
+            assert.equal(
+              r.support.budgets[0].bytes,
+              r.support.budgets[0].documents.reduce((n, d) => n + d.bytes, 0),
+            );
+          }
+          assert.equal(await readFile(original, "utf8"), ORIGINAL_PREFERENCE);
+          assert.equal(await readFile(sentinel, "utf8"), "original writer bytes");
+        });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);

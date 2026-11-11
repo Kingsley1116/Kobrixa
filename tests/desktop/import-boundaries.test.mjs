@@ -602,3 +602,49 @@ test("receipt dispatcher validates all semantic cuts without promoting foundatio
     assert.throws(() => verifyRunReceipt(forged));
   }
 });
+
+test("W12: restored admission blocks an attempted disk write, including the side effect", async () => {
+  const { createImportWriter, assertImportWriter } = await import("./import-boundaries.ts");
+  const { mkdtemp, writeFile, readFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const path = await import("node:path");
+  const directory = await mkdtemp(path.join(tmpdir(), "w12-writer-"));
+  try {
+    const destination = path.join(directory, "legacy.txt");
+    await writeFile(destination, "original");
+    const positive = createImportWriter("builtin:test.synthetic", destination);
+    await positive.start();
+    assert.equal(await readFile(destination, "utf8"), "unexpected legacy write");
+    await writeFile(destination, "original");
+    const guarded = createImportWriter("builtin:test.synthetic", destination);
+    guarded.writer.freezeAdmission();
+    guarded.composed();
+    const proof = await guarded.attempt();
+    assertImportWriter(proof);
+    assert.equal(await readFile(destination, "utf8"), "original");
+    for (const mutate of [
+      (p) => {
+        p.events = [];
+      },
+      (p) => {
+        p.error = null;
+      },
+      (p) => {
+        p.admitted = true;
+      },
+      (p) => {
+        p.after = "0".repeat(64);
+      },
+    ]) {
+      const bad = structuredClone(proof);
+      mutate(bad);
+      assert.throws(() => assertImportWriter(bad));
+    }
+    const noop = createImportWriter("builtin:test.synthetic", destination);
+    noop.composed();
+    await assert.rejects(noop.attempt());
+    assert.equal(await readFile(destination, "utf8"), "unexpected legacy write");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

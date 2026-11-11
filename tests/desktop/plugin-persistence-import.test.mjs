@@ -4,6 +4,7 @@ import { readEvidence, verifyImports } from "./plugin-persistence-harness.mjs";
 test("B2-RF5: actual import kill/reopen repeats preserve IDs, bytes and originals", async () => {
   const report = await readEvidence();
   verifyImports(report);
+  await assertImportRestartReport(report);
   const required = [
     "before-plan",
     "after-plan",
@@ -73,6 +74,9 @@ import {
   assertImportSlice,
   importObserver,
   IMPORT_SLICE,
+  assertImportRestartReport,
+  joinImportRestart,
+  rf5Boundary,
 } from "./plugin-persistence-import.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -860,4 +864,66 @@ test("slice storage proof permits explicit trusted-skip count without weakening 
   assertImportStorage(o, 49);
   assert.throws(() => assertImportStorage(o, 50));
   assert.throws(() => assertImportPhase(o));
+});
+
+test("W12: publication vocabulary maps exactly to the unchanged eighteen-boundary oracle", () => {
+  assert.equal(rf5Boundary("before-publish"), "before-head");
+  assert.equal(rf5Boundary("after-publish"), "after-head");
+  for (const boundary of IMPORT_BOUNDARIES) assert.equal(rf5Boundary(boundary), boundary);
+});
+test("W12: RF5 join refuses missing groups, duplicate groups and changed source identity", async () => {
+  await assert.rejects(joinImportRestart([]), /three independently/);
+  const sourceHashes = { "tests/desktop/example.ts": "a".repeat(64) };
+  const sourceIdentity = createHash("sha256")
+    .update(JSON.stringify(Object.entries(sourceHashes)))
+    .digest("hex");
+  const groups = ["publication-six", "semantic-eight", "preferences-four"].map((trial) => ({
+    format: 1,
+    level: "real-process",
+    sourceHashes,
+    sourceIdentity,
+    trial,
+    trials: [],
+  }));
+  await assert.rejects(joinImportRestart([groups[0], groups[0], groups[2]]));
+  await assert.rejects(joinImportRestart(groups));
+  groups[0].sourceHashes = { "tests/desktop/example.ts": "b".repeat(64) };
+  await assert.rejects(joinImportRestart(groups));
+});
+test("W12: restart observer forwards real results and records unresolved publications", async () => {
+  const { observeImportRestart } = await import("./plugin-persistence-import.ts");
+  const owner = { sourceKey: "builtin:test.synthetic", hostEpoch: randomUUID() };
+  const ticket = { id: randomUUID(), owner, target: { kind: "record", id: randomUUID() } };
+  const journal = { items: [{ state: "pending" }] };
+  const backend = {
+    imports: {
+      async load() {
+        return journal;
+      },
+      async reconcile() {
+        return { disposition: "unknown" };
+      },
+    },
+    engine: {
+      async publish() {
+        return { disposition: "committed", receipt: { commitId: ticket.id } };
+      },
+    },
+  };
+  backend.evidence = {
+    async auxiliaryKeys() {
+      return { keys: ["import/test"], nextCursor: null };
+    },
+    async auxiliary() {
+      return Buffer.from(JSON.stringify(journal));
+    },
+  };
+  const observation = observeImportRestart(backend);
+  assert.equal(await backend.imports.load(owner, "import/test"), journal);
+  await backend.imports.reconcile(ticket);
+  assert.equal((await backend.engine.publish(ticket)).receipt.commitId, ticket.id);
+  const snapshot = await observation.snapshot();
+  assert.deepEqual(snapshot.calls.find((c) => c.kind === "publish").unknown, [ticket.id]);
+  assert.deepEqual(snapshot.journals, [{ owner, journal }]);
+  assert.equal(snapshot.calls[0].bytes, Buffer.byteLength(JSON.stringify(journal)));
 });

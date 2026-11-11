@@ -375,6 +375,8 @@ export async function produceImportSlice(input: {
     cut,
     phase: config.importPhase,
     rf5Complete: false,
+    preferenceSeed: config.importPreferenceSeed ?? null,
+    writers: config.importWriterProofs,
     originals,
     profileId: config.profileId,
     hostEpoch: handles.profile.hostEpoch,
@@ -474,7 +476,23 @@ export function captureImportObservation(
   observer: ReturnType<typeof importObserver>,
   trace: ReturnType<PersistenceFaultControl["trace"]>,
 ) {
-  return { ...base, wire: observer.rows, processes: observer.processes, trace };
+  const fileOnly =
+    base.slice !== undefined &&
+    !["before-raw", "after-raw", "before-consumption", "after-consumption"].includes(base.slice);
+  return {
+    ...base,
+    get wire() {
+      return fileOnly
+        ? observer.rows.filter((r) => r.owner?.sourceKey === "builtin:test.synthetic")
+        : observer.rows;
+    },
+    get processes() {
+      return fileOnly
+        ? observer.processes.filter((r) => r.owner?.sourceKey === "builtin:test.synthetic")
+        : observer.processes;
+    },
+    trace,
+  };
 }
 
 /** The external supervisor polls while this host is alive. Never expose partial JSON. */
@@ -687,4 +705,369 @@ export function assertImportTrials(trials: Wire[], selection: string) {
     assert.equal(t.reports[0].evidence.importSlice.slice, t.trial);
     assertImportSlice(t.reports);
   }
+}
+
+/** Supplemental RF5 observation, shared by all cuts; the actual worker remains unchanged. */
+export function observeImportRestart(backend: PersistenceBackend) {
+  const load = backend.imports.load;
+  const publish = backend.engine.publish;
+  const reconcile = backend.imports.reconcile;
+  const owners = new Map<string, { owner: Parameters<typeof load>[0]; id: string }>();
+  const unresolved = new Set<string>();
+  const calls: Wire[] = [];
+  backend.imports.load = async (owner, id) => {
+    const journal = await load.call(backend.imports, owner, id);
+    owners.set(owner.sourceKey, { owner: structuredClone(owner), id });
+    calls.push({
+      kind: "load",
+      sourceKey: owner.sourceKey,
+      items: journal?.items.length ?? 0,
+      bytes: Buffer.byteLength(JSON.stringify(journal)),
+    });
+    return journal;
+  };
+  backend.imports.reconcile = async (ticket) => {
+    const result = await reconcile.call(backend.imports, ticket);
+    if (result.disposition === "unknown") unresolved.add(ticket.id);
+    else unresolved.delete(ticket.id);
+    calls.push({
+      kind: "reconcile",
+      ticket: ticket.id,
+      target: ticket.target,
+      disposition: result.disposition,
+    });
+    return result;
+  };
+  backend.engine.publish = async (ticket) => {
+    calls.push({
+      kind: "publish",
+      ticket: ticket.id,
+      target: ticket.target,
+      unknown: [...unresolved],
+    });
+    const result = await publish.call(backend.engine, ticket);
+    if (result.disposition === "unknown") unresolved.add(ticket.id);
+    return result;
+  };
+  return {
+    calls,
+    async snapshot() {
+      const journals: Wire[] = [];
+      const budgets: Wire[] = [];
+      for (const { owner, id } of owners.values()) {
+        const journal = await load.call(backend.imports, owner, id);
+        if (journal) journals.push({ owner, journal });
+        const documents: Wire[] = [];
+        const cursors = new Set<string>();
+        let cursor: string | undefined;
+        do {
+          const page = await backend.evidence.auxiliaryKeys(owner, "import", cursor);
+          assert.ok(page.keys.length <= 64);
+          for (const key of page.keys) {
+            assert.ok(!documents.some((d) => d.key === key));
+            const bytes = await backend.evidence.auxiliary(owner, "import", key);
+            assert.ok(bytes);
+            documents.push({
+              key,
+              bytes: bytes.length,
+              sha256: createHash("sha256").update(bytes).digest("hex"),
+            });
+            assert.ok(documents.length <= 512);
+          }
+          cursor = page.nextCursor ?? undefined;
+          if (cursor) {
+            assert.ok(!cursors.has(cursor));
+            cursors.add(cursor);
+          }
+        } while (cursor);
+        const bytes = documents.reduce((n, d) => n + d.bytes, 0);
+        assert.ok(bytes <= 2097152);
+        budgets.push({ sourceKey: owner.sourceKey, documents, bytes });
+      }
+      return { calls: structuredClone(calls), journals, budgets };
+    },
+  };
+}
+
+/** Explicit vocabulary bridge; publish cuts are the validator's durable head cuts. */
+export function rf5Boundary(trial: string) {
+  return trial === "before-publish"
+    ? "before-head"
+    : trial === "after-publish"
+      ? "after-head"
+      : trial;
+}
+
+/** Rebuild the strict RF5 receipt from original per-process observations, never supplied booleans. */
+export async function joinImportRestart(groups: Wire[]) {
+  const { PREFERENCE_CUTS, assertPreferenceSequence, assertPreferenceStorage, assertCaptureIpc } =
+    await import("./import-preferences.js");
+  const {
+    SEMANTIC_IMPORT_BOUNDARIES,
+    assertSemanticSequence,
+    assertImportWriter,
+    TRUSTED_SKIP_REASON,
+  } = await import("./import-boundaries.js");
+  // @ts-expect-error Test-local Node oracle, also bundled into the native test entry.
+  const { verifyRunReceipt, verifyImports } = await import("./plugin-persistence-harness.mjs");
+  assert.equal(groups.length, 3, "RF5 requires three independently executed groups");
+  const required = [IMPORT_SIX, "semantic-eight", "preferences-four"];
+  assert.deepEqual(groups.map((g) => g.trial).sort(), required.slice().sort());
+  const first = groups[0]!;
+  assert.match(first.sourceIdentity, /^[a-f0-9]{64}$/);
+  const trials: Wire[] = [];
+  const restartDetails: Wire[] = [];
+  const bounds = { maxBatch: 0, maxCandidateNames: 0, maxJournalItems: 0, maxJournalBytes: 0 };
+  let execution: Wire | undefined;
+  const profiles = new Set<string>();
+  const epochs = new Set<string>();
+  let commit: string | undefined;
+  for (const group of groups) {
+    assert.equal(group.level, "real-process");
+    assert.equal(group.sourceIdentity, first.sourceIdentity, "Cross-source RF5 join");
+    assert.deepEqual(group.sourceHashes, first.sourceHashes);
+    assert.equal(
+      createHash("sha256")
+        .update(
+          JSON.stringify(Object.entries(group.sourceHashes).sort(([a], [b]) => a.localeCompare(b))),
+        )
+        .digest("hex"),
+      group.sourceIdentity,
+    );
+    const names =
+      group.trial === IMPORT_SIX
+        ? [...IMPORT_PUBLICATION_TRIALS]
+        : group.trial === "semantic-eight"
+          ? [...SEMANTIC_IMPORT_BOUNDARIES]
+          : [...PREFERENCE_CUTS];
+    assert.deepEqual(
+      group.trials.map((t: Wire) => t.trial),
+      names,
+    );
+    for (const t of group.trials) {
+      const preference = (PREFERENCE_CUTS as readonly string[]).includes(t.trial);
+      const semantic = (SEMANTIC_IMPORT_BOUNDARIES as readonly string[]).includes(t.trial);
+      if (preference) assertPreferenceSequence(t.reports);
+      else if (semantic) await assertSemanticSequence(t.reports);
+      else assertImportSlice(t.reports);
+      const killed = t.reports[0];
+      const prior = killed.evidence.importPreferences ?? killed.evidence.importSlice;
+      assert.equal(prior.slice, t.trial);
+      assert.ok(!profiles.has(killed.profileId), "Reused trial profile");
+      profiles.add(killed.profileId);
+      commit ??= killed.commit;
+      assert.equal(killed.commit, commit);
+      assert.equal(killed.bundleSha256, group.bundleSha256);
+      assert.equal(killed.artifactSha256, group.artifactSha256);
+      assert.equal(killed.status, "killed-import");
+      assert.equal(killed.signal, "SIGKILL");
+      assert.equal(killed.cleanup.children, 0);
+      assert.deepEqual(killed.cleanup.errors, []);
+      assert.ok(
+        killed.observedProcesses.some((p: Wire) => p.pid === killed.pid && p.start),
+        "Killed host absent from OS census",
+      );
+      if (!preference) {
+        const seed = prior.preferenceSeed;
+        assert.ok(seed, "Missing original preference capture in this trial");
+        const d = seed.preferences.documents.find((r: Wire) => r.document.raw)?.document;
+        assert.ok(d);
+        assert.equal(d.state, "consumed");
+        assert.equal(seed.preferences.progress.state, "complete");
+        assertCaptureIpc(seed.ipc, d, false);
+        assert.deepEqual(seed.capture.snapshot, d.raw);
+      }
+      const reopens: Wire[] = [];
+      let expectedIds: string[] | undefined, expectedHashes: string[] | undefined;
+      let preferenceDigest: string | undefined;
+      let skipReasons: Wire[] | undefined;
+      for (const receipt of t.reports) {
+        assert.ok(!epochs.has(receipt.hostEpoch), "Reused host epoch");
+        epochs.add(receipt.hostEpoch);
+        assert.equal(receipt.commit, commit);
+        assert.equal(receipt.artifactSha256, group.artifactSha256);
+        assert.equal(receipt.bundleSha256, group.bundleSha256);
+        if (receipt === killed) continue;
+        verifyRunReceipt(receipt);
+        const o = receipt.evidence.importPreferences ?? receipt.evidence.importSlice;
+        if (!["reopen1", "reopen2", "reopen3", "deleted"].includes(o.phase)) continue;
+        const support = o.restart;
+        assert.ok(support, "Missing RF5 restart observations");
+        assert.equal(support.rendererPresent, false);
+        assert.ok(["", "about:blank"].includes(support.rendererDocument.url));
+        assert.deepEqual(support.rendererDocument.preferenceHandlers, []);
+        assert.deepEqual(support.rendererDocument.ipc, []);
+        assert.equal(support.writers.length, 2);
+        for (const writer of support.writers) assertImportWriter(writer);
+        const writer = support.writers.find((w: Wire) => w.sourceKey === "builtin:test.synthetic");
+        assert.ok(writer);
+        const prefs = support.preferences;
+        assert.equal(prefs.progress.state, "complete");
+        const d = prefs.documents.find((r: Wire) => r.document.raw)?.document;
+        assert.ok(d);
+        assertPreferenceStorage(
+          { ...o, wire: support.preferenceWire, processes: support.preferenceProcesses },
+          d,
+          prefs.journal,
+        );
+        if (!preference) {
+          const seeded = prior.preferenceSeed.preferences.documents.find(
+            (r: Wire) => r.document.raw,
+          ).document;
+          for (const key of ["nonce", "raw", "digest", "originalTicket", "scope"])
+            assert.deepEqual(d[key], seeded[key]);
+        }
+        const stale = support.oldSubmit;
+        assert.deepEqual(stale.snapshot, d.raw);
+        assert.equal(stale.error, "stale");
+        assert.equal(stale.result, null);
+        assert.notDeepEqual(stale.currentScope, d.scope);
+        preferenceDigest ??= d.digest;
+        assert.equal(d.digest, preferenceDigest);
+        const journal = support.journals.find(
+          (j: Wire) => j.owner.sourceKey === "builtin:test.synthetic",
+        )?.journal;
+        assert.ok(journal?.complete, "Missing final complete file journal");
+        assert.equal(journal.items.length, 50);
+        const skipped = journal.items.filter((i: Wire) => i.state === "skipped");
+        const committed = journal.items.filter((i: Wire) => i.state === "committed");
+        const skip = ["before-skip", "after-skip"].includes(t.trial);
+        assert.equal(skipped.length, skip ? 1 : 0);
+        assert.equal(committed.length, skip ? 49 : 50);
+        for (const i of skipped) assert.equal(i.skipReason, TRUSTED_SKIP_REASON);
+        const reasons = skipped.map((i: Wire) => ({ key: i.key, reason: i.skipReason }));
+        skipReasons ??= reasons;
+        assert.deepEqual(reasons, skipReasons);
+        const rows = o.wire.filter((r: Wire) => r.owner?.sourceKey === "builtin:test.synthetic");
+        const listed = rows
+          .find((r: Wire) => r.direction === "host" && r.method === "storage/list")
+          .message.result.value.entries.slice()
+          .sort((a: Wire, b: Wire) => a.id.localeCompare(b.id));
+        const publishes = support.calls.filter(
+          (c: Wire) => c.kind === "publish" && c.target.kind === "record",
+        );
+        assert.ok(
+          publishes.every((c: Wire) => c.unknown.length === 0),
+          "Publication while reconciliation remains unknown",
+        );
+        if (o.phase !== "reopen1")
+          assert.equal(publishes.length, 0, "Completed import republished a record");
+        bounds.maxBatch = Math.max(bounds.maxBatch, listed.length);
+        bounds.maxCandidateNames = Math.max(bounds.maxCandidateNames, o.originals.length);
+        bounds.maxJournalItems = Math.max(
+          bounds.maxJournalItems,
+          ...support.calls.filter((c: Wire) => c.kind === "load").map((c: Wire) => c.items),
+        );
+        assert.equal(support.budgets.length, 2);
+        for (const budget of support.budgets) {
+          assert.equal(
+            budget.bytes,
+            budget.documents.reduce((n: number, d: Wire) => n + d.bytes, 0),
+          );
+          assert.ok(budget.documents.length > 0 && budget.documents.length <= 512);
+          for (const document of budget.documents) assert.match(document.sha256, /^[a-f0-9]{64}$/);
+          bounds.maxJournalBytes = Math.max(bounds.maxJournalBytes, budget.bytes);
+        }
+        if (o.phase === "deleted") continue; // Sequence validator separately checks exact remaining IDs.
+        const ids = listed.map((r: Wire) => r.id),
+          hashes = listed.map((r: Wire) => r.sha256);
+        expectedIds ??= ids;
+        expectedHashes ??= hashes;
+        assert.deepEqual(ids, expectedIds);
+        assert.deepEqual(hashes, expectedHashes);
+        const reopened = {
+          hostEpoch: receipt.hostEpoch,
+          pid: receipt.pid,
+          profileId: receipt.profileId,
+          ids,
+          hashes,
+          originalHashes: o.originals.map((r: Wire) => r.sha256),
+          committedDestinations: listed.length,
+          completedItems: journal.items.length,
+          committedItems: committed.length,
+          skippedItems: skipped.length,
+          skipReasons: reasons,
+          barrierRestoredAt: writer.events.find((e: Wire) => e.kind === "composition-returned").at,
+          writerStartAttemptAt: writer.at,
+          writerAdmitted: writer.admitted,
+          publishesWhileUnknown: publishes.filter((c: Wire) => c.unknown.length).length,
+          deletedRecordResurrected: false,
+          rendererPresent: support.rendererPresent,
+          preferenceSourceHash: d.digest,
+          preferenceMappedHash: prefs.journal.plan.items[0].mappedSha256,
+          oldWindowSubmitAccepted: stale.error === null,
+          workerTrace: receipt.workerTrace,
+          count: listed.length,
+          bytes: listed.reduce((n: number, r: Wire) => n + r.byteLength, 0),
+          originalsHash: createHash("sha256").update(JSON.stringify(o.originals)).digest("hex"),
+          completeMarker: journal.complete,
+          // Only resumption after the first interruption may publish pending items.
+          republishCount: publishes.filter(
+            (c: Wire) =>
+              o.phase !== "reopen1" ||
+              committed.some(
+                (i: Wire) =>
+                  i.publicationTicket.id !== c.ticket &&
+                  i.publicationTicket.target.id === c.target.id,
+              ),
+          ).length,
+        };
+        reopens.push(reopened);
+        execution = receipt;
+      }
+      assert.equal(reopens.length, 3);
+      assert.equal(new Set(reopens.map((r) => r.pid)).size, 3);
+      restartDetails.push({
+        boundary: rf5Boundary(t.trial),
+        actualProcessDeath: true,
+        pid: killed.pid,
+        hostEpoch: killed.hostEpoch,
+        profileId: killed.profileId,
+        signal: killed.signal,
+        expectedIds,
+        expectedHashes,
+        originalHashes: prior.originals.map((r: Wire) => r.sha256),
+        persistedPreferenceDigest: preferenceDigest,
+        expectedPreferenceMappedHash: reopens[0]!.preferenceMappedHash,
+        skipReasons,
+        reopens,
+      });
+      if (!preference && !semantic)
+        trials.push({
+          point: t.trial,
+          actualProcessDeath: true,
+          originalsHash: createHash("sha256").update(JSON.stringify(prior.originals)).digest("hex"),
+          reopens,
+        });
+    }
+  }
+  assert.ok(execution);
+  const result = {
+    format: 1,
+    level: "real-process",
+    status: "scoped-import-restart",
+    rf5Complete: true,
+    fullStage3Pass: false,
+    sourceIdentity: first.sourceIdentity,
+    sourceHashes: first.sourceHashes,
+    execution,
+    groups,
+    imports: {
+      records: 50,
+      recordBytes: 8388608,
+      points: [...IMPORT_PUBLICATION_TRIALS],
+      trials,
+      restartDetails,
+      deletedRecordRecreated: false,
+      pendingRendererMarkedEmpty: false,
+      ...bounds,
+    },
+  };
+  verifyImports(result);
+  return result;
+}
+
+export async function assertImportRestartReport(report: Wire) {
+  const rebuilt = await joinImportRestart(report.groups);
+  assert.deepEqual(report, rebuilt, "RF5 summary differs from original observations");
 }

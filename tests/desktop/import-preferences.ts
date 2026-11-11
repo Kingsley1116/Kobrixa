@@ -239,6 +239,7 @@ export async function producePreferenceImport(input: {
     cut,
     phase: config.importPhase,
     rf5Complete: false,
+    writers: config.importWriterProofs,
     pid: process.pid,
     hostEpoch: handles.profile.hostEpoch,
     originals,

@@ -13,10 +13,12 @@ import {
   PREFERENCE_CUTS,
   producePreferenceImport,
   assertPreferencePhase,
+  readPreferenceState,
+  assertPreferenceStorage,
 } from "./import-preferences.js";
 import {
   SEMANTIC_IMPORT_BOUNDARIES,
-  observeImportWriter,
+  createImportWriter,
   produceSemanticImport,
   assertSemanticPhase,
 } from "./import-boundaries.js";
@@ -37,6 +39,7 @@ import {
   importObserver,
   produceImportSlice,
   assertImportPhase,
+  observeImportRestart,
 } from "./plugin-persistence-import.js";
 import { compatibilityObserver } from "./plugin-persistence-compatibility.js";
 import type { Wire as CompatibilityWire } from "./plugin-persistence-compatibility.js";
@@ -1107,12 +1110,21 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
     !!imported && (PREFERENCE_CUTS as readonly string[]).includes(config.importTrial);
   const semanticImport =
     !!imported && (SEMANTIC_IMPORT_BOUNDARIES as readonly string[]).includes(config.importTrial);
-  const importWriter = {
-    sourceKey: syntheticImportDescriptor.targetSourceKey,
-    freezeAdmission() {},
-    async settled() {},
-  };
-  const importWitness = semanticImport ? observeImportWriter(importWriter) : undefined;
+  const importWriters = imported
+    ? [syntheticImportDescriptor, syntheticPreferencesImportDescriptor].map((descriptor, index) =>
+        createImportWriter(
+          descriptor.targetSourceKey,
+          `${config.profile}/legacy-writer-${index}.txt`,
+        ),
+      )
+    : [];
+  for (const [index] of importWriters.entries()) {
+    const destination = `${config.profile}/legacy-writer-${index}.txt`;
+    if (config.importPhase === "kill")
+      await writeFile(destination, "original legacy writer sentinel", { flag: "wx" });
+    else assert.equal(await readFile(destination, "utf8"), "original legacy writer sentinel");
+  }
+  const importWitness = importWriters[0];
   const interop = ["public-interop", "negative-matrix"].includes(config.case)
     ? publicInteropObserver()
     : undefined;
@@ -1327,7 +1339,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         const builtins = [...BUILTIN_PLUGIN_SOURCES];
         for (const role of [
           ...foundationBuiltinRoles(config.case),
-          ...(preferenceImport ? ["preferences"] : []),
+          ...(imported ? ["preferences"] : []),
         ]) {
           if (optional) {
             builtins.push(optional.source(config.buildRoot, role));
@@ -1454,9 +1466,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                     pressure.output(plugin.channelOwner, line);
                   if (
                     imported &&
-                    ["test.synthetic", ...(preferenceImport ? ["test.preferences"] : [])].includes(
-                      plugin.id,
-                    ) &&
+                    ["test.synthetic", "test.preferences"].includes(plugin.id) &&
                     plugin.channelOwner
                   )
                     imported.output(plugin.channelOwner, line);
@@ -1497,9 +1507,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                 )
                   return pressure.attach(plugin.channelOwner, child);
                 return imported &&
-                  ["test.synthetic", ...(preferenceImport ? ["test.preferences"] : [])].includes(
-                    plugin.id,
-                  ) &&
+                  ["test.synthetic", "test.preferences"].includes(plugin.id) &&
                   plugin.channelOwner
                   ? imported.attach(plugin.channelOwner, child)
                   : row
@@ -1557,22 +1565,8 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           ...(imported
             ? {
                 legacy: {
-                  descriptors: [
-                    syntheticImportDescriptor,
-                    ...(preferenceImport ? [syntheticPreferencesImportDescriptor] : []),
-                  ],
-                  writers: [
-                    importWitness?.writer ?? importWriter,
-                    ...(preferenceImport
-                      ? [
-                          {
-                            sourceKey: syntheticPreferencesImportDescriptor.targetSourceKey,
-                            freezeAdmission() {},
-                            async settled() {},
-                          },
-                        ]
-                      : []),
-                  ],
+                  descriptors: [syntheticImportDescriptor, syntheticPreferencesImportDescriptor],
+                  writers: importWriters.map((w) => w.writer),
                 },
               }
             : {}),
@@ -1585,7 +1579,9 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           },
         });
         assert.ok(composition);
-        importWitness?.composed();
+        for (const writer of importWriters) writer.composed();
+        if (imported)
+          config.importWriterProofs = await Promise.all(importWriters.map((w) => w.attempt()));
         const live = composition,
           handles = desktopFoundationTestHandles(live),
           ui = desktopUi(live);
@@ -1657,7 +1653,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           assert.equal(handles.profile, profile);
           // No document is loaded on restart: the real host/worker and public plugin
           // channel operate without a renderer capture or private fixture handlers.
-          const capturePhase = preferenceImport && ["kill", "capture"].includes(config.importPhase);
+          const capturePhase = ["kill", "capture"].includes(config.importPhase);
           const preferenceIpc: Wire[] = [];
           let retirePreferences = () => {};
           if (capturePhase) {
@@ -1749,6 +1745,103 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             },
             async runCase(id) {
               assert.equal(id, "import-restart");
+              const restart = observeImportRestart(handles.backend);
+              if (!preferenceImport && config.importPhase === "kill") {
+                config.importPreferenceSeed = {
+                  capture: await win.webContents.executeJavaScript(
+                    "window.importPreferences.capture()",
+                  ),
+                  preferences: await readPreferenceState(live),
+                  ipc: structuredClone(preferenceIpc),
+                };
+              }
+              const finishRestart = async <
+                T extends {
+                  checks: CaseEvidence["checks"];
+                  events: CaseEvidence["events"];
+                  samples: CaseEvidence["samples"];
+                  importPreferences?: Wire;
+                  importSlice?: Wire;
+                },
+              >(
+                evidence: T,
+              ): Promise<T> => {
+                const observation = evidence.importPreferences ?? evidence.importSlice;
+                assert.ok(observation);
+                const preferences = observation.preferences ?? (await readPreferenceState(live));
+                if (!preferenceImport)
+                  assert.equal((await live.plugins.execute("test.preferences.inspect")).ok, true);
+                if (config.importPhase !== "pending") {
+                  const deadline = Date.now() + 5000;
+                  while (
+                    !imported.processes.some(
+                      (p) => p.kind === "boot" && p.owner.sourceKey === "builtin:test.preferences",
+                    )
+                  ) {
+                    assert.ok(Date.now() < deadline, "Missing actual preference consumer boot");
+                    await new Promise((resolve) => setTimeout(resolve, 10));
+                  }
+                }
+                const document = preferences.documents.find((r: Wire) => r.document.raw)?.document;
+                const preferenceWire = imported.rows.filter(
+                  (r) => r.owner?.sourceKey === "builtin:test.preferences",
+                );
+                const preferenceProcesses = imported.processes.filter(
+                  (r) => r.owner?.sourceKey === "builtin:test.preferences",
+                );
+                if (config.importPhase !== "pending") {
+                  assert.ok(document);
+                  assertPreferenceStorage(
+                    { ...observation, wire: preferenceWire, processes: preferenceProcesses },
+                    document,
+                    preferences.journal,
+                  );
+                }
+                let oldSubmit: Wire | null = null;
+                if (!capturePhase && document) {
+                  const snapshot = structuredClone(document.raw);
+                  let error: string | null = null;
+                  let result: unknown = null;
+                  try {
+                    result =
+                      await live.plugins.persistence170!.imports.acceptPreferencesEvidence(
+                        snapshot,
+                      );
+                  } catch (e) {
+                    error = e instanceof Error ? e.message : String(e);
+                  }
+                  assert.equal(error, "stale");
+                  oldSubmit = { snapshot, currentScope: structuredClone(scope()), error, result };
+                }
+                const rendererDocument = {
+                  url: win.webContents.getURL(),
+                  osPid: win.webContents.getOSProcessId(),
+                  preferenceHandlers: ipcNames.filter((name) =>
+                    name.startsWith("persistence:legacy-preferences-"),
+                  ),
+                  ipc: structuredClone(preferenceIpc),
+                };
+                if (!capturePhase) {
+                  assert.ok(["", "about:blank"].includes(rendererDocument.url));
+                  assert.deepEqual(rendererDocument.preferenceHandlers, []);
+                  assert.deepEqual(rendererDocument.ipc, []);
+                }
+                observation.restart = {
+                  oldSubmit,
+                  rendererDocument,
+                  writers: config.importWriterProofs,
+                  preferences,
+                  preferenceWire,
+                  get preferenceProcesses() {
+                    return imported.processes.filter(
+                      (r) => r.owner?.sourceKey === "builtin:test.preferences",
+                    );
+                  },
+                  rendererPresent: !["", "about:blank"].includes(rendererDocument.url),
+                  ...(await restart.snapshot()),
+                };
+                return evidence;
+              };
               if (preferenceImport) {
                 const prior =
                   config.importPhase === "kill"
@@ -1781,7 +1874,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                     : {}),
                 });
                 assertPreferencePhase(evidence.importPreferences);
-                return evidence;
+                return finishRestart(evidence);
               }
               const evidence = semanticImport
                 ? await produceSemanticImport({
@@ -1793,7 +1886,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                 : await produceImportSlice({ config, live, fault: fault!, observer: imported });
               if (semanticImport) assertSemanticPhase(evidence.importSlice);
               else assertImportPhase(evidence.importSlice);
-              return evidence;
+              return finishRestart(evidence);
             },
             close() {
               return (closed ??= (async () => {
