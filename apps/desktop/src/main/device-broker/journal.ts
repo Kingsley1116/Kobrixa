@@ -296,7 +296,9 @@ export function createJournal(fs: JournalFilesystem, profile: ProfileWriterLock)
         if (health !== "unwritable") health = "corrupt";
       }
       if (initializationFailed) {
-        health = "unwritable";
+        // Corrupt evidence needs the more specific recovery guidance even without
+        // a durability barrier. Both states block writes and new risk.
+        if (health !== "corrupt") health = "unwritable";
         recovering = false;
       }
       for (const item of committed.entries) if (item.state !== "resolved") carried.add(item.id);

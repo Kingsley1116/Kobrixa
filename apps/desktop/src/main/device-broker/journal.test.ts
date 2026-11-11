@@ -233,7 +233,8 @@ it.each(["current", "previous", "orphan", "corrupt-current"])(
     await journal.load();
     expect(journal.snapshot()).toMatchObject({
       revision: 7,
-      journalHealth: "unwritable",
+      journalHealth:
+        source === "previous" || source === "corrupt-current" ? "corrupt" : "unwritable",
       blockers: [marker.id],
       faults: [
         { id: marker.id, state: "unconfirmed", movement: "unknown", cause: "host-restarted" },
@@ -242,9 +243,13 @@ it.each(["current", "previous", "orphan", "corrupt-current"])(
     await expect(journal.commit(journalDocument(8, [resolved(marker)]))).rejects.toThrow(
       "journal write blocked",
     );
-    await expect(journal.commit(journalDocument(8, [marker, entry()]))).rejects.toThrow(
-      "journal write blocked",
-    );
+    for (const operationClass of ["finite-motion", "program-launch"] as const) {
+      const dispatch = vi.fn();
+      await expect(
+        journal.commit(journalDocument(8, [marker, entry({ operationClass })])).then(dispatch),
+      ).rejects.toThrow("journal write blocked");
+      expect(dispatch).not.toHaveBeenCalled();
+    }
     expect(m.files).toEqual(before);
     expect(m.trace).toEqual([]);
     expect(journal.snapshot().blockers).toEqual([marker.id]);
@@ -276,6 +281,67 @@ it.each(["missing", "corrupt", "future"])(
     expect(journal.snapshot().journalHealth).toBe("corrupt");
     expect(journal.snapshot().blockers).toContain(marker.id);
     await expect(journal.commit(journalDocument(2, []))).rejects.toThrow();
+  },
+);
+it.each(
+  [false, true].flatMap((barrierFailed) =>
+    ["faults.json", "faults.previous.json"].flatMap((damagedFile) =>
+      ["unparseable", "integrity", "future"].map((damage) => ({
+        barrierFailed,
+        damagedFile,
+        damage,
+      })),
+    ),
+  ),
+)(
+  "F13 $damage in $damagedFile remains corrupt with barrierFailed=$barrierFailed",
+  async ({ barrierFailed, damagedFile, damage }) => {
+    const m = fixture(),
+      marker = entry({ state: "active-program", dispatch: "sent" }),
+      valid = journalDocument(7, [marker]);
+    const readableFile = damagedFile === "faults.json" ? "faults.previous.json" : "faults.json";
+    m.files.set(readableFile, Buffer.from(JSON.stringify(valid)));
+    m.files.set(
+      damagedFile,
+      Buffer.from(
+        damage === "unparseable"
+          ? "{"
+          : JSON.stringify(
+              damage === "future"
+                ? { ...valid, schemaVersion: 2 }
+                : { ...valid, integrity: { algorithm: "sha256", digest: "0".repeat(64) } },
+            ),
+      ),
+    );
+    const before = new Map([...m.files].map(([name, bytes]) => [name, Buffer.from(bytes)]));
+    if (barrierFailed)
+      m.fs.initialize = async () => {
+        throw new Error("durability unavailable");
+      };
+    const journal = createJournal(m.fs, m.profile);
+    await journal.load();
+    const snapshot = journal.snapshot();
+    expect(snapshot).toMatchObject({
+      revision: 7,
+      journalHealth: "corrupt",
+      blockers: [marker.id],
+      faults: [
+        { id: marker.id, state: "unconfirmed", movement: "unknown", cause: "host-restarted" },
+      ],
+    });
+    for (const operationClass of ["finite-motion", "program-launch"] as const) {
+      const dispatch = vi.fn();
+      await expect(
+        journal.commit(journalDocument(8, [marker, entry({ operationClass })])).then(dispatch),
+      ).rejects.toThrow("journal write blocked");
+      expect(dispatch).not.toHaveBeenCalled();
+    }
+    await expect(journal.commit(journalDocument(8, [resolved(marker)]))).rejects.toThrow(
+      "journal write blocked",
+    );
+    expect(journal.snapshot()).toEqual(snapshot);
+    expect(m.files).toEqual(before);
+    expect(m.trace).toEqual(barrierFailed ? [] : ["initialize"]);
   },
 );
 it("F20 secondary initialization performs no filesystem work", () => {
