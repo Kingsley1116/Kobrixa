@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, realpath, writeFile, readdir } from "node:fs/promises";
 import path from "node:path";
+import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn, execFileSync } from "node:child_process";
@@ -548,19 +549,28 @@ export async function finishProcessObservation({
   }
   return survivors;
 }
+export async function resolvePython(explicit, env = process.env, platform = process.platform) {
+  const command =
+    explicit || env.KOBRIXA_TEST_PYTHON || (platform === "win32" ? "python" : "python3");
+  return realpath(
+    execFileSync(command, ["-c", "import sys;print(sys.executable)"], {
+      encoding: "utf8",
+    }).trim(),
+  );
+}
 async function main(args) {
-  assert.ok(["--build-only", "--run-built"].includes(args[0]));
-  if (args[0] === "--build-only") {
-    const python = await realpath(
-      args[1] ??
-        execFileSync("python3", ["-c", "import sys;print(sys.executable)"], {
-          encoding: "utf8",
-        }).trim(),
-    );
-    const directory = await realpath(await mkdtemp("/private/tmp/kobrixa-device-stdio-"));
+  assert.ok(["--build-only", "--run-built", "--run"].includes(args[0]));
+  if (args[0] !== "--run-built") {
+    const python = await resolvePython(args[1]);
+    const directory = await realpath(await mkdtemp(path.join(tmpdir(), "kobrixa-device-stdio-")));
     await buildDeviceStdio(directory, python, args[2]);
-    console.log(`BUILD ONLY, no Electron: ${directory}`);
-    return;
+    if (args[0] === "--build-only") {
+      console.log(`BUILD ONLY, no Electron: ${directory}`);
+      return;
+    }
+    console.log(`Stdio artifacts: ${directory}`);
+    const electron = createRequire(path.join(root, "apps/desktop/package.json"))("electron");
+    return main(["--run-built", directory, electron]);
   }
   const directory = await realpath(args[1]),
     identity = JSON.parse(await readFile(path.join(directory, "identity.json"), "utf8"));

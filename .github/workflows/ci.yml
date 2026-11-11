@@ -175,10 +175,19 @@ jobs:
           compression-level: 0
           retention-days: 7
 
+  stage3:
+    name: Stage 3 native acceptance
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
+    uses: ./.github/workflows/stage-3-acceptance.yml
+    permissions:
+      contents: read
+      actions: read
+
   result:
     name: CI result
     if: always()
-    needs: [changes, quality, web, platform]
+    needs: [changes, quality, web, platform, stage3]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -191,4 +200,6 @@ jobs:
       - name: Require every affected product to succeed
         env:
           CI_RESULTS: ${{ toJSON(needs) }}
-        run: node tools/ci/changes.mjs result
+        run: |
+          node tools/ci/changes.mjs result
+          node --input-type=module -e 'const n = JSON.parse(process.env.CI_RESULTS); const expected = n.changes.outputs.desktop === "true" ? "success" : "skipped"; if (n.stage3.result !== expected) throw new Error("Required Stage 3 native acceptance did not succeed");'

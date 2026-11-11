@@ -31,7 +31,7 @@
     "check:web": "pnpm --filter \"@kobrixa/web...\" -r check && eslint apps/web packages/ir",
     "check:collab": "pnpm --filter @kobrixa/collab check && eslint apps/collab tests/collab",
     "check:desktop": "pnpm --filter \"@kobrixa/desktop...\" --filter @kobrixa/plugin-sdk -r check && eslint apps/desktop packages frontends tools tests assets",
-    "check:common": "pnpm format:check && eslint \"*.mjs\" \"*.ts\" tools/ci && pnpm test:ci-routing",
+    "check:common": "pnpm format:check && eslint \"*.mjs\" \"*.ts\" tools/ci && pnpm test:ci-routing && node --test tests/desktop/stage-3-closeout-run.test.mjs",
     "test:web": "vitest run --project web --project @kobrixa/ir && pnpm --filter @kobrixa/web test:worker",
     "test:desktop": "vitest run --project \"!web\" && pnpm test:bytecode && pnpm test:release && pnpm test:python-sdk && pnpm test:static-languages && pnpm test:device-broker && pnpm test:declarative-ui && pnpm test:persistence:oracles && pnpm test:feature-oracles",
     "test:python-sdk": "node tools/run-python-tests.mjs",
@@ -50,7 +50,14 @@
     "test:persistence:disconnect": "node --experimental-transform-types --import ./tests/desktop/persistence-source-loader.mjs --test tests/desktop/plugin-persistence-disconnect.test.mjs",
     "test:declarative-ui": "node --experimental-transform-types --import ./tests/desktop/persistence-source-loader.mjs --test tests/desktop/declarative-ui-*.test.mjs tests/desktop/builtin-process-*.test.mjs",
     "test:declarative-ui:smoke": "node tests/desktop/declarative-ui-run.mjs --transport-only && node tests/desktop/declarative-ui-browser-run.mjs && node tests/desktop/declarative-ui-motion-run.mjs --backpressure && node tests/desktop/declarative-ui-motion-run.mjs --load",
-    "test:feature-oracles": "node -e \"process.env.DEVICE_STDIO_TEST_PYTHON ||= process.env.KOBRIXA_TEST_PYTHON || (process.platform === 'win32' ? 'python' : 'python3'); require('node:child_process').execFileSync(process.execPath, ['--test', ...process.argv.slice(1)], {stdio: 'inherit'})\" tests/desktop/motor-test-public.test.mjs tests/desktop/sensor-lab-public-test.mjs tests/desktop/sensor-lab-stdio-test.mjs tests/desktop/sensor-lab-installed-test.mjs tests/desktop/device-ui-public-test.mjs tests/desktop/device-ui-stdio-test.mjs tests/desktop/device-ui-installed-test.mjs"
+    "test:feature-oracles": "node -e \"process.env.DEVICE_STDIO_TEST_PYTHON ||= process.env.KOBRIXA_TEST_PYTHON || (process.platform === 'win32' ? 'python' : 'python3'); require('node:child_process').execFileSync(process.execPath, ['--test', ...process.argv.slice(1)], {stdio: 'inherit'})\" tests/desktop/motor-test-public.test.mjs tests/desktop/sensor-lab-public-test.mjs tests/desktop/sensor-lab-stdio-test.mjs tests/desktop/sensor-lab-installed-test.mjs tests/desktop/device-ui-public-test.mjs tests/desktop/device-ui-stdio-test.mjs tests/desktop/device-ui-installed-test.mjs",
+    "test:stage3:inventory": "node tests/desktop/stage-3-closeout-run.mjs all --inventory",
+    "test:stage3:wrappers": "node --test tests/desktop/stage-3-closeout-run.test.mjs",
+    "test:stage3:motor": "node tests/desktop/stage-3-closeout-run.mjs motor --run",
+    "test:stage3:lab": "node tests/desktop/stage-3-closeout-run.mjs lab --run",
+    "test:stage3:device": "node tests/desktop/stage-3-closeout-run.mjs device --run",
+    "test:stage3:installed": "node tests/desktop/stage-3-closeout-run.mjs installed --run",
+    "test:stage3:b2": "node tests/desktop/stage-3-closeout-run.mjs b2 --run"
   },
   "devDependencies": {
     "@electron/asar": "4.3.1",

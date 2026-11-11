@@ -1,0 +1,104 @@
+name: Stage 3 acceptance
+
+on:
+  workflow_call:
+  workflow_dispatch:
+    inputs:
+      b2_run_id:
+        description: Run containing actual complete B2 reports (required for dispatched B2 validation)
+        type: string
+        required: true
+      b2_artifact:
+        description: Artifact containing persistence.json and single-instance.json plus referenced receipts
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  native:
+    name: Stage 3 ${{ matrix.gate }} (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-26]
+        gate: [motor, lab, device, installed]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    env:
+      TMPDIR: ${{ runner.temp }}
+      TMP: ${{ runner.temp }}
+      TEMP: ${{ runner.temp }}
+      KOBRIXA_TEST_PYTHON: ${{ matrix.os == 'windows-2022' && 'python' || 'python3' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Inventory exact commands and prerequisites
+        run: node tests/desktop/stage-3-closeout-run.mjs ${{ matrix.gate }} --inventory
+      - run: pnpm build:core
+      - run: pnpm build:desktop
+      - name: Configure Electron sandbox
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          electron="$(node -e "console.log(require('electron'))" | tail -n 1)"
+          sandbox="$(dirname "$electron")/chrome-sandbox"
+          test -f "$sandbox"
+          sudo chown root:root "$sandbox"
+          sudo chmod 4755 "$sandbox"
+      - name: Execute required native gate
+        shell: bash
+        run: |
+          set -o pipefail
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            if [ '${{ matrix.gate }}' = installed ]; then
+              # Keep the desktop display but remove external interfaces for source-free isolation.
+              xvfb-run -a sudo --preserve-env=DISPLAY,XAUTHORITY,PATH,TMPDIR,TMP,TEMP unshare --net -- sudo --preserve-env=DISPLAY,XAUTHORITY,PATH,TMPDIR,TMP,TEMP -u "#$(id -u)" node tests/desktop/stage-3-closeout-run.mjs installed --run 2>&1 | tee stage-3-native.log
+            else
+              xvfb-run -a node tests/desktop/stage-3-closeout-run.mjs '${{ matrix.gate }}' --run 2>&1 | tee stage-3-native.log
+            fi
+          else
+            node tests/desktop/stage-3-closeout-run.mjs '${{ matrix.gate }}' --run 2>&1 | tee stage-3-native.log
+          fi
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: stage-3-${{ matrix.gate }}-${{ matrix.os }}
+          path: |
+            stage-3-native.log
+            ${{ runner.temp }}/kobrixa-*/**
+          if-no-files-found: error
+          retention-days: 7
+      - name: State remaining evidence scope
+        if: always()
+        shell: bash
+        run: echo 'This job does not sign B2 reports, maximum-load, hardware or human acceptance. Run dispatched B2 validation with actual complete reports.' >> "$GITHUB_STEP_SUMMARY"
+
+  b2-reports:
+    name: Full B2 supplied report validation
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.b2_artifact }}
+          run-id: ${{ inputs.b2_run_id }}
+          github-token: ${{ github.token }}
+          path: stage-3-reports
+      - name: Validate complete reports (missing or partial is a failure)
+        env:
+          PERSISTENCE_EVIDENCE: ${{ github.workspace }}/stage-3-reports/persistence.json
+          KOBRIXA_SINGLE_INSTANCE_REPORT: ${{ github.workspace }}/stage-3-reports/single-instance.json
+        run: node tests/desktop/stage-3-closeout-run.mjs b2 --run
