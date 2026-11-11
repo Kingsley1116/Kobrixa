@@ -774,12 +774,16 @@ it("D150 real IPC stops an external program through device-current-stop and reje
     await f.cleanup();
   }
 });
-it("D150 initial journal failure prevents actual stop dispatch", async () => {
+// 3A §7.2/§7.2.1: a failed initial marker must not suppress the safety stop; the
+// outcome stays rejected and unconfirmed, never a journaled resolution.
+it("D150 initial journal failure still dispatches one stop and stays unconfirmed", async () => {
   const f = await foundationIpc();
   const sync = vi.spyOn(f.fs, "sync").mockRejectedValueOnce(new Error("disk failure"));
   try {
     await expect(f.call("device:stop", f.sessionId)).rejects.toThrow();
-    expect(f.control.trace().some((row) => row.step === "stop")).toBe(false);
+    const stops = f.control.trace().filter((row) => row.step === "stop");
+    expect(new Set(stops.map((row) => row.operationId)).size).toBe(1);
+    expect(stops.filter((row) => row.dispatch === "sent")).toHaveLength(1);
     expect(f.journal.snapshot().journalHealth).not.toBe("ready");
   } finally {
     sync.mockRestore();
