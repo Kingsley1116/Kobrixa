@@ -1,6 +1,6 @@
 # Motor testing
 
-Stage 3 integration draft: this guide describes the public Motor test plugin. Product activation and removal of the older Monitor card are pending the integration gates; this branch is not a released installation.
+Stage 3 development branch: the public Motor test plugin is integrated and the private Monitor-card motor controls, service and IPC are removed. The EV3 provider’s motion engine and core stop/recovery remain. Final package/platform acceptance is still open; this is not a released-installation claim.
 
 Connect an EV3 through the device tools, then open **Plugin tools → Motor test**. Press **Use current connection** to select the connected session, and choose output **A–D**. Opening the panel, refreshing availability or enabling the plugin never connects a device or starts motion. No source program is required.
 
@@ -30,6 +30,6 @@ The device remains exclusively reserved for the test; competing program/deployme
 
 ## Availability and acceptance
 
-Motor test is an optional builtin, enabled by default once delivered. Its toggle is independent of the device provider. Disabling it stops its work; re-enabling only makes it available. If safe mode suppresses its process, the panel is unavailable while core recovery remains accessible. Follow the plugin settings' explanation before explicitly restoring it.
+Motor test is an optional builtin, enabled by default on this branch. Its toggle is independent of the device provider. Disabling it stops its work; re-enabling only makes it available. If safe mode suppresses its process, the panel is unavailable while core recovery remains accessible. Follow the plugin settings' explanation before explicitly restoring it.
 
-The [hardware checklist](../../tests/hardware/motor-test.md) records USB/Wi-Fi, operating systems, motor types, clean installation and manual accessibility separately. Software fixtures, bundle audits and native fake-provider runs do not establish physical-device acceptance. Unrun gates remain pending.
+The [hardware checklist](../../tests/hardware/motor-test.md) records USB/Wi-Fi, operating systems, motor types, clean installation and manual accessibility separately. Software fixtures, bundle audits and native fake-provider runs do not establish physical-device acceptance. S3-13 physical motor and S3-15 installation/accessibility acceptance are **NOT RUN**. Windows device execution/recovery acceptance remains blocked by the [journal durability limitation](device-support.md#windows-stage-3-journal-policy).

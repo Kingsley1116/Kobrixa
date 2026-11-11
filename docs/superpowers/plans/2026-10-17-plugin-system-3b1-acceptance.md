@@ -1,5 +1,9 @@
 # API 1.6.0 declarative UI acceptance ledger
 
+**2026-11-11 reconciliation:** this ledger preserves dated observations below; historical PASS applies only to its recorded source, artifact and scope. Current API is 1.8.0; historical P150/P160/P170 publication names are not current package versions. No final W20 artifact/platform receipt or H1–H6 human record was supplied to W21. Aggregate acceptance remains OPEN; S3-13–S3-15 are **NOT RUN**. See the [current S3 ledger](../specs/2026-10-17-plugin-system-stage-3-design.md#s3-current-ledger). A source handoff, build, wrapper inventory or general-smoke delegation is not an executed native feature test.
+
+The table's **Initial status** column is the original baseline; scoped execution records later in this file remain the observations. U01–U11/U13–U15 have implementation and scoped tests/native receipts, but no joined final-source matrix is accepted here. U12/U16/U17 require real save/stop/lifetime and full second-instance evidence, not the original empty persistence fixture. The three product payloads and Lab/device mappings now exist; “pending-3C/3D/3E” below denotes remaining acceptance, not absent implementation. V1 load/presentation receipts do not prove maximum v2 charts, 50-row pages or 3,600-frame recording. W15/W16 and final W20 remain open; manual screen-reader/installation/physical rows remain NOT RUN.
+
 Status: foundational implementation and scoped independent reviews complete; aggregate P160 acceptance is still in progress and is not published. The initial gate checklist below remains open except for the scoped observations recorded at the end. Publication P160 is conditional on the completed T10 checks and the explicit pending-real-persistence exception below. The controller records actual F/P150/P160 SHAs, command log paths and artifact hashes after execution; no symbolic milestone is represented as a commit hash.
 
 | Gate                                        | Initial status           | Evidence required                                                                                             |
@@ -95,3 +99,12 @@ Actual Electron action acceptance at ad2083c passed all four presentation combin
 - `22176bf` corrects two lifecycle tests to retain a genuinely pending hold reply and assert synchronous cancellation before awaiting settlement. Product admission is unchanged.
 - Full `pnpm test:desktop` exits0 at867fc52:4,025 Vitest tests passed,9 historical skips; bytecode164/release35/Python52/static40/device13 passed. Declarative helpers8 passed,12 actual-receipt checks skipped without their recorded input environment. Raw outputs/hash manifest are in [UI delivery evidence](../evidence/2026-10-23-3b1-ui-delivery/README.md).
 - Actual c59ab80 desktop packaging and plugin Electron lifecycle smoke also exit0. Aggregate P160 matrix, product motor activation, real persistence/X-T1, physical/manual gates remain separate and are not asserted by these results.
+
+#### Closeout work-package references
+
+These IDs name work scopes, not passing acceptance results.
+
+- **W15**: maximum v2 Lab/dataset load.
+- **W16**: adopt R2 and produce full load evidence.
+- **W20**: final regression and delivered-platform evidence.
+- **W21**: reconcile documentation and final evidence ledger.

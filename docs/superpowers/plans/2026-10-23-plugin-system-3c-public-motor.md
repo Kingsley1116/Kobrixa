@@ -1,5 +1,13 @@
 # Stage 3C：有界實作計畫（controller 已審閱；authoring 可執行，真實整合 gates 保留）
 
+## Current disposition — 2026-11-11
+
+Motor is integrated as the shipped public plugin. Its private controls/controller/service, feature IPC/preload and old mount are removed; the EV3 provider motion engine/helper and core broker/journal/stop remain. The historical [77-case native/installed receipt](../evidence/2026-10-24-3c-native-installed/README.md), [Linux isolation receipt](../evidence/2026-10-24-3c-linux-installed/README.md), and later [post-retirement product audit](../evidence/2026-10-30-3d-retirement/README.md) describe their own artifacts. The last record checks absence of both private Motor/Lab routes and exercises Motor in the unchanged whole product; its Lab cases are separate acceptance hosts.
+
+T1–T3 implementation and motor runtime retirement are present; T4/T6 **final-candidate** native/regression/package acceptance remains open. Earlier “not executed” and ownership sections below describe their original planning dates, not an instruction to reimplement retirement. Run `node tests/desktop/motor-test-public-run.mjs --all` (all 77 cases) plus `node --test tests/desktop/motor-test-boundaries.test.mjs`, or `node tests/desktop/stage-3-closeout-run.mjs motor --run`. General desktop smoke's feature handoff is not that run; installed source denial requires the explicit isolated gate. S3-13/S3-15 and H1/H5/H6 are **NOT RUN**. No final W20 artifact is accepted; see the [S3 ledger](../specs/2026-10-17-plugin-system-stage-3-design.md#s3-current-ledger).
+
+## Original implementation plan / historical requirements
+
 日期：2026-10-23。依 [3C 子規格](../specs/2026-10-23-plugin-system-3c-public-motor-design.md) 與 approved umbrella。controller 已依 umbrella 核准 T1–T3 authoring；以下驗收尚未執行，不代表產品或硬體通過。C-G1 由 B1 owner 同步實作，實際整合與 legacy 移除仍依 gates。
 
 ## 1. 開工／整合 gate
@@ -28,7 +36,7 @@ T6 閉合 write set：
 - 建置／來源註冊：`vitest.config.ts`、`apps/desktop/packaging.ts`、`apps/desktop/src/main/plugins/builtin.ts`、`apps/desktop/src/main/plugins/builtin.test.ts`、`apps/desktop/src/main/plugins/builtin-launch.test.ts`、`apps/desktop/src/main/packaging.test.ts`。
 - 既有 installed tests 改驗真實產品，處理 fixture identity collision：`tests/desktop/builtin-process-installed.mjs`、`tests/desktop/builtin-process-packaging.test.mjs`、`tools/release/desktop-packaging.test.mjs`。不擴 production launch allowlist、不讓 fixture 覆蓋 motor。
 - renderer 撤線／相鄰回歸：`apps/desktop/src/renderer/app.tsx`、`apps/desktop/src/renderer/device/monitor-panel.tsx`、`apps/desktop/src/renderer/device/monitor-panel.test.ts`、`apps/desktop/src/renderer/device/motor-test-controls.tsx`、`apps/desktop/src/renderer/device/motor-test-controller.ts`、其同名 `.test.ts`。
-- legacy host adapter 撤線／相鄰回歸：`apps/desktop/src/main/index.ts`、`apps/desktop/src/main/ipc.ts`、`apps/desktop/src/preload/index.ts`、`apps/desktop/src/shared/api.ts`、`apps/desktop/src/shared/motor-test.ts`、`apps/desktop/src/main/device/motor-test-service.ts`、`motor-test-service.test.ts`、`motor-test-ipc.test.ts`（後二者同目錄）、`apps/desktop/src/main/collab/device-control.ts`、`device-control.test.ts`（同目錄）、`apps/desktop/src/main/updates/service.ts`、`apps/desktop/src/main/updates/service.test.ts`。
+- legacy host adapter 撤線／相鄰回歸：`apps/desktop/src/main/index.ts`、`apps/desktop/src/main/ipc.ts`、`apps/desktop/src/preload/index.ts`、`apps/desktop/src/shared/api.ts`、`apps/desktop/src/shared/motor-test.ts`、`apps/desktop/src/main/device/motor-test-service.ts`、`motor-test-service.test.ts`、`motor-test-ipc.test.ts`（後二者同目錄）、`apps/desktop/src/main/collab/device-control.ts`、`device-control.test.ts`（同目錄）、`apps/desktop/src/main/updates/service.ts`、`apps/desktop/src/main/updates/updates.test.ts`。
 - smoke composition：`tests/desktop/run-smoke.mjs`；closeout docs：`docs/superpowers/specs/2026-10-17-plugin-system-stage-3-design.md`（僅 §8 motor ledger／證據連結）、`docs/superpowers/plans/2026-10-23-plugin-system-3c-acceptance.md`、`docs/superpowers/evidence/2026-10-23-3c-motor/`。
 
 B1 C-G1 owner 的預期 amendment set（獨立 gate，非 T1–T6 默許修改）：`docs/superpowers/specs/2026-10-17-plugin-system-3b1-declarative-ui-design.md` §6；`apps/desktop/src/renderer/plugin-ui/{bootstrap,state-store}.ts` 與同名 tests。先確認 generic cache 的 key／容量／清除／close 語意，必要 host-side 檔案由該 owner 另列。不得改 `ui/patch` 或增加 wire。
@@ -67,7 +75,7 @@ B1 C-G1 owner 的預期 amendment set（獨立 gate，非 T1–T6 默許修改�
 - C-G1 測試：在 A/B port 各輸入不同參數與 invalid raw，切 port／hide／close-reopen；同 workbench draft 留存、舊 scope／operation 不恢復；resource generation／renderer retirement 等清除條件符合 amendment。
 - `motor-test-smoke.mjs` 保留三模式、defaults／validation／per-port、progress、bilingual/narrow layout 涵蓋；移除 private test-service injection。舊「切 pane timed 繼續」改為 host 要求 stop、無新 motion、結果 confirmed 或明確 unconfirmed；增加 start 未回覆前 hide，不能只刪舊案例。
 - boundary test 同時檢 source imports、Vite transitive module metadata／bundle、RPC allowlist trace；加入禁止 desktop facade／dynamic import／external／私有字串 channel 的負例。SDK parentPort 是唯一既有 transport，不把 test host 的 dependencies 算進 feature bundle。
-- 驗證（未執行）：`node --test tests/desktop/motor-test-public.test.mjs tests/desktop/motor-test-boundaries.test.mjs`；`node tests/desktop/motor-test-public-run.mjs`（native Electron）；`pnpm test:desktop:smoke`（實際執行已替換 checkMotorTests）。runner 未完成或 skip 即 pending。
+- 驗證（未執行）：`node --test tests/desktop/motor-test-public.test.mjs tests/desktop/motor-test-boundaries.test.mjs`；`node tests/desktop/motor-test-public-run.mjs --all`（native Electron）；`pnpm test:desktop:smoke`（實際執行已替換 checkMotorTests）。runner 未完成或 skip 即 pending。
 
 ## 7. T5：文件與人工 gate
 
@@ -94,7 +102,7 @@ B1 C-G1 owner 的預期 amendment set（獨立 gate，非 T1–T6 默許修改�
 | 現有 public 合約回歸     | `pnpm test:device-broker`、`pnpm test:declarative-ui`；SDK／runtime／desktop affected tests 以 root Vitest 跑實際檔案，不把未列入 project 的 tests 當已跑                                                                 |
 | Type／lint               | `pnpm check:desktop`、`pnpm exec tsc -p plugins/motor-test/tsconfig.json --noEmit`；feature files 另由自身 TS 設定檢查，不能只依 desktop tsconfig 排除後宣稱通過                                                          |
 | public compose／boundary | `node --test tests/desktop/motor-test-public.test.mjs tests/desktop/motor-test-boundaries.test.mjs`；actual SDK trace、public-only bundle proof                                                                           |
-| real renderer native     | `node tests/desktop/motor-test-public-run.mjs`；T4 matrix／視窗／key／pointer、停止不確認與 drafts；generic browser/mock renderer 結果分列                                                                                |
+| real renderer native     | `node tests/desktop/motor-test-public-run.mjs --all`；T4 matrix／視窗／key／pointer、停止不確認與 drafts；generic browser/mock renderer 結果分列                                                                          |
 | 既有 motor smoke 替換    | `pnpm test:desktop:smoke`；實際跑更新後 checkMotorTests，全部 skip／其他 smoke failure 仍原樣記錄，不能記全套 PASS                                                                                                        |
 | release payload          | `node --test tests/desktop/builtin-process-packaging.test.mjs tools/release/desktop-packaging.test.mjs`；沿 shared build path 且不是 fixture motor                                                                        |
 | installed product        | `pnpm test:desktop:packaged`；installed runner 載入真實 motor；checkout 不可用、離線、無外部 Node、cwd 非 repo；所有 payload path/hash、toggle/re-enable、quit、missing/tampered resource fail-closed，不 fallback source |
@@ -121,3 +129,9 @@ B1 C-G1 owner 的預期 amendment set（獨立 gate，非 T1–T6 默許修改�
 ## T6 legacy retirement ownership clarification (2026-10-30)
 
 The C public77-case and Linux installed receipts support implementing the motor-only legacy retirement; final removal/build/native regression remains required. One stopped owner may edit the existing T6 renderer/main/IPC/preload/shared motor paths, plus direct callers `apps/desktop/src/renderer/device/monitor-workspace.tsx`, `monitor-workspace.test.ts`, `apps/desktop/src/renderer/execution/{execution.ts,execution.test.ts}`, `apps/desktop/src/main/ipc.test.ts`, and actual update test paths `apps/desktop/src/main/updates/{updates.test.ts,install-ipc.test.ts,installation.test.ts}` (the earlier service.test.ts name was not an existing file). Transfer useful old assertions into existing `plugins/motor-test/src/{model,feature}.test.ts` and `plugins/motor-test/resources.test.ts` before deleting old test/runtime paths. Do not delete `main/device/motor-test-image.ts` or its test: the EV3 provider still imports that engine helper. Preserve execution/files, monitor/battery, Lab original-writer barrier and main broker/coordinator stop/journal/close/update/authority safety; a stopped plugin is not proof of a stopped motor. Installed E harness files have a different writer and are excluded. No shared-branch merge, hardware claim or completed T6 receipt is authorized by this ownership clarification.
+
+#### Closeout work-package references
+
+These IDs name work scopes, not passing acceptance results.
+
+- **W20**: final regression and delivered-platform evidence.

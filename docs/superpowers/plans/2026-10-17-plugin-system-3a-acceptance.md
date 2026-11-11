@@ -1,5 +1,9 @@
 # API 1.5.0 device foundation acceptance
 
+**2026-11-11 reconciliation:** this ledger preserves dated observations below; historical PASS applies only to its recorded source, artifact and scope. Current API is 1.8.0; historical P150/P160/P170 publication names are not current package versions. No final W20 artifact/platform receipt or H1–H6 human record was supplied to W21. Aggregate acceptance remains OPEN; S3-13–S3-15 are **NOT RUN**. See the [current S3 ledger](../specs/2026-10-17-plugin-system-stage-3-design.md#s3-current-ledger). A source handoff, build, wrapper inventory or general-smoke delegation is not an executed native feature test.
+
+The F01–F21 and load PASS rows below are the 2026-10-22 foundation observations, not final 1.8 product receipts. A-RF5/F19 still needs the real persistence/lifecycle join (W10–W13/W18/W20); implemented B2 participants and the retired private Lab store do not by themselves close it. A-M01–M08 remain NOT RUN, mapped to audit H1–H6. R1's choice is approved; native feasibility and W02b product integration remain open. The later correction observation records a historical Windows candidate run with two failures and an unrun correction; it supersedes any reading of W02a's dated NOT RUN as “no Windows attempt ever occurred.” It does not establish production durability.
+
 Status: REVIEW FIXES CLOSED; AUTOMATED FOUNDATION EVIDENCE RECORDED (2026-10-22). Independent Codex review closed the four integration findings and both residual identity/wake cases at `8b1f4d7`, with no remaining findings in that scoped review. This is a feature-branch integration candidate, not blanket acceptance or shared-line merge approval. The general desktop smoke and packaged static-language gate remain failed as documented below; physical/manual, installed-app and future real persistence acceptance remain open.
 
 | Gate                         | Status                                          | Evidence required                                                                                                |
@@ -50,7 +54,7 @@ The normative policy and Microsoft documentation references are in [3A design §
 
 Current safety limitation: production barrier failure precedes startup inventory, so an empty faults list cannot certify a clean profile. Trusted stop can currently fail at its preceding journal commit before sending the physical stop. W02b must test and repair both behaviors without weakening pending-marker admission; this ledger does not claim either is fixed. Compilation/editing, passive reads, clean idle quit, unresolved-stop close/update blockers and recovery are separate cases.
 
-Build/run instructions, actual local checks and open risks are in the [W02a handoff report](../../../.superpowers/sdd/stage-3-closeout/reports/W02a.md). A Windows runner receipt and a reviewed durability argument are still required before W02a can meet the audit's feasibility-proof completion criterion.
+The [current ledger](../specs/2026-10-17-plugin-system-stage-3-design.md#s3-current-ledger) retains the durability policy and open risks. On Windows, compile the candidate against pinned Electron headers and execute `node --test tests/desktop/journal-win32-native.test.mjs` with the native configuration documented in that test. A Windows runner receipt and a reviewed durability argument are still required before W02a can meet the audit's feasibility-proof completion criterion.
 
 ## Final correction and measured evidence — 2026-10-22
 
@@ -112,3 +116,15 @@ Eleven forced-GC retained-heap samples passed the specified bounded-growth guard
 ### Integration cautions
 
 The read-only three-way merge preview into B1 found two conflicts in `packages/plugin-sdk-js/src/index.ts`. Preserve B1's `ContextCommands` and `pluginContext` UI surface together with A's `RequestContext.afterReply` device-readiness gate. Preserve P160/API 1.6 and regenerate schemas from the merged source. Do not choose one entire side of SDK/schema files. B2 had no textual conflict at the audited committed heads; that is not semantic integration acceptance.
+
+#### Closeout work-package references
+
+These IDs name work scopes, not passing acceptance results.
+
+- **W02a**: resolve and prototype the Windows journal contract.
+- **W02b**: integrate the approved journal adapter.
+- **W10**: attach B2 negatives and complete dual-transport groups.
+- **W13**: lifecycle and authority inventory and final evidence join.
+- **W18**: shipped-feature lifecycle and close/recovery failure cases.
+- **W20**: final regression and delivered-platform evidence.
+- **W21**: reconcile documentation and final evidence ledger.

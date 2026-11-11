@@ -1,6 +1,6 @@
 # 感測器曲線與校正
 
-在 Stage 3 開發分支，先從 **插件工具 → EV3** 連接裝置，再開啟 **插件工具 → 感測器工具**。這是可選的內建功能，一般使用者可在插件設定切換，不需要開發者模式。舊的 **EV3 工具 → 監測 → 曲線與校正** 屬於先前實作，正逐步撤除。若新功能不可用或資料匯入仍待完成，請依其復原狀態處理；開啟舊介面不會繞過這個狀態。最多選擇四個通道，來源包括本機輸入埠 1–4 的數值通道與 A–D 馬達角度。記錄期間固定通道及校正參數，並禁止切換感測器模式。
+在 Stage 3 開發分支，先從 **插件工具 → EV3** 連接裝置，再開啟 **插件工具 → 感測器工具**。這是可選的內建功能，一般使用者可在插件設定切換，不需要開發者模式。舊的 **EV3 工具 → 監測 → 曲線與校正** 及其私有 recorder／store／IPC 已移除。若公開功能不可用或資料匯入仍待完成，請依其復原狀態處理，不會退回私有 Lab。最多選擇四個通道，來源包括本機輸入埠 1–4 的數值通道與 A–D 馬達角度。記錄期間固定通道及校正參數，並禁止切換感測器模式。
 
 每個通道各有一張圖與獨立 Y 軸，共用相對時間軸。即時顯示最近 60 秒，停止後顯示完整記錄。「放大圖表」提供可用鍵盤操作的時間滑桿。可切換「原始／校正後」數值，並在「已存記錄」使用「查看」與「比較」，將兩次實驗依開始時間對齊，以實線與虛線疊圖。只有相同來源定義及單位才疊圖；歷史數值始終使用該次保存的校正參數。
 
@@ -24,4 +24,4 @@
 
 `Sensor.ReadSIValue(port, index)` 不切換模式，讀取目前模式的 SI 浮點數。埠沿用 1–16 編碼，通道索引為 0–7；SI 指韌體提供的模式單位。不合法常數會產生編譯診斷；動態參數不合法、通道不存在、裝置未就緒、讀值無效或讀取期間型別／模式改變時回傳 `NaN`。實作依據 [LEGO Firmware Developer Kit 的輸入埠指令](https://assets.education.lego.com/v3/assets/blt293eea581807678a/blt469be1e11ad37696/5f880384f71916144453a49f/lego-mindstorms-ev3-firmware-developer-kit.pdf?locale=en-us)。
 
-本版不包含高速 PID 採樣、雲端同步、韌體校正或自動調參。維護者於 2026-10-12 的實機確認適用先前實作，不代表 Stage 3 遷移已通過硬體驗收。目前已有[公開流程 native 證據](../superpowers/evidence/2026-10-26-3d-public-lab/README.md)及 [Linux 安裝 payload 驗證](../superpowers/evidence/2026-10-26-3d-installed-linux/README.md)，使用模擬設備且各有明列界線。剩餘功能對照、最終舊路徑撤除及實機／平台驗收仍待完成，請依[實機驗收清單](../../tests/hardware/sensor-lab.md)逐項記錄。
+本版不包含高速 PID 採樣、雲端同步、韌體校正或自動調參。維護者於 2026-10-12 的實機確認適用先前實作，不代表 Stage 3 遷移已通過硬體驗收。目前已有[公開流程 native 證據](../superpowers/evidence/2026-10-26-3d-public-lab/README.md)及 [Linux 安裝 payload 驗證](../superpowers/evidence/2026-10-26-3d-installed-linux/README.md)，使用模擬設備且各有明列界線。後續[撤除紀錄](../superpowers/evidence/2026-10-30-3d-retirement/README.md)已記錄私有 runtime 路徑移除及移除後的 Lab payload／restart 觀察；其中未修改整個產品的案例操作馬達，Lab 案例則使用 acceptance host。最終完整產品 Lab、最大 v2 負載及交付平台驗收仍待完成。S3-14 實機與 S3-15 人工驗收均為 **NOT RUN／尚未執行**，請依[實機驗收清單](../../tests/hardware/sensor-lab.md)記錄。

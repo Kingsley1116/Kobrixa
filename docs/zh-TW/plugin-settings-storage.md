@@ -1,8 +1,8 @@
 # 插件設定與資料紀錄
 
-開發狀態：API 1.7 schema 與 SDK context 組裝已在開發分支實作。公開傳輸、原生操作與安裝版驗收仍須完成 **P170／R170／D170／V170／K170 及跨程序證據**；這不是版本驗收完成的宣告。
+開發狀態：目前 API 為 1.8.0；1.7 引入的 settings／storage、雙 SDK、實際 worker 與隨附 Lab／device mappings 均已實作。歷史 P170 handoff 不是最終驗收。[B2 帳本](../superpowers/plans/2026-10-17-plugin-system-3b2-acceptance.md)區分局部 receipts 與未完成的 negative／import／kill／interop／load／installed 矩陣，不宣稱版本驗收完成。
 
-基礎範例：[JavaScript](../../tests/desktop/fixtures/plugin-persistence/consumer.ts)、[Python](../../tests/desktop/fixtures/plugin-persistence/consumer.py)。已撰寫 settings read／CAS／衝突／重新讀取、watch 訂閱／取消、record 分塊／seal／commit／讀回、flush 與 drain。export／copy helper 只接受真正 SDK invocation context 中的新 actionRef，activation 與 reference cases 不會執行它們。watch invalidation／ACK／callback 與 export／copy routing 仍需保留實際公開流量證據；Python SKIP 不能通過 parity。產品 mapping 範例留待 3D／3E。
+基礎範例：[JavaScript](../../tests/desktop/fixtures/plugin-persistence/consumer.ts)、[Python](../../tests/desktop/fixtures/plugin-persistence/consumer.py)。已撰寫 settings read／CAS／衝突／重新讀取、watch 訂閱／取消、record 分塊／seal／commit／讀回、flush 與 drain。export／copy helper 只接受真正 SDK invocation context 中的新 actionRef，activation 與 reference cases 不會執行它們。watch invalidation／ACK／callback 與 export／copy routing 仍需保留實際公開流量證據；Python SKIP 不能通過 parity。產品 mapping 已實作於 `apps/desktop/src/main/plugins/persistence/sensor-lab-import.ts` 與 `device-settings-import.ts`；使用者原檔復原驗收仍為 NOT RUN。
 
 Plugin API 1.7.0 提供型別化設定、有上限的 records、明確使用者觸發的匯出／複製，以及協作式 drain。設定宣告使用 version 1 與封裝內的 JSON path。settings 與 record 的 schemaVersion 是資料版本，和 Plugin API、UI resource version 分開。
 
@@ -22,10 +22,12 @@ receipt 證明已提交的 head。unknown 表示必須對帳，不能解讀成 r
 
 同一 profile 只允許一個 primary instance。第二次啟動聚焦現有視窗後退出，不初始化另一個 writer。關閉 app 會協調 storage drain、device stop 與 fault journal；取消關閉不會復活舊 handles、motion 或錄製。Disconnect 先確認 stop／save 才斷線。suspend 會要求 final save，但 OS 可能先凍結 I/O；wake 不自動續錄。
 
-Legacy import 是 host allowlist 管理的一次性作業。原始檔保留不變；plan、逐項 receipt 與 complete marker 持久化，重啟沿用原先配置的目標 IDs。缺 renderer evidence 時維持 pending。完成後使用者刪掉新 record，不會再次匯入。此基礎階段只含 synthetic mapper；真正 Sensor Lab 對應在 3D、device preferences 對應在 3E 驗收。
+Legacy import 是 host allowlist 管理的一次性作業。原始檔保留不變；plan、逐項 receipt 與 complete marker 持久化，重啟沿用原先配置的目標 IDs。缺 renderer evidence 時維持 pending。完成後使用者刪掉新 record，不會再次匯入。真正 Lab 記錄／校正與九個 device preferences 已有產品 mapper 及局部 worker／restart 觀察，不能取代備份後的使用者原檔人工驗收。
 
-JavaScript method 使用 camelCase；Python method 使用 snake_case，但 params dict 的 wire keys 保留 camelCase。兩者保留相同 ok／value／error business envelope，transport／numeric protocol failure 才拋 RpcError。1.4、1.5、1.6 consumers 維持相容，不收到 persistence drain 或 settings events。UI v2 與 Plugin API 1.8 由 3D 發布。
+JavaScript method 使用 camelCase；Python method 使用 snake_case，但 params dict 的 wire keys 保留 camelCase。兩者保留相同 ok／value／error business envelope，transport／numeric protocol failure 才拋 RpcError。1.4、1.5、1.6 consumers 維持相容，不收到 persistence drain 或 settings events。UI resource v2 已在 API 1.8 實作；API、resource、套件發行版與應用資料版本分開計算。
 
 SDK 的選用 watch callback 接收本機通知：實際設定失效事件為 `{type:"event", event}`；遇到事件缺口或 resync 後，SDK 重新讀取的快照為 `{type:"snapshot", snapshot}`。JavaScript 使用 `settings.watch(params, signal?, listener?)`；Python 使用 `settings.watch(params, listener=None)`，字典形狀相同。初始快照仍由 watch 結果回傳；snapshot 通知不是合成的 wire event。同步或非同步 callback 都沿用共用有界事件佇列串行執行；解除訂閱或關閉通道後，遲到的讀取不會通知呼叫端。
 
 Callback 失敗會被隔離，後續排隊事件仍可繼續。重新讀取本身若失敗，該筆不會產生成功的 snapshot 通知，也不自動重試；本機狀態不確定時可明確呼叫 `settings.read`。Revision 是不透明 token，只能比較是否相同。
+
+原生 Save／clipboard、真實 disk-full 復原與完整第二次啟動觀察仍待驗收。Persistence 使用 worker thread，RSS 屬整個程序，並非獨立 worker RSS；原記憶體預算在明確 R2 amendment 前保持未驗證，不得將診斷數值改稱通過量測。Windows storage 持久性不代表獨立的[設備安全日誌保證](device-support.md#windows-stage-3-journal-policy)。S3-15 人工復原／無障礙驗收為 **NOT RUN／尚未執行**。

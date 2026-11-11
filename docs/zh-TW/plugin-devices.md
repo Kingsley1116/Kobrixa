@@ -16,7 +16,7 @@ SDK query／control 為 5 秒、read 為 15 秒、connection 為 65 秒。provid
 
 monitor、battery、recorder 共用同一 session sampler；完成一次 read 後等 500 ms，僅 battery demand 時等 30 秒。recording 保留一至四個固定 channels，source change 即結束。frames 可含明確 gap；subscription queue 與 recording ring 有界，不能假定離線期間無限保存。先檢查 subscribe 的 business result，再取得 subscription。JS subscription 有 `subscriptionId`、`snapshot`、`lastSequence`、`dispose()`；Python 使用 `subscription_id`、`snapshot`、`last_sequence`、`close()`。SDK 在驗證與有界 enqueue 後 ack，不等待任意 consumer callback。
 
-reservation 第一次 end 固定 final-read grant 與 deadline。provider loss、suspend、core Disconnect 不 retire 健康 consumer generation。使用者一次 Disconnect 先停止、保存，再斷線；失敗顯示 blocker。wake 不自動續作。新 settings/storage API 在 1.7 前 unavailable；legacy Lab 原有 close/update/save 保護持續有效。
+reservation 第一次 end 固定 final-read grant 與 deadline。provider loss、suspend、core Disconnect 不 retire 健康 consumer generation。使用者一次 Disconnect 先停止、保存，再斷線；失敗顯示 blocker。wake 不自動續作。新 settings/storage API 在 1.7 前 unavailable；遷移後的 Lab 使用真正 persistence participant 與 committed checkpoints。私有 recorder／store 已撤除；原檔 import 及 close/update/save 保護仍保留。
 
 remote-files confirmation 閒置 120 秒到期，只有明確使用者確認可續租，總 lifetime 最多 600 秒。native dialog 晚回覆不可執行舊 plan。取消或失權阻止後續 chunks／entries，但不能假裝已送寫入能 rollback。
 
@@ -35,3 +35,5 @@ JS 使用 `devices.connectionRecovery.read({})`，Python 使用 `devices.connect
 連線偏好透過插件設定與 revision CAS 保存。六個 main 偏好與三個 renderer 偏好一次共同匯入；匯入待處理或無法讀取時，不得以預設政策允許新 I/O。選擇傳輸方式會獨立於連線結果保存；關閉記住位址時，同一 revision 清除位址。renderer 的擷取提示不代表 authoritative 匯入已完成。
 
 以上是 Stage 3 開發中的契約。完整 native／installed 遷移與[硬體及介面清單](../../tests/hardware/device-ui.md)仍是分別驗收的門檻。
+
+Windows Stage 3 設備執行／復原驗收仍等待 native journal 持久性證明及封裝整合。R1 保留完整保證；production 在不支援的 directory barrier 回 `ENOTSUP`。馬達／程式受理可能在 dispatch 前失敗，可信 Stop 也可能在前置 journal commit 失敗；startup 失敗後的空 faults 清單不代表 profile 乾淨。見[平台政策](device-support.md#windows-stage-3-journal-policy)，B2 storage 政策不能豁免此要求。

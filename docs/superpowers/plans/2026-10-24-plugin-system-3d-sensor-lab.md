@@ -1,5 +1,15 @@
 # Stage 3D：Sensor Lab 實作計畫草案
 
+## Current disposition — 2026-11-11
+
+D2–D7 implementation includes API 1.8/UI v2, public Lab process, actual storage/import and generic renderer. **D8 runtime retirement is implemented**, not a remaining deletion task. Private Lab service/store/panel/controller and feature IPC/preload are absent; read-only originals, durable import barriers, independent pure oracles and the explicit retired-writer hook remain.
+
+The [2026-10-30 retirement record](../evidence/2026-10-30-3d-retirement/README.md) binds product `a77387d`, full-product Motor cases and packaged absence checks, unchanged Lab payload cases, and same-profile restart. Lab payload/restart uses an acceptance host with a fake provider, not unchanged full-product Lab UI. Thus post-removal evidence exists, while **D9b final rebuilt whole-product Lab/platform acceptance remains OPEN** (W19/W20). The old handoff's close-smoke missing-bridge observation is historical: current `tests/desktop/close-smoke-main.mjs` checks `.app-shell`/`window.kobrixa`; it is not a new native pass.
+
+Run `node tests/desktop/stage-3-closeout-run.mjs lab --run` for public restart and Python stdio. W15 maximum v2 load, W16 full storage pressure and W18 lifecycle/failure observations remain separate gates; inventory/build-only/general-smoke handoff cannot pass them. D10 documentation is reconciled here; H2–H6 and S3-14/S3-15 are **NOT RUN**. See the [S3 ledger](../specs/2026-10-17-plugin-system-stage-3-design.md#s3-current-ledger).
+
+## Original implementation plan / historical requirements
+
 日期：2026-10-24；工作分支 `feat/plugin-3d`；[設計](../specs/2026-10-24-plugin-system-3d-sensor-lab-design.md)。本計畫安排後續實作與驗收；每個關卡以實際版本及證據判定。
 
 ## 1. 基準、依賴與執行原則
@@ -166,3 +176,13 @@ CSV/chart/calibration/parser oracles and 10 explicit baseline assertions. Detail
 limitations and stopped hashes: `/private/tmp/d8-retirement-implementation.md`.
 No native/package build was run for this patch; controller final packaging/native and D9b
 remain required. This is not D9b, hardware, or Stage3 closure.
+
+#### Closeout work-package references
+
+These IDs name work scopes, not passing acceptance results.
+
+- **W15**: maximum v2 Lab/dataset load.
+- **W16**: adopt R2 and produce full load evidence.
+- **W18**: shipped-feature lifecycle and close/recovery failure cases.
+- **W19**: final rebuilt whole-product C/D/E acceptance.
+- **W20**: final regression and delivered-platform evidence.

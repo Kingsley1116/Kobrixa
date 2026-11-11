@@ -6,7 +6,7 @@
 
 **Tech Stack:** TypeScript strict/noUncheckedIndexedAccess/exactOptionalPropertyTypes; repository Node 24+, Electron 44, Zod 4, draft-2020-12 JSON Schema, Vitest, Python 3.10+, pnpm. No dependency installation in T0/T1/T2.
 
-**Binding specs:** `docs/superpowers/specs/2026-10-17-plugin-system-stage-3-design.md` and `docs/superpowers/specs/2026-10-17-plugin-system-3b2-settings-storage-design.md`; sibling ports come from the 3A and 3B-1 specs. `.superpowers/sdd/stage-3-plans/skeleton.md` controls task IDs, spelling, values, and ownership. All commands below are future implementation instructions, not a claim that they ran while drafting.
+**Binding specs:** `docs/superpowers/specs/2026-10-17-plugin-system-stage-3-design.md` and `docs/superpowers/specs/2026-10-17-plugin-system-3b2-settings-storage-design.md`; sibling ports come from the 3A and 3B-1 specs. The task assignments in this tracked plan controls task IDs, spelling, values, and ownership. All commands below are future implementation instructions, not a claim that they ran while drafting.
 
 ## Global Constraints
 

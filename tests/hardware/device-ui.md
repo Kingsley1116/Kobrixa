@@ -1,6 +1,6 @@
 # Stage 3 EV3 plugin UI acceptance / 插件設備介面驗收
 
-Status: **not executed / 尚未執行**. This checklist is not a passing receipt. Earlier EV3 hardware acceptance does not establish acceptance of the Stage 3 plugin migration. Synthetic provider, MessagePort and installed smoke results must be recorded separately.
+Status: **NOT RUN / 尚未執行** (S3-14–S3-15). This checklist is not a passing receipt. Earlier EV3 hardware acceptance does not establish acceptance of the Stage 3 plugin migration. Synthetic provider, MessagePort and installed smoke results must be recorded separately.
 
 ## Record the tested artifact / 記錄受測成品
 
@@ -40,3 +40,11 @@ Use a stationary, supported brick with unloaded motors and an accessible physica
 A failure records the exact step, expected/actual result and logs. Repeat after a fix against the new artifact identity. Do not infer Windows/macOS results from Linux, hardware results from fake providers, or accessibility results from unit tests.
 
 失敗須記錄確切步驟、預期與實際結果及日誌；修正後以新成品身分重驗。Linux、模擬 provider 或單元測試不得替代其他平台、實體硬體或無障礙驗收。
+
+## Final-candidate record / 最終成品紀錄
+
+H1–H6 and S3-13–S3-15 remain **NOT RUN / 尚未執行**. Use the final regression-tested artifact after its automated/platform gates; no final candidate is certified by this checklist. Record tester/date, full commit and dirty state, installer **and executable** SHA-256, OS/version/architecture, Electron/runtime, EV3 firmware, transport, sensor/motor/load, locale/theme, case, actual result and logs/screenshots/video. Repeat platform-specific USB/Wi-Fi cases on Windows x64, macOS arm64 and Linux x64; an untested platform remains open. Windows device execution/recovery first needs verified Windows journal durability and packaging, not a successful prototype alone.
+
+依 [Stage 3 H1–H6 procedures](../../docs/superpowers/specs/2026-10-17-plugin-system-stage-3-design.md#s3-human-checklist) 使用最終完成回歸測試的成品，逐筆記錄測試人／日期、完整 commit 與 dirty 狀態、安裝包及執行檔雜湊、OS／架構、runtime、韌體、硬體／負載、語系／主題、案例與原始結果。未測平台保持未執行；Windows 先完成 Windows journal 持久性及封裝證據。既有 stage-2 V01–V04 不變。
+
+Append each named result after execution; preserve earlier failures and identify the corrected artifact on rerun. Stop requested, host readback and physical stop are separate observations. Native fake-provider/AX output cannot sign physical stopping, screen-reader speech or clean-machine usability. Do not prefill PASS.

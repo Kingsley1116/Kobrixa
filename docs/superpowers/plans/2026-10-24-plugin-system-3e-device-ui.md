@@ -1,5 +1,15 @@
 # Stage 3E：EV3 設備 UI 實作計畫草案
 
+## Current disposition — 2026-11-11
+
+E2/E3 and core E5 composition are implemented: one optional source/provider, authoritative nine-preference import/readiness, renderer writer freeze and public-session adoption by core deployment/files/pending Run. E4 public UI is integrated. E0/P01–P12 now have explicit software assertions, but the [Stage 3 current ledger](../specs/2026-10-17-plugin-system-stage-3-design.md#s3-current-ledger) leaves full native parity and retirement clearance open. Metadata inventory or software fixtures do not pass every parity row.
+
+E6 has [historical installed leaf evidence](../evidence/2026-10-30-3e-installed/README.md): harness `674323d`, unchanged leaf `253ca20`, Linux arm64, actual public plugin/worker/generic renderer with a fake provider. This is an acceptance host, not unchanged full-product device UI or delivered Linux x64 proof. Run `node tests/desktop/stage-3-closeout-run.mjs device --run` for current public restart/Python evidence and W19 for final installed product evidence.
+
+**E7 remains OPEN:** W07a renderer retirement has been committed on this branch: the legacy device monitor and connection-settings UI is retired, the renderer routes to Plugin tools, and core battery status retains one host-backed path. W07b retirement of obsolete main IPC/preload/shared contracts is still in progress. This implementation status is not an executed native retirement receipt. Final W06 replacement proof and W08/W19/W20 retirement validation remain required. Core execution, remote files, battery/recovery, provider engine and original import barriers remain intentional. Motor/Lab private runtimes are already retired; do not reopen those deletions. E8 human H01–H14 and S3-13–S3-15 are **NOT RUN**. E9/final closeout waits for W19/W20 and H1–H6; see the [S3 ledger](../specs/2026-10-17-plugin-system-stage-3-design.md#s3-current-ledger). Earlier dated handoffs remain historical observations, not new native smoke receipts.
+
+## Original implementation plan / historical requirements
+
 日期：2026-10-24；`feat/plugin-3e`／`a31da12`；[設計](../specs/2026-10-24-plugin-system-3e-device-ui-design.md)。公開 UI 契約仍為草案；E0 舊行為基準已有部分執行結果，見文末 receipt。其餘任務尚未完成。
 
 ## 1. 依賴、owner 與封閉路徑規則
@@ -209,3 +219,15 @@ Checkpoint source/hash/review/test evidence for `dfae915` is archived under [`do
 ### E6 installed harness ownership amendment (2026-10-30)
 
 After public JS `4a9db5c` and Python `7d1773f` native receipts, the installed writer owns exactly two new files `tests/desktop/device-ui-installed-{run,test}.mjs`; existing `tests/desktop/sensor-lab-installed-{run,artifacts,test}.mjs` for bounded reusable runtime/isolation/index helpers; and `tests/desktop/device-ui-public-{main.ts,run.mjs,test.mjs}` for explicit installed scenario, supplied production leaf and non-instrumented PID observation. The existing renderer, Landlock helper, production launcher and packaging remain read-only. Preserve Lab default behavior and regressions; no duplicated product compiler/copier, copied feature controller or weakened isolation. Actual production leaf bytes must be unchanged. Controller executes native/Linux runs and records exact build/source/artifact identities. This expands only test ownership, not completion or product scope.
+
+#### Closeout work-package references
+
+These IDs name work scopes, not passing acceptance results.
+
+- **W06**: finish device replacement parity before removal.
+- **W07a**: retire the old device UI mount and renderer writers.
+- **W07b**: retire obsolete host bridges after caller inventory.
+- **W08**: complete D/E source, bundle and trace audit.
+- **W19**: final rebuilt whole-product C/D/E acceptance.
+- **W20**: final regression and delivered-platform evidence.
+- **W21**: reconcile documentation and final evidence ledger.

@@ -151,7 +151,7 @@ Python 的 stderr 與 JS／TS 的 stdout／stderr 會保存在主程序記憶體
 
 這些是**可信任的本機插件**。獨立程序提供當機隔離；manifest 權限僅限制透過 Kobrixa 的呼叫，**不是作業系統沙箱**。插件程式仍可直接存取檔案與網路。
 
-插件 API **1.4.0** 支援靜態語言、編譯前端／後端與 `contributes.diagnosticHelp`；符合 host range 的 1.3.x manifests 仍接受。`kobrixa.basic-plus` 提供語言 `bp`，獨立的內建插件 `kobrixa.ev3` 提供目標 `ev3-native`；兩者都宣告 IR `{ min: 1, max: 1 }`，安全模式下仍保留，並沿用第一階段的內建停用限制。有效的 API 1.0、1.1、1.2 插件仍相容，但外部插件宣告 `frontends` 或 `backends` 時，整個插件無效（`PLUGIN_E_FRONTEND_REQUIRES_BUILTIN`／`PLUGIN_E_BACKEND_REQUIRES_BUILTIN`）。本版沒有外部編譯 RPC。
+Stage 3 分支的插件 API **1.8.0** 保留 API 1.4 的靜態語言、編譯前端／後端與 `contributes.diagnosticHelp`；符合 host range 的 1.3.x manifests 仍接受。`kobrixa.basic-plus` 提供語言 `bp`，獨立的內建插件 `kobrixa.ev3` 提供目標 `ev3-native`；兩者都宣告 IR `{ min: 1, max: 1 }`，安全模式下仍保留，並沿用第一階段的必要 compiler 內建停用限制；Stage 3 的三個設備功能可獨立停用。有效的 API 1.0、1.1、1.2 插件仍相容，但外部插件宣告 `frontends` 或 `backends` 時，整個插件無效（`PLUGIN_E_FRONTEND_REQUIRES_BUILTIN`／`PLUGIN_E_BACKEND_REQUIRES_BUILTIN`）。本版沒有外部編譯 RPC。
 
 宿主為每個語言／目標解析唯一、有效且已啟用的提供者。衝突的提供者全部以 `PLUGIN_E_PROVIDER_CONFLICT` 失效，不依載入順序取首筆；重新檢查提供者集合時排除停用者，清除已消失的衝突。IR 版本選前後端範圍交集的最大值。找不到提供者或發生衝突時，在開 worker 前回 `BUILD1001`；IR 不相容回 `BUILD1002`。
 
@@ -161,9 +161,9 @@ Python 的 stderr 與 JS／TS 的 stdout／stderr 會保存在主程序記憶體
 
 main 依通過驗證的專案語言選取啟用中的 frontend 擁有者，backend 缺席或 IR 不相容不影響編輯器分析。以 `pluginId:language` 選取編譯期內建 worker factory 與 browser companion；每工作區保留獨立的分析／Quick Fix 和補全 worker。所有訊息及已接受結果都帶宿主發放的 binding epoch；提供者 generation、路由設定或任一 worker 重啟都讓兩條通道失效並要求完整同步，一般輸入只改文件 revision。
 
-worker 保留原生語意狀態，只發布通用符號、緊湊 tokens／occurrences、補全可見性群組與編輯結果；診斷來源由宿主加註。Basic Plus 的即時補全過濾、結構性編輯偵測與格式化留在 browser companion，通用 renderer／shared 不匯入 Basic Plus。缺少服務顯示語言狀態列，設定衝突顯示列出插件的工作區橫幅，兩者皆可前往插件設定。內建插件仍不可停用；靜態語言使用 strict v1 tokenizer／configuration JSON 與共用 protocol validator。Runtime 原子發布 revisioned catalog，由單一 renderer store／registrar 管理所有文件與 review models；builtin raw JSON 封裝於 main，不從 repository 讀取。Catalog revision 與 service epoch 分離。第三方交付前同步保存 static risk marker，保持 sticky 到正常結束；寫入失敗阻止該交付。純靜態插件不啟動程序或 handshake。作者格式、衝突解析、有界資源計量與復原見[靜態語言插件](plugin-static-languages.md)。沒有第三方語言服務 RPC。
+worker 保留原生語意狀態，只發布通用符號、緊湊 tokens／occurrences、補全可見性群組與編輯結果；診斷來源由宿主加註。Basic Plus 的即時補全過濾、結構性編輯偵測與格式化留在 browser companion，通用 renderer／shared 不匯入 Basic Plus。缺少服務顯示語言狀態列，設定衝突顯示列出插件的工作區橫幅，兩者皆可前往插件設定。內建 compiler 插件仍不可停用；靜態語言使用 strict v1 tokenizer／configuration JSON 與共用 protocol validator。Runtime 原子發布 revisioned catalog，由單一 renderer store／registrar 管理所有文件與 review models；builtin raw JSON 封裝於 main，不從 repository 讀取。Catalog revision 與 service epoch 分離。第三方交付前同步保存 static risk marker，保持 sticky 到正常結束；寫入失敗阻止該交付。純靜態插件不啟動程序或 handshake。作者格式、衝突解析、有界資源計量與復原見[靜態語言插件](plugin-static-languages.md)。沒有第三方語言服務 RPC。
 
-宿主負責加註 `Diagnostic.source`，診斷說明只在同一來源內查詢。`devices` API 仍規劃於第三階段。詳見[插件設計](../superpowers/specs/2026-10-14-plugin-system-design.md)。
+宿主負責加註 `Diagnostic.source`，診斷說明只在同一來源內查詢。Stage 3 分支已實作公開 `devices` API，見[設備插件](plugin-devices.md)。詳見[插件設計](../superpowers/specs/2026-10-14-plugin-system-design.md)。
 
 ### 語言服務驗收
 
@@ -345,4 +345,8 @@ API 1.8 開發分支整合內建 process UI、host 的設備仲裁，以及 type
 
 設備啟動先凍結原偏好 writer，再收集每個視窗不可變的擷取資料。main 受理原始共同匯入並提供已提交設定給 provider；原匯入未解決前，一般設定寫入仍受 gate 限制。開面板、重送 snapshot 或恢復 process 都不重播使用者指令。休眠必須接上原停止／保存 receipt，喚醒後才可受理新工作。
 
-實作與驗收分別記錄於[3E 計畫](../superpowers/plans/2026-10-24-plugin-system-3e-device-ui.md)。部分 legacy UI 仍等待 replacement 證據；此處不宣告 Stage 3 或 stage-2 人工驗收完成。
+實作與驗收分別記錄於[3E 計畫](../superpowers/plans/2026-10-24-plugin-system-3e-device-ui.md)。馬達與 Lab 的私有 service、功能 IPC 及 UI 路徑已移除；provider 引擎、原檔 importer 與獨立純模型 oracle 仍保留。設備連線／監測／設定 replacement 已整合。此分支已撤除舊設備監測與連線設定 renderer UI：renderer 現在導向插件工具，核心電池狀態保留一條由 host 支援的路徑。過時 main IPC、preload 與 shared contracts 的撤除仍在進行；最終撤除證據仍未完成。遠端檔案、simulator、協作 UI、editor、workspace、無關的舊設定頁與 updates 仍列於 [Stage 3 例外帳](../superpowers/specs/2026-10-17-plugin-system-stage-3-design.md#8-過渡例外帳)。
+
+三個 optional features 預設啟用，一般使用者不需開發者模式即可獨立切換。馬達隱藏／關閉／失焦要求停止；Lab 面板隱藏／關閉／最小化繼續錄製。單一可信 Disconnect 動作先等待 stop/readback、journal 及 save 才斷線；公開 API 跨 owner 斷線仍回 busy。suspend 結束錄製並要求 final save，但 OS 凍結可能只留下 committed checkpoint。wake、重連及重新啟用都不重播工作。第二次啟動聚焦／還原 primary，並在 optional 初始化前退出；安裝版仍須完整觀察 secondary 零副作用及 primary 錄製不中斷。
+
+僅 optional plugin crash 本身不設定全域 unclean-exit safe-mode lock；renderer 無回應或第三方／development 風險可觸發。cold suppression 在 optional process、provider、import 前生效，核心管理／復原仍可用。Windows 保留[日誌 fail-closed 政策](device-support.md#windows-stage-3-journal-policy)，B2 record-store 持久性不能豁免它。仍須取得綁定最終來源的 native／平台證據，以及 S3-13–S3-15 人工結果；這三列均為 **NOT RUN／尚未執行**。Stage-2 V01–V04 不變。

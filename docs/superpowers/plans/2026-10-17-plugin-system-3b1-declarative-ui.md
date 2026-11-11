@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript strict/noUncheckedIndexedAccess/exactOptionalPropertyTypes, Zod 4, draft-2020-12 JSON Schema, Node.js 24, Electron 44, React 19, Vitest, pnpm, Python 3.10+.
 
-**Spec:** `docs/superpowers/specs/2026-10-17-plugin-system-3b1-declarative-ui-design.md`, with umbrella `docs/superpowers/specs/2026-10-17-plugin-system-stage-3-design.md`. Binding assignment: `.superpowers/sdd/stage-3-plans/skeleton.md`, row P05. The skeleton task IDs supersede the coarser spec §15 numbering. P05 writes only this fragment; P06/P07/P08 supply the remaining tasks and P08 supplies the five front-matter Review Focus lines and final verification.
+**Spec:** `docs/superpowers/specs/2026-10-17-plugin-system-3b1-declarative-ui-design.md`, with umbrella `docs/superpowers/specs/2026-10-17-plugin-system-stage-3-design.md`. Binding assignment: The task assignments in this tracked plan, row P05. The skeleton task IDs supersede the coarser spec §15 numbering. P05 writes only this fragment; P06/P07/P08 supply the remaining tasks and P08 supplies the five front-matter Review Focus lines and final verification.
 
 ## Global Constraints
 

@@ -25,7 +25,7 @@ Attach observed results and limitations before marking any cell passed. 如有�
 
 ## Stage 3 public-plugin acceptance — UNRUN
 
-The earlier card-based checklist records legacy behavior. For Stage 3 use **Plugin tools → Motor test → Use current connection**, not the removed Monitor-card route. Product activation/removal is still pending integration. No row below has been performed or signed off.
+The earlier card-based checklist records legacy behavior. For Stage 3 use **Plugin tools → Motor test → Use current connection**, not the removed Monitor-card route. The public plugin is integrated and the private motor route is removed; final rebuilt product/platform acceptance remains open. No row below has been performed or signed off.
 
 Record tester/date, OS/architecture, app commit and installed artifact SHA-256, EV3 firmware, motor type/port, transport, requested motion, load, and raw logs/video. Record three separate timestamps/outcomes: stop requested; host readback/confirmation; physical motion observed stopped. A successful request does not fill the other two columns.
 
@@ -41,3 +41,11 @@ Record tester/date, OS/architecture, app commit and installed artifact SHA-256, 
 | Port drafts, invalid raw, close/reopen; new resource/process clears drafts               | UNRUN | UNRUN | —        |
 
 Clean-install/manual S3-15: test each delivered OS/architecture without checkout or user Node, offline launch, missing/corrupt payload, independent feature/provider toggles, safe-mode cold suppression and core recovery, both locales/themes, 320 CSS px at 125%, keyboard/focus and actual screen-reader speech. All remain **UNRUN**. Attach named observations before changing status; simulated provider and accessibility-tree output cannot sign these rows.
+
+## Final-candidate record / 最終成品紀錄
+
+H1–H6 and S3-13–S3-15 remain **NOT RUN / 尚未執行**. Use the final regression-tested artifact after its automated/platform gates; no final candidate is certified by this checklist. Record tester/date, full commit and dirty state, installer **and executable** SHA-256, OS/version/architecture, Electron/runtime, EV3 firmware, transport, sensor/motor/load, locale/theme, case, actual result and logs/screenshots/video. Repeat platform-specific USB/Wi-Fi cases on Windows x64, macOS arm64 and Linux x64; an untested platform remains open. Windows device execution/recovery first needs verified Windows journal durability and packaging, not a successful prototype alone.
+
+依 [Stage 3 H1–H6 procedures](../../docs/superpowers/specs/2026-10-17-plugin-system-stage-3-design.md#s3-human-checklist) 使用最終完成回歸測試的成品，逐筆記錄測試人／日期、完整 commit 與 dirty 狀態、安裝包及執行檔雜湊、OS／架構、runtime、韌體、硬體／負載、語系／主題、案例與原始結果。未測平台保持未執行；Windows 先完成 Windows journal 持久性及封裝證據。既有 stage-2 V01–V04 不變。
+
+Append each named result after execution; preserve earlier failures and identify the corrected artifact on rerun. Stop requested, host readback and physical stop are separate observations. Native fake-provider/AX output cannot sign physical stopping, screen-reader speech or clean-machine usability. Do not prefill PASS.
