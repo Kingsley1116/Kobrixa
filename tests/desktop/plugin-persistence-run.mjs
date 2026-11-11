@@ -4,6 +4,13 @@ import {
   interopOutputs,
 } from "./plugin-persistence-public-interop.ts";
 import {
+  PUBLICATION_KILL_POINTS,
+  assertPublicationPause,
+  assertPublicationReopen,
+  joinPublicationKill,
+  assertPublicationKillReport,
+} from "./plugin-persistence-kill.ts";
+import {
   PREFERENCE_CUTS,
   preferencePhases,
   assertPreferencePause,
@@ -56,6 +63,7 @@ import {
   verifyB2Aggregate,
   verifyFoundationReports,
   verifyRunReceipt,
+  verifyKills,
   diagnosticError,
 } from "./plugin-persistence-harness.mjs";
 import { rawResourcePlugin } from "./raw-resource-plugin.mjs";
@@ -414,6 +422,7 @@ export async function superviseCase(
   { timeoutMs = 60000, pollMs = 100, settleMs = 5000 } = {},
 ) {
   let expectedImportKill = false;
+  let expectedPublicationKill = false;
   let child,
     tracker,
     originalError,
@@ -487,6 +496,20 @@ export async function superviseCase(
       await observe();
       if (originalError) break;
       if (
+        config.case === "publication-kill" &&
+        config.publicationPhase === "kill" &&
+        !expectedPublicationKill
+      ) {
+        const paused = await io.readCandidate();
+        if (paused.entryFailure) throw new Error("Publication entry failed before boundary");
+        if (paused.candidate) {
+          assertPublicationPause(paused.candidate, config);
+          assert.equal(paused.candidate.pid, child.pid);
+          expectedPublicationKill = true;
+          await terminateOwned();
+        }
+      }
+      if (
         config.case === "import-restart" &&
         config.importPhase === "kill" &&
         !expectedImportKill
@@ -520,7 +543,7 @@ export async function superviseCase(
     updateExit();
     if (
       parentExit.observed &&
-      !(expectedImportKill && parentExit.signal === "SIGKILL") &&
+      !((expectedImportKill || expectedPublicationKill) && parentExit.signal === "SIGKILL") &&
       (parentExit.code !== 0 || parentExit.signal !== null)
     )
       throw new Error(`Electron exited ${parentExit.code} (${parentExit.signal ?? "no signal"})`);
@@ -556,12 +579,12 @@ export async function superviseCase(
   }
   if (cleanupErrors.length && !originalError)
     remember(new Error("Process cleanup/observation failed"));
-  if (!originalError && expectedImportKill) {
+  if (!originalError && (expectedImportKill || expectedPublicationKill)) {
     assert.equal(parentExit.signal, "SIGKILL");
     assert.equal(remaining.length, 0);
     return {
       ...candidate,
-      status: "killed-import",
+      status: expectedPublicationKill ? "killed-publication" : "killed-import",
       exitCode: parentExit.code,
       signal: parentExit.signal,
       exitedAt: parentExit.at,
@@ -601,9 +624,12 @@ export async function superviseCase(
         observedDescendants: tracker.observed().filter((row) => row.pid !== child.pid),
       };
       const verify =
-        config.case === "all-optional-off" && ["seed", "settings"].includes(config.optionalPhase)
-          ? assertOptionalPhaseReceipt
-          : verifyRunReceipt;
+        config.case === "publication-kill"
+          ? (receipt) => assertPublicationReopen(receipt, config)
+          : config.case === "all-optional-off" &&
+              ["seed", "settings"].includes(config.optionalPhase)
+            ? assertOptionalPhaseReceipt
+            : verifyRunReceipt;
       verify(
         receipt,
         Object.fromEntries(
@@ -670,6 +696,9 @@ async function launchCase(electron, entry, configFile, reportFile, config) {
           throw new Error("BLOCKED: Windows owned-process observer required");
         const env = { ...process.env };
         delete env.ELECTRON_RUN_AS_NODE;
+        delete env.PERSISTENCE_KILL_PROBE;
+        if (config.case === "publication-kill")
+          env.PERSISTENCE_KILL_PROBE = config.publicationProbe;
         if (config.case === "all-optional-off") {
           env.PERSISTENCE_OPTIONAL_MAPPER_LOG = config.mapperLog;
           env.PERSISTENCE_OPTIONAL_RUN_ID = config.runId;
@@ -761,6 +790,7 @@ export function selectFoundationCases({ referencesOnly = false, caseId } = {}) {
   if (
     [
       "negative-matrix",
+      "publication-kill",
       "registration-end",
       "contention",
       "suspend-wake",
@@ -1022,6 +1052,9 @@ export async function runFoundationEvidence({
   const selectedCases =
     selectInteropMode({ interop: interopMode, referencesOnly, caseId, importTrial }) ??
     selectFoundationCases({ referencesOnly, caseId });
+  // The shared RF1 oracle also requires an executed foundation receipt. Run
+  // the unchanged retirement reference on these same bundled bytes, never a fixture.
+  if (caseId === "publication-kill") selectedCases.push("retirement");
   const handoffs = await preflight();
   const renderer = await readFoundationRenderer(handoffs.rendererArtifact);
   const output = evidencePath;
@@ -1362,9 +1395,16 @@ parseOwner:raw=>{const p=persistenceOwnerSchema.safeParse(raw);return p.success?
 write:row=>appendFileSync(${JSON.stringify(pressure.workerTrace)},JSON.stringify(row)+'\\n')});
 runSyntheticPersistenceWorker(new Map([['test.synthetic-import',${JSON.stringify(syntheticRoot)}]]));
 `
-      : selectedCases.includes("all-optional-off")
-        ? `import {runOptionalOffWorker} from ${JSON.stringify(path.join(root, "tests/desktop/fixtures/plugin-persistence/optional-off-worker.ts"))};\nrunOptionalOffWorker(new Map([['test.synthetic-import',${JSON.stringify(syntheticRoot)}]]));\n`
-        : `import {runSyntheticPersistenceWorker} from ${JSON.stringify(path.join(root, "tests/desktop/fixtures/plugin-persistence/kill-worker.mjs"))};\nrunSyntheticPersistenceWorker(new Map([['test.synthetic-import',${JSON.stringify(syntheticRoot)}]]));\n`,
+      : selectedCases.includes("publication-kill")
+        ? `import {installPublicationKillProbe} from ${JSON.stringify(path.join(root, "tests/desktop/plugin-persistence-kill.ts"))};
+import {runSyntheticPersistenceWorker} from ${JSON.stringify(path.join(root, "tests/desktop/fixtures/plugin-persistence/kill-worker.mjs"))};
+void (async()=>{
+await installPublicationKillProbe(process.env.PERSISTENCE_KILL_PROBE);
+runSyntheticPersistenceWorker(new Map([['test.synthetic-import',${JSON.stringify(syntheticRoot)}]]));
+})();\n`
+        : selectedCases.includes("all-optional-off")
+          ? `import {runOptionalOffWorker} from ${JSON.stringify(path.join(root, "tests/desktop/fixtures/plugin-persistence/optional-off-worker.ts"))};\nrunOptionalOffWorker(new Map([['test.synthetic-import',${JSON.stringify(syntheticRoot)}]]));\n`
+          : `import {runSyntheticPersistenceWorker} from ${JSON.stringify(path.join(root, "tests/desktop/fixtures/plugin-persistence/kill-worker.mjs"))};\nrunSyntheticPersistenceWorker(new Map([['test.synthetic-import',${JSON.stringify(syntheticRoot)}]]));\n`,
   );
   await bundle(workerSource, workerEntry);
   const source = path.join(directory, "entry.ts"),
@@ -1449,6 +1489,7 @@ app.exit(code);
   );
   await access(electron);
   const reports = [];
+  const kills = [];
   for (const id of selectedCases) {
     const profile = await mkdtemp(path.join(directory, `${id}-`)),
       report = path.join(directory, `${id}.candidate.json`),
@@ -1475,6 +1516,42 @@ app.exit(code);
       preload: handoffs.preload,
       filesystem: handoffs.filesystem,
     };
+    if (id === "publication-kill") {
+      for (const point of PUBLICATION_KILL_POINTS) {
+        const trialProfile = await mkdtemp(path.join(directory, `publication-${point}-`));
+        const profileId = randomUUID();
+        let killed, killedReceipt;
+        for (const phase of ["kill", "reopen"]) {
+          const phaseConfig = {
+            ...config,
+            profile: trialProfile,
+            profileId,
+            runId: randomUUID(),
+            publicationPoint: point,
+            publicationPhase: phase,
+            publicationProbe: path.join(directory, `publication-${point}-${phase}.probe.json`),
+            report: path.join(directory, `publication-${point}-${phase}.candidate.json`),
+            ...(killedReceipt ? { killedReceipt } : {}),
+          };
+          const phaseFile = path.join(directory, `publication-${point}-${phase}.json`);
+          await writeFile(phaseFile, JSON.stringify(phaseConfig), { flag: "wx" });
+          const receipt = await launchCase(
+            electron,
+            entry,
+            phaseFile,
+            phaseConfig.report,
+            phaseConfig,
+          );
+          const retained = path.join(directory, `publication-${point}-${phase}.receipt.json`);
+          await writeFile(retained, JSON.stringify(receipt, null, 2), { flag: "wx" });
+          if (phase === "kill") {
+            killed = receipt;
+            killedReceipt = retained;
+          } else kills.push(joinPublicationKill(killed, receipt));
+        }
+      }
+      continue;
+    }
     if (id === "negative-matrix") {
       for (const negativePhase of ["exercise", "reopen"]) {
         const phaseConfig = {
@@ -1805,6 +1882,27 @@ app.exit(code);
       pending: p.pending,
       unavailableMemory: p.unavailableMemory,
     };
+    await writeFile(output, JSON.stringify(result, null, 2), { flag: "wx" });
+    return result;
+  }
+  if (caseId === "publication-kill") {
+    assert.equal(reports.length, 1);
+    const result = {
+      format: 1,
+      level: "real-process",
+      status: "scoped-publication-kill",
+      execution: reports[0],
+      kills,
+      sourceIdentity,
+      sourceHashes,
+      artifact: entry,
+      artifactSha256,
+      bundleSha256,
+      renderer,
+      fullStage3Pass: false,
+    };
+    verifyKills(result);
+    assertPublicationKillReport(result);
     await writeFile(output, JSON.stringify(result, null, 2), { flag: "wx" });
     return result;
   }

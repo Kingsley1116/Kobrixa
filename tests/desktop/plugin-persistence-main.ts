@@ -1,4 +1,5 @@
 import { storageTree } from "./plugin-persistence-negative-storage.js";
+import { producePublicationKill } from "./plugin-persistence-kill.js";
 import {
   publicInteropObserver,
   producePublicInterop,
@@ -74,12 +75,14 @@ export type FoundationCase =
   | "storage-ui-pressure"
   | "compatibility"
   | "negative-matrix"
+  | "publication-kill"
   | "public-interop"
   | "installed";
 
 import type { ContentionObservation, ContentionForm } from "./plugin-persistence-contention.js";
 
 export type CaseEvidence = {
+  publicationKill?: Wire;
   publicInterop?: CompatibilityWire;
   negative?: PublicNegativeEvidence;
   pressure?: PressureRow;
@@ -1020,6 +1023,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
       "import-restart",
       "storage-ui-pressure",
       "public-interop",
+      "publication-kill",
     ].includes(config.case)
   )
     throw new Error(
@@ -1592,6 +1596,61 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         const admittedProvider = provider!,
           providerControl = fake!;
         assert.ok(fault, "Missing actual worker control");
+        if (config.case === "publication-kill") {
+          assert.equal(handles.recovery, "ready");
+          let closed: Promise<void> | undefined;
+          fixture = {
+            composition: {
+              profile: handles.profile,
+              journalProfile,
+              persistenceProfile: handles.persistenceProfile,
+              host: handles.host,
+              stage3: live.stage3,
+              get workerCount() {
+                return persistenceWorkerCount(handles.backend);
+              },
+              get reservationListenerCount() {
+                return listeners;
+              },
+            },
+            environment: {
+              commit: config.commit,
+              artifact: config.artifact,
+              artifactSha256: config.artifactSha256,
+              os: os.release(),
+              architecture: process.arch,
+              cpu: os.cpus()[0]?.model ?? "unknown",
+              ramBytes: os.totalmem(),
+              filesystem: config.filesystem,
+              node: process.versions.node,
+              electron: process.versions.electron ?? "",
+              memoryMethod: "not-measured-publication-kill",
+              warmCold: "cold",
+            },
+            async runCase(id) {
+              assert.equal(id, "publication-kill");
+              return producePublicationKill({
+                config,
+                backend: handles.backend,
+                fault: fault!,
+                hostEpoch: handles.profile.hostEpoch,
+                core: () => handles.host.recovery.snapshot(),
+              });
+            },
+            close() {
+              return (closed ??= (async () => {
+                await live.dispose();
+                restoreReservation();
+                assert.equal(persistenceWorkerCount(handles.backend), 0);
+                assert.equal(listeners, 0);
+                assert.deepEqual(failures, []);
+                win.destroy();
+              })());
+            },
+          };
+          assertRealComposition(fixture);
+          return;
+        }
         if (imported) {
           assert.equal(handles.recovery, "ready");
           assert.equal(live.stage3.persistence, handles.host.participant);
@@ -2601,7 +2660,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           assert.equal(input.host.recovery.snapshot().items.length, 0);
         };
         const producers: Record<
-          Exclude<FoundationCase, "public-interop" | "negative-matrix">,
+          Exclude<FoundationCase, "public-interop" | "negative-matrix" | "publication-kill">,
           () => Promise<CaseEvidence>
         > = {
           retirement: () => produceRetirement(input),
@@ -3022,9 +3081,13 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             try {
               assert.notEqual(id, "public-interop");
               assert.notEqual(id, "negative-matrix");
+              assert.notEqual(id, "publication-kill");
               evidence =
                 await producers[
-                  id as Exclude<FoundationCase, "public-interop" | "negative-matrix">
+                  id as Exclude<
+                    FoundationCase,
+                    "public-interop" | "negative-matrix" | "publication-kill"
+                  >
                 ]();
             } catch (error) {
               if (
