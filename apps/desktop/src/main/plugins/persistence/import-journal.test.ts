@@ -459,6 +459,8 @@ describe("T6 import-journal.test.ts: transitions", () => {
     expect(await finishImport(typedImports, owner, plan)).toBe(true);
     expect((await typedImports.load(owner, id))?.items[0]?.skipReason).toBe("trusted-user-skip");
   });
+  // Each case persists and verifies nearly 2 MiB through the real engine; hosted
+  // runners take 6–8 s. Keep the namespace limit and byte-for-byte assertions intact.
   it.each(["plan", "attempt", "receipt"] as const)(
     "T6 fix round1 namespace budget includes %s growth",
     async (phase) => {
@@ -527,6 +529,7 @@ describe("T6 import-journal.test.ts: transitions", () => {
         Uint8Array.from(padding),
       );
     },
+    30000,
   );
 });
 function recordRevision(ticket: PublicationTicket): string {

@@ -419,7 +419,10 @@ describe("PluginSupervisor", () => {
       expect(await command).toMatchObject({ code: "PLUGIN_E_DISABLED" });
       if (process.platform !== "win32") expect(initialized).toBe(true);
       expect(states).toEqual(["starting", "stopping", "idle"]);
-      expect(sent).toEqual(["initialize"]);
+      // Windows terminates the child before its delayed initialize reply; cancelling
+      // that pending request is valid. No command may be sent on either platform.
+      expect(sent.filter((method) => method !== "$/cancelRequest")).toEqual(["initialize"]);
+      expect(sent.filter((method) => method === "$/cancelRequest").length).toBeLessThanOrEqual(1);
       expect(supervisor.state).toBe("idle");
     } finally {
       supervisor.forceKill();

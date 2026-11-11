@@ -465,7 +465,13 @@ async function foundationIpc(legacyMetadata = false) {
   });
   const profile = { hostEpoch: id(1), assertHeld: vi.fn() },
     now = () => performance.now() + elapsed;
-  const fs = createJournalFilesystem(root),
+  // These are IPC ordering/fault-injection tests. Windows has no native journal
+  // directory barrier, so model only that barrier while retaining real file I/O.
+  // journal-filesystem.test.ts separately verifies production fails closed there.
+  const fs = createJournalFilesystem(
+      root,
+      process.platform === "win32" ? async () => {} : undefined,
+    ),
     journal = createJournal(fs, profile);
   const ledger = createCoreActionLedger({
     now,

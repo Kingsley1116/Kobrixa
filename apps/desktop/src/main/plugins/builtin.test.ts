@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
 import { pluginManifestSchema } from "@kobrixa/plugin-protocol";
 import { BASIC_PLUS_KEYWORDS, BASIC_PLUS_INDENTATION_RULES } from "@kobrixa/basic-plus/language";
@@ -1090,7 +1091,7 @@ async function motorPayload(packaged: boolean) {
   // This unit executable is never launched. Release packaging tests build the real entry.
   await writeFile(path.join(leaf, "main.cjs"), "'use strict';\n");
   await emitResourceIndex(
-    new URL("plugins/motor-test", repository).pathname,
+    fileURLToPath(new URL("plugins/motor-test", repository)),
     leaf,
     "kobrixa.motor-test",
   );
@@ -1098,7 +1099,7 @@ async function motorPayload(packaged: boolean) {
   await mkdir(deviceLeaf, { recursive: true });
   await writeFile(path.join(deviceLeaf, "main.cjs"), "'use strict';\n");
   await emitResourceIndex(
-    new URL("plugins/device-ev3", repository).pathname,
+    fileURLToPath(new URL("plugins/device-ev3", repository)),
     deviceLeaf,
     "kobrixa.device-ev3",
   );
@@ -1261,7 +1262,7 @@ it.each(["missing", "tampered"])(
         await mkdir(h.leaf, { recursive: true });
         await writeFile(path.join(h.leaf, "main.cjs"), "'use strict';\n");
         await emitResourceIndex(
-          new URL("plugins/motor-test", repository).pathname,
+          fileURLToPath(new URL("plugins/motor-test", repository)),
           h.leaf,
           "kobrixa.motor-test",
         );
@@ -1353,7 +1354,7 @@ it.each([false, true])(
       await mkdir(leaf, { recursive: true });
       await writeFile(path.join(leaf, "main.cjs"), "'use strict';\n");
       await emitResourceIndex(
-        new URL("plugins/sensor-lab", repository).pathname,
+        fileURLToPath(new URL("plugins/sensor-lab", repository)),
         leaf,
         "kobrixa.sensor-lab",
       );

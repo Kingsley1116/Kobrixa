@@ -164,6 +164,7 @@ async function fixture(existing?: string, authorityEnabled = true) {
     },
   };
 }
+// Real worker migration and namespace reopening exceed 5 s under concurrent disk load.
 it("publishes one null-target nine-field receipt from both originals, and completion survives a fresh worker", async () => {
   const f = await fixture();
   const original = Buffer.from('{ "usbRetryLimit": 5, "wifiConnectTimeout": 30000 }');
@@ -208,7 +209,7 @@ it("publishes one null-target nine-field receipt from both originals, and comple
   await writeFile(path.join(f.userData, "device-settings.json"), "corrupt after completion");
   expect((await next.run()).state).toBe("complete");
   expect(await next.backend.reads.settings(next.owner)).toEqual(settings);
-});
+}, 30000);
 it("requires both settled writers before issuing the snapshot challenge; disabled run reads nothing", async () => {
   const f = await fixture();
   let release!: () => void;
@@ -254,14 +255,18 @@ it("symlink and permission failures are not absent", async () => {
   await symlink(outside, file);
   await f.capture();
   expect((await f.run()).state).toBe("blocked");
-  await unlink(file);
-  await writeFile(file, "{}");
-  await chmod(file, 0);
-  try {
-    await expect(readFile(file)).rejects.toMatchObject({ code: "EACCES" });
-    expect((await f.run()).state).toBe("blocked");
-  } finally {
-    await chmod(file, 0o600);
+  // Windows chmod does not enforce POSIX read permissions; symlink rejection above
+  // remains covered on every platform.
+  if (process.platform !== "win32") {
+    await unlink(file);
+    await writeFile(file, "{}");
+    await chmod(file, 0);
+    try {
+      await expect(readFile(file)).rejects.toMatchObject({ code: "EACCES" });
+      expect((await f.run()).state).toBe("blocked");
+    } finally {
+      await chmod(file, 0o600);
+    }
   }
   expect(await f.saved()).toBeNull();
 });

@@ -229,7 +229,8 @@ print(json.dumps(rows))
     ],
     {
       cwd: root,
-      env: { ...process.env, PYTHONPATH: `${root}/sdks/python` },
+      // The pipe contains UTF-8 JSON; Windows Python otherwise uses its ANSI code page.
+      env: { ...process.env, PYTHONPATH: `${root}/sdks/python`, PYTHONIOENCODING: "utf-8" },
       input: JSON.stringify(records),
       encoding: "utf8",
     },

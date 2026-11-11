@@ -1002,6 +1002,7 @@ describe("T6 import-coordinator.test.ts: nonce", () => {
       }),
     ).rejects.toThrow("stale");
   });
+  // Multiple durable captures and two reopen cycles exceed 5 s on Windows CI.
   it("rejects multiple captured candidates but an unfinished plan pins its exact evidence", async () => {
     let f = await fixture(syntheticPreferencesImportDescriptor);
     const root = f.directory,
@@ -1064,7 +1065,7 @@ describe("T6 import-coordinator.test.ts: nonce", () => {
     const reopened = await fixture(syntheticPreferencesImportDescriptor, g.directory);
     expect((await reopened.coordinator.run(reopened.descriptor, signal())).state).toBe("blocked");
     expect(reopened.counts.map).toBe(0);
-  });
+  }, 30000);
 });
 import { publishImportDocument } from "./import-journal.js";
 

@@ -190,6 +190,7 @@ async function fixture(existing?: string) {
     },
   };
 }
+// Real worker migration and namespace reopening exceed 5 s under concurrent disk load.
 it("policy uses the committed namespace with no process or window and fences disable/replacement immediately", async () => {
   const f = await fixture();
   expect(() => f.host.connectionPolicy()).toThrow();
@@ -211,7 +212,7 @@ it("policy uses the committed namespace with no process or window and fences dis
   expect(f.host.connectionPolicy().usbAutoReconnect).toBe(true);
   f.host.dispose();
   expect(() => f.host.skipUnchangedAssets()).toThrow("Disposed");
-});
+}, 30000);
 it("actual CAS invalidates cached host policy until its committed refresh completes", async () => {
   const f = await fixture();
   await f.capture();
@@ -343,13 +344,19 @@ it("keeps the original shared publication alive when a read observer aborts", as
   const wait = new Promise<void>((r) => {
     release = r;
   });
+  let entered!: () => void;
+  const reading = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
   const original = f.resource.getMockImplementation()!;
   f.resource.mockImplementation(async (request) => {
+    entered();
     await wait;
     return original(request);
   });
   const capture = f.capture();
-  await vi.waitFor(() => expect(f.resource).toHaveBeenCalled());
+  // Wait for the actual worker-backed read, not vi.waitFor's 1 s polling budget.
+  await reading;
   const control = new AbortController();
   const cancelled = f.gate.prepare(control.signal);
   control.abort(new Error("observer cancelled"));
@@ -364,14 +371,20 @@ it("does not publish using a resource whose namespace changed during its async r
   const wait = new Promise<void>((r) => {
     release = r;
   });
+  let entered!: () => void;
+  const reading = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
   const original = f.resource.getMockImplementation()!;
   f.resource.mockImplementation(async (request) => {
+    entered();
     const resource = await original(request);
     await wait;
     return resource;
   });
   const capture = f.capture();
-  await vi.waitFor(() => expect(f.resource).toHaveBeenCalled());
+  // Wait for the actual worker-backed read, not vi.waitFor's 1 s polling budget.
+  await reading;
   f.replace();
   release();
   await expect(capture).rejects.toThrow();

@@ -194,6 +194,10 @@ export class NodePersistenceFs implements PersistenceFsPort {
     await fd.close();
   }
   async directorySync(name: string): Promise<void> {
+    this.profile.assertHeld();
+    // Apply the initialized adapter policy even to direct internal callers. Receipts
+    // retain file-sync-only; actual sync failures on supported platforms still throw.
+    if (this.durability === "file-sync-only") return;
     const fd = await open(name, constants.O_RDONLY);
     try {
       this.profile.assertHeld();

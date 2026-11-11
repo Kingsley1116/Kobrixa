@@ -549,8 +549,8 @@ it("unknown association publication retains the original metadata ticket and blo
     env.fs.atomicReplace = async (from, to) => {
       if (
         fail &&
-        env.fs.name(to).includes("/imports/") &&
-        !env.fs.name(to).includes("/objects/") &&
+        env.fs.name(to).includes(`${path.sep}imports${path.sep}`) &&
+        !env.fs.name(to).includes(`${path.sep}objects${path.sep}`) &&
         env.fs.name(to).endsWith(".json")
       ) {
         writes++;
@@ -560,17 +560,21 @@ it("unknown association publication retains the original metadata ticket and blo
     };
     const originalBytes = env.fs.bytes.bind(env.fs);
     let deny = false;
-    env.fs.bytes = async (path, max) => {
-      if (deny && env.fs.name(path).includes("/imports/") && env.fs.name(path).endsWith(".json"))
+    env.fs.bytes = async (storePath, max) => {
+      if (
+        deny &&
+        env.fs.name(storePath).includes(`${path.sep}imports${path.sep}`) &&
+        env.fs.name(storePath).endsWith(".json")
+      )
         throw Object.assign(new Error("denied"), { code: "EACCES" });
-      return originalBytes(path, max);
+      return originalBytes(storePath, max);
     };
     // Make the post-dispatch head inspection unreadable; absence must never be inferred.
     env.fs.atomicReplace = async (from, to) => {
       if (
         fail &&
-        env.fs.name(to).includes("/imports/") &&
-        !env.fs.name(to).includes("/objects/") &&
+        env.fs.name(to).includes(`${path.sep}imports${path.sep}`) &&
+        !env.fs.name(to).includes(`${path.sep}objects${path.sep}`) &&
         env.fs.name(to).endsWith(".json")
       ) {
         writes++;
@@ -767,12 +771,15 @@ it.each(["permission", "corrupt"] as const)(
     try {
       const p = await planned(env),
         bytes = env.fs.bytes.bind(env.fs);
-      env.fs.bytes = async (path, max) => {
-        if (env.fs.name(path).includes("/imports/") && !env.fs.name(path).includes("/objects/")) {
+      env.fs.bytes = async (storePath, max) => {
+        if (
+          env.fs.name(storePath).includes(`${path.sep}imports${path.sep}`) &&
+          !env.fs.name(storePath).includes(`${path.sep}objects${path.sep}`)
+        ) {
           if (kind === "permission") throw Object.assign(new Error("denied"), { code: "EACCES" });
           return Buffer.from("{}");
         }
-        return bytes(path, max);
+        return bytes(storePath, max);
       };
       expect(await env.store.reconcileImport(p.original)).toEqual({ disposition: "unknown" });
       await expect(env.store.admitImport(owner, p.id, "one")).rejects.toThrow();
@@ -1547,8 +1554,12 @@ for (const mode of [
   "dir-EIO",
   "unsupported-policy",
 ] as const) {
-  it(`B2 adapter evidence: ${mode} preserves exact head, quota and fresh-epoch readback`, async () => {
-    const env = await setup(undefined, mode !== "unsupported-policy");
+  // Native directory-fsync failure injection requires a POSIX directory barrier.
+  // Windows still exercises every file fault and the explicit file-sync-only policy.
+  const directorySyncSupported = mode !== "unsupported-policy" && process.platform !== "win32";
+  const test = it.skipIf(process.platform === "win32" && mode.startsWith("dir-"));
+  test(`B2 adapter evidence: ${mode} preserves exact head, quota and fresh-epoch readback`, async () => {
+    const env = await setup(undefined, directorySyncSupported);
     const trace: Array<Record<string, unknown>> = [];
     const proof: Record<string, unknown> = {
       mode,
@@ -1643,7 +1654,7 @@ for (const mode of [
         expect(failure).toBeUndefined();
         expect(result?.disposition).toBe("committed");
         expect(result?.receipt?.durability).toBe(
-          mode === "unsupported-policy" ? "file-sync-only" : "file-and-directory-sync",
+          directorySyncSupported ? "file-and-directory-sync" : "file-sync-only",
         );
         if (mode === "short")
           expect(trace.filter((row) => row.operation === "write-short").length).toBeGreaterThan(1);
@@ -1681,7 +1692,7 @@ for (const mode of [
       const reopenedFs = await createNodePersistenceFs(
         env.root,
         { hostEpoch: freshOwner.hostEpoch, assertHeld() {} },
-        { now: () => 0, directorySyncSupported: mode !== "unsupported-policy" },
+        { now: () => 0, directorySyncSupported },
       );
       fresh = new AtomicStore(reopenedFs);
       await fresh.initialize();

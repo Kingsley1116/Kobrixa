@@ -52,16 +52,16 @@ async function launch(userData: string) {
   };
 }
 it("derives fixed source paths only from the profile store", () => {
-  const roots = shippedLegacySourceRoots("/profile/plugins/persistence-v1");
+  const roots = shippedLegacySourceRoots(path.resolve("/profile/plugins/persistence-v1"));
   expect([...roots.values()]).toEqual([
-    "/profile/sensor-lab/recordings",
-    "/profile/sensor-lab/calibrations",
-    "/profile",
+    path.resolve("/profile/sensor-lab/recordings"),
+    path.resolve("/profile/sensor-lab/calibrations"),
+    path.resolve("/profile"),
   ]);
   for (const root of [
     "relative/plugins/persistence-v1",
-    "/profile/other/persistence-v1",
-    "/profile/plugins/../plugins/persistence-v1",
+    path.resolve("/profile/other/persistence-v1"),
+    `${path.resolve("/profile/plugins")}${path.sep}..${path.sep}plugins${path.sep}persistence-v1`,
   ])
     expect(() => shippedLegacySourceRoots(root)).toThrow("invalid-store-root");
 });
@@ -119,6 +119,7 @@ it("shipped worker imports true legacy envelopes and treats an absent new-instal
   }
 });
 
+// Multiple real worker publications/retries exceed 5 s on Windows CI.
 it("gates activation on both durable imports and never registers or maps a disabled source", async () => {
   const profile = path.join(directory, randomUUID()),
     base = path.join(profile, "sensor-lab");
@@ -188,7 +189,8 @@ it("gates activation on both durable imports and never registers or maps a disab
   } finally {
     await launched.backend.dispose();
   }
-});
+}, 30000);
+// Multiple real worker publications/retries exceed 5 s on Windows CI.
 it("does not pass a half-completed migration when the other source is malformed", async () => {
   const profile = path.join(directory, randomUUID()),
     base = path.join(profile, "sensor-lab");
@@ -224,8 +226,9 @@ it("does not pass a half-completed migration when the other source is malformed"
   } finally {
     await launched.backend.dispose();
   }
-});
+}, 30000);
 
+// Multiple real worker publications/retries exceed 5 s on Windows CI.
 it("reconciles original retained maps across retries without exhausting worker slots", async () => {
   const profile = path.join(directory, randomUUID()),
     base = path.join(profile, "sensor-lab", "recordings");
@@ -301,7 +304,7 @@ it("reconciles original retained maps across retries without exhausting worker s
   } finally {
     await backend.dispose();
   }
-});
+}, 30000);
 it("first caller cancellation does not fail a live coalesced caller", async () => {
   const launched = await launch(path.join(directory, randomUUID()));
   let release!: () => void;
@@ -360,6 +363,7 @@ it("first caller cancellation does not fail a live coalesced caller", async () =
     await launched.backend.dispose();
   }
 });
+// Multiple real worker publications/retries exceed 5 s on Windows CI.
 it("disabled and replaced owners cannot resume source reads after a pending writer settles", async () => {
   for (const mode of ["disable", "generation", "processEpoch"] as const) {
     const launched = await launch(path.join(directory, randomUUID()));
@@ -416,7 +420,7 @@ it("disabled and replaced owners cannot resume source reads after a pending writ
       await launched.backend.dispose();
     }
   }
-});
+}, 30000);
 
 it("owner transitions reconcile retained original tickets but publish only under the new owner", async () => {
   const profile = path.join(directory, randomUUID()),

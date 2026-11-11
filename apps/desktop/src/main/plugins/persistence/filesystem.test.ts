@@ -78,6 +78,10 @@ it("directory-sync policy distinguishes explicit unsupported from EIO", async ()
   expect(fs.durability).toBe(
     process.platform === "win32" ? "file-sync-only" : "file-and-directory-sync",
   );
+  const unsupported = new NodePersistenceFs(fs.root, profile, { directorySyncSupported: false });
+  // Even direct internal calls obey the initialized file-sync-only policy.
+  await expect(unsupported.directorySync(fs.root)).resolves.toBeUndefined();
+  expect(unsupported.durability).toBe("file-sync-only");
   fs.directorySync = async () => {
     throw Object.assign(new Error("disk"), { code: "EIO" });
   };

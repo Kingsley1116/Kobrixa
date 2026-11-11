@@ -22,7 +22,24 @@ export async function writeAll(
     offset += count;
   }
 }
-export function createJournalFilesystem(userData: string): JournalFilesystem {
+// Unlike plugin persistence, the safety journal cannot report file-sync-only success.
+// Node has no Windows directory flush barrier; fail closed until a verified native
+// durable replacement adapter is available. Never classify POSIX EIO/EPERM as unsupported.
+async function syncJournalDirectory(target: string): Promise<void> {
+  if (process.platform === "win32")
+    throw Object.assign(new Error("journal directory sync unsupported"), { code: "ENOTSUP" });
+  const fd = await open(target, constants.O_RDONLY);
+  try {
+    await fd.sync();
+  } finally {
+    await fd.close();
+  }
+}
+export function createJournalFilesystem(
+  userData: string,
+  // Host-only barrier injection for adapter tests; production uses the policy above.
+  directoryBarrier: (target: string) => Promise<void> = syncJournalDirectory,
+): JournalFilesystem {
   const root = path.resolve(userData, "device-broker");
   let initialized = false;
   const safe = (name: string): string => {
@@ -47,14 +64,7 @@ export function createJournalFilesystem(userData: string): JournalFilesystem {
       throw error;
     }
   };
-  const syncDirectory = async (target = root): Promise<void> => {
-    const fd = await open(target, constants.O_RDONLY);
-    try {
-      await fd.sync();
-    } finally {
-      await fd.close();
-    }
-  };
+  const syncDirectory = (target = root): Promise<void> => directoryBarrier(target);
   return {
     async initialize() {
       await mkdir(root, { recursive: true, mode: 0o700 });

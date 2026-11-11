@@ -102,11 +102,11 @@ it("uses isolated leaf cleanup, CJS, inline dynamic imports and no workspace ext
   const config = builtinPluginConfig({
     slug: "motor-test",
     pluginId: "kobrixa.motor-test",
-    sourceRoot: "/trusted/source",
-    buildRoot: "/trusted/build",
+    sourceRoot: path.resolve("/trusted/source"),
+    buildRoot: path.resolve("/trusted/build"),
   });
   expect(config.build).toMatchObject({
-    outDir: "/trusted/build/plugins/motor-test",
+    outDir: path.resolve("/trusted/build/plugins/motor-test"),
     emptyOutDir: true,
     sourcemap: true,
     rollupOptions: {
@@ -124,7 +124,7 @@ it("uses isolated leaf cleanup, CJS, inline dynamic imports and no workspace ext
   expect(external("crypto", undefined, false)).toBe(true);
   expect(external("@kobrixa/plugin-sdk", undefined, false)).toBe(false);
   expect(external("zod", undefined, false)).toBe(false);
-  expect(config.build?.outDir).not.toBe("/trusted/build");
+  expect(config.build?.outDir).not.toBe(path.resolve("/trusted/build"));
 });
 
 it("uses the CLI outDir for bundle, manifest, index and resources", async () => {
