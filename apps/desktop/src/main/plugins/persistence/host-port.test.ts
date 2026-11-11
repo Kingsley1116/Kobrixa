@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { expect, it, vi, onTestFinished } from "vitest";
 import type { DrainRequest, StorageRequestMap } from "@kobrixa/plugin-protocol";
 import { createPersistenceHost } from "./host-port.js";
+import { settingsRequests } from "./settings-service.js";
 import { bindPersistenceRoutes170 } from "../controller.js";
 import type { PersistenceBackend, PublicationTicket, StoredRecovery } from "./engine-port.js";
 import type { CommonEventLedgerPort } from "@kobrixa/plugin-runtime";
@@ -128,6 +129,83 @@ function fixture() {
   };
   return { input, backend, off };
 }
+it.each(["disable", "close", "update"] as const)(
+  "joins an admitted settings publication before reconciliation during %s",
+  async (reason) => {
+    const f = fixture();
+    f.input.now = () => 125.75;
+    const resolved = {
+      owner: { sourceKey: owner.sourceKey, pluginId: owner.pluginId, uiResourceGeneration: 1 },
+      resource: {
+        schemaVersion: 1,
+        title: { en: "Settings" },
+        fields: [
+          { key: "enabled", type: "boolean" as const, label: { en: "Enabled" }, default: true },
+        ],
+      },
+      validationDigest: "a".repeat(64),
+    };
+    f.input.composition.sources.settings = async () => resolved;
+    f.backend.reads.settings = async () => null;
+    let entered!: () => void, release!: () => void;
+    const reached = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const paused = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const receipt = {
+      commitId: "",
+      revision: `r_${"1".repeat(32)}`,
+      durability: "file-and-directory-sync" as const,
+    };
+    let published = false;
+    f.backend.engine.publish = async (ticket) => {
+      expect(ticket.deadlineMonotonicMs).toBe(10125.75);
+      receipt.commitId = ticket.id;
+      entered();
+      await paused;
+      published = true;
+      return { disposition: "committed", receipt };
+    };
+    const reconcile = vi.fn<PersistenceBackend["engine"]["reconcile"]>(async () =>
+      published ? { disposition: "committed", receipt } : { disposition: "not-committed" },
+    );
+    f.backend.engine.reconcile = reconcile;
+    const host = await createPersistenceHost(f.input);
+    settingsRequests(f.backend).admit(owner, "b".repeat(64), resolved);
+    const request = host.request(
+      principal,
+      "settings/update",
+      { schemaVersion: 1, expectedRevision: null, changes: [{ key: "enabled", value: false }] },
+      new AbortController().signal,
+    );
+    await reached;
+    const offer = host.participant.freeze(
+      owner,
+      reason === "close" ? "shutdown" : reason,
+      10125.75,
+    );
+    let settled = false;
+    const drain = host.participant.drain(offer, f.input.composition.dispatchDrain).finally(() => {
+      settled = true;
+    });
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+      expect(reconcile).not.toHaveBeenCalled();
+      release();
+      expect(await request).toMatchObject({ ok: true, value: { receipt } });
+      expect(await drain).toMatchObject({ state: "saved", pendingSettings: false, blocker: false });
+      expect(reconcile).toHaveBeenCalledWith(expect.objectContaining({ id: receipt.commitId }));
+    } finally {
+      release();
+      await request;
+      await drain;
+      await host.dispose();
+    }
+  },
+);
 it.each(["backend", "sources", "events", "dispatchDrain", "imports"])(
   "rejects missing composition %s before exposure",
   async (key) => {

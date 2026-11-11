@@ -387,6 +387,7 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
         return !ticket || !discardedTicket(ticket.owner, id);
       });
       await records.settle(ids);
+      await settings.settle(ids);
       for (const id of ids) {
         const projection = records.admittedWrites().find((w) => w.ticket.id === id);
         if (projection) await projection.pending.catch(() => {});

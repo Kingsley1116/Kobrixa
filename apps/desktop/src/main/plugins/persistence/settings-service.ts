@@ -129,6 +129,7 @@ export function createSettingsService(deps: SettingsDependencies) {
   }
 
   const tails = new Map<string, Promise<unknown>>();
+  const pending = new Map<string, Promise<void>>();
   const unresolved = new Map<
     string,
     { ticket: PublicationTicket; change: Omit<Change, "revision"> }
@@ -301,6 +302,13 @@ export function createSettingsService(deps: SettingsDependencies) {
       if (deps.now() >= ticket.deadlineMonotonicMs)
         throw { ok: false, error: { code: "PLUGIN_E_TIMEOUT", message: "Timed out." } };
     };
+    let settle!: () => void;
+    pending.set(
+      ticket.id,
+      new Promise<void>((resolve) => {
+        settle = resolve;
+      }),
+    );
     try {
       await current();
       check();
@@ -341,6 +349,9 @@ export function createSettingsService(deps: SettingsDependencies) {
       await deps.engine.abort(ticket);
       if (isFailure(error)) return error;
       return settingsFailure("PLUGIN_E_SETTINGS_SAVE", "io");
+    } finally {
+      pending.delete(ticket.id);
+      settle();
     }
   }
   const handlers: Handlers = {
@@ -433,6 +444,11 @@ export function createSettingsService(deps: SettingsDependencies) {
   }
   return {
     requestOwner,
+    async settle(tickets: readonly string[]) {
+      // Reconciliation can revoke a not-yet-dispatched publication. Join only
+      // the captured attempts before the drain asks the engine for their outcome.
+      await Promise.all(tickets.map((id) => pending.get(id)));
+    },
     request<M extends keyof SettingsRequestMap>(
       principal: Principal,
       method: M,
@@ -931,6 +947,7 @@ function makeSettingsComposition(input: CompositionInput) {
       });
     },
     requestOwner: service.requestOwner,
+    settle: service.settle,
     onCommitted(
       owner: Pick<ResourceOwner, "sourceKey">,
       listener: (reason: "committed" | "retired") => void,
