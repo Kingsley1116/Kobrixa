@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, rm, symlink } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
   assertClipboardObservation,
+  assertInvocationSubstitution,
+  captureLifecycleSubproof,
+  probeInvocationSubstitution,
   assertLifecycleCapture,
   assertLifecycleSubproof,
   assertNegativeLifecycleReport,
@@ -241,4 +244,267 @@ test("probe forwards actual input/result and always restores adapter injection (
     /channel lost/,
   );
   assert.equal(restored, true);
+});
+
+test("N23 invocation substitution traverses real action service and ledger (not native RPC)", async () => {
+  const { createPersistenceActions } =
+    await import("../../apps/desktop/src/main/plugins/persistence/actions.ts");
+  const { UserPersistenceActions } =
+    await import("../../apps/desktop/src/main/plugins/user-persistence-actions.ts");
+  const owner = {
+    hostEpoch: id(1),
+    processEpoch: id(2),
+    sourceKey: "builtin:test.actions",
+    pluginId: "test.actions",
+    generation: 1,
+  };
+  const scope = { hostEpoch: id(1), workbenchInstance: id(3) };
+  const ledger = new UserPersistenceActions(
+    () => 0,
+    () => true,
+  );
+  const effects = { dialogs: 0, destinationWrites: 0, clipboardWrites: 0, deviceLocks: 0 };
+  const unexpected = async () => {
+    effects.destinationWrites++;
+    throw Error("Unexpected destination access");
+  };
+  const service = createPersistenceActions({
+    now: () => 0,
+    wall: () => 100000,
+    live: () => true,
+    permission: () => true,
+    actions: ledger,
+    adapter: {
+      copyText: async () => {
+        effects.clipboardWrites++;
+      },
+      chooseDestination: async () => {
+        effects.dialogs++;
+        return null;
+      },
+    },
+    destinations: { register: unexpected, release: unexpected },
+    output: {
+      begin: unexpected,
+      append: unexpected,
+      commit: unexpected,
+      reconcile: unexpected,
+      abort: unexpected,
+    },
+  });
+  let restored = 0;
+  try {
+    const observation = await probeInvocationSubstitution({
+      prepare: async () => ({
+        invocationId: id(20),
+        actionRef: ledger.mint(owner, scope, 1),
+        restore: async () => {
+          restored++;
+        },
+      }),
+      request: (method, params) =>
+        service.request(
+          { kind: "plugin", owner, authorityContext: null },
+          method,
+          params,
+          new AbortController().signal,
+        ),
+      counters: () => effects,
+    });
+    assertInvocationSubstitution(observation);
+    assert.equal(restored, 1);
+    assert.equal(ledger.count(), 1, "Denied invocation must not consume the genuine action");
+    for (const mutate of [
+      (o) => (o.calls[0].result.error.code = -32602),
+      (o) => (o.calls[1].params.actionRef = o.genuineActionRef),
+      (o) => o.effects.deviceLocks++,
+      (o) => o.effects.dialogs++,
+      (o) => (o.invocationId = "invalid-id"),
+      (o) => (o.calls[0].params.sha256 = "bad"),
+      (o) => (o.calls[1].result.value = { copied: true }),
+    ]) {
+      const bad = structuredClone(observation);
+      mutate(bad);
+      assert.throws(() => assertInvocationSubstitution(bad));
+    }
+  } finally {
+    await service.dispose();
+    ledger.dispose();
+  }
+});
+
+test("N24 reuses full raw action oracle for identity replacement and pre-publication cancellation", async () => {
+  const { actionReplayOracle } =
+    await import("./fixtures/plugin-persistence/action-replay-oracle.mjs");
+  for (const scenario of ["destination-replacement", "cancel-before-publication"]) {
+    const raw = actionReplayOracle();
+    const proof = { scenario, raw, capture: capture(raw.owner.hostEpoch) };
+    assertLifecycleSubproof("B2-N24", proof);
+    const bad = structuredClone(proof);
+    bad.raw.files.replacement.after.sha256 = "0".repeat(64);
+    assert.throws(() => assertLifecycleSubproof("B2-N24", bad));
+    const report = await produceNegativeLifecycle({ "B2-N24": async () => [proof] });
+    const row = report.rows.find((r) => r.id === "B2-N24");
+    assert.ok(row.missing.includes("export-disk-full"));
+    assert.ok(row.missing.includes("cancel-after-publication"));
+  }
+});
+
+test("capture wrapper measures separately, reopens, hashes real files and rejects core mutation", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "w09c-capture-"));
+  let epoch = id(1),
+    measurements = 0,
+    reopens = 0;
+  const input = {
+    id: "B2-N25",
+    scenario: "clipboard-permission",
+    profilePath: root,
+    settle: async () => {},
+    measure: async () => {
+      measurements++;
+      const s = capture(epoch).before;
+      return { hostEpoch: s.hostEpoch, quotas: s.quotas, handles: s.handles, core: s.core };
+    },
+    run: async () => clipboard("clipboard-permission"),
+    reopen: async () => {
+      reopens++;
+      epoch = id(99);
+    },
+  };
+  try {
+    await writeFile(path.join(root, "head"), "abc");
+    const proof = await captureLifecycleSubproof(input);
+    assert.equal(measurements, 3);
+    assert.equal(reopens, 1);
+    assert.equal(
+      proof.capture.reopened.disk[0].sha256,
+      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+    );
+    proof.capture.reopened.core.items.push({ invented: true });
+    assert.throws(() => assertLifecycleSubproof("B2-N25", proof));
+    const failure = Error("producer failed");
+    await assert.rejects(
+      captureLifecycleSubproof({
+        ...input,
+        run: async () => {
+          throw failure;
+        },
+      }),
+      (error) => error === failure,
+    );
+    assert.equal(reopens, 2);
+    await assert.rejects(
+      captureLifecycleSubproof({
+        ...input,
+        run: async () => {
+          throw failure;
+        },
+        reopen: async () => {
+          throw Error("reopen failed");
+        },
+      }),
+      (error) =>
+        error instanceof AggregateError &&
+        error.errors[0] === failure &&
+        error.errors[1].message === "reopen failed",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+// Explicit W10 attachment input; missing evidence is a skip, never a native PASS.
+// This validates only the W09c partial-observation envelope. W10's aggregate gate
+// remains responsible for full rows, process/transport provenance and artifact IDs.
+test("attached W10 lifecycle observations", { skip: !process.env.W09C_EVIDENCE }, async () => {
+  const report = JSON.parse(await readFile(process.env.W09C_EVIDENCE, "utf8"));
+  assertNegativeLifecycleReport(report);
+  assert.ok(
+    report.rows.some((row) => row.observations.length > 0),
+    "Empty report is not executed evidence",
+  );
+});
+
+test("N25 real action service enforces permission, both limits and sanitized adapter failure", async () => {
+  const { createPersistenceActions } =
+    await import("../../apps/desktop/src/main/plugins/persistence/actions.ts");
+  const { UserPersistenceActions } =
+    await import("../../apps/desktop/src/main/plugins/user-persistence-actions.ts");
+  const { RpcError } = await import("@kobrixa/plugin-protocol");
+  const owner = {
+    hostEpoch: id(1),
+    processEpoch: id(2),
+    sourceKey: "builtin:test.actions",
+    pluginId: "test.actions",
+    generation: 1,
+  };
+  const scope = { hostEpoch: id(1), workbenchInstance: id(3) };
+  for (const scenario of lifecycleRequirements["B2-N25"]) {
+    const ledger = new UserPersistenceActions(
+      () => 0,
+      () => true,
+    );
+    const adapter = { reads: 0, otherFormats: 0, writes: 0, failures: 0 };
+    let permission = true,
+      failCopy = false;
+    const unexpected = async () => {
+      throw Error("Unexpected export operation");
+    };
+    const service = createPersistenceActions({
+      now: () => 0,
+      wall: () => 100000,
+      live: () => true,
+      permission: () => permission,
+      actions: ledger,
+      adapter: {
+        copyText: async () => {
+          adapter.writes++;
+          if (failCopy) {
+            adapter.failures++;
+            throw Error("/private/sentinel must not escape");
+          }
+        },
+        chooseDestination: unexpected,
+      },
+      destinations: { register: unexpected, release: unexpected },
+      output: {
+        begin: unexpected,
+        append: unexpected,
+        commit: unexpected,
+        reconcile: unexpected,
+        abort: unexpected,
+      },
+    });
+    try {
+      const observation = await probeClipboard({
+        scenario,
+        prepare: async (allowed, fail) => {
+          permission = allowed;
+          failCopy = fail;
+          return { actionRef: ledger.mint(owner, scope, 1), restore: async () => {} };
+        },
+        request: async (params) => {
+          try {
+            return await service.request(
+              { kind: "plugin", owner, authorityContext: null },
+              "ui/copyText",
+              params,
+              new AbortController().signal,
+            );
+          } catch (error) {
+            // Component-only RPC error normalization; the native probe must use
+            // the actual peer envelope and cannot substitute this adapter.
+            assert.ok(error instanceof RpcError);
+            return { ok: false, error: { code: error.code } };
+          }
+        },
+        counters: () => adapter,
+      });
+      assertClipboardObservation(observation);
+      assert.ok(!JSON.stringify(observation.result).includes("/private/sentinel"));
+    } finally {
+      await service.dispose();
+      ledger.dispose();
+    }
+  }
 });

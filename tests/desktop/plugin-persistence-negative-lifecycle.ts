@@ -212,12 +212,18 @@ export function assertLifecycleSubproof(id: LifecycleRow, p: Subproof): void {
         p.capture.before.hostEpoch,
       );
       break;
+    case "destination-replacement":
+    case "cancel-before-publication":
     case "action-replay": {
       const o = raw as Parameters<typeof assertActionObservation>[0];
       assertActionObservation(o);
       assert.equal(o.owner.hostEpoch, p.capture.before.hostEpoch);
       break;
     }
+    case "invocation-id-substitution":
+      assertInvocationSubstitution(raw as InvocationSubstitutionObservation);
+      assertUnchangedCapture(p.capture);
+      break;
     case "clipboard-permission":
     case "clipboard-bytes":
     case "clipboard-codepoints":
@@ -226,11 +232,7 @@ export function assertLifecycleSubproof(id: LifecycleRow, p: Subproof): void {
       assert.equal(o.scenario, p.scenario);
       assertClipboardObservation(o);
       // Copy has no persistence mutation, quota admission or handle allocation.
-      for (const s of [p.capture.after, p.capture.reopened]) {
-        assert.deepEqual(s.disk, p.capture.before.disk);
-        assert.deepEqual(s.quotas, p.capture.before.quotas);
-        assert.deepEqual(s.handles, p.capture.before.handles);
-      }
+      assertUnchangedCapture(p.capture);
       break;
     }
     default:
@@ -332,4 +334,162 @@ export async function probeClipboard(input: {
   } finally {
     await context.restore();
   }
+}
+
+/** No-op action failures must not mutate even the core recovery state. */
+function assertUnchangedCapture(c: Capture): void {
+  for (const s of [c.after, c.reopened]) {
+    assert.deepEqual(s.disk, c.before.disk);
+    assert.deepEqual(s.quotas, c.before.quotas);
+    assert.deepEqual(s.handles, c.before.handles);
+    assert.deepEqual(s.core, c.before.core);
+  }
+}
+
+export type InvocationSubstitutionObservation = {
+  invocationId: string;
+  genuineActionRef: string;
+  calls: {
+    method: "storage/exportBegin" | "ui/copyText";
+    params: Record<string, unknown>;
+    result: ClipboardObservation["result"];
+  }[];
+  effects: {
+    dialogs: number;
+    destinationWrites: number;
+    clipboardWrites: number;
+    deviceLocks: number;
+  };
+};
+export function assertInvocationSubstitution(o: InvocationSubstitutionObservation): void {
+  // A schema-valid invocation UUID is essential: an invalid string tests only validation.
+  assert.match(
+    o.invocationId,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+  );
+  assert.match(o.genuineActionRef, /^[0-9a-f-]{36}$/);
+  assert.notEqual(o.invocationId, o.genuineActionRef);
+  assert.deepEqual(
+    o.calls.map((c) => c.method),
+    ["storage/exportBegin", "ui/copyText"],
+  );
+  for (const call of o.calls) {
+    assert.equal(call.params.actionRef, o.invocationId);
+    assert.equal(call.result.ok, false);
+    assert.equal(call.result.value, undefined);
+    assert.equal(call.result.error?.code, "PLUGIN_E_PERMISSION_DENIED");
+  }
+  assert.deepEqual(o.calls[0]!.params, {
+    actionRef: o.invocationId,
+    suggestedName: "w09c.txt",
+    mediaType: "text/plain",
+    byteLength: 0,
+    sha256: digest(new Uint8Array()),
+  });
+  assert.deepEqual(o.calls[1]!.params, {
+    actionRef: o.invocationId,
+    text: "W09c invocation substitution",
+  });
+  assert.deepEqual(o.effects, {
+    dialogs: 0,
+    destinationWrites: 0,
+    clipboardWrites: 0,
+    deviceLocks: 0,
+  });
+}
+
+/** W10 supplies a real trusted invocation and forwards requests via the original
+ * consumer transport. The invocation remains active until both requests settle.
+ * Counters observe cumulative side effects, so acquire/release cannot hide a lock.
+ */
+export async function probeInvocationSubstitution(input: {
+  prepare(): Promise<{ invocationId: string; actionRef: string; restore(): Promise<void> }>;
+  request(
+    method: InvocationSubstitutionObservation["calls"][number]["method"],
+    params: Record<string, unknown>,
+  ): Promise<ClipboardObservation["result"]>;
+  counters(): InvocationSubstitutionObservation["effects"];
+}): Promise<InvocationSubstitutionObservation> {
+  const context = await input.prepare();
+  try {
+    const before = structuredClone(input.counters());
+    const calls: InvocationSubstitutionObservation["calls"] = [];
+    for (const [method, params] of [
+      [
+        "storage/exportBegin",
+        {
+          actionRef: context.invocationId,
+          suggestedName: "w09c.txt",
+          mediaType: "text/plain",
+          byteLength: 0,
+          sha256: digest(new Uint8Array()),
+        },
+      ],
+      ["ui/copyText", { actionRef: context.invocationId, text: "W09c invocation substitution" }],
+    ] as const) {
+      const result = await input.request(method, params);
+      calls.push({ method, params: structuredClone(params), result: structuredClone(result) });
+    }
+    const after = input.counters();
+    const effects = Object.fromEntries(
+      Object.entries(after).map(([key, value]) => [
+        key,
+        value - before[key as keyof typeof before],
+      ]),
+    ) as InvocationSubstitutionObservation["effects"];
+    const observation = {
+      invocationId: context.invocationId,
+      genuineActionRef: context.actionRef,
+      calls,
+      effects,
+    };
+    assertInvocationSubstitution(observation);
+    return observation;
+  } finally {
+    await context.restore();
+  }
+}
+
+/** Execute one existing producer with actual settled measurements, followed by
+ * the sole composition's close/reopen. Never reuse the before snapshot as after.
+ * The caller must stop other writers to this synthetic profile for the capture.
+ * Reopen is attempted after failed producers too; failures are propagated.
+ */
+export async function captureLifecycleSubproof(input: {
+  id: LifecycleRow;
+  scenario: string;
+  profilePath: string;
+  settle(): Promise<void>;
+  measure(): Promise<Omit<State, "disk">>;
+  run(): Promise<unknown>;
+  reopen(): Promise<void>;
+}): Promise<Subproof> {
+  assert.ok((lifecycleRequirements[input.id] as readonly string[]).includes(input.scenario));
+  const snapshot = async (): Promise<State> => {
+    await input.settle();
+    const measured = structuredClone(await input.measure());
+    const disk = await lifecycleDiskTree(input.profilePath);
+    const result = { ...measured, disk };
+    state(result);
+    return result;
+  };
+  const before = await snapshot();
+  let raw: unknown;
+  let after: State;
+  try {
+    raw = await input.run();
+    after = await snapshot();
+  } catch (error) {
+    try {
+      await input.reopen();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], "Producer and reopen failed");
+    }
+    throw error;
+  }
+  await input.reopen();
+  const reopened = await snapshot();
+  const proof = { scenario: input.scenario, raw, capture: { before, after, reopened } };
+  assertLifecycleSubproof(input.id, proof);
+  return proof;
 }
