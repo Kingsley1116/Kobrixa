@@ -83,6 +83,19 @@ function fixture() {
             after: { asar: hash, executable: hash },
           },
           secondary: {
+            startup: { pid: 102, ready: false },
+            observedIdentities: [{ pid: 102, created: "original-secondary" }],
+            observation: {
+              phase: "exit",
+              pid: 102,
+              beforeReady: true,
+              code: 0,
+              workers: [],
+              utilities: [],
+              children: [],
+              writes: [],
+              locks: [{ acquired: false }],
+            },
             requestedProfile: profile,
             pid: 102,
             marker,
@@ -99,9 +112,22 @@ function fixture() {
     ],
   };
 }
-test("Observed subset remains partial with all four unrun gates", () =>
+test("Observed startup subset remains partial with recording continuity unrun", () =>
   assertSingleInstanceReceipt(fixture()));
 const bad = {
+  "unobserved startup": (r) => delete r.runs[0].singleInstance.secondary.startup,
+  "late observation": (r) => (r.runs[0].singleInstance.secondary.observation.beforeReady = false),
+  "missing birth identity": (r) => (r.runs[0].singleInstance.secondary.observedIdentities = []),
+  "secondary acquired lock": (r) =>
+    (r.runs[0].singleInstance.secondary.observation.locks[0].acquired = true),
+  "secondary worker": (r) =>
+    r.runs[0].singleInstance.secondary.observation.workers.push({ api: "Worker" }),
+  "secondary provider/plugin": (r) =>
+    r.runs[0].singleInstance.secondary.observation.utilities.push({ api: "fork" }),
+  "secondary child": (r) =>
+    r.runs[0].singleInstance.secondary.observation.children.push({ api: "spawn" }),
+  "secondary profile write": (r) =>
+    r.runs[0].singleInstance.secondary.observation.writes.push({ api: "writeFile" }),
   "full-pass promotion": (r) => (r.status = "passed"),
   "missing unrun coverage": (r) => r.unrun.pop(),
   nonisolated: (r) => (r.isolated = false),

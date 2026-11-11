@@ -689,3 +689,26 @@ test("motor readiness rejects previous panels, stale bindings, and unavailable r
   selection.entry.availability = "unavailable";
   assert.equal((await read()).ready, false);
 });
+
+test("installed executable layouts include Windows .exe and fail closed for unknown platforms", async () => {
+  const { installedLayout, installedLaunchCommand, installedPlatformPolicy } =
+    await import("./builtin-process-installed.mjs");
+  assert.equal(
+    installedLayout("win32", ["resources", "kobrixa.exe"]).executableRelative,
+    "kobrixa.exe",
+  );
+  assert.equal(installedLayout("linux", ["resources", "kobrixa"]).executableRelative, "kobrixa");
+  assert.equal(
+    installedLayout("darwin", ["Kobrixa.app"]).executableRelative,
+    "Kobrixa.app/Contents/MacOS/kobrixa",
+  );
+  assert.throws(() => installedLayout("unknown", []));
+  const policy = installedPlatformPolicy("win32", true);
+  assert.equal(policy.isolated, false);
+  assert.ok(policy.blockers.some((item) => item.id === "W17-isolation"));
+  assert.throws(
+    () =>
+      installedLaunchCommand({ isolated: true, executable: "C:\\app\\kobrixa.exe" }, [], "win32"),
+    /isolation/,
+  );
+});

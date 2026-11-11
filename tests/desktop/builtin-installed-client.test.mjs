@@ -819,3 +819,134 @@ test("Windows ancestry retains a late-sampled child of an already exited observe
   assert.deepEqual(descendants(remaining, 10, known), remaining);
   assert.equal(known.get(13), "grandchild");
 });
+
+test("secondary entry observer records original mutations and requires a terminal receipt", async () => {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const { collectSecondaryObservation } = await import("./builtin-process-installed.mjs");
+  for (const mutate of [false, true]) {
+    const { stderr } = await promisify(execFile)(process.execPath, [
+      "--input-type=module",
+      "-e",
+      `
+      import { createRequire } from 'node:module';
+      import { installSecondaryObservation } from ${JSON.stringify(new URL("./builtin-process-installed.mjs", import.meta.url).href)};
+      const realRequire = createRequire(import.meta.url);
+      const fs = realRequire('node:fs'), write = fs.writeSync;
+      const electron = {app:{isReady:()=>false, requestSingleInstanceLock:()=>false}, utilityProcess:{fork:()=>({original:true})}};
+      const require = name => name === 'electron' ? electron : realRequire(name);
+      installSecondaryObservation(require, process, row => write(2, '\\nKOBRIXA_SECONDARY '+JSON.stringify(row)+'\\n'));
+      if (electron.app.requestSingleInstanceLock() !== false) throw Error('Lock changed');
+      if (${mutate}) {
+        if (!electron.utilityProcess.fork('provider.cjs').original) throw Error('Fork changed');
+        try { fs.writeFileSync('/nonexistent-w17-parent/profile', 'x'); } catch (error) {
+          if (error.code !== 'ENOENT') throw error;
+        }
+      }
+    `,
+    ]);
+    const observed = collectSecondaryObservation(stderr);
+    assert.deepEqual(observed.locks, [{ acquired: false }]);
+    assert.deepEqual(observed.workers, []);
+    assert.deepEqual(observed.children, []);
+    assert.equal(observed.utilities.length, mutate ? 1 : 0);
+    assert.equal(observed.writes.length > 0, mutate);
+    assert.throws(() => collectSecondaryObservation(stderr.split("\n").slice(0, 2).join("\n")));
+    assert.throws(() => collectSecondaryObservation(stderr + stderr));
+  }
+});
+
+test("native process observer retains this process birth identity", async () => {
+  const { processTable } = await import("./builtin-installed-client.mjs");
+  const first = (await processTable()).find((row) => row.pid === process.pid);
+  const second = (await processTable()).find((row) => row.pid === process.pid);
+  assert.ok(first?.created);
+  assert.equal(second?.created, first.created);
+});
+
+test("POSIX process identities are parsed with the C locale", async () => {
+  const { processTable } = await import("./builtin-installed-client.mjs");
+  const rows = await processTable({
+    platform: "darwin",
+    run: async (file, args, options) => {
+      assert.equal(file, "/bin/ps");
+      assert.deepEqual(args, ["-axo", "pid=,ppid=,pgid=,lstart="]);
+      assert.equal(options.env.LC_ALL, "C");
+      return { stdout: " 12 10 12 Thu Nov 12 10:00:00 2026\n" };
+    },
+  });
+  assert.deepEqual(rows, [{ pid: 12, ppid: 10, pgid: 12, created: "Thu Nov 12 10:00:00 2026" }]);
+  const known = new Map([[12, rows[0].created]]);
+  assert.deepEqual(
+    descendants(
+      [
+        { ...rows[0], created: "new" },
+        { pid: 13, ppid: 12, pgid: 12, created: "foreign child" },
+      ],
+      12,
+      known,
+    ),
+    [],
+  );
+});
+
+test("secondary probe and creation identity are installed before entry resumes", async () => {
+  const { observeSecondaryStartup } = await import("./builtin-process-installed.mjs");
+  const order = [];
+  let evaluation = 0;
+  const client = {
+    event: async () => ({ callFrames: [{ callFrameId: "entry" }] }),
+    async send(method, params) {
+      order.push(method);
+      if (method === "Debugger.evaluateOnCallFrame") {
+        assert.equal(params.callFrameId, "entry");
+        // Parse the exact serialized native expression, including stderr newlines.
+        new Function("require", "process", `return ${params.expression}`);
+        return {
+          result: {
+            value:
+              evaluation++ === 0
+                ? { pid: 10, executable: "C:\\app\\kobrixa.exe", ready: false }
+                : true,
+          },
+        };
+      }
+      return {};
+    },
+  };
+  const known = new Map();
+  await observeSecondaryStartup(client, 10, "C:\\app\\kobrixa.exe", known, async () => {
+    order.push("identity");
+    return [{ pid: 10, ppid: 1, created: "original" }];
+  });
+  assert.equal(evaluation, 2);
+  assert.equal(known.get(10), "original");
+  assert.ok(order.indexOf("identity") < order.indexOf("Debugger.resume"));
+});
+
+test("Windows persistence ownership retains orphan identities and refuses missing/reused births", async () => {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const loader = new URL("./persistence-source-loader.mjs", import.meta.url).href;
+  await promisify(execFile)(process.execPath, [
+    "--experimental-transform-types",
+    "--import",
+    loader,
+    "--input-type=module",
+    "-e",
+    `
+    import assert from 'node:assert/strict';
+    import { createOwnedProcessTracker } from ${JSON.stringify(new URL("./plugin-persistence-run.mjs", import.meta.url).href)};
+    const tracker = createOwnedProcessTracker(10);
+    const root = {pid:10, ppid:1, pgid:0, start:'root'};
+    const child = {pid:12, ppid:10, pgid:0, start:'child'};
+    assert.deepEqual(tracker.observe([root,child]), [root,child]);
+    const orphan = {...child,ppid:1};
+    assert.deepEqual(tracker.observe([orphan]), [orphan]);
+    const late = {pid:13,ppid:12,pgid:0,start:'late'};
+    assert.deepEqual(tracker.observe([late]), [late]);
+    assert.deepEqual(tracker.observe([{...root,start:'reused'}, {pid:14,ppid:10,pgid:0,start:'foreign'}]), []);
+    assert.throws(() => createOwnedProcessTracker(10).observe([{...root,start:null}]), /Missing creation identity/);
+  `,
+  ]);
+});

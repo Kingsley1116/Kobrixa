@@ -132,38 +132,75 @@ test("independent Windows observations continue after failures without changing 
 
 test("Windows secondary resumes only after its paused entry and OS creation identity agree", async () => {
   const { observeSecondaryStartup } = await import("./builtin-process-installed.mjs");
-  for (const outcome of ["success", "missing", "wrong-executable", "already-ready"]) {
+  for (const outcome of [
+    "success",
+    "missing",
+    "wrong-os-pid",
+    "missing-creation",
+    "wrong-entry-pid",
+    "wrong-executable",
+    "already-ready",
+    "observer-failed",
+  ]) {
     const calls = [],
       known = new Map();
     let paused;
+    let evaluations = 0;
     const client = {
       event: () =>
         new Promise((resolve) => {
           paused = resolve;
         }),
-      send: async (method) => {
+      send: async (method, params) => {
         calls.push(method);
         if (method === "Runtime.runIfWaitingForDebugger")
           paused({ callFrames: [{ callFrameId: "entry" }] });
-        if (method === "Debugger.evaluateOnCallFrame")
+        if (method === "Debugger.evaluateOnCallFrame") {
+          assert.equal(params.callFrameId, "entry");
+          evaluations++;
+          if (evaluations === 2) {
+            assert.match(params.expression, /installSecondaryObservation/);
+            calls.push("observer installation");
+            return { result: { value: outcome !== "observer-failed" } };
+          }
+          assert.equal(evaluations, 1);
           return {
             result: {
               value: {
-                pid: 10,
+                pid: outcome === "wrong-entry-pid" ? 11 : 10,
                 executable:
                   outcome === "wrong-executable" ? "C:\\wrong.exe" : "C:\\app\\kobrixa.exe",
                 ready: outcome === "already-ready",
               },
             },
           };
+        }
+        if (method === "Debugger.resume") {
+          assert.equal(known.get(10), "observed-creation");
+          assert.equal(evaluations, 2);
+        }
       },
     };
     const work = observeSecondaryStartup(client, 10, "C:\\app\\kobrixa.exe", known, async () => {
       calls.push("OS creation identity");
-      return outcome === "missing" ? [] : [{ pid: 10, ppid: 1, created: "observed-creation" }];
+      return outcome === "missing"
+        ? []
+        : [
+            {
+              pid: outcome === "wrong-os-pid" ? 11 : 10,
+              ppid: 1,
+              created: outcome === "missing-creation" ? "" : "observed-creation",
+            },
+          ];
     });
     if (outcome === "success") {
-      assert.equal((await work).pid, 10);
+      assert.deepEqual(await work, {
+        pid: 10,
+        executable: "C:\\app\\kobrixa.exe",
+        ready: false,
+      });
+      assert.equal(evaluations, 2);
+      assert.ok(calls.indexOf("observer installation") < calls.indexOf("OS creation identity"));
       assert.equal(known.get(10), "observed-creation");
       assert.ok(calls.indexOf("OS creation identity") < calls.indexOf("Debugger.resume"));
     } else {
