@@ -7,11 +7,11 @@ FIXTURES = ROOT / "packages/plugin-protocol/test-fixtures/settings-storage-v1"
 
 class SettingsValidationTests(unittest.TestCase):
     def test_shared_resources(self):
-        for case in json.loads((FIXTURES / "valid.json").read_text())["cases"]:
+        for case in json.loads((FIXTURES / "valid.json").read_text(encoding="utf-8"))["cases"]:
             if case["schema"] != "settingsResourceV1": continue
             resource = case["input"]
             self.assertEqual(validate_resource(resource, wire_bytes(resource)), resource)
-        for case in json.loads((FIXTURES / "invalid.json").read_text())["cases"]:
+        for case in json.loads((FIXTURES / "invalid.json").read_text(encoding="utf-8"))["cases"]:
             if case["schema"] != "settingsResourceV1": continue
             resource = case["input"]
             with self.assertRaises(ValueError):

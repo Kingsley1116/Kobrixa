@@ -10,7 +10,7 @@ FIXTURES = Path(__file__).resolve().parents[3] / "test-fixtures/declarative-ui-v
 
 class CanonicalUiDataTests(unittest.TestCase):
     def test_shared_dataset_golden_bytes_and_hashes(self):
-        for case in json.loads((FIXTURES / "canonical-golden.json").read_text()):
+        for case in json.loads((FIXTURES / "canonical-golden.json").read_text(encoding="utf-8")):
             with self.subTest(case=case["name"]):
                 data = json.loads(case["canonical"])
                 if case["name"] == "numbers":
@@ -21,7 +21,7 @@ class CanonicalUiDataTests(unittest.TestCase):
                 self.assertEqual(hashlib.sha256(actual).hexdigest(), case["sha256"])
 
     def test_binary64_matches_independent_javascript_vectors(self):
-        cases = json.loads((FIXTURES / "binary64-golden.json").read_text())["cases"]
+        cases = json.loads((FIXTURES / "binary64-golden.json").read_text(encoding="utf-8"))["cases"]
         self.assertGreaterEqual(len(cases), 990)
         for case in cases:
             with self.subTest(bits=case["bits"]):

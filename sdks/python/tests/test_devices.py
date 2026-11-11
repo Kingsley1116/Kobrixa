@@ -11,7 +11,7 @@ class DevicesTests(unittest.IsolatedAsyncioTestCase):
         directory=root/'packages/plugin-protocol/test-fixtures/device-broker-v1'
         validator=Validator.bundled()
         for kind in ('valid','invalid','maximum'):
-            document=json.loads((directory/(kind+'.json')).read_text())
+            document=json.loads((directory/(kind+'.json')).read_text(encoding="utf-8"))
             self.assertEqual(set(document), {'formatVersion','family','cases'})
             self.assertEqual(document['formatVersion'], 1)
             self.assertEqual(document['family'], 'device-broker-v1')

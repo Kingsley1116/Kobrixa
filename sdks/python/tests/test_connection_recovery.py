@@ -20,7 +20,7 @@ OWNER = {"sourceKey": "builtin:test.recovery", "pluginId": "test.recovery", "gen
 class RecoverySchemaTests(unittest.TestCase):
     def test_shared_semantics_and_strict_legacy_schema(self):
         validator = Validator.bundled()
-        cases = json.loads((Path(__file__).resolve().parents[3] / "packages/plugin-protocol/test-fixtures/connection-recovery-v180/cases.json").read_text())
+        cases = json.loads((Path(__file__).resolve().parents[3] / "packages/plugin-protocol/test-fixtures/connection-recovery-v180/cases.json").read_text(encoding="utf-8"))
         for case in cases:
             with self.subTest(case=case['id']):
                 def check():

@@ -27,7 +27,7 @@ class UiDataTests(unittest.TestCase):
     def test_shared_javascript_python_admission_cases(self):
         operations = {"declaration": validate_declaration, "header": validate_header,
                       "chunk": validate_chunk, "dataset": validate_dataset}
-        for case in json.loads((FIXTURES / "semantic-cases.json").read_text()):
+        for case in json.loads((FIXTURES / "semantic-cases.json").read_text(encoding="utf-8")):
             with self.subTest(case=case["name"]):
                 operation = operations[case["op"]]
                 if case["valid"]:
@@ -37,7 +37,7 @@ class UiDataTests(unittest.TestCase):
                         operation(*case["args"])
 
     def test_shared_typed_golden_bytes_and_hashes(self):
-        for case in json.loads((FIXTURES / "canonical-golden.json").read_text()):
+        for case in json.loads((FIXTURES / "canonical-golden.json").read_text(encoding="utf-8")):
             header, entries = json.loads(case["canonical"])
             actual = canonical_dataset_bytes(header, entries)
             self.assertEqual(actual, case["canonical"].encode())
