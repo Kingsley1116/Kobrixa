@@ -104,6 +104,7 @@ jobs:
           $repo = (Get-Location).Path
           $buildRoot = Join-Path $env:RUNNER_TEMP ('w02a-' + [guid]::NewGuid().ToString())
           New-Item -ItemType Directory -Path $buildRoot | Out-Null
+          "W02A_BUILD_ROOT=$buildRoot" >> $env:GITHUB_ENV
           Copy-Item apps/desktop/native/journal-win32/binding.gyp $buildRoot
           Copy-Item apps/desktop/native/journal-win32/journal.cc $buildRoot
           $electronVersion = (& node -p "require('electron/package.json').version").Trim()
@@ -120,7 +121,6 @@ jobs:
           $env:ELECTRON_RUN_AS_NODE = '1'
           & $electron --test --test-reporter=tap $suite 2>&1 | Tee-Object (Join-Path $buildRoot 'electron-test.tap')
           if ($LASTEXITCODE -ne 0) { throw 'Windows Electron native suite failed' }
-          "W02A_BUILD_ROOT=$buildRoot" >> $env:GITHUB_ENV
       - name: Retain build log and TAP output
         if: always()
         uses: actions/upload-artifact@v7

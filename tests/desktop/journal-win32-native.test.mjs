@@ -12,6 +12,7 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
@@ -95,6 +96,23 @@ if (process.env.KOBRIXA_JOURNAL_WIN32_CHILD === "interrupt") {
   });
   throw new Error("interruption child unexpectedly completed");
 } else {
+  test("directory-link fixture cleanup preserves target bytes (not native adapter evidence)", (t) => {
+    const { root, current } = fixture(t);
+    const outside = path.join(root, "outside");
+    mkdirSync(outside);
+    const retained = path.join(outside, "retained.json");
+    writeFileSync(retained, oldBytes);
+    // Windows creates a junction; POSIX ignores the type and creates a symlink.
+    symlinkSync(outside, current, "junction");
+    unlinkSync(current);
+    assert.equal(existsSync(current), false);
+    assert.deepEqual(readFileSync(retained), oldBytes);
+    writeFileSync(current, newBytes, { flag: "wx" });
+    assert.deepEqual(readFileSync(current), newBytes);
+    assert.deepEqual(readdirSync(outside), ["retained.json"]);
+    assert.deepEqual(readFileSync(retained), oldBytes);
+  });
+
   test(
     "candidate capability never enables production durable replacement",
     { skip: notRun },
@@ -164,24 +182,81 @@ if (process.env.KOBRIXA_JOURNAL_WIN32_CHILD === "interrupt") {
   );
 
   test(
-    "real Windows sharing violation preserves old bytes and staged evidence",
+    "real Windows delete-sharing denial preserves old bytes and staged evidence",
     { skip: notRun },
     (t) => {
-      const { dir, current } = fixture(t);
+      const { dir, current, previous } = fixture(t);
       replace(dir, oldBytes);
+      replace(dir, oldBytes, { name: "faults.previous.json" });
       const targetId = native.inspect(dir, "faults.json");
+      const temp = `faults.next-${randomUUID()}.json`;
+      const phases = [];
       let attempted = false;
       native.withExclusiveFile(dir, "faults.json", () => {
         attempted = true;
-        assert.throws(() => replace(dir, newBytes, { targetId }), fault("EBUSY", 32));
+        // Attribute-only identity reads are exempt from CreateFileW share checks.
+        // MoveFileExW replacement on windows-2022 reports ACCESS_DENIED (5),
+        // not the SHARING_VIOLATION (32) specified for conflicting CreateFileW opens.
+        // Preserve the actual API error; do not recast it as EBUSY or ENOTSUP.
+        assert.throws(
+          () => replace(dir, newBytes, { targetId, temp, hook: (phase) => phases.push(phase) }),
+          (error) => {
+            t.diagnostic(
+              `delete-sharing denial: ${error.message} ${error.code} Win32=${error.win32Code} phase=${error.phase} publicationState=${error.publicationState}`,
+            );
+            assert.equal(fault("EACCES", 5)(error), true);
+            assert.equal(error.message, "MoveFileExW");
+            assert.equal(error.phase, "move");
+            assert.equal(error.publicationState, "uncertain");
+            return true;
+          },
+        );
       });
       assert.equal(attempted, true);
+      assert.deepEqual(phases, ["after-temp-flush"]);
+      assert.equal(native.inspect(dir, "faults.json"), targetId);
       assert.deepEqual(readFileSync(current), oldBytes);
+      assert.deepEqual(readSnapshot(previous).bytes, oldBytes);
+      assert.deepEqual(readSnapshot(path.join(dir, temp)).bytes, newBytes);
+      assert.deepEqual(
+        readdirSync(dir).sort(),
+        ["faults.json", "faults.previous.json", temp].sort(),
+      );
       // Handle closure is real: the same operation must now succeed.
       replace(dir, newBytes);
       assert.deepEqual(readFileSync(current), newBytes);
+      assert.deepEqual(readSnapshot(previous).bytes, oldBytes);
+      assert.deepEqual(readSnapshot(path.join(dir, temp)).bytes, newBytes);
     },
   );
+
+  test("conflicting CreateFileW opens report the real sharing violation", { skip: notRun }, (t) => {
+    const { dir, current } = fixture(t);
+    replace(dir, oldBytes);
+    let reopened = false;
+    native.withExclusiveFile(dir, "faults.json", () => {
+      assert.throws(
+        () =>
+          native.withExclusiveFile(dir, "faults.json", () => {
+            reopened = true;
+          }),
+        (error) => {
+          assert.equal(fault("EBUSY", 32)(error), true);
+          assert.equal(error.message, "CreateFileW");
+          assert.equal(error.phase, "exclusive-file");
+          assert.equal(error.publicationState, "not-published");
+          return true;
+        },
+      );
+    });
+    assert.equal(reopened, false);
+    native.withExclusiveFile(dir, "faults.json", () => {
+      reopened = true;
+    });
+    assert.equal(reopened, true);
+    assert.deepEqual(readFileSync(current), oldBytes);
+    assert.deepEqual(readdirSync(dir), ["faults.json"]);
+  });
 
   test(
     "real read-only destination access denial is not recast as unsupported",
@@ -383,29 +458,53 @@ if (process.env.KOBRIXA_JOURNAL_WIN32_CHILD === "interrupt") {
     },
   );
 
-  test(
-    "refuse ancestor and leaf reparse points and hard-linked journal files",
-    { skip: notRun },
-    (t) => {
-      const { root, dir, current } = fixture(t);
-      const outside = path.join(root, "outside");
-      mkdirSync(outside);
-      const alias = path.join(root, "alias");
-      symlinkSync(dir, alias, "junction");
-      assert.throws(() => native.inspect(alias, ""), fault("EUNSAFE"));
-      const child = path.join(dir, "child");
-      mkdirSync(child);
-      assert.throws(() => native.inspect(path.join(alias, "child"), ""), fault("EUNSAFE"));
-      symlinkSync(outside, current, "junction");
-      assert.throws(() => replace(dir, newBytes), fault("EUNSAFE"));
-      assert.deepEqual(readdirSync(outside), []);
-      rmSync(current);
-      replace(dir, oldBytes);
-      linkSync(current, path.join(outside, "linked.json"));
-      assert.throws(() => replace(dir, newBytes), fault("EUNSAFE"));
-      assert.deepEqual(readFileSync(current), oldBytes);
-    },
-  );
+  test("refuse ancestor and leaf reparse points", { skip: notRun }, (t) => {
+    const { root, dir, current } = fixture(t);
+    const outside = path.join(root, "outside");
+    mkdirSync(outside);
+    const alias = path.join(root, "alias");
+    symlinkSync(dir, alias, "junction");
+    assert.throws(() => native.inspect(alias, ""), fault("EUNSAFE"));
+    const child = path.join(dir, "child");
+    mkdirSync(child);
+    assert.throws(() => native.inspect(path.join(alias, "child"), ""), fault("EUNSAFE"));
+    symlinkSync(outside, current, "junction");
+    assert.throws(() => native.inspect(dir, "faults.json"), fault("EUNSAFE"));
+    // Bypass the JS helper's inspection to exercise ReplaceCandidate validation too.
+    assert.throws(() => replace(dir, newBytes, { targetId: "missing" }), {
+      code: "EUNSAFE",
+      phase: "validate",
+      publicationState: "not-published",
+    });
+    assert.deepEqual(readdirSync(outside), []);
+    // rmSync without recursive rejects a Windows directory junction with EISDIR.
+    // Unlink the junction itself, preserving the target directory and its bytes.
+    const retained = path.join(outside, "retained.json");
+    writeFileSync(retained, oldBytes);
+    unlinkSync(current);
+    assert.equal(existsSync(current), false);
+    assert.deepEqual(readFileSync(retained), oldBytes);
+    assert.deepEqual(readdirSync(dir), ["child"]);
+  });
+
+  test("refuse hard-linked journal files before staging", { skip: notRun }, (t) => {
+    const { root, dir, current } = fixture(t);
+    const outside = path.join(root, "outside");
+    mkdirSync(outside);
+    replace(dir, oldBytes);
+    const targetId = native.inspect(dir, "faults.json");
+    const linked = path.join(outside, "linked.json");
+    linkSync(current, linked);
+    assert.throws(() => native.inspect(dir, "faults.json"), fault("EUNSAFE"));
+    assert.throws(() => replace(dir, newBytes, { targetId }), {
+      code: "EUNSAFE",
+      phase: "validate",
+      publicationState: "not-published",
+    });
+    assert.deepEqual(readFileSync(current), oldBytes);
+    assert.deepEqual(readFileSync(linked), oldBytes);
+    assert.deepEqual(readdirSync(dir), ["faults.json"]);
+  });
 
   test("refuse path aliases, traversal, ADS and nonlocal support", { skip: notRun }, (t) => {
     const { dir } = fixture(t);
