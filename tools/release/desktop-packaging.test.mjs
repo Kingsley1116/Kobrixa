@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { createPackageWithOptions, statFile } from "@electron/asar";
+import { createPackageWithOptions, listPackage, statFile } from "@electron/asar";
 import {
   buildBuiltinPayloads,
   validateBuiltinPayloads,
@@ -83,21 +84,29 @@ test("release packaging builds, validates and unpacks the same builtin leaves as
   await createPackageWithOptions(stage, archive, {
     unpack: withPersistenceWorkerUnpack(BUILTIN_PAYLOAD_UNPACK),
   });
-  for (const slug of ["motor-test", "sensor-lab"]) {
+  const inventory = new Set(listPackage(archive));
+  async function assertUnpacked(relative) {
+    // ASAR traverses directories by path.sep: member lookup must use host paths,
+    // even though resource-index paths and unpack glob patterns use forward slashes.
+    const member = path.normalize(relative);
+    assert.ok(inventory.has(path.join(path.sep, member)), `Missing ASAR member: ${member}`);
+    const entry = statFile(archive, member);
+    assert.equal(entry.unpacked, true, member);
+    const source = await readFile(path.join(stage, member));
+    assert.deepEqual(await readFile(path.join(`${archive}.unpacked`, member)), source);
+    assert.equal(entry.integrity.hash, createHash("sha256").update(source).digest("hex"));
+  }
+  for (const slug of ["motor-test", "sensor-lab", "device-ev3"]) {
     const payload = path.join(stage, ".vite/build/plugins", slug);
     const manifest = JSON.parse(await readFile(path.join(payload, "resource-index.json"), "utf8"));
     assert.equal(manifest.pluginId, `kobrixa.${slug}`);
     for (const name of [...manifest.files.map((file) => file.path), "resource-index.json"]) {
       const relative = `.vite/build/plugins/${slug}/${name}`;
-      assert.equal(statFile(archive, relative).unpacked, true);
-      assert.deepEqual(
-        await readFile(path.join(`${archive}.unpacked`, relative)),
-        await readFile(path.join(payload, name)),
-      );
+      await assertUnpacked(relative);
     }
   }
-  assert.equal(statFile(archive, "node_modules/native/addon.node").unpacked, true);
-  assert.equal(statFile(archive, ".vite/build/persistence-worker.cjs").unpacked, true);
+  await assertUnpacked("node_modules/native/addon.node");
+  await assertUnpacked(".vite/build/persistence-worker.cjs");
   assert.equal(
     await readFile(`${archive}.unpacked/.vite/build/persistence-worker.cjs`, "utf8"),
     "worker fixture",

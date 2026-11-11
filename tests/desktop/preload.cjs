@@ -136,6 +136,10 @@ contextBridge.exposeInMainWorld("kobrixa", {
       hold: uiRequest("hold"),
       pulse: uiRequest("pulse"),
       snapshot: uiRequest("snapshot"),
+      interact: uiRequest("interact"),
+      syncForm: uiRequest("form-sync"),
+      dataRead: uiRequest("data-read"),
+      dataSnapshot: uiRequest("data-snapshot"),
       reportFailure: uiRequest("report-failure"),
       onEvent(listener) {
         const id = ++nextUiListener,

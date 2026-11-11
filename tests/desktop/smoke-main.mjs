@@ -222,6 +222,10 @@ for (const method of [
   "hold",
   "pulse",
   "snapshot",
+  "interact",
+  "form-sync",
+  "data-read",
+  "data-snapshot",
   "report-failure",
 ])
   ipcMain.handle(`plugins:ui:${method}`, () => {

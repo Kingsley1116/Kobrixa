@@ -233,6 +233,47 @@ test("smoke UI observers use separate targeted channels and dispose once", async
   assert.deepEqual(calls.at(-1), ["plugins:ui:snapshot", { binding: "opaque" }]);
 });
 
+for (const [method, channel] of [
+  ["interact", "interact"],
+  ["syncForm", "form-sync"],
+  ["dataRead", "data-read"],
+  ["dataSnapshot", "data-snapshot"],
+]) {
+  test(`smoke UI ${method} forwards opaque input, replies and failures across disposal`, async () => {
+    const { api, calls, ipcRenderer } = loadPreload();
+    const input = { binding: { generation: 7 }, revision: 3, requestId: "request" };
+    const seen = [];
+    const off = api.plugins.ui.onEvent((event) => seen.push(event));
+    let resolve;
+    ipcRenderer.invoke = (...args) => {
+      calls.push(args);
+      return new Promise((done) => {
+        resolve = done;
+      });
+    };
+    const pending = api.plugins.ui[method](input);
+    assert.deepEqual(calls.at(-1), [`plugins:ui:${channel}`, input]);
+    assert.equal(calls.at(-1)[1], input);
+    const finish = resolve;
+    const event = { type: "data", revision: 4 };
+    ipcRenderer.emit("plugins:ui:event:1", {}, event);
+    off();
+    off();
+    ipcRenderer.emit("plugins:ui:event:1", {}, event);
+    assert.deepEqual(seen, [event]);
+    assert.equal(ipcRenderer.listenerCount("plugins:ui:event:1"), 0);
+    assert.equal(calls.filter(([name]) => name === "plugins:ui:unsubscribe").length, 1);
+    const reply = { ok: true, value: { revision: 4 } };
+    finish(reply);
+    assert.equal(await pending, reply);
+    const failure = new Error("UI request failed");
+    ipcRenderer.invoke = async () => {
+      throw failure;
+    };
+    await assert.rejects(api.plugins.ui[method](input), (error) => error === failure);
+  });
+}
+
 test("smoke preload contains the real preload's complete API key tree", async () => {
   const source = await readFile(
     new URL("../../apps/desktop/src/preload/index.ts", import.meta.url),

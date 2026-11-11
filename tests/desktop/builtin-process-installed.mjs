@@ -1005,6 +1005,10 @@ export async function main() {
   const isolated = process.argv.includes("--isolated");
   const singleInstance = process.argv.includes("--single-instance");
   assert.ok(!singleInstance || isolated, "Single-instance partial evidence requires --isolated");
+  if (process.platform === "win32") {
+    console.log("NOT RUN on win32: installed OS process-tree evidence supports macOS/Linux only");
+    return;
+  }
   assert.ok(
     ["darwin", "linux"].includes(process.platform),
     "OS process-tree evidence currently supports macOS/Linux only; Windows remains unrun",
