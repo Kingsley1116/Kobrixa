@@ -25,6 +25,27 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const dependencies = process.env.KOBRIXA_E6_DEPS ?? root;
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const pluginId = "kobrixa.device-ev3";
+// Receipt keys use repository-relative slashes on every host; disk paths stay native.
+export function deviceSourceKey(workspace, file, paths = path) {
+  return paths.relative(workspace, file).split(paths.sep).join("/");
+}
+
+export function deviceRendererSource(workspace, id, paths = path) {
+  if (!paths.isAbsolute(id)) return undefined;
+  const file = paths.resolve(id.split("?")[0]);
+  const normalized = file.split(paths.sep).join("/");
+  if (normalized.includes("/node_modules/")) return undefined;
+  const relative = paths.relative(workspace, file);
+  assert.ok(
+    relative !== "" &&
+      relative !== ".." &&
+      !relative.startsWith(`..${paths.sep}`) &&
+      !paths.isAbsolute(relative),
+    `Foreign renderer ${id}`,
+  );
+  return file;
+}
+
 export const legacyDevice = {
   skipUnchangedAssets: true,
   usbAutoReconnect: false,
@@ -415,12 +436,13 @@ export async function buildDevice(directory, { productionLeaf } = {}) {
       const absolute = input.startsWith("kobrixa-raw-resource:")
         ? input.slice("kobrixa-raw-resource:".length)
         : path.resolve(root, input);
+      const normalized = absolute.split(path.sep).join("/");
       assert.ok(
-        absolute.startsWith(root + path.sep) || absolute.includes("/node_modules/"),
+        absolute.startsWith(root + path.sep) || normalized.includes("/node_modules/"),
         `Foreign workspace source ${absolute}`,
       );
       assert.ok(
-        !absolute.includes("/node_modules/@kobrixa/"),
+        !normalized.includes("/node_modules/@kobrixa/"),
         `Workspace dependency fallback ${absolute}`,
       );
       inputs.add(absolute);
@@ -529,10 +551,8 @@ export async function buildDevice(directory, { productionLeaf } = {}) {
               })();`,
           });
           for (const id of this.getModuleIds()) {
-            if (id.startsWith("/") && !id.includes("/node_modules/")) {
-              assert.ok(id.startsWith(root + path.sep), `Foreign renderer ${id}`);
-              inputs.add(id.split("?")[0]);
-            }
+            const file = deviceRendererSource(root, id);
+            if (file) inputs.add(file);
           }
         },
         transformIndexHtml: {
@@ -563,7 +583,7 @@ export async function buildDevice(directory, { productionLeaf } = {}) {
   ])
     artifactHashes[name] = digest(await readFile(path.join(directory, name)));
   for (const file of [...inputs].sort())
-    sourceHashes[path.relative(root, file)] = digest(await readFile(file));
+    sourceHashes[deviceSourceKey(root, file)] = digest(await readFile(file));
   for (const required of [
     ...(!productionLeaf
       ? ["plugins/device-ev3/src/main.ts", "plugins/device-ev3/src/controller.ts"]

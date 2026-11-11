@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { cp, mkdir, mkdtemp, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { setTimeout as pause } from "node:timers/promises";
 import { build } from "esbuild";
 import { root, fixture, readFixtures } from "./declarative-ui-harness.mjs";
@@ -102,7 +103,7 @@ for (let n = 0; n < 2; n++) {
       JSON.stringify(object).replaceAll("acceptance.ui", `acceptance.ui-${n}`),
     );
   await build({
-    entryPoints: [new URL("consumer.ts", fixture).pathname],
+    entryPoints: [fileURLToPath(new URL("consumer.ts", fixture))],
     outfile: path.join(folder, "main.cjs"),
     bundle: true,
     platform: "node",

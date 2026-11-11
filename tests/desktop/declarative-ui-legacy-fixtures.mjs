@@ -3,6 +3,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { root, fixture } from "./declarative-ui-harness.mjs";
 
@@ -155,7 +156,7 @@ export async function legacyFixtures(directory, options = {}) {
         : new URL(`legacy-consumer.${language === "js" ? "ts" : "py"}`, fixture);
       if (language === "js") {
         await build({
-          entryPoints: [consumer.pathname],
+          entryPoints: [fileURLToPath(consumer)],
           outfile: path.join(folder, "main.cjs"),
           bundle: true,
           platform: "node",

@@ -7,6 +7,8 @@ import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 import {
+  deviceSourceKey,
+  deviceRendererSource,
   verifyDeviceReceipt,
   legacyDevice,
   verifyRestartReceipt,
@@ -864,3 +866,39 @@ test("actual generated seed script leaves phase2 localStorage untouched", async 
     assert.equal(logs.at(-1).operation, "remove");
   }
 });
+
+for (const [platform, paths, workspace] of [
+  ["Windows", path.win32, "D:\\a\\Kobrixa\\Kobrixa"],
+  ["POSIX", path.posix, "/a/Kobrixa/Kobrixa"],
+]) {
+  test(`${platform} production source keys retain exact required paths`, () => {
+    const required = "plugins/device-ev3/src/main.ts";
+    const hashes = { [deviceSourceKey(workspace, paths.join(workspace, required), paths)]: "hash" };
+    assert.equal(hashes[required], "hash");
+    assert.equal(hashes["plugins/device-ev3/src/missing.ts"], undefined);
+    assert.notEqual(
+      deviceSourceKey(workspace, paths.join(workspace, "other", required), paths),
+      required,
+    );
+  });
+
+  test(`${platform} renderer collection includes production sources and rejects foreign workspaces`, () => {
+    const file = paths.join(workspace, "apps/desktop/src/renderer/plugin-ui/panel-host.tsx");
+    for (const id of [file, file.split(paths.sep).join("/")]) {
+      assert.equal(deviceRendererSource(workspace, `${id}?v=1`, paths), file);
+    }
+    assert.equal(deviceRendererSource(workspace, "\0virtual:module", paths), undefined);
+    assert.equal(
+      deviceRendererSource(workspace, paths.join(workspace, "node_modules/react/index.js"), paths),
+      undefined,
+    );
+    assert.throws(
+      () => deviceRendererSource(workspace, paths.join(workspace + "-foreign", "entry.ts"), paths),
+      /Foreign renderer/,
+    );
+    assert.throws(
+      () => deviceRendererSource(workspace, paths.join(workspace, "../foreign/entry.ts"), paths),
+      /Foreign renderer/,
+    );
+  });
+}
