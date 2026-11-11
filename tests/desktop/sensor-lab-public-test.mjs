@@ -4,7 +4,11 @@ import { test } from "node:test";
 import { readFile, mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
+import { runInNewContext } from "node:vm";
+import { labClickTargetScript } from "./sensor-lab-click-target.ts";
 import {
+  sourceHashKey,
+  verifyOracleFreshness,
   restartOriginals,
   seedLabRestart,
   snapshotLabRestart,
@@ -1379,3 +1383,71 @@ for (const [name, mutate] of [
     mutate(r.second.drains[0]);
     assert.throws(() => verifyLabRestart(r));
   });
+
+test("oracle source identity uses the same key on Windows and POSIX", () => {
+  const relative = "tests/desktop/sensor-lab-public-run.mjs";
+  for (const [paths, root] of [
+    [path.win32, "D:\\a\\Kobrixa"],
+    [path.posix, "/work/Kobrixa"],
+  ]) {
+    const key = sourceHashKey(root, paths.join(root, relative), paths);
+    assert.equal(key, relative);
+    for (const text of ["// oracle\n", "// oracle\r\n"]) {
+      const bytes = Buffer.from(text);
+      const hashes = { [key]: createHash("sha256").update(bytes).digest("hex") };
+      assert.doesNotThrow(() => verifyOracleFreshness(bytes, hashes));
+      assert.throws(
+        () => verifyOracleFreshness(Buffer.from(text + "// changed"), hashes),
+        /Oracle changed since build/,
+      );
+      assert.throws(() => verifyOracleFreshness(bytes, {}), /Oracle changed since build/);
+      const otherEol = Buffer.from(text.includes("\r") ? "// oracle\n" : "// oracle\r\n");
+      assert.throws(() => verifyOracleFreshness(otherEol, hashes), /Oracle changed since build/);
+    }
+  }
+});
+
+test("native click rechecks a target that changes after scrolling without activating it", () => {
+  let width = 80;
+  let height = 20;
+  let scrolls = 0;
+  const target = {
+    disabled: false,
+    textContent: " Refresh ",
+    scrollIntoView() {
+      scrolls++;
+    },
+    getBoundingClientRect: () => ({ x: 10, y: 20, width, height }),
+    getAttribute: () => "Refresh",
+  };
+  let elements = [target];
+  const context = {
+    document: { querySelectorAll: () => elements },
+    window: { labNativeTargetId: (element) => (element === target ? 1 : 2) },
+  };
+  const probe = (measure) =>
+    runInNewContext(labClickTargetScript("button", "Refresh", measure), context);
+  assert.equal(probe(false), true);
+  assert.equal(scrolls, 1);
+  target.disabled = true;
+  assert.equal(probe(true), null);
+  target.disabled = false;
+  elements = [];
+  assert.equal(probe(true), null);
+  elements = [target];
+  width = 0;
+  assert.equal(probe(true), null);
+  width = 80;
+  height = 0;
+  assert.equal(probe(true), null);
+  height = 20;
+  elements = [{ ...target }];
+  assert.deepEqual(JSON.parse(JSON.stringify(probe(true))), {
+    x: 50,
+    y: 30,
+    targetId: 2,
+    ariaLabel: "Refresh",
+  });
+  elements[0].textContent = "Delete";
+  assert.equal(probe(true), null);
+});

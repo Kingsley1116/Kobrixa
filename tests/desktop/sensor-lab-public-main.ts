@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { labClickTargetScript } from "./sensor-lab-click-target.js";
 import path from "node:path";
 import { realpath, writeFile } from "node:fs/promises";
 import { app, BrowserWindow, ipcMain } from "electron";
@@ -447,22 +448,21 @@ export function runNativeLab(): void {
         const js = <T>(source: string) =>
           window.webContents.executeJavaScript(source) as Promise<T>;
         const click = async (selector: string, text?: string) => {
-          const find = `Array.from(document.querySelectorAll(${JSON.stringify(selector)})).find(e => ${text === undefined ? "true" : `e.textContent.trim() === ${JSON.stringify(text)}`})`;
-          await until(
-            () =>
-              js<boolean>(
-                `(() => { const e=${find}; if(!e || e.disabled) return false; e.scrollIntoView({block:'center'}); return true; })()`,
-              ),
+          const bounds = await until(
+            async () => {
+              const ready = await js<boolean>(labClickTargetScript(selector, text, false));
+              if (!ready) return;
+              await pause(100);
+              // Re-query after scrolling/settling: renderer updates can disable,
+              // replace, or hide the target between readiness and measurement.
+              return js<{
+                x: number;
+                y: number;
+                targetId: number;
+                ariaLabel: string | null;
+              } | null>(labClickTargetScript(selector, text, true));
+            },
             `enabled target ${selector} ${text ?? ""}`,
-          );
-          await pause(100);
-          const bounds = await js<{
-            x: number;
-            y: number;
-            targetId: number;
-            ariaLabel: string | null;
-          }>(
-            `(() => { const e=${find}; const r=e.getBoundingClientRect(); if(e.disabled || r.width<=0 || r.height<=0) throw Error('Target unavailable'); return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2),targetId:window.labNativeTargetId(e),ariaLabel:e.getAttribute("aria-label")}; })()`,
           );
           checkpoints[`input-${sequence}`] = {
             stage,
@@ -905,7 +905,9 @@ export function runNativeLab(): void {
         assert.deepEqual(failures, []);
         stage = "complete";
       } catch (error) {
-        failures.push(error instanceof Error ? (error.stack ?? error.message) : String(error));
+        const failure = error instanceof Error ? (error.stack ?? error.message) : String(error);
+        failures.push(failure);
+        console.error(`Sensor Lab producer failed at ${stage}: ${failure}`);
         if (composition)
           await composition.dispose().catch((error) => failures.push(`cleanup: ${String(error)}`));
       } finally {

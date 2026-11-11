@@ -23,6 +23,20 @@ import { rawResourcePlugin } from "./raw-resource-plugin.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const pluginId = "kobrixa.sensor-lab";
+
+// Identity keys are portable; digests still cover the exact on-disk bytes.
+export function sourceHashKey(root, file, paths = path) {
+  return paths.relative(root, file).split(paths.sep).join("/");
+}
+
+export function verifyOracleFreshness(bytes, sourceHashes) {
+  assert.equal(
+    digest(bytes),
+    sourceHashes["tests/desktop/sensor-lab-public-run.mjs"],
+    "Oracle changed since build; rebuild before native execution",
+  );
+}
+
 const ok = (result) => {
   assert.equal(result?.ok, true, JSON.stringify(result));
   return result.value;
@@ -866,7 +880,7 @@ export async function buildLab(directory) {
   ])
     artifactHashes[name] = digest(await readFile(path.join(directory, name)));
   for (const file of [...inputs].sort())
-    sourceHashes[path.relative(root, file)] = digest(await readFile(file));
+    sourceHashes[sourceHashKey(root, file)] = digest(await readFile(file));
   const identity = {
     root,
     commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
@@ -1222,7 +1236,11 @@ async function runLabRestartProcess(directory, electron, env, phase) {
   assert.deepEqual(errors, []);
   assert.deepEqual(survivors, []);
   assert.equal(timedOut, false);
-  assert.equal(result.code, 0);
+  assert.equal(
+    result.code,
+    0,
+    `Native restart phase ${phase} failed; inspect ${path.join(directory, `producer-restart-${phase}.json`)} and native-restart-${phase}.log`,
+  );
   assert.equal(result.signal, null);
   return outside;
 }
@@ -1245,11 +1263,7 @@ async function main(args) {
     console.log("BUILD ONLY: Electron was not launched; no native PASS claimed.");
     return;
   }
-  assert.equal(
-    digest(await readFile(fileURLToPath(import.meta.url))),
-    identity.sourceHashes["tests/desktop/sensor-lab-public-run.mjs"],
-    "Oracle changed since build; rebuild before native execution",
-  );
+  verifyOracleFreshness(await readFile(fileURLToPath(import.meta.url)), identity.sourceHashes);
   for (const [file, hash] of Object.entries(identity.artifactHashes))
     assert.equal(
       digest(await readFile(path.join(directory, file))),
