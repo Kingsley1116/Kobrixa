@@ -2,6 +2,8 @@ import { constants } from "node:fs";
 import { lstat, mkdir, open, readdir, realpath, rename, unlink } from "node:fs/promises";
 import path from "node:path";
 export interface JournalFilesystem {
+  // Failed durability initialization must not prevent independently validated reads
+  // of existing evidence. It never authorizes writes or repair.
   initialize(): Promise<void>;
   inventory(): Promise<Array<{ name: string; bytes: number }>>;
   read(name: string): Promise<Uint8Array | null>;
@@ -41,7 +43,11 @@ export function createJournalFilesystem(
   directoryBarrier: (target: string) => Promise<void> = syncJournalDirectory,
 ): JournalFilesystem {
   const root = path.resolve(userData, "device-broker");
-  let initialized = false;
+  let readable = false;
+  let writable = false;
+  const assertWritable = (): void => {
+    if (!writable) throw new Error("journal not writable");
+  };
   const safe = (name: string): string => {
     if (!/^(faults(?:\.previous)?\.json|faults\.(?:next|backup)-[0-9a-f-]{36}\.json)$/.test(name))
       throw new Error("journal filename");
@@ -67,15 +73,19 @@ export function createJournalFilesystem(
   const syncDirectory = (target = root): Promise<void> => directoryBarrier(target);
   return {
     async initialize() {
+      readable = false;
+      writable = false;
       await mkdir(root, { recursive: true, mode: 0o700 });
       await directory();
+      // Retain read-only recovery access even when either durability probe fails.
+      readable = true;
       // This is a capability probe, not a silent file-sync-only downgrade.
       await syncDirectory();
       await syncDirectory(path.dirname(root));
-      initialized = true;
+      writable = true;
     },
     async inventory() {
-      if (!initialized) throw new Error("journal not initialized");
+      if (!readable) throw new Error("journal not initialized");
       await directory();
       const names = await readdir(root);
       if (names.length > 256) throw new Error("journal directory entry budget");
@@ -109,6 +119,7 @@ export function createJournalFilesystem(
       }
     },
     async write(name, bytes) {
+      assertWritable();
       await directory();
       if (bytes.length > 8388608) throw new Error("journal write budget");
       const fd = await open(
@@ -127,6 +138,7 @@ export function createJournalFilesystem(
       }
     },
     async sync(name) {
+      assertWritable();
       if (!(await regular(name))) throw new Error("journal temp absent");
       const fd = await open(safe(name), constants.O_RDWR | constants.O_NOFOLLOW);
       try {
@@ -136,12 +148,14 @@ export function createJournalFilesystem(
       }
     },
     async replace(from, to) {
+      assertWritable();
       if (!(await regular(from))) throw new Error("journal temp absent");
       await regular(to);
       await rename(safe(from), safe(to));
     },
     syncDirectory: () => syncDirectory(),
     async remove(name) {
+      assertWritable();
       if (await regular(name)) await unlink(safe(name));
     },
   };

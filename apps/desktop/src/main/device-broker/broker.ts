@@ -1270,6 +1270,7 @@ export function createBroker(
       current.recoveryHistory.push(receipt);
       current.recoveryDisposition = disposition;
       let confirmed = false;
+      let journalCommitted = false;
       let physicalProof = false;
       let resolution: SafetyFaultEntry | undefined;
       let recordedFault = false;
@@ -1354,6 +1355,7 @@ export function createBroker(
         confirmed =
           physicalProof &&
           !(typeof result === "object" && result !== null && "ok" in result && result.ok === false);
+        journalCommitted = input.journal.snapshot().journalHealth === "ready";
         if (!confirmed) current.lane.quarantined = true;
         return result;
       } catch (error) {
@@ -1412,7 +1414,7 @@ export function createBroker(
           receipt.faultIds = faultIds;
           settle({
             stopConfirmed: confirmed && !current.lane.occupied && !current.providerPending.size,
-            journalCommitted: snapshot.journalHealth === "ready",
+            journalCommitted: journalCommitted && snapshot.journalHealth === "ready",
             faultIds,
           });
         }
@@ -2653,9 +2655,19 @@ export function createBroker(
             cause: "none",
             resolution: null,
           };
-          await writeProgram(entry);
-          lane.recorded?.(entry);
+          let journalFailed = false;
+          try {
+            await writeProgram(entry);
+          } catch {
+            // Safety stops reduce existing risk: a failed marker must not suppress
+            // hardware cleanup (§7.2/§7.2.1). Run/motion still require their marker.
+            journalFailed = true;
+          }
+          if (!journalFailed) lane.recorded?.(entry);
           const outcome = await lane.stop();
+          // Do not retry publication or turn physical readback into a journaled
+          // resolution after a failed (possibly still settling) initial commit.
+          if (journalFailed) throw new Error("Safety-stop journal commit failed");
           const confirmed =
             !outcome.error && outcome.stopConfirmation === "confirmed" && isIdle(outcome.value);
           entry = {

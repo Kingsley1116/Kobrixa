@@ -109,11 +109,14 @@ it("current-device stop journals a real request before stop and does not invent 
 import { createJournal, journalDocument, parseJournal } from "./journal.js";
 import type { JournalFilesystem } from "./journal-filesystem.js";
 import { createCoreActionLedger } from "../plugins/core-recovery.js";
-async function realSetup() {
+async function realSetup(durabilityAvailable = true) {
   const h = operationHarness();
   const files = new Map<string, Uint8Array>();
   const filesystem: JournalFilesystem = {
-    initialize: async () => {},
+    initialize: async () => {
+      if (!durabilityAvailable)
+        throw Object.assign(new Error("durability unavailable"), { code: "ENOTSUP" });
+    },
     inventory: async () => [...files].map(([name, bytes]) => ({ name, bytes: bytes.length })),
     read: async (name) => files.get(name)?.slice() ?? null,
     write: async (name, bytes) => {
@@ -190,6 +193,56 @@ async function realSetup() {
   };
 }
 // T10 Step 18 removes this gate.
+it.each([true, false])("W02b program dispatch requires durability=%s", async (available) => {
+  const h = await realSetup(available);
+  const operation = await h.broker.begin({
+    principal: {
+      kind: "core",
+      adapter: "program",
+      hostEpoch: ID,
+      workbenchInstance: ID,
+      authorityContext: { ref: ID, epoch: ID },
+    },
+    sessionId: h.sessionId,
+    operationClass: "program-launch",
+    signal: signal(),
+  });
+  try {
+    const running = operation.execute({ kind: "run", remotePath: "/test.rbf" });
+    if (available) {
+      expect((await running).error).toBeNull();
+      expect(h.provider.calls.filter((call) => call === "run")).toHaveLength(1);
+      expect(parseJournal(h.files.get("faults.json")!).entries[0]?.state).toBe("active-program");
+    } else {
+      await expect(running).rejects.toThrow("journal write blocked");
+      expect(h.provider.calls).not.toContain("run");
+      expect(h.files.size).toBe(0);
+      expect(h.broker.recovery.snapshot().journalHealth).toBe("unwritable");
+    }
+  } finally {
+    await operation.cancel();
+  }
+});
+it("W02b trusted stop still dispatches when durability is unavailable without claiming success", async () => {
+  const h = await realSetup(false);
+  const result = await h.broker.stopCurrentDevice({
+    sessionId: h.sessionId,
+    action: h.actions.mint(h.scope, { kind: "device-current-stop", sessionId: h.sessionId }),
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    error: { detail: { reason: "journal-unwritable", stopConfirmation: "unconfirmed" } },
+  });
+  expect(h.broker.recovery.snapshot().journalHealth).toBe("unwritable");
+  expect(h.files.size).toBe(0);
+  // The required best-effort physical stop is independent of durable resolution.
+  expect(h.provider.calls.filter((call) => call === "stop")).toHaveLength(1);
+  await expect(h.unregister.retirement!.retire()).rejects.toMatchObject({
+    disposition: { stopConfirmed: false, journalCommitted: false, faultIds: [] },
+  });
+  expect(h.provider.calls).not.toContain("disconnect");
+  expect(h.provider.calls).not.toContain("dispose");
+});
 describe("real-factory acceptance", () => {
   it("real action ledger rejects replay and foreign-window current stops", async () => {
     const h = await realSetup(),
@@ -211,7 +264,7 @@ describe("real-factory acceptance", () => {
     expect(h.provider.calls.filter((call) => call === "stop")).toHaveLength(1);
   });
   it.each([1, 2])(
-    "real facade journal failure at commit %i retains a blocker without extra dispatch",
+    "real facade journal failure at commit %i still attempts one trusted stop and retains blockers",
     async (failAt) => {
       const h = await realSetup();
       let count = 0;
@@ -224,8 +277,25 @@ describe("real-factory acceptance", () => {
         kind: "device-current-stop",
         sessionId: h.sessionId,
       });
-      expect((await h.broker.stopCurrentDevice({ sessionId: h.sessionId, action })).ok).toBe(false);
-      expect(h.provider.calls.filter((call) => call === "stop")).toHaveLength(failAt === 1 ? 0 : 1);
+      expect(await h.broker.stopCurrentDevice({ sessionId: h.sessionId, action })).toMatchObject({
+        ok: false,
+        error: { detail: { reason: "journal-unwritable", stopConfirmation: "unconfirmed" } },
+      });
+      // §7.2 requires hardware stop to continue on journal failure; only new
+      // motion/Run must remain undispatched without a committed pending marker.
+      expect(h.provider.calls.filter((call) => call === "stop")).toHaveLength(1);
+      expect(count).toBe(failAt);
+      if (failAt === 1) {
+        expect(h.files.size).toBe(0);
+        expect(h.broker.recovery.snapshot().faults).toEqual([]);
+      } else {
+        expect(parseJournal(h.files.get("faults.json")!).entries[0]).toMatchObject({
+          state: "pending",
+          stopConfirmation: "pending",
+          resolution: null,
+        });
+        expect(h.broker.recovery.snapshot().blockers).toHaveLength(1);
+      }
       await expect(
         h.broker.begin({
           principal: pluginPrincipal(),
@@ -234,6 +304,21 @@ describe("real-factory acceptance", () => {
           signal: signal(),
         }),
       ).rejects.toThrow();
+      await expect(
+        h.broker.begin({
+          principal: pluginPrincipal(),
+          sessionId: h.sessionId,
+          operationClass: "program-launch",
+          signal: signal(),
+        }),
+      ).rejects.toThrow();
+      expect(h.provider.calls).not.toContain("run");
+      expect(h.provider.calls).not.toContain("motion");
+      await expect(h.unregister.retirement!.retire()).rejects.toMatchObject({
+        disposition: { stopConfirmed: false, journalCommitted: false },
+      });
+      expect(h.provider.calls).not.toContain("disconnect");
+      expect(h.provider.calls).not.toContain("dispose");
     },
   );
   it("real read-only reconciliation observes without issuing a stop", async () => {
@@ -299,6 +384,56 @@ function retirementGate() {
   });
   return { promise, resolve };
 }
+
+it("trusted stop survives a pending commit timeout; late publication cannot resolve or unblock it", async () => {
+  const h = await realSetup();
+  const entered = retirementGate(),
+    release = retirementGate();
+  const commit = h.dependencies.journal.commit.bind(h.dependencies.journal);
+  const committing = vi.spyOn(h.dependencies.journal, "commit").mockImplementation(async (doc) => {
+    entered.resolve();
+    await release.promise;
+    await commit(doc);
+  });
+  vi.useFakeTimers();
+  try {
+    const stopping = h.broker.stopCurrentDevice({
+      sessionId: h.sessionId,
+      action: h.actions.mint(h.scope, { kind: "device-current-stop", sessionId: h.sessionId }),
+    });
+    await entered.promise;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await stopping).toMatchObject({
+      ok: false,
+      error: { detail: { reason: "journal-unwritable", stopConfirmation: "unconfirmed" } },
+    });
+    expect(h.provider.calls.filter((call) => call === "stop")).toHaveLength(1);
+    expect(committing).toHaveBeenCalledTimes(1);
+    expect(h.files.size).toBe(0);
+    await expect(h.unregister.retirement!.retire()).rejects.toMatchObject({
+      disposition: { stopConfirmed: false, journalCommitted: false },
+    });
+    release.resolve();
+    await committing.mock.results[0]!.value;
+    expect(parseJournal(h.files.get("faults.json")!).entries[0]).toMatchObject({
+      state: "pending",
+      stopConfirmation: "pending",
+      resolution: null,
+    });
+    expect(h.broker.recovery.snapshot().blockers).toHaveLength(1);
+    await expect(h.unregister.retirement!.retire()).rejects.toMatchObject({
+      disposition: { stopConfirmed: false, journalCommitted: false },
+    });
+    expect(committing).toHaveBeenCalledTimes(1);
+    expect(h.provider.calls).not.toContain("run");
+    expect(h.provider.calls).not.toContain("motion");
+    expect(h.provider.calls).not.toContain("disconnect");
+    expect(h.provider.calls).not.toContain("dispose");
+  } finally {
+    release.resolve();
+    vi.useRealTimers();
+  }
+});
 
 it("real retirement waits for stop/readback and final journal commit, then disposes once; stale unregister cannot remove replacement", async () => {
   const h = await realSetup();
@@ -811,10 +946,12 @@ it("contract2 concurrent recovery stays excluded through journal publication; qu
 it("contract2 no-fault uncertainty cannot acquire a recovery lease or retire as time passes", async () => {
   const h = await realSetup();
   expect(await failCurrentStop(h, "no-fault")).toBeUndefined();
+  expect(h.provider.calls.filter((call) => call === "stop")).toHaveLength(1);
   h.setNow(100000);
   expect((await recoverFault(h, ID).run()).ok).toBe(false);
   await expectRetirementBlocked(h);
-  expect(h.provider.calls).not.toContain("stop");
+  // The original trusted stop was attempted; invalid recovery adds no dispatch.
+  expect(h.provider.calls.filter((call) => call === "stop")).toHaveLength(1);
 });
 it("contract2 real filesystem failure latches the journal: restored writes never manufacture recovery", async () => {
   const h = await realSetup();

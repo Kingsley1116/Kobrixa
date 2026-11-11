@@ -225,12 +225,15 @@ export function createJournal(fs: JournalFilesystem, profile: ProfileWriterLock)
       profile.assertHeld();
       if (loaded) return structuredClone(committed);
       const found: FaultJournalDocument[] = [];
+      let initializationFailed = false;
       try {
         try {
           await fs.initialize();
         } catch {
+          initializationFailed = true;
           health = "unwritable";
-          throw new Error("journal initialization");
+          // A missing durability barrier is not evidence of an empty profile.
+          // Inventory/read retain their own path, type and byte-limit validation.
         }
         const files = await fs.inventory();
         const overBudget = files.reduce((n, file) => n + file.bytes, 0) > 8388608;
@@ -260,8 +263,8 @@ export function createJournal(fs: JournalFilesystem, profile: ProfileWriterLock)
         const newer = committedDocuments.filter((doc) => doc.revision > committed.revision);
         if (newer.length) health = "corrupt";
         recovering = orphans.size > 0 && health === "ready";
-        if (orphans.size || health === "corrupt") {
-          health = "corrupt";
+        if (orphans.size || health !== "ready") {
+          if (health !== "unwritable") health = "corrupt";
           const evidence = new Map<string, SafetyFaultEntry>(
             committed.entries.map((item) => [item.id, item]),
           );
@@ -291,6 +294,10 @@ export function createJournal(fs: JournalFilesystem, profile: ProfileWriterLock)
       } catch {
         recovering = false;
         if (health !== "unwritable") health = "corrupt";
+      }
+      if (initializationFailed) {
+        health = "unwritable";
+        recovering = false;
       }
       for (const item of committed.entries) if (item.state !== "resolved") carried.add(item.id);
       loaded = true;

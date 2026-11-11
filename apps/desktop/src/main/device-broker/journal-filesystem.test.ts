@@ -1,9 +1,11 @@
-import { mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { createJournalFilesystem, writeAll } from "./journal-filesystem.js";
 import { createJournal, journalDocument } from "./journal.js";
+import type { SafetyFaultEntry } from "@kobrixa/plugin-runtime";
 afterEach(() => vi.unstubAllGlobals());
 it("F10 loops on short writes and rejects zero progress", async () => {
   const output: number[] = [];
@@ -92,3 +94,78 @@ it.each(["EIO", "EPERM"])("F10 does not downgrade a %s directory barrier failure
     await rm(temp, { recursive: true, force: true });
   }
 });
+it.each(["root", "parent"])(
+  "W02b failed %s barrier preserves real on-disk faults and denies mutations",
+  async (point) => {
+    const temp = await mkdtemp(path.join(tmpdir(), "journal-recovery-"));
+    try {
+      const root = await realpath(temp);
+      const directory = path.join(root, "device-broker");
+      await mkdir(directory);
+      const id = randomUUID();
+      const marker: SafetyFaultEntry = {
+        id,
+        revision: 1,
+        owner: { kind: "core", adapter: "motor", hostEpoch: id, workbenchInstance: id },
+        providerId: "kobrixa.device-ev3",
+        providerGeneration: 1,
+        physical: {
+          providerId: "kobrixa.device-ev3",
+          family: "ev3",
+          basis: "serial",
+          digest: "a".repeat(64),
+          strength: "stable",
+        },
+        sessionId: id,
+        operationId: id,
+        operationClass: "finite-motion",
+        createdAt: 1,
+        updatedAt: 1,
+        state: "pending",
+        dispatch: "sent",
+        movement: "unknown",
+        stopRequested: false,
+        stopConfirmation: "pending",
+        cause: "none",
+        resolution: null,
+      };
+      const bytes = Buffer.from(JSON.stringify(journalDocument(1, [marker])));
+      await writeFile(path.join(directory, "faults.json"), bytes);
+      const barriers: string[] = [];
+      const fs = createJournalFilesystem(root, async (target) => {
+        barriers.push(target);
+        if (target === (point === "root" ? directory : root))
+          throw Object.assign(new Error("barrier unavailable"), { code: "ENOTSUP" });
+      });
+      const journal = createJournal(fs, { hostEpoch: id, assertHeld() {} });
+      await journal.load();
+      expect(barriers).toEqual(point === "root" ? [directory] : [directory, root]);
+      expect(journal.snapshot()).toMatchObject({
+        journalHealth: "unwritable",
+        blockers: [id],
+        faults: [{ id, state: "unconfirmed", cause: "host-restarted" }],
+      });
+      await expect(journal.commit(journalDocument(2, [marker]))).rejects.toThrow(
+        "journal write blocked",
+      );
+      const next = `faults.next-${randomUUID()}.json`;
+      await expect(fs.write(next, bytes)).rejects.toThrow("journal not writable");
+      await expect(fs.sync("faults.json")).rejects.toThrow("journal not writable");
+      await expect(fs.replace("faults.json", "faults.previous.json")).rejects.toThrow(
+        "journal not writable",
+      );
+      await expect(fs.remove("faults.json")).rejects.toThrow("journal not writable");
+      expect(await fs.inventory()).toEqual([{ name: "faults.json", bytes: bytes.length }]);
+      expect(await readFile(path.join(directory, "faults.json"))).toEqual(bytes);
+      // Read-only recovery still applies the ordinary unsafe-evidence checks.
+      await symlink(
+        path.join(directory, "faults.json"),
+        path.join(directory, "faults.previous.json"),
+      );
+      await expect(fs.inventory()).rejects.toThrow("journal unsafe evidence");
+      await expect(fs.read("faults.previous.json")).rejects.toThrow("journal unsafe file");
+    } finally {
+      await rm(temp, { recursive: true, force: true });
+    }
+  },
+);

@@ -212,6 +212,57 @@ it("F11 restart projects pending and active-program as unknown without I/O repla
   });
   expect(m.trace).toEqual(["initialize"]);
 });
+it.each(["current", "previous", "orphan", "corrupt-current"])(
+  "W02b unavailable durability retains %s faults without admitting repair or risk",
+  async (source) => {
+    const m = fixture(),
+      marker = entry({ state: "active-program", dispatch: "sent" });
+    const name =
+      source === "current"
+        ? "faults.json"
+        : source === "orphan"
+          ? `faults.next-${randomUUID()}.json`
+          : "faults.previous.json";
+    m.files.set(name, Buffer.from(JSON.stringify(journalDocument(7, [marker]))));
+    if (source === "corrupt-current") m.files.set("faults.json", Buffer.from("{"));
+    const before = new Map([...m.files].map(([name, bytes]) => [name, Buffer.from(bytes)]));
+    m.fs.initialize = async () => {
+      throw Object.assign(new Error("durability unavailable"), { code: "ENOTSUP" });
+    };
+    const journal = createJournal(m.fs, m.profile);
+    await journal.load();
+    expect(journal.snapshot()).toMatchObject({
+      revision: 7,
+      journalHealth: "unwritable",
+      blockers: [marker.id],
+      faults: [
+        { id: marker.id, state: "unconfirmed", movement: "unknown", cause: "host-restarted" },
+      ],
+    });
+    await expect(journal.commit(journalDocument(8, [resolved(marker)]))).rejects.toThrow(
+      "journal write blocked",
+    );
+    await expect(journal.commit(journalDocument(8, [marker, entry()]))).rejects.toThrow(
+      "journal write blocked",
+    );
+    expect(m.files).toEqual(before);
+    expect(m.trace).toEqual([]);
+    expect(journal.snapshot().blockers).toEqual([marker.id]);
+  },
+);
+it("W02b unavailable durability cannot report ready for an empty profile", async () => {
+  const m = fixture();
+  m.fs.initialize = async () => {
+    throw new Error("barrier failed");
+  };
+  const journal = createJournal(m.fs, m.profile);
+  await journal.load();
+  expect(journal.snapshot()).toMatchObject({ journalHealth: "unwritable", faults: [] });
+  await expect(journal.commit(journalDocument(1, [entry()]))).rejects.toThrow(
+    "journal write blocked",
+  );
+  expect(m.trace).toEqual([]);
+});
 it.each(["missing", "corrupt", "future"])(
   "F10 current %s preserves previous pending evidence",
   async (kind) => {

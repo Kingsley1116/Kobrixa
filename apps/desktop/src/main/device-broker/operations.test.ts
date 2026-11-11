@@ -1,6 +1,35 @@
 import { expect, it, vi } from "vitest";
 import { OperationStore } from "./operations.js";
 import { operationHarness, pluginPrincipal } from "./fake-provider.js";
+import { createJournal } from "./journal.js";
+import type { JournalFilesystem } from "./journal-filesystem.js";
+it("W02b unavailable durability prevents motion dispatch through the real journal", async () => {
+  const h = operationHarness();
+  const write = vi.fn<JournalFilesystem["write"]>();
+  h.dependencies.journal = createJournal(
+    {
+      async initialize() {
+        throw Object.assign(new Error("durability unavailable"), { code: "ENOTSUP" });
+      },
+      inventory: async () => [],
+      read: async () => null,
+      write,
+      sync: vi.fn(),
+      replace: vi.fn(),
+      syncDirectory: vi.fn(),
+      remove: vi.fn(),
+    },
+    h.dependencies.profile,
+  );
+  await h.dependencies.journal.load();
+  const store = new OperationStore(h.dependencies);
+  const operation = store.prepare(h.admission);
+  store.start(h.admission.principal, operation.operationId);
+  expect((await store.settled(operation.operationId)).journalCommitted).toBe(false);
+  expect(h.provider.calls).not.toContain("motion");
+  expect(write).not.toHaveBeenCalled();
+  expect(h.dependencies.journal.snapshot().journalHealth).toBe("unwritable");
+});
 it("F07 starting motion reserves foreground before a shared read drains without aborting it", async () => {
   const h = operationHarness(),
     store = new OperationStore(h.dependencies);
