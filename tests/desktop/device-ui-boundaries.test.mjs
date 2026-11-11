@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { test } from "node:test";
 import {
   auditFeature,
@@ -6,6 +8,9 @@ import {
   auditBundle,
   auditTrace,
   auditRetiredSource,
+  auditRetiredSources,
+  retainedCoreAllowlist,
+  root,
   auditRetiredText,
   auditProductionLeaf,
   auditInstalledTrace,
@@ -172,6 +177,112 @@ test("device retirement checker distinguishes retained core deployment/files/rec
 
 test("device retired feature bridges and old mounted controls are absent after W07b", async () => {
   await auditRetiredSource(feature);
+});
+
+// Real source is the baseline; mutations are validator negatives, not native evidence.
+let coreSources;
+async function retainedSources() {
+  coreSources ??= auditRetiredSource(feature).then(async (files) =>
+    Object.fromEntries(
+      await Promise.all(
+        files.map(async (file) => [file, await readFile(path.join(root, file), "utf8")]),
+      ),
+    ),
+  );
+  return { ...(await coreSources) };
+}
+
+test("retained-core allowlist still rejects every retired feature outside its entries", async () => {
+  const sources = await retainedSources();
+  for (const token of [
+    "device:monitor",
+    "device:set-input-mode",
+    "device:connect",
+    "device:discover",
+    "device:set-preferences",
+    "MonitorPanel",
+  ]) {
+    assert.throws(
+      () =>
+        auditRetiredSources(feature, {
+          ...sources,
+          "apps/desktop/src/renderer/negative.ts": `const forbidden = ${JSON.stringify(token)};`,
+        }),
+      /Retired feature/,
+    );
+  }
+});
+
+test("retained-core channels reject second literal and facade consumers", async () => {
+  const sources = await retainedSources();
+  for (const entry of retainedCoreAllowlist.slice(0, 2)) {
+    assert.throws(
+      () =>
+        auditRetiredSources(feature, {
+          ...sources,
+          "apps/desktop/src/renderer/negative.ts": `const channel = ${JSON.stringify(entry.token)};`,
+        }),
+      /Unapproved retained-core use/,
+    );
+  }
+  for (const method of ["watchMonitor", "onMonitor"]) {
+    const file = "apps/desktop/src/renderer/app.tsx";
+    assert.throws(
+      () =>
+        auditRetiredSources(feature, {
+          ...sources,
+          [file]: sources[file] + `\nwindow.kobrixa.device["${method}"]();`,
+        }),
+      /Second retained-core consumer/,
+    );
+  }
+});
+
+test("retained-core consumers reject mode, sensor, connection, discovery and preference behavior", async () => {
+  const sources = await retainedSources();
+  for (const entry of retainedCoreAllowlist)
+    for (const operation of [
+      "setInputMode",
+      "sampleSensors",
+      "connect",
+      "discover",
+      "setPreferences",
+    ]) {
+      const file = entry.consumer.file;
+      assert.throws(
+        () =>
+          auditRetiredSources(feature, {
+            ...sources,
+            [file]: sources[file] + `\nfeature.${operation}();`,
+          }),
+        /Changed retained-core consumer|Unapproved retained-core use/,
+      );
+    }
+  const file = "apps/desktop/src/preload/index.ts";
+  assert.throws(
+    () =>
+      auditRetiredSources(feature, {
+        ...sources,
+        [file]: sources[file].replace(
+          'ipcRenderer.invoke("device:watch-monitor", sessionId, enabled)',
+          'ipcRenderer.invoke("device:watch-monitor", sessionId, feature.sampleSensors())',
+        ),
+      }),
+    /Unapproved retained-core use/,
+  );
+});
+
+test("every retained-core entry must remain present, including its single reachable consumer", async () => {
+  const sources = await retainedSources();
+  for (const entry of retainedCoreAllowlist) {
+    const missing = Object.fromEntries(
+      Object.entries(sources).map(([file, source]) => [
+        file,
+        source.replaceAll(entry.token, "removedCoreItem"),
+      ]),
+    );
+    assert.throws(() => auditRetiredSources(feature, missing), /Stale retained-core allowlist/);
+  }
 });
 
 test(

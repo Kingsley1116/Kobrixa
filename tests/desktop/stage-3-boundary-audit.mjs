@@ -484,24 +484,257 @@ export function auditRetiredText(feature, text, filename) {
         `Uninventoried core channel ${channel}: ${filename}`,
       );
 }
+// W07a/W07b retained-core exceptions, never permissions for plugin consumers.
+// Each entry names one consumer; sites are its exact host/preload wiring (or
+// saved-tab mount). Token fingerprints ignore comments/formatting but deliberately
+// fail closed on behavior changes, including renamed/aliased feature operations.
+// Updating a fingerprint requires reviewing the retained-core contract again.
+export const retainedCoreAllowlist = [
+  {
+    token: "device:watch-monitor",
+    justification: "Core battery demand uses the existing host broker, with no feature sampler.",
+    consumer: {
+      file: "apps/desktop/src/renderer/device/monitor-controller.ts",
+      symbol: "CoreBatteryMonitor",
+      sha256: "a9d7c3a82f0f51d2f894d13e92806e44db0c5c2e201635282724968f2c190b32",
+    },
+    sites: [
+      {
+        file: "apps/desktop/src/main/ipc.ts",
+        sha256: "039e66efc8e27e6671d2555a7e973b8130d4dedd0a0473b877e126e639d91e2e",
+        count: 1,
+      },
+      {
+        file: "apps/desktop/src/preload/index.ts",
+        sha256: "2702cab7c5b3a3d322cc046c548cb68c163783effb961bb94bc8ad968cc77f0c",
+        count: 1,
+      },
+    ],
+  },
+  {
+    token: "device:monitor-update",
+    justification:
+      "Core battery status observes the same broker feed and reads only battery fields.",
+    consumer: {
+      file: "apps/desktop/src/renderer/device/battery-status.ts",
+      symbol: "BatteryStatus",
+      sha256: "bc28ce643541fda7df9f606693fe3760180f58e7898f9be0f627646339636015",
+    },
+    sites: [
+      {
+        file: "apps/desktop/src/main/index.ts",
+        sha256: "e72fd661800db6430c969629ea99b30135a207f29084f3f8b61c247072634da9",
+        count: 1,
+      },
+      {
+        file: "apps/desktop/src/preload/index.ts",
+        sha256: "ac0b8d9efc15417754d9373d4786badecac0abe63fefbe346befa369041f7345",
+        count: 1,
+      },
+      {
+        file: "apps/desktop/src/preload/index.ts",
+        sha256: "5b03981b686f158daf93d870c7d23c9c3bdc66a7d77dc04f43ef6cd1f2652805",
+        count: 1,
+      },
+    ],
+  },
+  {
+    token: "MonitorWorkspace",
+    justification:
+      "Saved Monitor tabs redirect to public plugin panels without mounting retired controls.",
+    consumer: {
+      file: "apps/desktop/src/renderer/device/monitor-workspace.tsx",
+      symbol: "MonitorWorkspace",
+      sha256: "c7c6f4d7a0da423b3cc8b86119703dc0bfebf7e9f5153f2d6426e1827634c5ee",
+    },
+    sites: [
+      {
+        file: "apps/desktop/src/renderer/app.tsx",
+        sha256: "aeae24ba0233f89a0e133e94ae04d1f8c37579cee9c9299eb3bbea596b1ee0c7",
+        count: 1,
+      },
+      {
+        file: "apps/desktop/src/renderer/app.tsx",
+        sha256: "f0a23b583e4ebdcc5b6562efa73765285b86fc72c2e013121a756da25a3ca137",
+        count: 1,
+      },
+      {
+        file: "apps/desktop/src/renderer/device/monitor-workspace.tsx",
+        sha256: "8d77c88b95e1467d024324661f1d5428b66c5e3b1c0bb86f5b2311e793f592d4",
+        count: 1,
+      },
+    ],
+  },
+];
+
+function coreFingerprint(node) {
+  const tokens = [];
+  function visit(current) {
+    const children = current.getChildren();
+    if (!children.length && current.kind !== ts.SyntaxKind.EndOfFileToken)
+      tokens.push([current.kind, current.getText()]);
+    else children.forEach(visit);
+  }
+  visit(node);
+  return digest(JSON.stringify(tokens));
+}
+function retainedScope(node) {
+  for (let current = node.parent; current; current = current.parent)
+    if (
+      ts.isPropertyAssignment(current) ||
+      ts.isExpressionStatement(current) ||
+      ts.isVariableStatement(current) ||
+      ts.isImportDeclaration(current) ||
+      ts.isJsxSelfClosingElement(current) ||
+      ts.isFunctionDeclaration(current)
+    )
+      return current;
+  assert.fail("Retained item outside permitted wiring");
+}
+
+// In-memory seam for adversarial tests: exactly the same inventory and checks as
+// the disk audit. Fixture code is still scanned for retired tokens. Only facade
+// consumer counting uses the reachable production graph (legacy oracles are not
+// mounted consumers); importing an oracle into production makes it count again.
+export function auditRetiredSources(feature, sources) {
+  featureRoot(feature);
+  const trees = new Map(
+    Object.entries(sources).map(([file, source]) => {
+      const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+      assert.equal(tree.parseDiagnostics.length, 0, `Unparseable source: ${file}`);
+      return [normalize(file), tree];
+    }),
+  );
+  const reachable = new Set();
+  function reach(file) {
+    if (reachable.has(file) || !trees.has(file)) return;
+    reachable.add(file);
+    function visit(node) {
+      if (
+        (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+        node.moduleSpecifier &&
+        ts.isStringLiteralLike(node.moduleSpecifier)
+      ) {
+        const specifier = node.moduleSpecifier.text;
+        if (specifier.startsWith(".")) {
+          const target = normalize(path.posix.join(path.posix.dirname(file), specifier));
+          for (const candidate of [
+            target,
+            target.replace(/\.js$/, ".ts"),
+            target.replace(/\.js$/, ".tsx"),
+            `${target}.ts`,
+            `${target}.tsx`,
+            `${target}/index.ts`,
+          ])
+            reach(candidate);
+        }
+      }
+      if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+        const specifier = node.arguments[0];
+        assert.ok(
+          specifier && ts.isStringLiteralLike(specifier),
+          `Nonliteral production import: ${file}`,
+        );
+        const target = normalize(path.posix.join(path.posix.dirname(file), specifier.text));
+        for (const candidate of [
+          target,
+          target.replace(/\.js$/, ".ts"),
+          target.replace(/\.js$/, ".tsx"),
+        ])
+          reach(candidate);
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(trees.get(file));
+  }
+  for (const entry of ["main/index.ts", "preload/index.ts", "renderer/app.tsx"])
+    reach(`apps/desktop/src/${entry}`);
+  const seen = new Map();
+  const facadeCounts = new Map();
+  // The independent historical oracle is not a product consumer. It remains
+  // scanned above for retired channels and may never enter the production graph.
+  const oracle = "apps/desktop/src/renderer/device/legacy-monitor.fixture.ts";
+  const facadeInventory = {
+    watchMonitor: {
+      "preload/index.ts": 1,
+      "shared/api.ts": 1,
+      "renderer/device/monitor-controller.ts": 3,
+    },
+    onMonitor: {
+      "preload/index.ts": 1,
+      "shared/api.ts": 1,
+      "renderer/device/monitor-controller.ts": 1,
+      "renderer/device/battery-status.ts": 2,
+    },
+  };
+  for (const [file, tree] of trees) {
+    function visit(node) {
+      if (ts.isIdentifier(node) || ts.isStringLiteralLike(node)) {
+        const entry =
+          feature === "device-ev3" &&
+          retainedCoreAllowlist.find((item) => item.token === node.text);
+        if (entry) {
+          const hash = coreFingerprint(retainedScope(node));
+          const site = entry.sites.find((item) => item.file === file && item.sha256 === hash);
+          assert.ok(site, `Unapproved retained-core use ${entry.token}: ${file}`);
+          seen.set(site, (seen.get(site) ?? 0) + 1);
+          assert.ok(
+            seen.get(site) <= site.count,
+            `Second retained-core consumer ${entry.token}: ${file}`,
+          );
+        } else auditRetiredText(feature, node.text, file);
+        // Include property access, bracket access, destructuring and string keys;
+        // declarations in the shared contract/preload and the core type Pick are
+        // inventory, not extra consumers. No other reachable file may use them.
+        if (
+          feature === "device-ev3" &&
+          ["watchMonitor", "onMonitor"].includes(node.text) &&
+          (file !== oracle || reachable.has(file))
+        ) {
+          const expected = facadeInventory[node.text][file.replace("apps/desktop/src/", "")];
+          const key = `${file}:${node.text}`;
+          facadeCounts.set(key, (facadeCounts.get(key) ?? 0) + 1);
+          assert.ok(
+            expected && facadeCounts.get(key) <= expected,
+            `Second retained-core consumer ${node.text}: ${file}`,
+          );
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(tree);
+  }
+  if (feature === "device-ev3")
+    for (const entry of retainedCoreAllowlist) {
+      for (const site of entry.sites)
+        assert.equal(
+          seen.get(site) ?? 0,
+          site.count,
+          `Stale retained-core allowlist ${entry.token}: ${site.file}`,
+        );
+      const tree = trees.get(entry.consumer.file);
+      assert.ok(tree, `Stale retained-core consumer ${entry.consumer.symbol}`);
+      assert.equal(
+        coreFingerprint(tree),
+        entry.consumer.sha256,
+        `Changed retained-core consumer ${entry.consumer.symbol}: feature behavior requires review`,
+      );
+      assert.ok(
+        reachable.has(entry.consumer.file),
+        `Stale unreachable core consumer ${entry.consumer.symbol}`,
+      );
+    }
+  assert.ok(trees.size > 0);
+  return [...trees.keys()];
+}
 export async function auditRetiredSource(feature) {
-  const inspected = [];
+  const sources = {};
   for (const area of ["main", "preload", "renderer", "shared"])
     for (const file of await filesUnder(path.join(root, "apps/desktop/src", area))) {
       if (!/\.[cm]?tsx?$/.test(file) || /\.(?:test|spec)\./.test(file)) continue;
-      // Comments can document migration; the executable tokens must be absent.
-      const source = await readFile(file, "utf8");
-      const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
-      function visit(node) {
-        if (ts.isIdentifier(node) || ts.isStringLiteralLike(node))
-          auditRetiredText(feature, node.text, file);
-        ts.forEachChild(node, visit);
-      }
-      visit(tree);
-      inspected.push(normalize(path.relative(root, file)));
+      sources[normalize(path.relative(root, file))] = await readFile(file, "utf8");
     }
-  assert.ok(inspected.length > 0);
-  return inspected;
+  return auditRetiredSources(feature, sources);
 }
 
 // The map is build metadata, not independent attestation. Bind its source bytes
