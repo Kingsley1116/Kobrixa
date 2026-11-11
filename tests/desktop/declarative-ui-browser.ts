@@ -308,7 +308,7 @@ export async function runLegacy() {
         );
     } else {
       check(
-        hello?.apiVersion === (plugin.id.includes("legacy-new") ? "1.6.0" : "1.4.0"),
+        hello?.apiVersion === (plugin.id.includes("legacy-new") ? "1.8.0" : "1.4.0"),
         "preserved SDK version mismatch",
       );
       check(execute, "legacy execute absent");

@@ -352,6 +352,18 @@ async function setup(
     event("ui.form");
     return invoke(name, args);
   };
+  const publishedRow = async (dataset: string) => {
+    await vi.waitFor(
+      () => {
+        expect(rows.get(dataset)).toHaveLength(1);
+        // A dataCommit precedes the final ui/patch. Match the renderer's
+        // presentation fence before using the controller's published row revision.
+        expect(metadata.get(dataset)?.presentation).toBe(state.data.presentation);
+      },
+      { timeout: 2500 },
+    );
+    return { row: rows.get(dataset)![0]!, dataset: metadata.get(dataset)!.revision };
+  };
   let closed = false;
   const close = async () => {
     if (closed) return;
@@ -379,6 +391,7 @@ async function setup(
     metadata,
     invoke,
     syncInvoke,
+    publishedRow,
     form,
     event,
     external,
@@ -470,9 +483,7 @@ it("P01/P10: late discovery after hide cannot restore candidate rows", async () 
 it("P01: exact published candidate key/version/revision connects once; stale replay cannot connect", async () => {
   const f = await setup({ usb: true });
   await f.invoke("discover");
-  await vi.waitFor(() => expect(f.rows.get("candidates")?.length).toBe(1), { timeout: 2500 });
-  const row = f.rows.get("candidates")![0]!;
-  const dataset = f.metadata.get("candidates")!.revision;
+  const { row, dataset } = await f.publishedRow("candidates");
   await f.invoke("candidate", { key: row.key, version: row.version, dataset: dataset - 1 });
   expect(f.provider.calls).not.toContain("connect");
   await f.invoke("candidate", { key: row.key, version: row.version, dataset });
@@ -497,9 +508,7 @@ it("P09/P10: mode rows bind source/session/dataset; authority loss refuses mode 
   await f.invoke("connect");
   await vi.waitFor(() => expect(f.state.data["session-id"]).not.toBeNull(), { timeout: 2500 });
   await f.invoke("modes");
-  await vi.waitFor(() => expect(f.rows.get("modes")?.length).toBe(1), { timeout: 2500 });
-  const row = f.rows.get("modes")![0]!;
-  const dataset = f.metadata.get("modes")!.revision;
+  const { row, dataset } = await f.publishedRow("modes");
   await f.invoke("mode", { key: row.key, version: row.version, dataset: dataset - 1 });
   expect(write).not.toHaveBeenCalled();
   f.deny();
@@ -526,9 +535,7 @@ it("P09: fresh exact mode row writes once and source change invalidates its repl
   await f.invoke("connect");
   await vi.waitFor(() => expect(f.state.data["session-id"]).not.toBeNull(), { timeout: 2500 });
   await f.invoke("modes");
-  await vi.waitFor(() => expect(f.rows.get("modes")?.length).toBe(1), { timeout: 2500 });
-  const row = f.rows.get("modes")![0]!;
-  const dataset = f.metadata.get("modes")!.revision;
+  const { row, dataset } = await f.publishedRow("modes");
   await f.invoke("mode", { key: row.key, version: row.version, dataset });
   expect(write).toHaveBeenCalledOnce();
   await f.invoke("mode", { key: row.key, version: row.version, dataset });
@@ -684,9 +691,7 @@ it("fix1: hide fences a pending transport read before any settings publication",
 it("E6: actual unchanged form sync before candidate command retains exact row identity", async () => {
   const f = await setup({ usb: true });
   await f.syncInvoke("discover");
-  await vi.waitFor(() => expect(f.rows.get("candidates")?.length).toBe(1), { timeout: 2500 });
-  const row = f.rows.get("candidates")![0]!;
-  const dataset = f.metadata.get("candidates")!.revision;
+  const { row, dataset } = await f.publishedRow("candidates");
   const revision = f.state.formRevision;
   await f.syncInvoke("candidate", { key: row.key, version: row.version, dataset });
   expect(f.state.formRevision).toBe(revision + 1);
@@ -701,9 +706,7 @@ it("E6: actual unchanged form sync before mode command retains source/row identi
   await f.syncInvoke("connect");
   await vi.waitFor(() => expect(f.state.data["session-id"]).not.toBeNull(), { timeout: 2500 });
   await f.syncInvoke("modes");
-  await vi.waitFor(() => expect(f.rows.get("modes")?.length).toBe(1), { timeout: 2500 });
-  const row = f.rows.get("modes")![0]!;
-  const dataset = f.metadata.get("modes")!.revision;
+  const { row, dataset } = await f.publishedRow("modes");
   await f.syncInvoke("mode", { key: row.key, version: row.version, dataset });
   expect(write).toHaveBeenCalledOnce();
   await f.syncInvoke("mode", { key: row.key, version: row.version, dataset });
@@ -714,9 +717,7 @@ it.each([{ transport: "wifi" }, { "wifi-address": "192.168.1.2" }])(
   async (change) => {
     const f = await setup({ usb: true });
     await f.syncInvoke("discover");
-    await vi.waitFor(() => expect(f.rows.get("candidates")?.length).toBe(1), { timeout: 2500 });
-    const row = f.rows.get("candidates")![0]!;
-    const dataset = f.metadata.get("candidates")!.revision;
+    const { row, dataset } = await f.publishedRow("candidates");
     f.form(change);
     await f.syncInvoke("candidate", { key: row.key, version: row.version, dataset });
     expect(f.provider.calls).not.toContain("connect");
@@ -729,9 +730,7 @@ it("E6: changed port invalidates a published mode even after returning to the or
   await f.syncInvoke("connect");
   await vi.waitFor(() => expect(f.state.data["session-id"]).not.toBeNull(), { timeout: 2500 });
   await f.syncInvoke("modes");
-  await vi.waitFor(() => expect(f.rows.get("modes")?.length).toBe(1), { timeout: 2500 });
-  const row = f.rows.get("modes")![0]!;
-  const dataset = f.metadata.get("modes")!.revision;
+  const { row, dataset } = await f.publishedRow("modes");
   f.form({ port: "input:1" });
   f.form({ port: "input:0" });
   await f.syncInvoke("mode", { key: row.key, version: row.version, dataset });

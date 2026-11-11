@@ -30,7 +30,7 @@ test("maps only known source package aliases and existing relative TS counterpar
 test("does not intercept dependency internals, outside importers, or non-module errors", () => {
   for (const parentURL of [
     pathToFileURL(path.join(sourceRoot, "node_modules/pkg/index.js")).href,
-    "file:///outside/index.ts",
+    pathToFileURL(path.join(path.parse(sourceRoot).root, "outside/index.ts")).href,
     "node:fs",
   ])
     assert.deepEqual(
@@ -57,7 +57,9 @@ test("does not intercept dependency internals, outside importers, or non-module 
   );
 });
 test("committed bootstrap imports source validators and CLI without executing native entry", () => {
-  const loader = path.join(sourceRoot, "tests/desktop/persistence-source-loader.mjs");
+  const loader = pathToFileURL(
+    path.join(sourceRoot, "tests/desktop/persistence-source-loader.mjs"),
+  ).href;
   const moduleUrl = pathToFileURL(
     path.join(sourceRoot, "tests/desktop/plugin-persistence-run.mjs"),
   ).href;

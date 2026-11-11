@@ -110,7 +110,9 @@ async function transport(
       grantedPermissions: manifest.permissions ?? [],
     };
     const hello = await peer.request("initialize", initialize);
-    assert.equal(hello.apiVersion, "1.6.0");
+    // initialize advertises each peer's supported API; it does not echo the
+    // mock host's 1.6 version or the fixture manifest's ^1.6 minimum.
+    assert.equal(hello.apiVersion, "1.8.0");
     const negotiated = await peer.request("ui/negotiate", {
       commandEnvelopeVersions: [1],
       uiResourceVersions: [1],

@@ -1,4 +1,6 @@
 import { optionalKeys, optionalSummary, sha } from "../../plugin-persistence-optional-off.ts";
+import path from "node:path";
+import { tmpdir } from "node:os";
 const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const success = (value) => ({ ok: true, value });
 const clone = structuredClone;
@@ -81,7 +83,7 @@ export function optionalOffOracle() {
       phase: name,
       runId: id(epoch + 20),
       profileId: id(profile),
-      profile: `/tmp/optional-${profile}`,
+      profile: path.join(tmpdir(), `optional-${profile}`),
       hostEpoch: id(epoch),
       pid: epoch + 100,
       scope: { hostEpoch: id(epoch), workbenchInstance: id(epoch + 30) },
@@ -105,7 +107,7 @@ export function optionalOffOracle() {
       at: start + 10,
       beforeCompose: start + 20,
       disabled,
-      path: `${p.profile}/plugins/state.json`,
+      path: path.join(p.profile, "plugins/state.json"),
       data,
       sha256: sha(data),
     };
@@ -147,7 +149,7 @@ export function optionalOffOracle() {
         values: [{ key: "fixture.enabled", value: true }],
       };
       p.settings = {
-        schema: { path: "/tmp/settings.json", data: "{}", sha256: sha("{}") },
+        schema: { path: path.join(tmpdir(), "settings.json"), data: "{}", sha256: sha("{}") },
         opened: {
           binding: {
             owner: { sourceKey: optionalKeys[1] },
@@ -198,7 +200,7 @@ export function optionalOffOracle() {
     };
     const bytes = name === "seed" ? finalBytes : originalBytes;
     const file = {
-      path: `${p.profile}/optional-off-${name}.bin`,
+      path: path.join(p.profile, `optional-off-${name}.bin`),
       data: bytes.toString("base64"),
       sha256: sha(bytes),
       identity: "1:2",

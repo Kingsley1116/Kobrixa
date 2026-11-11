@@ -42,7 +42,7 @@ test(
         "locale",
         "pluginId",
       ]);
-      assert.equal(row.apiVersion, "1.6.0");
+      assert.equal(row.apiVersion, "1.8.0");
       assert.equal(row.legacy, null);
       assert.deepEqual(row.negotiated, { commandEnvelopeVersions: [1], uiResourceVersions: [1] });
       assert.equal(row.duplicateCalls, 1);

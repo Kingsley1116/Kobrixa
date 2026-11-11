@@ -56,7 +56,7 @@ test(
         assert.equal(row.result.ok, true);
         assert.equal(
           initialized.result.apiVersion,
-          definition.sdk === "current" ? "1.6.0" : "1.4.0",
+          definition.sdk === "current" ? "1.8.0" : "1.4.0",
         );
         assert.equal(execute.length, 1);
         assert.equal(
