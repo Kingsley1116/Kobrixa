@@ -354,6 +354,21 @@ export type DiskHead = {
   receipt: Receipt<RecordRevision>;
   importTag?: ImportTag;
 };
+// Only a well-formed newer version is an upgrade problem. Missing, malformed,
+// or invalid version fields are damaged envelopes, never an empty/new store.
+export function assertDiskFormat(value: unknown): void {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    !("formatVersion" in value)
+  )
+    throw new Error("corrupt");
+  const version = value.formatVersion;
+  if (typeof version !== "number" || !Number.isSafeInteger(version) || version < 1)
+    throw new Error("corrupt");
+  if (version > 1) throw new Error("unsupported-format");
+}
 export function parseHead(bytes: Uint8Array): DiskHead {
   if (bytes.length > 8192) throw new Error("corrupt");
   let raw: unknown;
@@ -362,8 +377,7 @@ export function parseHead(bytes: Uint8Array): DiskHead {
   } catch {
     throw new Error("corrupt");
   }
-  if (typeof raw === "object" && raw !== null && "formatVersion" in raw && raw.formatVersion !== 1)
-    throw new Error("unsupported-format");
+  assertDiskFormat(raw);
   const parsed = diskHeadSchema.safeParse(raw);
   if (!parsed.success) throw new Error("corrupt");
   const head = parsed.data as DiskHead;
@@ -417,7 +431,7 @@ export class Namespace {
     const data = JSON.parse(
       new TextDecoder("utf-8", { fatal: true }).decode(await fs.bytes(identity, 4096)),
     ) as { formatVersion?: unknown; sourceKey?: unknown };
-    if (data.formatVersion !== 1) throw new Error("unsupported-format");
+    assertDiskFormat(data);
     if (
       data.sourceKey !== sourceKey ||
       Object.keys(data).sort().join(",") !== "formatVersion,sourceKey"

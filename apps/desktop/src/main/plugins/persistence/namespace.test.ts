@@ -3,7 +3,7 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import { expect, it } from "vitest";
 import { createNodePersistenceFs } from "./filesystem.js";
-import { Namespace } from "./namespace.js";
+import { Namespace, parseHead } from "./namespace.js";
 it("uses the full source hash and verifies stored identity, not plugin ID", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "namespace-"));
   try {
@@ -125,4 +125,16 @@ it("strictly validates immutable plan identity, evidence references and complete
     }),
   ).toBe(true);
   expect(sameImportValue(ticket, { ...ticket, owner: { ...owner, generation: 2 } })).toBe(false);
+});
+
+it.each([undefined, null, false, "2", 0, -1, 1.5, 2.5, Number.MAX_SAFE_INTEGER + 1])(
+  "classifies malformed head version %s as corruption, never upgrade-required",
+  (formatVersion) => {
+    expect(() => parseHead(Buffer.from(JSON.stringify({ formatVersion })))).toThrow("corrupt");
+  },
+);
+it.each([2, 99])("preserves genuinely newer head format %s", (formatVersion) => {
+  expect(() => parseHead(Buffer.from(JSON.stringify({ formatVersion })))).toThrow(
+    "unsupported-format",
+  );
 });

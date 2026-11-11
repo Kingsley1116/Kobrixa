@@ -963,10 +963,24 @@ export function runPersistenceWorker(input: {
       );
     if (!input.lazySourceRoots) await sources.validateRoots();
     let recovery: "ready" | "blocked" = "ready";
+    let recoveryError: ReturnType<typeof privateError> | undefined;
     try {
       await store.initialize();
-    } catch {
+    } catch (error) {
       recovery = "blocked";
+      const cause =
+        error instanceof Error && error.message === "recovery-blocked" ? error.cause : error;
+      // Retain the actual startup failure: corruption and unsafe aliases must
+      // never masquerade as a newer disk format, nor expose a partial history.
+      recoveryError = privateError(
+        cause instanceof SyntaxError ||
+          cause instanceof TypeError ||
+          cause instanceof z.ZodError ||
+          (cause instanceof Error &&
+            ["unsafe-path", "identity-mismatch", "rollback-interrupted"].includes(cause.message))
+          ? new Error("corrupt")
+          : cause,
+      );
     }
     const queue = new WorkQueue(() => performance.now()),
       accepted = new Map<number, { ticket: PublicationTicket; until: number | null }>(),
@@ -1133,8 +1147,9 @@ export function runPersistenceWorker(input: {
           version: 1,
           id: r.id,
           ok: false,
-          error: { code: "io", message: "unsupported-format" },
+          error: recoveryError!,
         });
+        requests.delete(r.id);
         return;
       }
       if (r.operation === "engine.reserve" || r.operation === "engine.reserveFinal") {

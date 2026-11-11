@@ -405,7 +405,21 @@ export function createRecordService(
         committed(write, result.receipt);
         return { ok: true, value: { record: write.record, receipt: result.receipt } };
       } catch (error) {
-        if (write.state === "publishing") unknown();
+        if (write.state === "publishing") {
+          // Only a stale rejection can be reclassified here, and only after
+          // the original ticket proves publication never dispatched. Lost replies
+          // and explicit unknown outcomes retain their normal reconciliation path.
+          const staleRejection =
+            (error instanceof PersistenceFault &&
+              error.result.error.code === "PLUGIN_E_STALE_RESOURCE") ||
+            (error instanceof Error && ["stale", "expired", "not-primary"].includes(error.message));
+          if (!staleRejection) unknown();
+          await reconcile(write).catch(() => {});
+          if (write.receipt)
+            return { ok: true, value: { record: write.record, receipt: write.receipt } };
+          if (write.state === "publishing") unknown();
+          stale();
+        }
         throw error;
       }
     },

@@ -5,6 +5,7 @@ import type { StorePath } from "./filesystem.js";
 import {
   type Namespace,
   parseHead,
+  assertDiskFormat,
   liveRecord,
   publicationTicketSchema,
   sameImportValue,
@@ -215,9 +216,7 @@ export async function scanNamespace(ns: Namespace, hostEpoch: string): Promise<N
           await fs.bytes(ns.object(loc, head), 2097152),
         ),
       );
-      if (raw === null || typeof raw !== "object" || !("formatVersion" in raw))
-        throw new Error("corrupt");
-      if (raw.formatVersion !== 1) throw new Error("unsupported-format");
+      assertDiskFormat(raw);
     }
     result.heads.push(head);
     const record = liveRecord(head);
@@ -248,7 +247,7 @@ export async function scanNamespace(ns: Namespace, hostEpoch: string): Promise<N
       formatVersion?: unknown;
       ticket?: { owner?: { hostEpoch?: unknown; sourceKey?: unknown } };
     };
-    if (value.formatVersion !== 1) throw new Error("unsupported-format");
+    assertDiskFormat(value);
     if (value.ticket?.owner?.sourceKey !== ns.sourceKey) throw new Error("identity-mismatch");
     const checkedTicket = publicationTicketSchema.parse(value.ticket);
     if (checkedTicket.target.kind === "import") {

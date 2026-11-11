@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { SettingsResourceV1, SettingsSnapshot, RecordMeta } from "@kobrixa/plugin-protocol";
-import { mkdtemp, rm, mkdir, realpath, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, realpath, writeFile, unlink, symlink, link } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -2642,3 +2642,97 @@ it("B2-N04-N13 replacement/delete conflict preserves pinned revisions and immuta
     }
   }
 }, 60000);
+
+it.each([
+  "payload",
+  "head",
+  "head-version-invalid",
+  "identity-version-invalid",
+  "symlink",
+  "hardlink",
+  "head-newer",
+  "identity-newer",
+] as const)(
+  "N14/N29: reopened %s retains its failure class and never returns empty history",
+  async (mode) => {
+    const userData = path.join(directory, randomUUID()),
+      first = await launch(userData);
+    const owner = ownerFor(first.profile.hostEpoch),
+      bytes = Buffer.from("committed original"),
+      ticket = make(owner, bytes);
+    try {
+      await stage(first.backend, ticket, bytes);
+      expect((await first.backend.engine.publish(ticket)).disposition).toBe("committed");
+    } finally {
+      await first.backend.dispose();
+    }
+    if (ticket.metadata.kind !== "record") throw new Error("record required");
+    const record = ticket.metadata.record;
+    const namespace = path.join(
+      userData,
+      "plugins",
+      "persistence-v1",
+      "namespaces",
+      hash(Buffer.from(owner.sourceKey)),
+    );
+    const headPath = path.join(namespace, "records", record.id, "head.json");
+    const objectPath = path.join(
+      namespace,
+      "records",
+      record.id,
+      "objects",
+      record.revision + ".bin",
+    );
+    const identityPath = path.join(namespace, "identity.json");
+    const outside = path.join(directory, randomUUID() + ".outside");
+    if (mode === "payload") await writeFile(objectPath, "corrupted payload");
+    else if (mode === "head") await writeFile(headPath, "{invalid-json");
+    else if (mode === "symlink" || mode === "hardlink") {
+      await writeFile(outside, bytes);
+      await unlink(objectPath);
+      if (mode === "symlink") await symlink(outside, objectPath);
+      else await link(outside, objectPath);
+    } else {
+      const file = mode.startsWith("identity") ? identityPath : headPath;
+      const raw = JSON.parse(await readFile(file, "utf8"));
+      raw.formatVersion = mode.endsWith("newer") ? 2 : "2";
+      await writeFile(file, JSON.stringify(raw));
+    }
+    const before = await Promise.all(
+      [headPath, objectPath, identityPath].map((file) => readFile(file)),
+    );
+    const reopened = await launch(userData),
+      nextOwner = ownerFor(reopened.profile.hostEpoch);
+    const expected = {
+      result: {
+        ok: false,
+        error: {
+          code: mode.endsWith("newer") ? "PLUGIN_E_STORAGE_VERSION" : "PLUGIN_E_STORAGE_IO",
+          detail: { reason: mode.endsWith("newer") ? "unsupported-format" : "corrupt" },
+        },
+      },
+    };
+    try {
+      expect(reopened.recovery).toBe("blocked");
+      await expect(reopened.backend.reads.stat(nextOwner, record.id)).rejects.toMatchObject(
+        expected,
+      );
+      await expect(reopened.backend.reads.list(nextOwner, { limit: 64 })).rejects.toMatchObject(
+        expected,
+      );
+      await expect(
+        reopened.backend.reads.open(nextOwner, record.id, record.revision),
+      ).rejects.toMatchObject(expected);
+      // Blocked startup closes host admission before a worker write is allocated.
+      await expect(
+        reopened.backend.engine.reserve(make(nextOwner, bytes), bytes.length),
+      ).rejects.toThrow("stale");
+      expect(
+        await Promise.all([headPath, objectPath, identityPath].map((file) => readFile(file))),
+      ).toEqual(before);
+      if (mode === "symlink" || mode === "hardlink") expect(await readFile(outside)).toEqual(bytes);
+    } finally {
+      await reopened.backend.dispose();
+    }
+  },
+);

@@ -39,6 +39,7 @@ import {
 import { type NodePersistenceFs, writeAll, type StoreFd, type StorePath } from "./filesystem.js";
 import {
   Namespace,
+  assertDiskFormat,
   parseHead,
   liveRecord,
   importTagSchema,
@@ -121,7 +122,7 @@ type Page = {
 export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
   readonly quota = new QuotaLedger();
   private readonly namespaces = new Map<string, Promise<Namespace>>();
-  private readonly blockedSources = new Map<string, string>();
+  private readonly blockedSources = new Map<string, Error>();
   // Verified committed sizes and outstanding candidates share one synchronous admission
   // boundary. Namespace recovery owns disk reconciliation before this ledger is exposed.
   private readonly importCommitted = new WeakMap<Namespace, Map<string, number>>();
@@ -158,12 +159,13 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
           await this.fs.bytes(this.fs.path("namespaces", dir.name, "identity.json"), 4096),
         ),
       ) as { sourceKey?: unknown; formatVersion?: unknown };
-      if (identity.formatVersion !== 1) throw new Error("unsupported-format");
+      assertDiskFormat(identity);
       if (typeof identity.sourceKey !== "string") throw new Error("identity-mismatch");
       const ns = await this.ns(identity.sourceKey);
       if (ns.hash !== dir.name) throw new Error("identity-mismatch");
     }
-    if (this.blockedSources.size) throw new Error("recovery-blocked");
+    if (this.blockedSources.size)
+      throw new Error("recovery-blocked", { cause: this.blockedSources.values().next().value });
   }
   private ns(source: string): Promise<Namespace> {
     let pending = this.namespaces.get(source);
@@ -181,9 +183,10 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
               imports.set(head.target.key, head.byteLength);
             }
           this.importCommitted.set(ns, imports);
-          if (scanned.problems.length) this.blockedSources.set(source, scanned.problems[0]!);
+          if (scanned.problems.length)
+            this.blockedSources.set(source, new Error(scanned.problems[0]!));
         } catch (e) {
-          this.blockedSources.set(source, e instanceof Error ? e.message : "corrupt");
+          this.blockedSources.set(source, e instanceof Error ? e : new Error("corrupt"));
         }
         return ns;
       });
@@ -293,7 +296,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     )
       throw new Error("stale");
     if (this.blockedSources.has(t.owner.sourceKey))
-      throw new Error(this.blockedSources.get(t.owner.sourceKey));
+      throw this.blockedSources.get(t.owner.sourceKey);
     if (this.uncertain.has(t.owner.sourceKey)) throw new Error("publish-uncertain");
   }
   private entry(t: PublicationTicket): Entry {
@@ -1175,7 +1178,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       validationDigest: string;
       values: SettingsSnapshot["values"];
     };
-    if (body.formatVersion !== 1) throw new Error("unsupported-format");
+    assertDiskFormat(body);
     if (
       head.metadata.kind !== "settings" ||
       body.schemaVersion !== head.metadata.schemaVersion ||
@@ -1634,7 +1637,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     const bytes = await this.auxiliary(owner, "import", id);
     if (!bytes) return null;
     const raw = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
-    if (raw.formatVersion !== 1) throw new Error("unsupported-format");
+    assertDiskFormat(raw);
     const saved = importDocumentSchema.parse(raw);
     if (saved.plan.id !== id || saved.plan.targetSourceKey !== owner.sourceKey)
       throw new Error("input-changed");
@@ -1991,7 +1994,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
         const raw = JSON.parse(
           Buffer.from(await this.fs.bytes(ns.object(loc, head), 2097152)).toString("utf8"),
         );
-        if (raw.formatVersion !== 1) throw new Error("unsupported-format");
+        assertDiskFormat(raw);
         if ("checkpoint" in raw) {
           const document = checkpointDocumentSchema.parse(raw);
           if (document.checkpoint !== head.target.key) throw new Error("corrupt");

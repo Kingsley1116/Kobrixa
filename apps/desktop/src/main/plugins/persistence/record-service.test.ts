@@ -915,3 +915,49 @@ it("public ID boundary: own revision conflicts and real open I/O errors remain u
     fault.result,
   );
 });
+
+it.each(["not-committed", "unknown", "lost", "committed"] as const)(
+  "N09: rejected publication reconciles the original ticket as %s without republishing",
+  async (outcome) => {
+    const f = fixture(),
+      begin = await f.begin(new Uint8Array());
+    await f.service.request(p, "storage/sealWrite", { write: begin.write }, signal());
+    const rejection = new Error("stale");
+    f.deps.engine.publish = vi.fn(async () => {
+      throw rejection;
+    });
+    f.deps.engine.reconcile = vi.fn(async (ticket) => {
+      if (outcome === "lost") throw new Error("worker-unavailable");
+      if (outcome === "committed") return f.publish(ticket);
+      return { disposition: outcome };
+    });
+    const reply = await f.service.request(
+      p,
+      "storage/commitWrite",
+      { write: begin.write },
+      signal(),
+    );
+    if (outcome === "not-committed") {
+      expect(reply).toMatchObject({
+        ok: false,
+        error: {
+          code: "PLUGIN_E_STALE_RESOURCE",
+          detail: { kind: "resource", reason: "stale" },
+        },
+      });
+      expect(f.service.admittedWrites(owner)[0]?.state).toBe("sealed");
+      expect(f.records.size).toBe(0);
+    } else if (outcome === "committed") expect(reply).toMatchObject({ ok: true });
+    else
+      expect(reply).toMatchObject({
+        ok: false,
+        error: {
+          code: "PLUGIN_E_STORAGE_IO",
+          detail: { reason: "publish-uncertain", disposition: "unknown" },
+        },
+      });
+    expect(f.deps.engine.publish).toHaveBeenCalledOnce();
+    expect(f.deps.engine.reconcile).toHaveBeenCalledExactlyOnceWith(f.reserve.mock.calls[0]![0]);
+    await f.service.close();
+  },
+);
