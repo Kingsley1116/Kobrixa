@@ -2,10 +2,34 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { setTimeout as pause } from "node:timers/promises";
+import { writeFileSync } from "node:fs";
 import { app, BrowserWindow, dialog } from "electron";
 
 const [directory, scenario] = process.argv.slice(2);
+assert.ok(["close", "quit", "early-close", "reopen"].includes(scenario));
+const events = [];
+const observe = (event, windowId = null) =>
+  events.push({ event, at: performance.now(), window: windowId });
+const receipt = (status, error = null) =>
+  writeFileSync(
+    path.join(directory, `close-${scenario}.json`),
+    JSON.stringify(
+      {
+        schema: 1,
+        scope: "production-window-close-only",
+        scenario,
+        status,
+        pid: process.pid,
+        electron: process.versions.electron,
+        events,
+        error,
+      },
+      null,
+      2,
+    ),
+  );
 const fail = (error) => {
+  receipt("failed", String(error));
   console.error(error);
   app.exit(1);
 };
@@ -23,19 +47,30 @@ setTimeout(() => fail(new Error(`Close smoke timed out: ${scenario}`)), 30_000).
 let first;
 let closed = 0;
 app.on("browser-window-created", (_event, window) => {
+  const windowId = window.id;
+  observe("created", windowId);
   first ??= window;
-  window.once("closed", () => closed++);
+  window.once("closed", () => {
+    observe("closed", windowId);
+    closed++;
+  });
   if (scenario === "early-close") setImmediate(() => window.close());
 });
 let drained = false;
 app.on("will-quit", (event) => {
+  observe("will-quit");
   assert.ok(closed > 0, "The production close flow must close its window");
   // Give asynchronous device/reset and lab publication callbacks a chance to run.
   if (!drained) {
     event.preventDefault();
     drained = true;
     setTimeout(() => app.quit(), 200);
-  } else console.log(`PASS ${scenario}`);
+  } else {
+    assert.equal(BrowserWindow.getAllWindows().length, 0, "Quit must leave no native windows");
+    assert.equal(closed, events.filter((entry) => entry.event === "created").length);
+    receipt("passed");
+    console.log(`PASS ${scenario}`);
+  }
 });
 async function until(read) {
   for (let i = 0; i < 200; i++) {
@@ -63,6 +98,7 @@ async function ready(window) {
       ),
     );
   }
+  observe("ready", window.id);
 }
 
 createRequire(import.meta.url)(path.join(directory, "main.cjs"));
