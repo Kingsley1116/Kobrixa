@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
+import { once } from "node:events";
+import { Worker } from "node:worker_threads";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createPackageWithOptions, listPackage, statFile } from "@electron/asar";
 import {
+  buildDesktopEntry,
   buildBuiltinPayloads,
   validateBuiltinPayloads,
   BUILTIN_PAYLOAD_UNPACK,
@@ -124,6 +127,50 @@ test("release builder registers the same persistence worker and unpack rule as F
     builder,
     /\["vite\.main\.config\.ts", PERSISTENCE_WORKER_ENTRY, "persistence-worker\.cjs"\]/,
   );
-  assert.match(builder, /forgeConfigSelf: \{ entry \}/);
+  assert.match(builder, /await buildDesktopEntry\(config, entry, name\)/);
+  const helper = await readFile(new URL("./desktop-packaging.mjs", import.meta.url), "utf8");
+  assert.match(helper, /forgeConfigSelf: \{ entry \}/);
   assert.match(builder, /asarUnpack: \[withPersistenceWorkerUnpack\(BUILTIN_PAYLOAD_UNPACK\)\]/);
 });
+
+test(
+  "production persistence entry boots beside an existing native main bundle",
+  { timeout: 15000 },
+  async (t) => {
+    const directory = await realpath(await mkdtemp(path.join(tmpdir(), "kobrixa-release-worker-")));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const main = path.join(directory, "main.cjs");
+    await writeFile(main, "native main fixture");
+    await buildDesktopEntry(
+      "vite.main.config.ts",
+      PERSISTENCE_WORKER_ENTRY,
+      "persistence-worker.cjs",
+      directory,
+    );
+    assert.equal(await readFile(main, "utf8"), "native main fixture");
+    const root = path.join(directory, "plugins/persistence-v1");
+    await mkdir(path.join(root, "namespaces"), { recursive: true, mode: 0o700 });
+    const held = new SharedArrayBuffer(16 + 1024 * 16 + 1024 * 4);
+    Atomics.store(new Int32Array(held), 0, 1);
+    const worker = new Worker(path.join(directory, "persistence-worker.cjs"), { workerData: {} });
+    t.after(async () => {
+      await worker.terminate();
+      Atomics.store(new Int32Array(held), 0, 0);
+    });
+    const ready = once(worker, "message");
+    worker.postMessage({
+      version: 1,
+      kind: "boot",
+      hostEpoch: "10000000-0000-4000-8000-000000000001",
+      root,
+      held,
+    });
+    const [message] = await ready;
+    assert.equal(message.version, 1);
+    assert.equal(message.kind, "ready");
+    assert.equal(message.recovery, "ready");
+    const exit = once(worker, "exit");
+    worker.postMessage({ version: 1, kind: "close" });
+    assert.deepEqual(await exit, [0]);
+  },
+);

@@ -1,5 +1,6 @@
 import path from "node:path";
-import { build, runnerImport } from "vite";
+import { builtinModules } from "node:module";
+import { build, loadConfigFromFile, mergeConfig, runnerImport } from "vite";
 import { repositoryRoot } from "./common.mjs";
 
 const desktop = path.join(repositoryRoot, "apps/desktop");
@@ -24,4 +25,48 @@ export async function buildBuiltinPayloads(fixture, buildRoot = path.join(deskto
       build: { outDir: path.join(buildRoot, "plugins", leaf.slug) },
     });
   }
+}
+
+// Shared by release packaging and native harnesses so worker entry footers and
+// dependency resolution stay identical to the product build.
+const external = [
+  "electron",
+  "electron/main",
+  "electron/renderer",
+  "node-hid",
+  "electron-updater",
+  ...builtinModules.flatMap((name) => [name, `node:${name}`]),
+];
+export async function buildDesktopEntry(
+  config,
+  entry,
+  name,
+  buildRoot = path.join(desktop, ".vite/build"),
+) {
+  const user = await loadConfigFromFile(
+    { command: "build", mode: "production", forgeConfigSelf: { entry } },
+    path.join(desktop, config),
+  );
+  await build(
+    mergeConfig(
+      {
+        configFile: false,
+        root: desktop,
+        mode: "production",
+        define: {
+          MAIN_WINDOW_VITE_DEV_SERVER_URL: "undefined",
+          MAIN_WINDOW_VITE_NAME: JSON.stringify("main_window"),
+        },
+        resolve: { conditions: ["node"], mainFields: ["module", "jsnext:main", "jsnext"] },
+        build: {
+          emptyOutDir: false,
+          outDir: buildRoot,
+          minify: true,
+          lib: { entry, formats: ["cjs"] },
+          rollupOptions: { external, output: { entryFileNames: name, inlineDynamicImports: true } },
+        },
+      },
+      user.config,
+    ),
+  );
 }

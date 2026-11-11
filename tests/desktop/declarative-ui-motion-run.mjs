@@ -10,6 +10,10 @@ import { build } from "esbuild";
 import { build as buildRenderer } from "vite";
 import { root, materialize, padJson } from "./declarative-ui-harness.mjs";
 import { rawResourcePlugin } from "./raw-resource-plugin.mjs";
+import {
+  buildDesktopEntry,
+  PERSISTENCE_WORKER_ENTRY,
+} from "../../tools/release/desktop-packaging.mjs";
 import { analyzeLoad } from "./declarative-ui-load-report.mjs";
 
 const faults = [
@@ -99,6 +103,13 @@ await build({
   external: ["electron", "node-hid", "usb"],
   plugins: [rawResourcePlugin()],
 });
+// composeDesktopMain resolves this worker beside main.cjs in both motion modes.
+await buildDesktopEntry(
+  "vite.main.config.ts",
+  PERSISTENCE_WORKER_ENTRY,
+  "persistence-worker.cjs",
+  directory,
+);
 await build({
   entryPoints: [path.join(root, "tests/desktop/fixtures/declarative-ui/motion-consumer.ts")],
   outfile: path.join(template, "source/main.cjs"),
@@ -229,6 +240,7 @@ const artifact = {
     await Promise.all(
       [
         "main.cjs",
+        "persistence-worker.cjs",
         ...(await readdir(template, { recursive: true, withFileTypes: true }))
           .filter((entry) => entry.isFile())
           .map((entry) => path.relative(directory, path.join(entry.parentPath, entry.name))),

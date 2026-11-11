@@ -1,10 +1,11 @@
-import { build as viteBuild, loadConfigFromFile, mergeConfig } from "vite";
+import { build as viteBuild } from "vite";
 import { build as packageElectron } from "electron-builder";
-import { builtinModules, createRequire } from "node:module";
+import { createRequire } from "node:module";
 import { cp, mkdir, readFile, rm, writeFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { repositoryRoot, readVersion } from "./common.mjs";
 import {
+  buildDesktopEntry,
   copyNativeDependencies,
   buildBuiltinPayloads,
   validateBuiltinPayloads,
@@ -25,14 +26,6 @@ const stage = path.join(desktop, "out/stage");
 const output = path.join(desktop, "out");
 process.chdir(desktop);
 await rm(path.join(desktop, ".vite"), { recursive: true, force: true });
-const external = [
-  "electron",
-  "electron/main",
-  "electron/renderer",
-  "node-hid",
-  "electron-updater",
-  ...builtinModules.flatMap((name) => [name, `node:${name}`]),
-];
 for (const [config, entry, name] of [
   ["vite.main.config.ts", "src/main/index.ts", "main.cjs"],
   ["vite.main.config.ts", PERSISTENCE_WORKER_ENTRY, "persistence-worker.cjs"],
@@ -40,32 +33,7 @@ for (const [config, entry, name] of [
   ["vite.build-worker.config.ts", "src/main/workspace/build-worker.ts", "build-worker.cjs"],
   ["vite.preload.config.ts", "src/preload/index.ts", "preload.cjs"],
 ]) {
-  const user = await loadConfigFromFile(
-    { command: "build", mode: "production", forgeConfigSelf: { entry } },
-    path.join(desktop, config),
-  );
-  await viteBuild(
-    mergeConfig(
-      {
-        configFile: false,
-        root: desktop,
-        mode: "production",
-        define: {
-          MAIN_WINDOW_VITE_DEV_SERVER_URL: "undefined",
-          MAIN_WINDOW_VITE_NAME: JSON.stringify("main_window"),
-        },
-        resolve: { conditions: ["node"], mainFields: ["module", "jsnext:main", "jsnext"] },
-        build: {
-          emptyOutDir: false,
-          outDir: ".vite/build",
-          minify: true,
-          lib: { entry, formats: ["cjs"] },
-          rollupOptions: { external, output: { entryFileNames: name, inlineDynamicImports: true } },
-        },
-      },
-      user.config,
-    ),
-  );
+  await buildDesktopEntry(config, entry, name);
 }
 await viteBuild({
   configFile: path.join(desktop, "vite.renderer.config.ts"),
