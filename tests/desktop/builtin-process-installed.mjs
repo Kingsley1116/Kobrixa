@@ -26,8 +26,11 @@ import {
   connect,
   descendants,
   processTable,
+  observeBeforeStartup,
+  releaseStartingWorkers,
   signalProcess,
   until,
+  waitForRendererTarget,
 } from "./builtin-installed-client.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
@@ -215,10 +218,11 @@ export function collectWorkerTimeline(output, prior = []) {
 
 // Inspector-only observation: call and return the original fork without changing
 // arguments, services, channels, or product policy. Exit records survive app quit.
-export const installProbe = `(() => {
-  const require = process.getBuiltinModule('module').createRequire(process.execPath);
+export const installProbe = `((require) => {
+  if (typeof require !== 'function') throw Error('Paused entry module require unavailable');
   const electron = require('electron');
   if (!electron.utilityProcess?.fork || !electron.app) throw Error('Main Electron probe unavailable');
+  if (electron.app.isReady()) throw Error('Observe startup before application readiness');
   const workers = (${observeInstalledWorkers.toString()})(require('node:worker_threads'),
     row => process.stderr.write('\\nKOBRIXA_INSTALLED_WORKER ' + JSON.stringify(row) + '\\n'),
     () => ({ at: Date.now(), monotonicMs: performance.now(), execArgv: [...process.execArgv], resourcesPath: process.resourcesPath }));
@@ -241,7 +245,7 @@ export const installProbe = `(() => {
     return workers.restore() && electron.utilityProcess.fork === original;
   }};
   return true;
-})()`;
+})(require)`;
 
 function requiredCompilers(state) {
   for (const id of ["kobrixa.basic-plus", "kobrixa.ev3"]) {
@@ -272,6 +276,7 @@ async function launchProduct(config, receipt, check) {
     closed,
     main,
     renderer,
+    workerStartup,
     monitor,
     monitoring = false,
     monitorError;
@@ -283,6 +288,8 @@ async function launchProduct(config, receipt, check) {
   receipt.forcedCleanup = false;
   receipt.forks = [];
   receipt.workerTimeline = [];
+  receipt.workerInspector = {};
+  receipt.rendererTargetWait = {};
   const sample = async () => {
     if (!child?.pid) return [];
     return descendants(await processTable(), child.pid, known);
@@ -305,7 +312,7 @@ async function launchProduct(config, receipt, check) {
                 executable,
               ]
           : []),
-        "--inspect=127.0.0.1:0",
+        "--inspect-brk=127.0.0.1:0",
         "--remote-debugging-address=127.0.0.1",
         "--remote-debugging-port=0",
         `--user-data-dir=${profile}`,
@@ -343,44 +350,49 @@ async function launchProduct(config, receipt, check) {
     })().catch((error) => {
       monitorError = error;
     });
+    const startupDiagnostics = () => ({
+      exit: receipt.exit,
+      workerInspector: receipt.workerInspector,
+      workerTimeline: collectWorkerTimeline(output),
+      outputTail: output.slice(-16_384),
+    });
+    const checkAlive = () => {
+      if (launchError) throw launchError;
+      if (monitorError) throw monitorError;
+      workerStartup?.check();
+      assert.equal(ended, false, `Product exited before evidence: ${JSON.stringify(receipt.exit)}`);
+      assert.ok(
+        !output.includes("Primary startup failed."),
+        "Product reported Primary startup failed",
+      );
+    };
     const alive = (read) =>
       until(
         async () => {
-          if (launchError) throw launchError;
-          if (monitorError) throw monitorError;
-          assert.equal(
-            ended,
-            false,
-            `Product exited before evidence: ${JSON.stringify(receipt.exit)}`,
-          );
+          checkAlive();
           return read();
         },
         "product debug readiness",
         30_000,
+        startupDiagnostics,
       );
     const mainUrl = await alive(() => output.match(/Debugger listening on (ws:\/\/[^\s]+)/)?.[1]);
     main = await connect(mainUrl);
     clients.push(main);
-    const installed = await main.send("Runtime.evaluate", {
-      expression: installProbe,
-      returnByValue: true,
+    workerStartup = await releaseStartingWorkers(main, receipt.workerInspector);
+    await observeBeforeStartup(main, async (evaluate) => {
+      assert.equal(await evaluate(installProbe), true);
+      receipt.originalForkObserved = true;
+      receipt.probeBeforeReady = await evaluate("!__installedProbe.electron.app.isReady()");
+      assert.equal(receipt.probeBeforeReady, true, "Observe startup before application readiness");
     });
-    if (installed.exceptionDetails) throw Error(JSON.stringify(installed.exceptionDetails));
-    assert.equal(installed.result.value, true);
-    receipt.originalForkObserved = true;
-    receipt.probeBeforeReady = await main.js("!__installedProbe.electron.app.isReady()");
-    assert.equal(receipt.probeBeforeReady, true, "Observe startup before application readiness");
     const browserUrl = await alive(
       () => output.match(/DevTools listening on (ws:\/\/[^\s]+)/)?.[1],
     );
-    const target = await alive(async () => {
-      const response = await fetch(`http://${new URL(browserUrl).host}/json/list`, {
-        signal: AbortSignal.timeout(2000),
-      });
-      assert.ok(response.ok);
-      return (await response.json()).find(
-        (page) => page.type === "page" && page.url.startsWith("file:"),
-      );
+    const target = await waitForRendererTarget(browserUrl, {
+      evidence: receipt.rendererTargetWait,
+      check: checkAlive,
+      diagnostics: startupDiagnostics,
     });
     renderer = await connect(target.webSocketDebuggerUrl);
     clients.push(renderer);
@@ -462,8 +474,10 @@ async function launchProduct(config, receipt, check) {
     receipt.workerTimeline = await main.js("__installedProbe.workers.timeline");
     receipt.probeRestored = await main.js("__installedProbe.restore()");
     assert.equal(receipt.probeRestored, true);
+    await workerStartup.settled();
     // Dispatch quit synchronously and let the official shutdown coordination run.
     await main.js("setTimeout(() => __installedProbe.electron.app.quit(), 0); true");
+    workerStartup.dispose();
     main.close(); // Node inspector must detach for Electron/Node to finish quitting.
     await until(() => ended, "graceful application quit", 12_000);
     await exit;
@@ -484,6 +498,7 @@ async function launchProduct(config, receipt, check) {
         cleanupErrors.push(errorRecord(error));
       }
     }
+    workerStartup?.dispose();
     for (const client of clients) client.close();
     try {
       if (!ended && child?.pid) {
@@ -913,62 +928,156 @@ async function observeSingleInstance(client, config, run, binding) {
   if (failure) throw failure;
 }
 
+// Runs in the renderer; use only public preload evidence and the selected DOM.
+export async function observeMotorPanel(selection) {
+  const tab = document.getElementById(selection.tabId);
+  const pane = document.getElementById(selection.panelId);
+  const selected =
+    tab?.getAttribute("aria-selected") === "true" &&
+    tab.getAttribute("aria-controls") === selection.panelId &&
+    pane?.getAttribute("aria-labelledby") === selection.tabId;
+  const events = globalThis.__installedUiEvents.filter(
+    (event) =>
+      event.binding?.kind === "panel" && event.binding.contributionId === selection.entry.id,
+  );
+  const event = [...events]
+    .reverse()
+    .find(
+      (event) =>
+        event.type === "state" &&
+        event.binding.uiResourceGeneration === selection.entry.uiResourceGeneration,
+    );
+  const result = event
+    ? await window.kobrixa.plugins.ui.snapshot({ binding: event.binding })
+    : null;
+  const snapshot = result?.ok ? result.value : null;
+  const bindingMatches =
+    snapshot &&
+    Object.keys(event.binding).every((key) => snapshot.binding[key] === event.binding[key]);
+  const summary = selected && pane.querySelector('.plugin-ui [data-ui-node="summary"]');
+  // Rendered controls carry the host-issued panelInstance in their IDs.
+  const boundDom =
+    bindingMatches &&
+    selected &&
+    [...pane.querySelectorAll(".plugin-ui [id]")].some((node) =>
+      node.id.startsWith(`ui-${snapshot.binding.panelInstance}-`),
+    );
+  const alerts = selected ? [...pane.querySelectorAll('[role="alert"]')] : [];
+  const checks = {
+    resourceAvailable: selection.entry.availability === "available",
+    selected: Boolean(selected),
+    // Panel-content alerts (including no connected device) are valid product UI.
+    noHostAlerts: !alerts.some((node) => !node.closest(".plugin-ui")),
+    snapshotPresent: Boolean(snapshot),
+    bindingMatches: Boolean(bindingMatches),
+    boundDom: Boolean(boundDom),
+    // bootstrap.environment gates snapshot.visible on window focus as well as
+    // selection. It is interaction eligibility, not proof of a rendered panel.
+    summaryRendered: Boolean(
+      summary && !summary.closest("[hidden]") && summary.getClientRects().length,
+    ),
+    summaryPresent: Boolean(snapshot?.data.summary),
+    // The motor summary is a data ref: displayText does not translate it.
+    summaryMatches: Boolean(snapshot && summary?.textContent === snapshot.data.summary),
+  };
+  return {
+    selected: Boolean(selected),
+    open: Boolean(selected && pane.querySelector(":scope > button:not([data-close-contribution])")),
+    alerts: alerts.map((node) => node.textContent),
+    text: selected ? pane.textContent : null,
+    events,
+    result,
+    snapshot,
+    checks,
+    snapshotVisible: Boolean(snapshot?.visible),
+    documentVisible: document.visibilityState === "visible",
+    documentFocused: document.hasFocus(),
+    summaryText: summary?.textContent ?? null,
+    ready: Object.values(checks).every(Boolean),
+  };
+}
+
 async function openMotor(client, manifest, receipt) {
   const { renderer, state } = client;
   await renderer.js(`(() => {
     globalThis.__installedUiEvents = [];
     globalThis.__installedUiOff = window.kobrixa.plugins.ui.onEvent(event => {
-      if (__installedUiEvents.length < 256) __installedUiEvents.push(event);
+      __installedUiEvents.push(event);
+      if (__installedUiEvents.length > 256) __installedUiEvents.shift();
     });
     const toggle = document.querySelector('.plugin-tools-toggle');
     if (toggle.getAttribute('aria-pressed') !== 'true') toggle.click();
     return true;
   })()`);
   const panel = manifest.contributes.panels[0];
+  const selection = await renderer.js(`(async () => {
+    const entries = [];
+    let cursor;
+    do {
+      const result = await window.kobrixa.plugins.ui.catalog(cursor ? {cursor} : {});
+      if (!result.ok) throw Error(JSON.stringify(result));
+      entries.push(...result.value.entries);
+      cursor = result.value.nextCursor;
+    } while (cursor);
+    const panels = entries.filter(e => e.kind === 'panel').sort((a,b) => {
+      const left = a.pluginId + '\\0' + a.id, right = b.pluginId + '\\0' + b.id;
+      return left < right ? -1 : left > right ? 1 : 0;
+    });
+    const index = panels.findIndex(e => e.pluginId === ${JSON.stringify(motorId)} && e.id === ${JSON.stringify(panel.id)});
+    if (index < 0) throw Error('Motor contribution missing: ' + JSON.stringify(entries));
+    return { entry: panels[index], tabId: 'plugin-tab-' + index, panelId: 'plugin-panel-' + index };
+  })()`);
   await until(
     () =>
       renderer.js(`(() => {
-    const tab = [...document.querySelectorAll('.plugin-tools-pane [role="tab"]')].find(el => ${JSON.stringify(Object.values(panel.title))}.includes(el.textContent.trim()));
+    const tab = document.getElementById(${JSON.stringify(selection.tabId)});
     if (!tab) return false;
     tab.click(); return true;
   })()`),
     "real motor tab",
   );
-  await until(
-    () =>
-      renderer.js(`(() => {
-    if (document.querySelector('.plugin-tools-pane .plugin-ui')) return true;
-    const open = document.querySelector('.plugin-tools-pane [role="tabpanel"] > button:not([data-close-contribution])');
-    if (!open) return false;
-    open.click(); return true;
-  })()`),
-    "generic panel Open button",
-  );
-  await until(
-    () =>
-      renderer.js(
-        "Boolean(document.querySelector('.plugin-tools-pane .plugin-ui [data-ui-node=\"summary\"]'))",
-      ),
+  let observation;
+  let requestedOpen = false;
+  const snapshot = await until(
+    async () => {
+      observation = await renderer.js(
+        `(${observeMotorPanel.toString()})(${JSON.stringify(selection)})`,
+      );
+      if (observation.selected && observation.open && !requestedOpen) {
+        // Selection commits asynchronously; never click the previous panel's Open.
+        requestedOpen = true;
+        await renderer.js(`(() => {
+        const tab = document.getElementById(${JSON.stringify(selection.tabId)});
+        const pane = document.getElementById(${JSON.stringify(selection.panelId)});
+        if (tab?.getAttribute('aria-selected') !== 'true') throw Error('Motor selection changed');
+        pane?.querySelector(':scope > button:not([data-close-contribution])')?.click();
+      })()`);
+      }
+      return observation.ready && observation.snapshot;
+    },
     "real motor panel rendered",
+    15_000,
+    async () => ({
+      selection,
+      observation,
+      plugins: await state(),
+      resources: await renderer.js(`(async () => {
+      const entry = ${JSON.stringify(selection.entry)};
+      const catalog = await window.kobrixa.plugins.ui.catalog({});
+      const resource = await window.kobrixa.plugins.ui.resource({sourceKey: entry.sourceKey,
+        id: entry.id, uiResourceGeneration: entry.uiResourceGeneration, resourceDigest: entry.resourceDigest});
+      return {catalog, resource: resource.ok ? {ok: true} : resource};
+    })()`),
+    }),
   );
-  const snapshot = await until(async () => {
-    const value = await renderer.js(`(async () => {
-      const event = [...__installedUiEvents].reverse().find(item => item.type === 'state' && item.binding?.kind === 'panel' && item.binding.contributionId === ${JSON.stringify(panel.id)});
-      if (!event) return null;
-      const result = await window.kobrixa.plugins.ui.snapshot({binding:event.binding});
-      if (!result.ok) throw Error(JSON.stringify(result));
-      return result.value;
-    })()`);
-    return value?.data?.summary && value;
-  }, "official preload motor snapshot");
   assert.equal(snapshot.data.available, false);
   assert.equal(snapshot.data["can-start"], false);
   assert.match(snapshot.data.summary, /Unavailable|無法使用/);
   receipt.snapshots ??= [];
   receipt.snapshots.push(snapshot);
   const dom = await renderer.js(`(() => ({
-    summary: document.querySelector('.plugin-tools-pane [data-ui-node="summary"]').textContent,
-    actions: [...document.querySelectorAll('.plugin-tools-pane [data-ui-node]')]
+    summary: document.getElementById(${JSON.stringify(selection.panelId)}).querySelector('[data-ui-node="summary"]').textContent,
+    actions: [...document.getElementById(${JSON.stringify(selection.panelId)}).querySelectorAll('[data-ui-node]')]
       .filter(node => /^(?:[abcd]-(?:forward|reverse|start))$/.test(node.dataset.uiNode))
       .flatMap(node => [...node.querySelectorAll('button')].map(button => ({node:node.dataset.uiNode, disabled:button.disabled})))
   }))()`);
@@ -1478,4 +1587,7 @@ export async function main() {
   }
 }
 if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url)
-  await main();
+  await main().catch((error) => {
+    console.error(`Installed product run failed: ${error.message}`);
+    process.exitCode = 1;
+  });

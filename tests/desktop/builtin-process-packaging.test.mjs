@@ -100,6 +100,42 @@ test("U14/B1-RF5: missing/corrupt/foreign/traversing payloads fail closed", asyn
 
 // Receipt validation is a pure audit. Only the controller can supply actual
 // installed evidence; unit data below is never written as an installed receipt.
+function assertStartupObservation(run) {
+  assert.equal(run.probeBeforeReady, true, "Pre-ready observation remains required");
+  assert.equal(run.workerInspector.enabled, true);
+  assert.equal(run.workerInspector.waitForDebuggerOnStart, false);
+  const targets = run.workerInspector.targets;
+  assert.ok(
+    targets.some((row) => /\/persistence-worker\.cjs$/.test(row.workerInfo.url)),
+    "Persistence worker inspector target must be observed",
+  );
+  for (const row of targets) {
+    assert.equal(typeof row.waitingForDebugger, "boolean");
+    assert.equal(row.error, undefined);
+    assert.ok(Number.isSafeInteger(row.attachedAt));
+    assert.ok(Number.isSafeInteger(row.releasedAt) && row.releasedAt >= row.attachedAt);
+    assert.ok(Number.isSafeInteger(row.detachedAt) && row.detachedAt >= row.releasedAt);
+  }
+  const persistence = run.workerTimeline.find(
+    (row) => row.event === "construct" && /\/persistence-worker\.cjs$/.test(row.arguments[0]),
+  );
+  assert.ok(persistence, "Original persistence Worker constructor must be observed");
+  const ready = run.workerTimeline.find(
+    (row) =>
+      row.worker === persistence.worker && row.event === "message" && row.message.kind === "ready",
+  );
+  assert.ok(ready, "Original persistence worker must report ready");
+  assert.equal(
+    run.workerTimeline.some(
+      (row) =>
+        row.worker === persistence.worker &&
+        ["error", "exit", "constructor-error"].includes(row.event) &&
+        row.sequence < ready.sequence,
+    ),
+    false,
+  );
+}
+
 export function assertProductReceipt(report) {
   assert.equal(report.kind, "installed-builtin-product");
   assert.equal(report.status, "passed");
@@ -140,6 +176,7 @@ export function assertProductReceipt(report) {
     assert.equal(run.error, undefined);
     assert.equal(run.cleanupErrors, undefined);
     assert.equal(run.originalForkObserved, true);
+    assertStartupObservation(run);
     assert.equal(run.probeRestored, true);
     assert.equal(run.gracefulQuit, true);
     assert.equal(run.forcedCleanup, false);
@@ -291,6 +328,71 @@ test("U14: synthetic or partial receipts cannot pass product acceptance", () => 
     assert.throws(() => assertProductReceipt(report));
 });
 
+test("startup receipt requires pre-ready observation, worker release/detach, and actual readiness", () => {
+  const run = {
+    probeBeforeReady: true,
+    workerInspector: {
+      enabled: true,
+      waitForDebuggerOnStart: false,
+      targets: [
+        {
+          workerInfo: { url: "file:///installed/persistence-worker.cjs" },
+          waitingForDebugger: false,
+          attachedAt: 1,
+          releasedAt: 2,
+          detachedAt: 3,
+        },
+      ],
+    },
+    workerTimeline: [
+      {
+        sequence: 0,
+        worker: 0,
+        event: "construct",
+        arguments: ["/installed/persistence-worker.cjs"],
+      },
+      { sequence: 1, worker: 0, event: "message", message: { kind: "ready" } },
+    ],
+  };
+  assertStartupObservation(run);
+  for (const mutate of [
+    (r) => {
+      r.probeBeforeReady = false;
+    },
+    (r) => {
+      r.workerInspector.enabled = false;
+    },
+    (r) => {
+      r.workerInspector.waitForDebuggerOnStart = true;
+    },
+    (r) => {
+      r.workerInspector.targets = [];
+    },
+    (r) => {
+      delete r.workerInspector.targets[0].releasedAt;
+    },
+    (r) => {
+      delete r.workerInspector.targets[0].detachedAt;
+    },
+    (r) => {
+      r.workerInspector.targets[0].error = { message: "release failed" };
+    },
+    (r) => {
+      r.workerTimeline.pop();
+    },
+    (r) => {
+      r.workerTimeline[1].worker = 1;
+    },
+    (r) => {
+      r.workerTimeline.splice(1, 0, { sequence: 0, worker: 0, event: "exit", code: 1 });
+    },
+  ]) {
+    const invalid = structuredClone(run);
+    mutate(invalid);
+    assert.throws(() => assertStartupObservation(invalid));
+  }
+});
+
 test(
   "U14/T6: controller receipt contains real installed product evidence",
   {
@@ -393,19 +495,23 @@ test("serialized inspector probe persists early exit even when main cannot be qu
   }
   const threads = { Worker };
   const originalFork = () => new EventEmitter();
-  const electron = { app: {}, utilityProcess: { fork: originalFork } };
+  const electron = { app: { isReady: () => false }, utilityProcess: { fork: originalFork } };
   let output = "";
   const context = {
     URL,
     performance,
     SharedArrayBuffer,
+    require: (name) => {
+      assert.ok(["electron", "node:worker_threads"].includes(name));
+      return name === "electron" ? electron : threads;
+    },
     process: {
       execPath: "/installed/kobrixa",
       execArgv: ["--inspect-brk=127.0.0.1:0"],
       resourcesPath: "/installed/resources",
-      getBuiltinModule: () => ({
-        createRequire: () => (name) => (name === "electron" ? electron : threads),
-      }),
+      getBuiltinModule: () => {
+        throw Error("Probe must use the paused module require");
+      },
       stderr: {
         write: (text) => {
           output += text;
@@ -413,6 +519,11 @@ test("serialized inspector probe persists early exit even when main cannot be qu
       },
     },
   };
+  electron.app.isReady = () => true;
+  assert.throws(() => runInNewContext(installProbe, context), /before application readiness/);
+  assert.equal(threads.Worker, Worker);
+  assert.equal(electron.utilityProcess.fork, originalFork);
+  electron.app.isReady = () => false;
   assert.equal(runInNewContext(installProbe, context), true);
   const child = new threads.Worker("/installed/worker.cjs", { workerData: {} });
   child.emit("online");
@@ -432,4 +543,141 @@ test("serialized inspector probe persists early exit even when main cannot be qu
   assert.equal(electron.utilityProcess.fork, originalFork);
   assert.throws(() => collectWorkerTimeline("KOBRIXA_INSTALLED_WORKER {bad}"));
   assert.throws(() => collectWorkerTimeline(output, [{ ...rows[0], worker: 999 }]));
+});
+
+test("motor readiness rejects previous panels, stale bindings, and unavailable resources", async () => {
+  const { observeMotorPanel } = await import("./builtin-process-installed.mjs");
+  const selection = {
+    tabId: "motor-tab",
+    panelId: "motor-panel",
+    entry: { id: "motor", uiResourceGeneration: 2, availability: "available" },
+  };
+  const binding = {
+    kind: "panel",
+    contributionId: "motor",
+    uiResourceGeneration: 2,
+    panelInstance: "current",
+    processEpoch: "process",
+    hostEpoch: "host",
+    generation: 1,
+  };
+  let selected = false,
+    instance = "previous",
+    hostAlert = false,
+    snapshotError = false;
+  let panelAlerts = true,
+    hidden = false,
+    laidOut = true,
+    summaryExists = true,
+    summaryText = "Unavailable";
+  const snapshot = { binding, visible: true, data: { summary: "Unavailable", available: false } };
+  const panelRoot = {};
+  const alertNode = (textContent, inPanel) => ({
+    textContent,
+    closest: (selector) => (selector === ".plugin-ui" && inPanel ? panelRoot : null),
+  });
+  const pane = {
+    getAttribute: () => "motor-tab",
+    querySelector: (selector) =>
+      selector.includes("summary") && summaryExists
+        ? {
+            textContent: summaryText,
+            closest: (selector) => (selector === "[hidden]" && hidden ? pane : null),
+            getClientRects: () => (laidOut ? [{}] : []),
+          }
+        : null,
+    querySelectorAll: (selector) =>
+      selector.includes("[id]")
+        ? [{ id: `ui-${instance}-power` }]
+        : [
+            ...(hostAlert ? [alertNode("Resource unavailable", false)] : []),
+            ...(panelAlerts
+              ? [alertNode("Unavailable. Use the connection UI...", true), alertNode("", true)]
+              : []),
+          ],
+    textContent: "Unavailable",
+  };
+  const context = {
+    document: {
+      visibilityState: "visible",
+      hasFocus: () => snapshot.visible,
+      getElementById: (id) =>
+        id === "motor-panel"
+          ? pane
+          : {
+              getAttribute: (key) => (key === "aria-selected" ? String(selected) : "motor-panel"),
+            },
+    },
+    window: {
+      kobrixa: {
+        plugins: {
+          ui: {
+            snapshot: async () =>
+              snapshotError
+                ? { ok: false, error: { code: "PLUGIN_E_PROVIDER" } }
+                : { ok: true, value: snapshot },
+          },
+        },
+      },
+    },
+    __installedUiEvents: [{ type: "state", binding }],
+  };
+  const read = () =>
+    runInNewContext(`(${observeMotorPanel.toString()})(${JSON.stringify(selection)})`, context);
+  assert.equal((await read()).ready, false); // Previous tab still committed.
+  selected = true;
+  assert.equal((await read()).ready, false); // Previous instance's controls.
+  instance = "current";
+  assert.equal((await read()).ready, true); // No EV3 is a valid rendered unavailable state.
+  assert.equal((await read()).alerts.length, 2); // Content alerts, including an empty alert.
+  snapshot.visible = false;
+  const unfocused = await read();
+  assert.equal(unfocused.ready, true); // Rendered panel in an unfocused macOS window.
+  assert.equal(unfocused.snapshotVisible, false);
+  assert.equal(unfocused.documentFocused, false);
+  assert.ok(Object.values(unfocused.checks).every((value) => value === true));
+  assert.equal(unfocused.summaryText, snapshot.data.summary);
+  for (const missing of ["hidden", "layout", "summary", "text"]) {
+    hidden = missing === "hidden";
+    laidOut = missing !== "layout";
+    summaryExists = missing !== "summary";
+    summaryText = missing === "text" ? "尚未更新" : "Unavailable";
+    const observation = await read();
+    assert.equal(observation.ready, false, missing);
+    assert.equal(
+      observation.checks[missing === "text" ? "summaryMatches" : "summaryRendered"],
+      false,
+      missing,
+    );
+  }
+  hidden = false;
+  laidOut = summaryExists = true;
+  summaryText = "Unavailable";
+  hostAlert = true;
+  assert.equal((await read()).ready, false);
+  assert.equal((await read()).checks.noHostAlerts, false);
+  assert.equal((await read()).alerts[0], "Resource unavailable");
+  panelAlerts = false;
+  assert.equal((await read()).ready, false); // Host alert alone also rejects.
+  hostAlert = false;
+  assert.equal((await read()).ready, true);
+  snapshot.binding = { ...binding, processEpoch: "stale" };
+  assert.equal((await read()).checks.bindingMatches, false);
+  assert.equal((await read()).ready, false);
+  snapshot.binding = binding;
+  snapshot.data.summary = "";
+  assert.equal((await read()).checks.summaryPresent, false);
+  assert.equal((await read()).ready, false);
+  snapshot.data.summary = "Unavailable";
+  snapshotError = true;
+  assert.equal((await read()).ready, false);
+  assert.equal((await read()).result.error.code, "PLUGIN_E_PROVIDER");
+  snapshotError = false;
+  context.__installedUiEvents = [
+    { type: "state", binding: { ...binding, uiResourceGeneration: 1 } },
+  ];
+  assert.equal((await read()).ready, false);
+  context.__installedUiEvents = [{ type: "state", binding }];
+  selection.entry.availability = "unavailable";
+  assert.equal((await read()).ready, false);
 });
