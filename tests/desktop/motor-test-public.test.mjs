@@ -19,7 +19,50 @@ import {
   observeNativeIpc,
   requireMotionJournalFilesystem,
   nativeClick,
+  observePanelsBeforeOpen,
 } from "./motor-test-public-run.mjs";
+
+test("pre-open readiness permits lazy owners but rejects panels from any owner", async () => {
+  const events = new EventEmitter();
+  const observe = () =>
+    observePanelsBeforeOpen({
+      onEvent(listener) {
+        events.on("state", listener);
+        return () => events.off("state", listener);
+      },
+    });
+  const instances = (owner, kinds) =>
+    events.emit("state", owner, {
+      kind: "ui.instances",
+      data: { instances: kinds.map((kind) => ({ kind })) },
+    });
+  let owner;
+  const preOpen = observe();
+  // Renderer bootstrap and debugger enable complete before native Open; neither
+  // activates the lazy plugin. A status from another owner is not a panel.
+  await Promise.resolve();
+  instances({ pluginId: "status-plugin" }, ["status"]);
+  assert.equal(owner, undefined);
+  preOpen.assertUnopened();
+  preOpen.dispose();
+  const open = () => {
+    owner = { pluginId: "motor-test" };
+    instances(owner, ["panel"]);
+  };
+  open();
+  assert.ok(owner, "Only panel open resolves the fake launcher owner");
+  assert.equal(events.listenerCount("state"), 0);
+
+  for (const pluginId of ["motor-test", "other-plugin"]) {
+    const premature = observe();
+    instances({ pluginId }, ["panel"]);
+    // Even closing before readiness cannot erase an early first intent.
+    instances({ pluginId }, []);
+    assert.throws(() => premature.assertUnopened(), /readiness must precede/);
+    premature.dispose();
+  }
+  assert.equal(events.listenerCount("state"), 0);
+});
 
 test("motion journal probes the real barrier and identifies only Windows ENOTSUP as W02b", async () => {
   let calls = 0;

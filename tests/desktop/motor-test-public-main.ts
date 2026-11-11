@@ -30,6 +30,25 @@ import {
   ID,
 } from "../../apps/desktop/src/main/device-broker/fake-provider.js";
 
+// Install on the fresh registry before renderer routes/load. Panel activation is
+// lazy: its execution owner need not exist until Open invokes the launcher.
+export function observePanelsBeforeOpen(states: Pick<UiStateRegistry, "onEvent">) {
+  let panelOpened = false;
+  const dispose = states.onEvent((_owner, event) => {
+    if (
+      event.kind === "ui.instances" &&
+      event.data.instances.some((binding) => binding.kind === "panel")
+    )
+      panelOpened = true;
+  });
+  return {
+    dispose,
+    assertUnopened() {
+      assert.equal(panelOpened, false, "Renderer readiness must precede the first panel intent");
+    },
+  };
+}
+
 // Main-process receipt order is authoritative; renderer timestamps stay diagnostic.
 type InputReceipt = {
   at: number;
@@ -776,6 +795,8 @@ export function runNativeMotor() {
   let main: DesktopMainComposition | undefined;
   let offPersistenceWindow = () => {};
   app.once("quit", () => offPersistenceWindow());
+  let offPreOpenPanels = () => {};
+  app.once("quit", () => offPreOpenPanels());
   let control: FakeProviderControl | undefined;
   let loseProvider: (() => void) | undefined;
   const childPids = new Set<number>();
@@ -992,6 +1013,8 @@ export function runNativeMotor() {
         });
         const composition = main;
         const ui = desktopUi(composition);
+        const preOpenPanels = observePanelsBeforeOpen(ui.states);
+        offPreOpenPanels = preOpenPanels.dispose;
         observePresentation = () => {
           if (!owner) return;
           presentationSamples.push({
@@ -1271,12 +1294,7 @@ export function runNativeMotor() {
           "renderer observed native focus and visibility before panel open",
         );
         native.push({ at: wall(), type: "renderer-ready", detail: rendererReady });
-        assert.ok(owner, "Actual SDK owner before panel open");
-        assert.equal(
-          ui.states.instances(owner).some((binding) => binding.kind === "panel"),
-          false,
-          "Renderer readiness must precede the first panel intent",
-        );
+        preOpenPanels.assertUnopened();
         if (scenario.fault === "renderer-freeze") {
           const debug = window.webContents.debugger;
           debug.on("message", (_event, method, params) => {
@@ -1301,6 +1319,8 @@ export function runNativeMotor() {
             throw new Error(freezeInvalid, { cause: error });
           }
         }
+        preOpenPanels.assertUnopened();
+        offPreOpenPanels();
         await click('.plugin-tools-pane [role="tabpanel"] > button');
         await until(
           () =>
