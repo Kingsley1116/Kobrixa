@@ -10,6 +10,7 @@ import { diagnosticsFor as stateDiagnostics } from "../../apps/desktop/src/rende
 import type { FoundationDiagnostics } from "@kobrixa/plugin-runtime";
 import type { UiLabels } from "../../apps/desktop/src/renderer/plugin-ui/host-ports.js";
 import "../../apps/desktop/src/renderer/styles/index.css";
+import { assertLoadCatalog, waitForLoad } from "./declarative-ui-load-fixture.js";
 
 const check = (value: unknown, label: string): void => {
   if (!value) throw new Error(label);
@@ -137,6 +138,29 @@ document.addEventListener(
 function entries() {
   return owner.session.catalog.getSnapshot().entries;
 }
+function inspect() {
+  return {
+    focused: document.hasFocus(),
+    hidden: document.hidden,
+    phase: owner.session.catalog.getSnapshot().phase,
+    selected: owner.session.selectedKey(),
+    entries: entries().map((entry) => ({
+      id: entry.id,
+      sourceKey: entry.sourceKey,
+      kind: entry.kind,
+      availability: entry.availability,
+      failed: owner.session.failed(entry),
+      binding: owner.session.record(entry)?.state.form().binding,
+      active: owner.session.record(entry)?.state.getSnapshot().active ?? false,
+    })),
+  };
+}
+const focused = () =>
+  waitForLoad(
+    () => ({ focused: document.hasFocus(), hidden: document.hidden }),
+    (state) => state.focused && !state.hidden,
+    "focused, visible load renderer",
+  );
 document.addEventListener(
   "click",
   (event) => {
@@ -155,22 +179,27 @@ document.addEventListener(
 );
 async function openAll() {
   await owner.ready;
+  assertLoadCatalog(entries());
+  await focused();
   const panels = entries().filter(
     (entry) => entry.kind === "panel" && entry.availability === "available",
   );
   check(panels.length === 16, `expected16 panels, got${panels.length}`);
   for (const panel of panels) {
-    await owner.session.open(panel);
+    await openPanel(panel);
     await frame();
   }
   owner.session.select(panels[0]!);
   await frame();
   await frame();
   discover();
-  check(
-    entries().filter((entry) => entry.kind === "status" && owner.session.record(entry)).length ===
-      16,
-    "16 live statuses",
+  // Main initialization creates statuses, but renderer resource/snapshot adoption
+  // is asynchronous and is not joined by panel open or two animation frames.
+  await waitForLoad(
+    inspect,
+    (state) =>
+      state.entries.filter((entry) => entry.kind === "status" && entry.active).length === 16,
+    "16 live acceptance statuses",
   );
   check(
     panels.every((entry) => owner.session.record(entry)),
@@ -181,8 +210,23 @@ async function openAll() {
     ?.setAttribute("open", "");
   return { entries: entries(), diagnostics: sample() };
 }
-function bounds(kind: "input" | "hold" | "hide" | "number") {
-  const element =
+async function openPanel(panel: ReturnType<typeof entries>[number]) {
+  await waitForLoad(
+    async () => {
+      await focused();
+      await owner.session.open(panel);
+      check(!owner.session.failed(panel), `panel failed: ${JSON.stringify(inspect())}`);
+      // A real blur while resource/open IPC is pending cancels the open. Retry
+      // only until an actual record exists, after native focus has returned.
+      return { opened: !!owner.session.record(panel), ...inspect() };
+    },
+    (state) => state.opened,
+    `panel ${panel.id}`,
+  );
+}
+async function bounds(kind: "input" | "hold" | "hide" | "number") {
+  await focused();
+  const find = () =>
     kind === "hide"
       ? document.querySelector<HTMLButtonElement>(".plugin-tools-pane > header button")
       : kind === "number"
@@ -192,7 +236,18 @@ function bounds(kind: "input" | "hold" | "hide" | "number") {
           : [...document.querySelectorAll<HTMLButtonElement>("button")].find(
               (button) => button.textContent?.trim() === "Hold",
             );
-  check(element && !element.disabled, `missing ${kind}`);
+  await waitForLoad(
+    () => ({
+      present: !!find(),
+      enabled: find()?.disabled === false,
+      focused: document.hasFocus(),
+      hidden: document.hidden,
+    }),
+    (state) => state.focused && !state.hidden && state.enabled,
+    `enabled native ${kind} control`,
+  );
+  const element = find();
+  check(element && !element.disabled, `missing ${kind}: ${JSON.stringify(inspect())}`);
   element!.scrollIntoView({ block: "center" });
   const r = element!.getBoundingClientRect();
   return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
@@ -204,7 +259,7 @@ async function cycles(count: number) {
   await frame();
   for (let i = 0; i < count; i++) {
     const entry = panels[i % panels.length]!;
-    await owner.session.open(entry);
+    await openPanel(entry);
     await frame();
     check(document.querySelector(".plugin-tools-pane .plugin-ui"), `cycle${i} missing actual tree`);
     document.querySelector<HTMLButtonElement>("[data-close-contribution]")!.click();
@@ -216,6 +271,7 @@ async function cycles(count: number) {
 Object.assign(window, {
   uiLoad: {
     ready: owner.ready,
+    inspect,
     count: () => entries().length,
     openAll,
     bounds,

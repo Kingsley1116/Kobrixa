@@ -1,9 +1,97 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { assertLoadCatalog, waitForLoad, waitLoadInterval } from "./declarative-ui-load-fixture.ts";
 import { readFile } from "node:fs/promises";
 import { gunzipSync } from "node:zlib";
 import { assertMeasurements, summary } from "./declarative-ui-harness.mjs";
 import { analyzeLoad } from "./declarative-ui-load-report.mjs";
+
+function loadCatalog() {
+  return Array.from({ length: 8 }, (_, n) =>
+    ["panel", "status"].flatMap((kind) =>
+      [0, 1].map((i) => ({
+        id: `acceptance.ui-${n}.${kind}-${i}`,
+        pluginId: `acceptance.ui-${n}`,
+        sourceKey: `dev:fixture-${n}`,
+        kind,
+        availability: "available",
+        version: 1,
+        resourceBytes: 256 * 1024,
+      })),
+    ),
+  ).flat();
+}
+
+test("orphan observation waits at least five measured seconds even when a timer wakes early", async () => {
+  let now = 0;
+  const requested = [];
+  const elapsed = await waitLoadInterval(5000, {
+    now: () => now,
+    pause: async (ms) => {
+      requested.push(ms);
+      now += requested.length === 1 ? 4999.25 : ms;
+    },
+  });
+  assert.deepEqual(requested, [5000, 1]);
+  assert.equal(elapsed, 5000.25);
+});
+
+test("load catalog is exactly the eight acceptance sources, not an aggregate UI count", () => {
+  assert.doesNotThrow(() => assertLoadCatalog(loadCatalog()));
+  for (const mutate of [
+    (entries) => entries.pop(),
+    (entries) => entries.push({ ...entries[0], id: "kobrixa.motor-test.panel" }),
+    (entries) => {
+      entries[0] = { ...entries[0], id: "kobrixa.motor-test.panel" };
+    },
+    (entries) => {
+      entries[0] = entries[1];
+    },
+    (entries) => {
+      entries[0].availability = "unavailable";
+    },
+    (entries) => {
+      entries[0].resourceBytes--;
+    },
+    (entries) => {
+      entries[0].sourceKey = "dev:other";
+    },
+    (entries) => {
+      entries[0].kind = "status";
+    },
+  ]) {
+    const entries = loadCatalog();
+    mutate(entries);
+    assert.throws(() => assertLoadCatalog(entries));
+  }
+});
+
+test("load readiness waits for real focus/adoption and reports a bounded failure", async () => {
+  let time = 0;
+  const clock = {
+    now: () => time,
+    pause: async () => {
+      time += 20;
+    },
+    timeoutMs: 100,
+  };
+  const read = () => ({ focused: time >= 20, statuses: time >= 60 ? 16 : 0 });
+  assert.deepEqual(await waitForLoad(read, (s) => s.focused && s.statuses === 16, "load", clock), {
+    focused: true,
+    statuses: 16,
+  });
+  assert.equal(time, 60);
+  await assert.rejects(
+    waitForLoad(
+      () => ({ focused: false, statuses: 0 }),
+      (s) => s.focused,
+      "native focus",
+      clock,
+    ),
+    /native focus: \{"focused":false,"statuses":0\}/,
+  );
+  assert.equal(time, 160);
+});
 
 test(
   "actual 30-second slow renderer preserves drafts, bounds queues and ignores a retired snapshot",

@@ -394,7 +394,10 @@ import { registerPluginIpc } from "./plugins/ipc.js";
 import type { ResourceOwner, RpcPeer } from "@kobrixa/plugin-protocol";
 import { memoryPlugin } from "../../../../packages/plugin-runtime/src/test-process.js";
 
-async function foundationIpc(legacyMetadata = false) {
+async function foundationIpc(
+  legacyMetadata = false,
+  options: { now?: () => number; directoryBarrier?: (target: string) => Promise<void> } = {},
+) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "kobrixa-d150-ipc-")));
   const directory = join(root, "consumer");
   await mkdir(directory);
@@ -464,13 +467,13 @@ async function foundationIpc(legacyMetadata = false) {
     busy: () => false,
   });
   const profile = { hostEpoch: id(1), assertHeld: vi.fn() },
-    now = () => performance.now() + elapsed;
+    now = () => (options.now?.() ?? performance.now()) + elapsed;
   // These are IPC ordering/fault-injection tests. Windows has no native journal
   // directory barrier, so model only that barrier while retaining real file I/O.
   // journal-filesystem.test.ts separately verifies production fails closed there.
   const fs = createJournalFilesystem(
       root,
-      process.platform === "win32" ? async () => {} : undefined,
+      options.directoryBarrier ?? (process.platform === "win32" ? async () => {} : undefined),
     ),
     journal = createJournal(fs, profile);
   const ledger = createCoreActionLedger({
@@ -880,47 +883,90 @@ async function prepareMotion(f: Awaited<ReturnType<typeof foundationIpc>>) {
   if (!result.ok) throw new Error(result.error.message);
   return result.value.operation.operationId;
 }
-it("D150 stop/readback and durable final journal precede physical Disconnect and manager shutdown", async () => {
-  const f = await foundationIpc();
+it("D150 a journal write outliving the single panel pulse never reaches motion dispatch", async () => {
+  const f = await foundationIpc(false, { now: () => 0, directoryBarrier: async () => {} });
   try {
-    const operationId = await prepareMotion(f);
-    f.control.block("after-exchange", "motion-pulse");
-    expect((await f.peer.request("devices/motion/start", { operationId })).ok).toBe(true);
-    await f.control.reached("after-exchange", "motion-pulse");
-    f.control.block("before-stop-readback", "stop");
-    const disconnected = f.call("device:disconnect", f.sessionId);
-    await f.control.reached("before-stop-readback", "stop");
-    expect(f.control.trace().some((row) => row.step === "disconnect")).toBe(false);
-    f.control.release("after-exchange", "motion-pulse");
-    const synced = deferredIpc<void>(),
-      allowSync = deferredIpc<void>();
-    const original = f.fs.syncDirectory.bind(f.fs);
-    const sync = vi.spyOn(f.fs, "syncDirectory").mockImplementation(async () => {
-      synced.resolve();
-      await allowSync.promise;
-      await original();
+    const fileSync = f.fs.sync.bind(f.fs);
+    vi.spyOn(f.fs, "sync").mockImplementationOnce(async (name) => {
+      f.advance(351);
+      await fileSync(name);
     });
-    f.control.release("before-stop-readback", "stop");
-    await synced.promise;
-    expect(
-      f.control.trace().some((row) => row.step === "readback" && row.dispatch === "sent"),
-    ).toBe(true);
-    expect(f.control.trace().some((row) => row.step === "disconnect")).toBe(false);
-    expect(f.shutdown).not.toHaveBeenCalled();
-    allowSync.resolve();
-    await disconnected;
-    sync.mockRestore();
+    const operationId = await prepareMotion(f);
+    expect((await f.peer.request("devices/motion/start", { operationId })).ok).toBe(true);
+    // The old ordering test instead awaited the unreachable motion-pulse
+    // barrier here, hiding the expired authority behind Vitest's 5 s timeout.
+    await vi.waitFor(async () => {
+      expect(await f.peer.request("devices/motion/query", { operationId })).toMatchObject({
+        ok: true,
+        value: { operation: { stage: "terminal", stopConfirmation: "confirmed" } },
+      });
+    });
+    expect(f.control.trace().some((row) => row.step === "motion-pulse")).toBe(false);
     expect(f.journal.snapshot().blockers).toEqual([]);
-    const sent = f.control
-      .trace()
-      .filter((row) => row.dispatch === "sent")
-      .map((row) => row.step);
-    expect(sent.indexOf("readback")).toBeLessThan(sent.indexOf("disconnect"));
-    expect(f.shutdown).not.toHaveBeenCalled();
   } finally {
     await f.cleanup();
   }
 });
+it.each(["platform barrier", "modeled Windows barrier"])(
+  "D150 stop/readback and durable final journal precede physical Disconnect and manager shutdown (%s)",
+  async (barrier) => {
+    // This checks ordering, not heartbeat liveness. A single pulse expires after
+    // 350 ms; real journal I/O on a busy runner must not decide whether we ever
+    // reach the motion-pulse barrier. Keep the broker clock under test control.
+    const f = await foundationIpc(false, {
+      now: () => 0,
+      ...(barrier === "modeled Windows barrier" ? { directoryBarrier: async () => {} } : {}),
+    });
+    const synced = deferredIpc<void>(),
+      allowSync = deferredIpc<void>();
+    let sync: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      const fileSync = f.fs.sync.bind(f.fs);
+      vi.spyOn(f.fs, "sync").mockImplementationOnce(async (name) => {
+        // Reproduces the old timeout with the wall clock on every platform.
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        await fileSync(name);
+      });
+      const operationId = await prepareMotion(f);
+      f.control.block("after-exchange", "motion-pulse");
+      expect((await f.peer.request("devices/motion/start", { operationId })).ok).toBe(true);
+      await f.control.reached("after-exchange", "motion-pulse");
+      f.control.block("before-stop-readback", "stop");
+      const disconnected = f.call("device:disconnect", f.sessionId);
+      await f.control.reached("before-stop-readback", "stop");
+      expect(f.control.trace().some((row) => row.step === "disconnect")).toBe(false);
+      f.control.release("after-exchange", "motion-pulse");
+      const original = f.fs.syncDirectory.bind(f.fs);
+      sync = vi.spyOn(f.fs, "syncDirectory").mockImplementation(async () => {
+        synced.resolve();
+        await allowSync.promise;
+        await original();
+      });
+      f.control.release("before-stop-readback", "stop");
+      await synced.promise;
+      expect(
+        f.control.trace().some((row) => row.step === "readback" && row.dispatch === "sent"),
+      ).toBe(true);
+      expect(f.control.trace().some((row) => row.step === "disconnect")).toBe(false);
+      expect(f.shutdown).not.toHaveBeenCalled();
+      allowSync.resolve();
+      await disconnected;
+      sync.mockRestore();
+      expect(f.journal.snapshot().blockers).toEqual([]);
+      const sent = f.control
+        .trace()
+        .filter((row) => row.dispatch === "sent")
+        .map((row) => row.step);
+      expect(sent.indexOf("readback")).toBeLessThan(sent.indexOf("disconnect"));
+      expect(f.shutdown).not.toHaveBeenCalled();
+    } finally {
+      // Never strand the journal in teardown when an ordering assertion fails.
+      allowSync.resolve();
+      sync?.mockRestore();
+      await f.cleanup();
+    }
+  },
+);
 function deferredIpc<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => {

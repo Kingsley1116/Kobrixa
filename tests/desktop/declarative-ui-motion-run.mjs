@@ -5,7 +5,6 @@ import { createRequire } from "node:module";
 import { cp, mkdir, mkdtemp, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { setTimeout as pause } from "node:timers/promises";
 import { build } from "esbuild";
 import { build as buildRenderer } from "vite";
 import { root, materialize, padJson } from "./declarative-ui-harness.mjs";
@@ -15,6 +14,7 @@ import {
   PERSISTENCE_WORKER_ENTRY,
 } from "../../tools/release/desktop-packaging.mjs";
 import { analyzeLoad } from "./declarative-ui-load-report.mjs";
+import { waitLoadInterval } from "./declarative-ui-load-fixture.ts";
 
 const faults = [
   "hide",
@@ -338,13 +338,19 @@ for (const scenario of selected) {
       throw error;
     }
   };
-  const closedAt = performance.now();
-  await pause(5000);
-  report.orphanCheckMs = performance.now() - closedAt;
+  report.orphanCheckMs = await waitLoadInterval(5000);
   report.remainingPids = pids.filter(alive);
   report.artifact = artifact;
   report.normalClose = !report.expectedBlockedClose;
   await writeFile(output, JSON.stringify(report, null, 2));
+  console.log(
+    JSON.stringify({
+      reportPath: output,
+      orphanCheckMs: report.orphanCheckMs,
+      remainingPids: report.remainingPids,
+      normalClose: report.normalClose,
+    }),
+  );
   assert.deepEqual(report.remainingPids, []);
   reports.push({ scenario, path: output });
   console.log(`${load ? "RECORDED native UI load" : "PASS native motion"} ${name}: ${output}`);
@@ -375,6 +381,17 @@ console.log(
 if (args[0] === "--load") {
   const analysis = await analyzeLoad(path.join(directory, "matrix.json"));
   await writeFile(path.join(directory, "load-analysis.json"), JSON.stringify(analysis, null, 2));
+  for (const run of analysis.runs)
+    console.log(
+      JSON.stringify({
+        reportPath: run.reportPath,
+        checks: run.checks,
+        apply: run.apply,
+        input: run.input,
+        revoke: run.revoke,
+        uncertainty: run.uncertainty,
+      }),
+    );
   assert.equal(analysis.pass, true, JSON.stringify(analysis.runs.map((run) => run.checks)));
   console.log("Native UI load timing, heap and cleanup thresholds PASS.");
 }

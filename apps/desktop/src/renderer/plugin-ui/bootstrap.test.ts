@@ -11,6 +11,56 @@ import {
 } from "./contract.test.js";
 import { RendererSession, bootstrapPluginUi } from "./bootstrap.js";
 afterEach(() => vi.useRealTimers());
+it("unfocused or hidden panel opens do not activate; blur disables holds without losing the record", async () => {
+  const f = fixture();
+  const session = new RendererSession(f.bridge);
+  await session.start();
+  session.showPane(true, "tab");
+  session.environment(true, false, "window");
+  await session.open(entry);
+  expect(f.bridge.open).not.toHaveBeenCalled();
+  expect(session.record(entry)).toBeUndefined();
+
+  session.environment(false, true, "document");
+  await session.open(entry);
+  expect(f.bridge.open).not.toHaveBeenCalled();
+  expect(session.record(entry)).toBeUndefined();
+
+  session.environment(true, true, "window");
+  await session.open(entry);
+  const record = session.record(entry)!;
+  expect(record.state.actionEnabled("hold")).toBe(true);
+  session.environment(true, false, "window");
+  expect(record.state.actionEnabled("hold")).toBe(false);
+  expect(session.record(entry)).toBe(record);
+  session.environment(true, true, "window");
+  expect(record.state.actionEnabled("hold")).toBe(true);
+  expect(f.bridge.open).toHaveBeenCalledTimes(1);
+  session.dispose();
+});
+
+it("blur during open retires the late binding and permits an explicit retry after focus returns", async () => {
+  const f = fixture();
+  const session = new RendererSession(f.bridge);
+  await session.start();
+  session.showPane(true, "tab");
+  const pending = deferred<Awaited<ReturnType<typeof f.bridge.open>>>();
+  f.bridge.open.mockReturnValueOnce(pending.promise);
+  const opening = session.open(entry);
+  await vi.waitFor(() => expect(f.bridge.open).toHaveBeenCalledTimes(1));
+  session.environment(true, false, "window");
+  pending.resolve({ ok: true, value: snapshot() });
+  await opening;
+  expect(session.record(entry)).toBeUndefined();
+  expect(f.bridge.close).toHaveBeenCalledWith({ binding });
+  expect(session.failed(entry)).toBe(false);
+  session.environment(true, true, "window");
+  await session.open(entry);
+  expect(session.record(entry)).toBeDefined();
+  expect(f.bridge.open).toHaveBeenCalledTimes(2);
+  session.dispose();
+});
+
 it("U15 starts once across view remounts and never activates from readiness", async () => {
   const f = fixture();
   const session = new RendererSession(f.bridge);

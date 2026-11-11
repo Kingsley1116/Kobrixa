@@ -5,13 +5,14 @@ import path from "node:path";
 import { Session } from "node:inspector";
 import { cpus, totalmem, platform, arch } from "node:os";
 import { getHeapStatistics } from "node:v8";
-import type { BrowserWindow } from "electron";
+import { app, type BrowserWindow } from "electron";
 import type { FoundationDiagnostics } from "@kobrixa/plugin-runtime";
 import type { DesktopMainComposition } from "../../apps/desktop/src/main/device-broker/lifecycle-coordinator.js";
 import { desktopUi } from "../../apps/desktop/src/main/plugins/controller.js";
 import { diagnosticsFor as mainDiagnostics } from "../../apps/desktop/src/main/plugins/ui-bridge.js";
 import { diagnosticsFor as stateDiagnostics } from "../../packages/plugin-runtime/src/ui-state.js";
 import { measureSlowRenderer, type SnapshotDelay } from "./declarative-ui-slow-main.js";
+import { waitForLoad } from "./declarative-ui-load-fixture.js";
 
 const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const wall = () => performance.timeOrigin + performance.now();
@@ -36,14 +37,54 @@ export async function runUiLoad(input: {
   const ui = desktopUi(composition);
   const diag = [stateDiagnostics(ui.states), input.runtime, mainDiagnostics(ui.bridge)];
   const snapshots = () => diag.map((value, id) => ({ id, counters: value.snapshot() }));
-  const js = <T = unknown>(source: string): Promise<T> =>
-    window.webContents.executeJavaScript(source);
-  const wait = async (source: string, label: string) => {
-    const deadline = performance.now() + 15000;
-    while (!(await js(source))) {
-      assert.ok(performance.now() < deadline, label);
-      await pause(20);
+  const js = async <T = unknown>(source: string): Promise<T> => {
+    try {
+      return await window.webContents.executeJavaScript(source);
+    } catch (error) {
+      const state = await window.webContents
+        .executeJavaScript("window.uiLoad?.inspect()")
+        .catch(String);
+      throw new Error(`${source}: ${String(error)}; load state: ${JSON.stringify(state)}`, {
+        cause: error,
+      });
     }
+  };
+  const wait = async (source: string, label: string) => {
+    await waitForLoad(() => js(source), Boolean, label);
+  };
+  const requestForeground = () => {
+    // BrowserWindow.focus alone does not activate a background macOS app.
+    // This native-input fixture owns focus; preserve the real blur/revoke route.
+    if (window.isMinimized()) window.restore();
+    window.show();
+    app.focus({ steal: true });
+    window.focus();
+    window.webContents.focus();
+  };
+  const foreground = async () => {
+    await waitForLoad(
+      async () => {
+        const ready = await js<boolean>("document.hasFocus() && !document.hidden");
+        if (!ready) requestForeground();
+        return ready;
+      },
+      Boolean,
+      "native load window focus",
+    );
+  };
+  // A renderer-side wait cannot bring a background app forward. Recover focus
+  // even inside openAll/cycles, after the real blur event has been delivered.
+  let focusRecovery: ReturnType<typeof setImmediate> | undefined;
+  const regainFocus = () => {
+    if (focusRecovery) return;
+    focusRecovery = setImmediate(() => {
+      focusRecovery = undefined;
+      if (!window.isDestroyed()) requestForeground();
+    });
+  };
+  const bounds = async (kind: "input" | "hold" | "hide") => {
+    await foreground();
+    return js<{ x: number; y: number }>(`window.uiLoad.bounds('${kind}')`);
   };
   const inspector = new Session();
   inspector.connect();
@@ -98,10 +139,12 @@ export async function runUiLoad(input: {
     );
   });
   try {
+    window.on("blur", regainFocus);
+    window.on("hide", regainFocus);
+    window.on("minimize", regainFocus);
     await window.loadFile(path.join(directory, "renderer/index.html"));
-    window.show();
-    window.focus();
-    await wait("window.uiLoad && document.hasFocus()", "load shell focus");
+    await foreground();
+    await wait("window.uiLoad", "load shell ready");
     await js("window.uiLoad.ready");
     assert.equal(await js("window.uiLoad.count()"), 0);
     const coldCounters = { main: snapshots(), renderer: await js("window.uiLoad.sample()") };
@@ -123,6 +166,7 @@ export async function runUiLoad(input: {
     // Retained-cycle comparison uses an empty, warmed catalog; cold setup is
     // measured separately, not subtracted as if it were a resource leak.
     await linkAll();
+    await foreground();
     await js("window.uiLoad.openAll()");
     await js("window.uiLoad.cycles(16)");
     await unlinkAll();
@@ -136,6 +180,7 @@ export async function runUiLoad(input: {
     const baselineHeap = await heap("empty-warm");
     await linkAll();
     await wait("window.uiLoad.count() === 32", "32 maximum catalog entries");
+    await foreground();
     await js("window.uiLoad.openAll()");
     await pause(500);
     const fullCounters = { main: snapshots(), renderer: await js("window.uiLoad.sample()") };
@@ -144,6 +189,7 @@ export async function runUiLoad(input: {
     const fullHeap = await heap("full");
     // Heap snapshots deliberately stall both isolates. Resume via the real
     // visibility route before warmup, rather than measuring a revoked scope.
+    await foreground();
     await js("window.uiLoad.show()");
     if (input.slow) {
       const observed = await measureSlowRenderer(window, input.snapshotDelay);
@@ -186,6 +232,7 @@ export async function runUiLoad(input: {
     await input.workload?.prepare();
     const warmupAt = wall();
     await pause(5000);
+    await foreground();
     recording = true;
     await input.workload?.start();
     const start = await js<number>("window.uiLoad.start()");
@@ -193,19 +240,19 @@ export async function runUiLoad(input: {
     const deadline = performance.now() + input.durationMs;
     let n = 0;
     while (performance.now() < deadline) {
-      const bounds = await js<{ x: number; y: number }>("window.uiLoad.bounds('input')");
+      const inputBounds = await bounds("input");
       await pause(20);
       window.webContents.sendInputEvent({
         type: "mouseDown",
         button: "left",
         clickCount: 1,
-        ...bounds,
+        ...inputBounds,
       });
       window.webContents.sendInputEvent({
         type: "mouseUp",
         button: "left",
         clickCount: 1,
-        ...bounds,
+        ...inputBounds,
       });
       native.push({ kind: "input", at: wall() });
       window.webContents.sendInputEvent({
@@ -218,7 +265,7 @@ export async function runUiLoad(input: {
       });
       window.webContents.sendInputEvent({ type: "char", keyCode: n++ % 2 ? "x" : "y" });
       await pause(200);
-      const hold = await js<{ x: number; y: number }>("window.uiLoad.bounds('hold')");
+      const hold = await bounds("hold");
       await pause(20);
       window.webContents.sendInputEvent({
         type: "mouseDown",
@@ -235,7 +282,7 @@ export async function runUiLoad(input: {
         ...hold,
       });
       await pause(50);
-      const hide = await js<{ x: number; y: number }>("window.uiLoad.bounds('hide')");
+      const hide = await bounds("hide");
       await pause(20);
       native.push({ kind: "hide", at: wall() });
       window.webContents.sendInputEvent({
@@ -268,6 +315,7 @@ export async function runUiLoad(input: {
       await js<string>("JSON.stringify(window.uiLoad.stop())"),
     );
     await js("window.uiLoad.clear()");
+    await foreground();
     const cycleCounters = await js(`window.uiLoad.cycles(${input.cycles})`);
     const rendererFinal = await js("window.uiLoad.dispose()");
     // Renderer singleton is disposed, so its catalog no longer follows events.
@@ -311,6 +359,10 @@ export async function runUiLoad(input: {
       normalClose: true,
     };
   } finally {
+    window.off("blur", regainFocus);
+    window.off("hide", regainFocus);
+    window.off("minimize", regainFocus);
+    if (focusRecovery) clearImmediate(focusRecovery);
     off();
     closeSync(traceFd);
     inspector.disconnect();
