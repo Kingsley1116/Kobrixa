@@ -392,6 +392,184 @@ function installPublicInterop(ctx: PluginContext): NonNullable<PluginDefinition[
           data,
         }),
     );
+  let negativeRun = false;
+  const negativeBytes = Buffer.from("W10 retained record\n");
+  const negativeInput = {
+    kind: "test.negative",
+    schemaVersion: 1,
+    label: "W10 retained",
+    mediaType: "application/octet-stream" as const,
+    byteLength: negativeBytes.length,
+    sha256: createHash("sha256").update(negativeBytes).digest("hex"),
+  };
+  const negativeSnapshot = async () => {
+    const settings = value(await ctx.settings.read({ schemaVersion: 1 }));
+    const listed = value(await ctx.storage.list({ kind: "test.negative", limit: 64 }));
+    assert.equal(listed.entries.length, 1);
+    const record = listed.entries[0]!;
+    const read = value(
+      await ctx.storage.openRead({
+        id: record.id,
+        expectedRevision: record.revision,
+        schemaVersion: 1,
+      }),
+    );
+    try {
+      const chunk = value(
+        await ctx.storage.readChunk({ read: read.read, offset: 0, maxBytes: 262144 }),
+      );
+      assert.equal(chunk.data, negativeBytes.toString("base64"));
+      assert.equal(chunk.eof, true);
+      assert.equal(record.sha256, negativeInput.sha256);
+    } finally {
+      value(await ctx.storage.closeRead({ read: read.read }));
+    }
+    return { settings, record, quota: value(await ctx.storage.quota({})) };
+  };
+  ctx.commands.register(`${ctx.pluginId}.negative-prepare`, async () => {
+    negativeRun = true;
+    const write = value(
+      await ctx.storage.beginWrite({ ...negativeInput, target: { mode: "create" } }),
+    );
+    value(
+      await ctx.storage.writeChunk({
+        write: write.write,
+        offset: 0,
+        data: negativeBytes.toString("base64"),
+      }),
+    );
+    value(await ctx.storage.sealWrite({ write: write.write }));
+    value(await ctx.storage.commitWrite({ write: write.write }));
+    emit("negative-prepared", await negativeSnapshot());
+  });
+  ctx.commands.register(`${ctx.pluginId}.negative-reopen`, async () => {
+    negativeRun = true;
+    emit("negative-reopened", await negativeSnapshot());
+  });
+  ctx.commands.register(`${ctx.pluginId}.negative-probe`, async () => {
+    negativeRun = true;
+    const baseline = await negativeSnapshot();
+    emit("negative-before", baseline);
+    const denied = async (
+      scenario: string,
+      code: string,
+      call: () => Promise<{ ok: boolean; error?: { code: string } }>,
+    ) => {
+      emit("negative-start", { scenario });
+      const result = await call();
+      emit("negative-result", { scenario, result });
+      assert.equal(result.ok, false, scenario);
+      assert.equal(result.error?.code, code, scenario);
+    };
+    for (const [scenario, key, invalid] of [
+      ["unknown-setting", "unknown", true],
+      ["setting-type", "fixture.enabled", "true"],
+    ] as const)
+      await denied(scenario, "PLUGIN_E_SETTINGS_SCHEMA", () =>
+        ctx.settings.update({
+          schemaVersion: 1,
+          expectedRevision: baseline.settings.revision,
+          changes: [{ key, value: invalid }],
+        }),
+      );
+    const stages: string[] = [];
+    const begin = async (
+      target: Parameters<typeof ctx.storage.beginWrite>[0]["target"] = { mode: "create" },
+    ) => {
+      const write = value(await ctx.storage.beginWrite({ ...negativeInput, target })).write;
+      stages.push(write);
+      return write;
+    };
+    const abort = async (write: string) => {
+      value(await ctx.storage.abortWrite({ write }));
+      stages.splice(stages.indexOf(write), 1);
+    };
+    try {
+      const target = {
+        mode: "replace" as const,
+        id: baseline.record.id,
+        expectedRevision: baseline.record.revision,
+      };
+      const replacement = await begin(target);
+      await denied("replacement-busy", "PLUGIN_E_STORAGE_CONFLICT", () =>
+        ctx.storage.beginWrite({ ...negativeInput, target }),
+      );
+      await denied("delete-busy", "PLUGIN_E_STORAGE_CONFLICT", () =>
+        ctx.storage.delete({ id: target.id, expectedRevision: target.expectedRevision }),
+      );
+      await abort(replacement);
+      const first = await begin(),
+        second = await begin();
+      await denied("staging-quota", "PLUGIN_E_STORAGE_QUOTA", () =>
+        ctx.storage.beginWrite({ ...negativeInput, target: { mode: "create" } }),
+      );
+      await abort(second);
+      value(
+        await ctx.storage.writeChunk({
+          write: first,
+          offset: 0,
+          data: negativeBytes.toString("base64"),
+        }),
+      );
+      await denied("chunk-offset", "PLUGIN_E_STORAGE_CONFLICT", () =>
+        ctx.storage.writeChunk({ write: first, offset: negativeBytes.length + 1, data: "Yg==" }),
+      );
+      await denied("chunk-retry-mismatch", "PLUGIN_E_STORAGE_CONFLICT", () =>
+        ctx.storage.writeChunk({
+          write: first,
+          offset: 0,
+          data: Buffer.alloc(negativeBytes.length, 98).toString("base64"),
+        }),
+      );
+      await denied("flush-incomplete", "PLUGIN_E_STORAGE_CONFLICT", () => ctx.storage.flush({}));
+      await abort(first);
+      await denied("aborted-write", "PLUGIN_E_STORAGE_CONFLICT", () =>
+        ctx.storage.writeChunk({ write: first, offset: 0, data: "Yg==" }),
+      );
+      const wrong = await begin();
+      value(
+        await ctx.storage.writeChunk({
+          write: wrong,
+          offset: 0,
+          data: Buffer.alloc(negativeBytes.length, 98).toString("base64"),
+        }),
+      );
+      await denied("seal-checksum", "PLUGIN_E_STORAGE_CONFLICT", () =>
+        ctx.storage.sealWrite({ write: wrong }),
+      );
+      await abort(wrong);
+      const read = value(
+        await ctx.storage.openRead({
+          id: baseline.record.id,
+          expectedRevision: baseline.record.revision,
+          schemaVersion: 1,
+        }),
+      ).read;
+      value(await ctx.storage.closeRead({ read }));
+      await denied("closed-read", "PLUGIN_E_STALE_RESOURCE", () =>
+        ctx.storage.readChunk({ read, offset: 0, maxBytes: 1 }),
+      );
+      const forged = "00000000-0000-4000-8000-000000000001";
+      await denied("copy-without-action", "PLUGIN_E_PERMISSION_DENIED", () =>
+        ctx.ui.copyText({ actionRef: forged, text: "forbidden" }),
+      );
+      await denied("export-without-action", "PLUGIN_E_PERMISSION_DENIED", () =>
+        ctx.actions.exportBegin({
+          actionRef: forged,
+          suggestedName: "forbidden.txt",
+          mediaType: "text/plain",
+          byteLength: 1,
+          sha256: createHash("sha256").update("x").digest("hex"),
+        }),
+      );
+    } finally {
+      for (const write of [...stages]) await abort(write);
+    }
+    value(await ctx.storage.flush({}));
+    const after = await negativeSnapshot();
+    assert.deepEqual(after, baseline);
+    emit("negative-after", after);
+  });
   const records: RecordMeta[] = [];
   let retainedRead: string | undefined;
   let subscription: string | undefined;
@@ -619,6 +797,11 @@ function installPublicInterop(ctx: PluginContext): NonNullable<PluginDefinition[
   });
   emit("boot");
   return async ({ request, storage }) => {
+    if (negativeRun) {
+      assert.equal(request.checkpoints.length, 0);
+      value(await storage.flush({}));
+      return { ok: true, value: { status: "submitted", writes: [] } };
+    }
     assert.equal(request.checkpoints.length, 1);
     emit("drain-enter", request);
     const item = request.checkpoints[0]!;

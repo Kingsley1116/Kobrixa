@@ -50,6 +50,10 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import {
   verifyInterop,
+  verifyNegativeReport,
+  negativeCoverage,
+  readNegativeAttachments,
+  verifyB2Aggregate,
   verifyFoundationReports,
   verifyRunReceipt,
   diagnosticError,
@@ -756,6 +760,7 @@ export function selectFoundationCases({ referencesOnly = false, caseId } = {}) {
   if (referencesOnly) return ["retirement", "healthy-release"];
   if (
     [
+      "negative-matrix",
       "registration-end",
       "contention",
       "suspend-wake",
@@ -818,6 +823,9 @@ export function interopManifest(id, hostVersion) {
     "interop-records",
     "interop-verify",
     "interop-checkpoint",
+    "negative-prepare",
+    "negative-probe",
+    "negative-reopen",
   ];
   const commands = [
     ...legacy.map((name) => ({ id: `${id}.${name}`, title: { en: name } })),
@@ -963,6 +971,9 @@ async function materializePublicInterop(buildRoot, bundle) {
     "plugin-persistence-run.mjs",
     "plugin-persistence-harness.mjs",
     "plugin-persistence-public-interop.ts",
+    "plugin-persistence-negative-settings.ts",
+    "plugin-persistence-negative-storage.ts",
+    "plugin-persistence-negative-lifecycle.ts",
   ])
     sourceHashes[`tests/desktop/${file}`] = digest(
       await readFile(path.join(root, "tests/desktop", file)),
@@ -970,19 +981,50 @@ async function materializePublicInterop(buildRoot, bundle) {
   return { identity, sources, python, artifacts, sourceHashes };
 }
 
+export async function recordBundleSources(inputs, hashes) {
+  for (const input of inputs) {
+    const file = path.resolve(root, input.replace(/^kobrixa-raw-resource:/, ""));
+    if (!file.startsWith(root) || file.split(path.sep).includes("node_modules")) continue;
+    const relative = path.relative(root, file).split(path.sep).join("/"),
+      hash = digest(await readFile(file));
+    if (hashes[relative]) assert.equal(hashes[relative], hash, "Source changed across bundles");
+    hashes[relative] = hash;
+  }
+}
+
+async function readEvidenceForAggregate(file) {
+  const report = JSON.parse(await readFile(file, "utf8"));
+  assert.equal(report.format, 1);
+  return report;
+}
+
 export async function runFoundationEvidence({
   referencesOnly = false,
   caseId,
   importTrial,
   interop: interopMode = false,
+  evidencePath = process.env.PERSISTENCE_EVIDENCE,
 } = {}) {
+  if (!referencesOnly && !caseId && !interopMode) {
+    const input = process.env.PERSISTENCE_AGGREGATE;
+    assert.ok(
+      input && path.isAbsolute(input),
+      "BLOCKED: remaining observation-table producers require an absolute PERSISTENCE_AGGREGATE with all 29 rows and §12.1 groups",
+    );
+    const report = await readEvidenceForAggregate(input);
+    verifyB2Aggregate(report);
+    const output = evidencePath;
+    assert.ok(output && path.isAbsolute(output), "PERSISTENCE_EVIDENCE must be absolute");
+    await writeFile(output, JSON.stringify(report, null, 2), { flag: "wx" });
+    return report;
+  }
   if (caseId === "import-restart") selectImportTrials(importTrial);
   const selectedCases =
     selectInteropMode({ interop: interopMode, referencesOnly, caseId, importTrial }) ??
     selectFoundationCases({ referencesOnly, caseId });
   const handoffs = await preflight();
   const renderer = await readFoundationRenderer(handoffs.rendererArtifact);
-  const output = process.env.PERSISTENCE_EVIDENCE;
+  const output = evidencePath;
   assert.ok(
     output && path.isAbsolute(output),
     "PERSISTENCE_EVIDENCE must be an absolute retained report path",
@@ -992,7 +1034,8 @@ export async function runFoundationEvidence({
   const buildRoot = path.join(directory, "build");
   await mkdir(buildRoot);
   // Failed artifacts/profiles are retained for diagnosis; no profile deletion while a process is alive.
-  if (!interopMode)
+  const publicMode = interopMode || caseId === "negative-matrix";
+  if (!publicMode)
     await materializeFoundationFixtures(
       buildRoot,
       build,
@@ -1073,11 +1116,13 @@ export async function runFoundationEvidence({
     "@kobrixa/plugin-runtime": path.join(root, "packages/plugin-runtime/src/index.ts"),
     "@kobrixa/plugin-sdk": path.join(root, "packages/plugin-sdk-js/src/index.ts"),
   };
-  const bundle = async (entry, outfile) =>
-    build({
+  const bundledSources = {};
+  const bundle = async (entry, outfile) => {
+    const result = await build({
       entryPoints: [entry],
       outfile,
       bundle: true,
+      metafile: true,
       platform: "node",
       format: "cjs",
       alias,
@@ -1101,7 +1146,10 @@ export async function runFoundationEvidence({
         },
       ],
     });
-  const interop = interopMode ? await materializePublicInterop(buildRoot, bundle) : undefined;
+    await recordBundleSources(Object.keys(result.metafile.inputs), bundledSources);
+    return result;
+  };
+  const interop = publicMode ? await materializePublicInterop(buildRoot, bundle) : undefined;
   let pressure;
   if (selectedCases.includes("storage-ui-pressure")) {
     const { materialize } = await import("./declarative-ui-harness.mjs");
@@ -1345,6 +1393,21 @@ app.exit(code);
       "\n})();\n",
   );
   await bundle(source, entry);
+  const sourceHashes = { ...bundledSources };
+  for (const hashes of [
+    renderer.sourceSha256 ?? {},
+    interop?.sourceHashes ?? {},
+    interop?.identity.runtimeHashes ?? {},
+  ])
+    for (const [rawFile, hash] of Object.entries(hashes)) {
+      const file = rawFile.replaceAll("\\", "/");
+      if (sourceHashes[file])
+        assert.equal(sourceHashes[file], hash, "Renderer/main source disagreement");
+      sourceHashes[file] = hash;
+    }
+  const sourceIdentity = digest(
+    JSON.stringify(Object.entries(sourceHashes).sort(([a], [b]) => a.localeCompare(b))),
+  );
   const bundleSha256 = digest(await readFile(entry)),
     commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
   const artifactSha256 = digest(
@@ -1392,6 +1455,7 @@ app.exit(code);
       configFile = path.join(directory, `${id}.json`);
     const config = {
       case: id,
+      sourceIdentity,
       ...(compatibility ? { compatibility } : {}),
       ...(interop ? { interop } : {}),
       ...(pressure ? { pressure } : {}),
@@ -1411,6 +1475,39 @@ app.exit(code);
       preload: handoffs.preload,
       filesystem: handoffs.filesystem,
     };
+    if (id === "negative-matrix") {
+      for (const negativePhase of ["exercise", "reopen"]) {
+        const phaseConfig = {
+          ...config,
+          negativePhase,
+          runId: randomUUID(),
+          report: path.join(directory, `negative-${negativePhase}.candidate.json`),
+        };
+        const phaseFile = path.join(directory, `negative-${negativePhase}.json`);
+        await writeFile(phaseFile, JSON.stringify(phaseConfig), { flag: "wx" });
+        const receipt = await launchCase(
+          electron,
+          entry,
+          phaseFile,
+          phaseConfig.report,
+          phaseConfig,
+        );
+        await writeFile(
+          path.join(directory, `negative-${negativePhase}.receipt.json`),
+          JSON.stringify(receipt),
+          { flag: "wx" },
+        );
+        for (const row of receipt.evidence.negative.consumers) {
+          const boot = interopOutputs(row, "boot")[0];
+          assert.ok(
+            receipt.observedDescendants.some((p) => p.pid === boot.pid),
+            "Negative consumer PID absent from OS observation",
+          );
+        }
+        reports.push(receipt);
+      }
+      continue;
+    }
     if (id === "import-restart") {
       const trials = [];
       for (const trial of selectImportTrials(importTrial)) {
@@ -1585,6 +1682,44 @@ app.exit(code);
     });
     reports.push(receipt);
   }
+  for (const [file, hash] of Object.entries(sourceHashes))
+    assert.equal(
+      digest(await readFile(path.join(root, file))),
+      hash,
+      `Source changed during run: ${file}`,
+    );
+  if (caseId === "negative-matrix") {
+    assert.deepEqual(
+      await readInteropIdentity(root),
+      interop.identity,
+      "Source/schema changed during negative run",
+    );
+    for (const [file, hash] of Object.entries(interop.sourceHashes))
+      assert.equal(digest(await readFile(path.join(root, file))), hash);
+    for (const file of interop.artifacts)
+      assert.equal(digest(await readFile(file.path)), file.sha256);
+    const attachments = await readNegativeAttachments(process.env.PERSISTENCE_NEGATIVE_ATTACHMENTS);
+    const result = {
+      format: 1,
+      level: "real-process",
+      mode: "negative-matrix",
+      sourceIdentity,
+      sourceHashes,
+      status: "partial-negative-matrix",
+      fullPass: false,
+      reports,
+      artifact: entry,
+      bundleSha256,
+      artifactSha256,
+      renderer,
+      interop,
+      attachments,
+      coverage: negativeCoverage(reports, attachments),
+    };
+    verifyNegativeReport(result);
+    await writeFile(output, JSON.stringify(result, null, 2), { flag: "wx" });
+    return result;
+  }
   if (interop) {
     assert.equal(reports.length, 1);
     const report = reports[0],
@@ -1616,6 +1751,8 @@ app.exit(code);
       format: 1,
       level: "real-process",
       mode: "public-interop",
+      sourceIdentity,
+      sourceHashes,
       status: "public-interop-subset",
       fullStage3Pass: false,
       reports,

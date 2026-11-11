@@ -37,7 +37,7 @@ test("B2 §10: every negative row has real reopened state evidence", async () =>
   const report = await readEvidence();
   verifyMatrix(report);
 });
-test("B2 §12.1: JS MessagePort and Python stdio use the public 1.7 router", async () => {
+test("B2 §12.1: JS MessagePort and Python stdio use the current public router", async () => {
   verifyInterop(await readEvidence());
 });
 test("evidence gates reject absent and mock-only acceptance", async () => {
@@ -47,7 +47,9 @@ test("evidence gates reject absent and mock-only acceptance", async () => {
 });
 
 import ts from "typescript";
-import { readFile } from "node:fs/promises";
+import { readFile, mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 function assertNoConstantProducerChecks(source) {
   const file = ts.createSourceFile(
@@ -247,7 +249,11 @@ import {
   selectFoundationCases,
 } from "./plugin-persistence-run.mjs";
 test("BM-20 reference cases execute through createFoundationFixture", async () => {
-  const result = await runFoundationEvidence({ referencesOnly: true });
+  const directory = await mkdtemp(path.join(tmpdir(), "w10-reference-evidence-"));
+  const result = await runFoundationEvidence({
+    referencesOnly: true,
+    evidencePath: path.join(directory, "references.json"),
+  });
   verifyFoundationReports(result.reports, ["retirement", "healthy-release"]);
 });
 test("verifier negatives: absent attachments fail closed before native allocation", async () => {
@@ -256,6 +262,7 @@ test("verifier negatives: absent attachments fail closed before native allocatio
 
 import { spawnSync } from "node:child_process";
 import {
+  foundationBuiltinRoles,
   FOUNDATION_CASES,
   FOUNDATION_CHECKS,
   assertFoundationEvidence,
@@ -1562,7 +1569,11 @@ test("public interop phase2: generated two-language manifests and panels use exa
     );
     assert.equal(validated.ok, true, JSON.stringify(validated));
     assert.equal(manifest.runtime.kind, id.endsWith("python") ? "python" : "node");
-    assert.equal(manifest.contributes.commands.length, 9);
+    assert.equal(manifest.contributes.commands.length, 12);
+    assert.deepEqual(
+      manifest.contributes.commands.filter((c) => c.id.includes(".negative-")).map((c) => c.id),
+      ["prepare", "probe", "reopen"].map((phase) => `${id}.negative-${phase}`),
+    );
     assert.equal(panel.nodes.length, 9);
     assert.equal(manifest.contributes.settings.path, "settings.json");
     for (const command of manifest.contributes.commands.filter(
@@ -1652,4 +1663,407 @@ test("public interop phase2: quota summary requires original public quota respon
   const pair = interopPairs(row, "storage/quota")[1];
   row.wire = row.wire.filter((w) => w !== pair.request && w !== pair.response);
   assert.throws(() => verifyPublicInterop(f.consumers, f.identity));
+});
+
+import {
+  PUBLIC_NEGATIVE_PROBES,
+  verifyPublicNegative,
+  producePublicNegative,
+} from "./plugin-persistence-public-interop.ts";
+import {
+  negativeCoverage,
+  verifyNegativeReport,
+  verifyB2Aggregate,
+  readNegativeAttachments,
+  B2_GROUP_REQUIREMENTS,
+} from "./plugin-persistence-harness.mjs";
+
+// Pure oracle model, never written as a native observation or acceptance receipt.
+function negativeUnitEvidence(phase = "exercise") {
+  let sequence = 0;
+  const bytes = Buffer.from("W10 retained record\n");
+  const hash = createHash("sha256").update(bytes).digest("hex");
+  const evidence = {
+    phase,
+    identity: { hostVersion: "1.8.0", publicApi18Published: true },
+    consumers: [],
+    captures: [],
+  };
+  for (const [index, pluginId] of [
+    "acceptance.interop-js",
+    "acceptance.interop-python",
+  ].entries()) {
+    const row = {
+      owner: {
+        pluginId,
+        sourceKey: `dev:${pluginId}`,
+        hostEpoch: `00000000-0000-4000-8000-00000000000${phase === "exercise" ? 1 : 2}`,
+        processEpoch: `00000000-0000-4000-8000-00000000000${index + (phase === "exercise" ? 3 : 5)}`,
+        generation: 1,
+      },
+      transport: index ? "stdio" : "message-port",
+      launch: ++sequence,
+      wire: [],
+      output: [],
+      actions: [],
+    };
+    evidence.consumers.push(row);
+    let requestId = 0;
+    const pair = (method, params, result, direction = "plugin") => {
+      const id = ++requestId;
+      row.wire.push({
+        sequence: ++sequence,
+        direction,
+        message: { jsonrpc: "2.0", id, method, params },
+      });
+      row.wire.push({
+        sequence: ++sequence,
+        direction: direction === "plugin" ? "host" : "plugin",
+        message: { jsonrpc: "2.0", id, result },
+      });
+    };
+    const emit = (phase, data) =>
+      row.output.push({
+        sequence: ++sequence,
+        line: "PUBLIC_INTEROP:" + JSON.stringify({ phase, pluginId, pid: 100 + index, data }),
+      });
+    pair(
+      "initialize",
+      { pluginId, apiVersion: "1.8.0" },
+      { apiVersion: "1.8.0", sdk: { name: index ? "kobrixa-plugin-sdk" : "@kobrixa/plugin-sdk" } },
+      "host",
+    );
+    emit("boot", {});
+    const snapshot = {
+      record: {
+        id: `record-${index}`,
+        revision: "revision",
+        byteLength: bytes.length,
+        sha256: hash,
+      },
+      settings: { revision: null, values: [] },
+      quota: {
+        recordCount: 1,
+        committedBytes: bytes.length,
+        reservedBytes: 0,
+        reservedCreates: 0,
+        pinnedBytes: 0,
+      },
+    };
+    const capture = (phase) => {
+      pair("settings/read", { schemaVersion: 1 }, { ok: true, value: snapshot.settings });
+      pair("storage/quota", {}, { ok: true, value: snapshot.quota });
+      pair(
+        "storage/openRead",
+        { id: snapshot.record.id, expectedRevision: snapshot.record.revision },
+        { ok: true, value: { read: `read-${sequence}` } },
+      );
+      const read = row.wire.at(-1).message.result.value.read;
+      pair(
+        "storage/readChunk",
+        { read },
+        { ok: true, value: { data: bytes.toString("base64"), eof: true } },
+      );
+      emit(`negative-${phase}`, snapshot);
+      evidence.captures.push({
+        pluginId,
+        phase,
+        state: {
+          hostEpoch: row.owner.hostEpoch,
+          disk: { "head.json": { bytes: bytes.length, sha256: hash } },
+          quota: snapshot.quota,
+          core: { items: [] },
+          diagnostics: [{}],
+          native: { dialogs: [], writes: [], textSha256: hash },
+        },
+      });
+    };
+    if (phase === "exercise") {
+      capture("before");
+      for (const [scenario, [, method, code]] of Object.entries(PUBLIC_NEGATIVE_PROBES)) {
+        emit("negative-start", { scenario });
+        const result = { ok: false, error: { code } };
+        const params =
+          scenario === "unknown-setting" || scenario === "setting-type"
+            ? {
+                schemaVersion: 1,
+                expectedRevision: snapshot.settings.revision,
+                changes: [
+                  {
+                    key: scenario === "unknown-setting" ? "unknown" : "fixture.enabled",
+                    value: scenario === "unknown-setting" ? true : "true",
+                  },
+                ],
+              }
+            : scenario === "replacement-busy"
+              ? {
+                  target: {
+                    mode: "replace",
+                    id: snapshot.record.id,
+                    expectedRevision: snapshot.record.revision,
+                  },
+                }
+              : scenario === "delete-busy"
+                ? { id: snapshot.record.id, expectedRevision: snapshot.record.revision }
+                : scenario === "staging-quota"
+                  ? { target: { mode: "create" } }
+                  : scenario === "chunk-offset"
+                    ? { offset: bytes.length + 1, data: "Yg==" }
+                    : scenario === "chunk-retry-mismatch"
+                      ? { offset: 0, data: Buffer.alloc(bytes.length, 98).toString("base64") }
+                      : scenario.endsWith("without-action")
+                        ? { actionRef: "00000000-0000-4000-8000-000000000001" }
+                        : {};
+        pair(method, params, result);
+        emit("negative-result", { scenario, result });
+      }
+      capture("after");
+    } else capture("reopened");
+    row.exit = { sequence: ++sequence, code: 0 };
+  }
+  return evidence;
+}
+
+test("W10: failure subset links all 13 probes to both original transports", () => {
+  const evidence = negativeUnitEvidence();
+  const links = verifyPublicNegative(evidence);
+  assert.equal(links.length, 26);
+  for (const transport of ["message-port", "stdio"])
+    assert.deepEqual(
+      links.filter((l) => l.transport === transport).map((l) => l.scenario),
+      Object.keys(PUBLIC_NEGATIVE_PROBES),
+    );
+  const rows = negativeCoverage([{ runId: "pure-oracle", evidence: { negative: evidence } }]);
+  assert.equal(rows.length, 29);
+  assert.ok(rows.every((r) => r.status === "incomplete" && r.missing.length > 0));
+  assert.equal(rows.find((r) => r.id === "B2-N05").links.length, 2);
+  assert.ok(rows.find((r) => r.id === "B2-N05").missing.some((s) => s.includes("W17")));
+  assert.equal(rows.find((r) => r.id === "B2-N20").links.length, 0);
+});
+for (const [name, mutate] of Object.entries({
+  "missing Python": (e) => e.consumers.pop(),
+  "missing wire response": (e) => e.consumers[0].wire.splice(7, 1),
+  "wrong failure code": (e) => {
+    const p = interopPairs(e.consumers[0], "settings/update")[0];
+    p.result.error.code = "PLUGIN_E_STORAGE_IO";
+  },
+  "invented SDK summary": (e) => {
+    const r = e.consumers[0].output.find((r) => r.line.includes('"negative-result"'));
+    r.line = r.line.replace("PLUGIN_E_SETTINGS_SCHEMA", "PLUGIN_E_STORAGE_IO");
+  },
+  "changed retained disk": (e) => (e.captures[1].state.disk["head.json"].sha256 = "f".repeat(64)),
+  "changed core recovery": (e) => e.captures[1].state.core.items.push("invented"),
+  "changed quota": (e) => (e.captures[1].state.quota = { recordCount: 2 }),
+  "wrong epoch": (e) => (e.captures[0].state.hostEpoch = "foreign"),
+  "failed process": (e) => (e.consumers[1].exit.code = 1),
+  "wrong failed request": (e) => {
+    interopPairs(e.consumers[0], "settings/update")[0].params.changes[0].key = "fixture.enabled";
+  },
+  "native chooser reached": (e) =>
+    e.captures[1].state.native.dialogs.push({ name: "forbidden.txt" }),
+  "native clipboard changed": (e) => (e.captures[1].state.native.textSha256 = "f".repeat(64)),
+  "copy actually invoked": (e) => e.consumers[0].actions.push({ kind: "clipboard-write" }),
+}))
+  test(`W10: rejects ${name}`, () => {
+    const e = structuredClone(negativeUnitEvidence());
+    mutate(e);
+    assert.throws(() => verifyPublicNegative(e));
+  });
+
+test("W10: reopen observes readback and rejects reseeding", () => {
+  const e = negativeUnitEvidence("reopen");
+  assert.deepEqual(verifyPublicNegative(e), []);
+  const row = e.consumers[0];
+  const p = interopPairs(row, "settings/read")[0];
+  p.request.message.method = "settings/update";
+  assert.throws(() => verifyPublicNegative(e));
+});
+test("W10: selector uses sole foundation and rejects mixed modes", () => {
+  assert.deepEqual(selectFoundationCases({ caseId: "negative-matrix" }), ["negative-matrix"]);
+  assert.throws(() => selectInteropMode({ interop: true, caseId: "negative-matrix" }));
+  assert.deepEqual(foundationBuiltinRoles("negative-matrix"), []);
+});
+test("W10: incomplete inputs cannot become aggregate acceptance", async () => {
+  assert.equal(Object.keys(B2_GROUP_REQUIREMENTS).length, 8);
+  assert.equal(
+    B2_GROUP_REQUIREMENTS["G05-negatives"].filter((s) => s.startsWith("B2-N")).length,
+    29,
+  );
+  for (const input of [
+    {},
+    { format: 1, mode: "b2-aggregate", status: "complete", pending: ["W17"] },
+    {
+      format: 1,
+      mode: "b2-aggregate",
+      status: "complete",
+      pending: [],
+      level: "real-process",
+      cases: [],
+    },
+  ])
+    assert.throws(() => verifyB2Aggregate(input));
+  assert.throws(() =>
+    verifyNegativeReport({ level: "real-process", mode: "negative-matrix", status: "passed" }),
+  );
+  assert.deepEqual(await readNegativeAttachments(), []);
+  await assert.rejects(readNegativeAttachments("relative.json"), /absolute/);
+});
+test("W10: native driver preserves original failure and cleanup failures", async () => {
+  const failure = new Error("original failure"),
+    cleanup = new Error("cleanup failure");
+  await assert.rejects(
+    producePublicNegative({
+      observer: { consumers: [] },
+      phase: "exercise",
+      capture: async () => assert.fail("unexpected capture"),
+      plugins: {
+        state: () => ({ plugins: [{ id: "acceptance.interop-js", sourceKey: "source" }] }),
+        setEnabled: async (_key, enabled) => {
+          if (!enabled) throw cleanup;
+          return { ok: true };
+        },
+        execute: async () => {
+          throw failure;
+        },
+      },
+    }),
+    (error) =>
+      error instanceof AggregateError && error.errors[0] === failure && error.errors[1] === cleanup,
+  );
+});
+
+function negativeUnitReport() {
+  const sourceHashes = { "pure-oracle.ts": "e".repeat(64) };
+  const sourceIdentity = createHash("sha256")
+    .update(JSON.stringify(Object.entries(sourceHashes)))
+    .digest("hex");
+  const reports = ["exercise", "reopen"].map((phase) => {
+    const negative = negativeUnitEvidence(phase);
+    return {
+      ...receiptFixture(),
+      sourceIdentity,
+      case: "negative-matrix",
+      runId: phase,
+      hostEpoch: negative.consumers[0].owner.hostEpoch,
+      evidence: { negative },
+    };
+  });
+  return {
+    format: 1,
+    sourceIdentity,
+    sourceHashes,
+    level: "real-process",
+    mode: "negative-matrix",
+    status: "partial-negative-matrix",
+    fullPass: false,
+    reports,
+    bundleSha256: reports[0].bundleSha256,
+    artifactSha256: reports[0].artifactSha256,
+    attachments: [],
+    coverage: negativeCoverage(reports),
+  };
+}
+test("W10: negative receipt binds cleanup, artifacts and same-profile new-epoch reopen", () => {
+  verifyNegativeReport(negativeUnitReport());
+  for (const mutate of [
+    (r) => (r.reports[1].profileId = "other-profile"),
+    (r) => (r.reports[1].hostEpoch = r.reports[0].hostEpoch),
+    (r) => (r.reports[1].artifactSha256 = "f".repeat(64)),
+    (r) => (r.reports[1].cleanup.workers = 1),
+    (r) => (r.coverage[0].status = "passed"),
+    (r) => (r.fullPass = true),
+    (r) => (r.sourceHashes["pure-oracle.ts"] = "f".repeat(64)),
+    (r) => r.reports.pop(),
+  ]) {
+    const report = negativeUnitReport();
+    mutate(report);
+    assert.throws(() => verifyNegativeReport(report));
+  }
+});
+test("W10: W09 attachments retain immutable bytes and incomplete row scope", async () => {
+  const { produceNegativeLifecycle } = await import("./plugin-persistence-negative-lifecycle.ts");
+  const directory = await mkdtemp(path.join(tmpdir(), "w10-attachment-oracle-"));
+  try {
+    const observation = await produceNegativeLifecycle({});
+    const raw = JSON.stringify(observation),
+      receipt = path.join(directory, "unit-only.json"),
+      manifest = path.join(directory, "manifest.json");
+    await writeFile(receipt, raw);
+    const reference = {
+      kind: "lifecycle",
+      path: receipt,
+      sha256: createHash("sha256").update(raw).digest("hex"),
+    };
+    await writeFile(manifest, JSON.stringify([reference]));
+    const attachments = await readNegativeAttachments(manifest);
+    const coverage = negativeCoverage([], attachments);
+    assert.equal(coverage.length, 29);
+    assert.equal(coverage.filter((r) => r.attachments.length).length, 13);
+    assert.ok(coverage.every((r) => r.status === "incomplete"));
+    attachments[0].observation.rows[0].status = "passed";
+    assert.throws(() => negativeCoverage([], attachments), /Changed embedded/);
+    await writeFile(manifest, JSON.stringify([reference, reference]));
+    await assert.rejects(readNegativeAttachments(manifest), /Duplicate/);
+    await writeFile(manifest, JSON.stringify([reference]));
+    await writeFile(receipt, raw + " ");
+    await assert.rejects(readNegativeAttachments(manifest), /Changed W09 receipt/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("W10: native join cannot promote worker-only or missing lifecycle adapters", async () => {
+  const { verifyNativeNegativeAttachments } = await import("./plugin-persistence-harness.mjs");
+  const { produceNegativeLifecycle } = await import("./plugin-persistence-negative-lifecycle.ts");
+  assert.throws(() => verifyNativeNegativeAttachments([], []), /Missing W09 native/);
+  const observation = await produceNegativeLifecycle({}),
+    raw = JSON.stringify(observation);
+  const attachment = {
+    kind: "lifecycle",
+    path: path.join(tmpdir(), "unit-only-never-written.json"),
+    raw,
+    observation,
+    sha256: createHash("sha256").update(raw).digest("hex"),
+    transport: "message-port",
+    runIds: ["exercise", "reopen"],
+  };
+  const report = negativeUnitReport();
+  assert.throws(
+    () => verifyNativeNegativeAttachments([attachment], report.reports),
+    /missing native lifecycle scenarios/,
+  );
+  assert.throws(
+    () => verifyNativeNegativeAttachments([{ ...attachment, transport: "fake" }], report.reports),
+    /transport identity/,
+  );
+  assert.throws(
+    () =>
+      verifyNativeNegativeAttachments(
+        [{ ...attachment, runIds: ["exercise", "missing"] }],
+        report.reports,
+      ),
+    /absent native run/,
+  );
+});
+
+test("W10: compiled source inventory resolves raw resources and rejects drift", async () => {
+  const { recordBundleSources } = await import("./plugin-persistence-run.mjs");
+  const source = "tests/desktop/fixtures/plugin-persistence/settings.json",
+    hashes = {};
+  await recordBundleSources(
+    [
+      `kobrixa-raw-resource:${path.resolve(source)}`,
+      "/tmp/w10-generated-entry.ts",
+      "node_modules/w10-not-read.js",
+    ],
+    hashes,
+  );
+  assert.deepEqual(hashes, {
+    [source]: createHash("sha256")
+      .update(await readFile(source))
+      .digest("hex"),
+  });
+  await recordBundleSources([source], hashes);
+  hashes[source] = "f".repeat(64);
+  await assert.rejects(recordBundleSources([source], hashes), /Source changed across bundles/);
 });

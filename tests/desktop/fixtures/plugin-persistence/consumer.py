@@ -175,6 +175,88 @@ def install_public_interop():
         await read_all(ctx)
         state["read"] = value(await ctx.storage.open_read(dict(id=records[0]["id"], expectedRevision=records[0]["revision"], schemaVersion=1)))["read"]
         emit("records", dict(records=records, read=state["read"], quota=value(await ctx.storage.quota({}))))
+    negative_bytes = b"W10 retained record\n"
+    negative_input = dict(kind="test.negative", schemaVersion=1, label="W10 retained",
+                          mediaType="application/octet-stream", byteLength=len(negative_bytes),
+                          sha256=hashlib.sha256(negative_bytes).hexdigest())
+    async def negative_snapshot(ctx):
+        settings = value(await ctx.settings.read(dict(schemaVersion=1)))
+        listed = value(await ctx.storage.list(dict(kind="test.negative", limit=64)))
+        assert len(listed["entries"]) == 1
+        record = listed["entries"][0]
+        read = value(await ctx.storage.open_read(dict(id=record["id"], expectedRevision=record["revision"], schemaVersion=1)))["read"]
+        try:
+            chunk = value(await ctx.storage.read_chunk(dict(read=read, offset=0, maxBytes=262144)))
+            assert base64.b64decode(chunk["data"], validate=True) == negative_bytes and chunk["eof"]
+            assert record["sha256"] == negative_input["sha256"]
+        finally:
+            value(await ctx.storage.close_read(dict(read=read)))
+        return dict(settings=settings, record=record, quota=value(await ctx.storage.quota({})))
+    @plugin.command(identity + ".negative-prepare")
+    async def negative_prepare(ctx):
+        state["negative"] = True
+        write = value(await ctx.storage.begin_write(dict(negative_input, target=dict(mode="create"))))["write"]
+        value(await ctx.storage.write_chunk(dict(write=write, offset=0, data=base64.b64encode(negative_bytes).decode())))
+        value(await ctx.storage.seal_write(dict(write=write)))
+        value(await ctx.storage.commit_write(dict(write=write)))
+        emit("negative-prepared", await negative_snapshot(ctx))
+    @plugin.command(identity + ".negative-reopen")
+    async def negative_reopen(ctx):
+        state["negative"] = True
+        emit("negative-reopened", await negative_snapshot(ctx))
+    @plugin.command(identity + ".negative-probe")
+    async def negative_probe(ctx):
+        state["negative"] = True
+        baseline = await negative_snapshot(ctx)
+        emit("negative-before", baseline)
+        async def denied(scenario, code, call):
+            emit("negative-start", dict(scenario=scenario))
+            result = await call()
+            emit("negative-result", dict(scenario=scenario, result=result))
+            assert result["ok"] is False and result["error"]["code"] == code, scenario
+        for scenario, key, invalid in [("unknown-setting", "unknown", True), ("setting-type", "fixture.enabled", "true")]:
+            await denied(scenario, "PLUGIN_E_SETTINGS_SCHEMA", lambda: ctx.settings.update(dict(schemaVersion=1,
+                expectedRevision=baseline["settings"]["revision"], changes=[dict(key=key, value=invalid)])))
+        stages = []
+        async def begin(target=None):
+            write = value(await ctx.storage.begin_write(dict(negative_input, target=target or dict(mode="create"))))["write"]
+            stages.append(write)
+            return write
+        async def abort(write):
+            value(await ctx.storage.abort_write(dict(write=write)))
+            stages.remove(write)
+        try:
+            target = dict(mode="replace", id=baseline["record"]["id"], expectedRevision=baseline["record"]["revision"])
+            replacement = await begin(target)
+            await denied("replacement-busy", "PLUGIN_E_STORAGE_CONFLICT", lambda: ctx.storage.begin_write(dict(negative_input, target=target)))
+            await denied("delete-busy", "PLUGIN_E_STORAGE_CONFLICT", lambda: ctx.storage.delete(dict(id=target["id"], expectedRevision=target["expectedRevision"])))
+            await abort(replacement)
+            first, second = await begin(), await begin()
+            await denied("staging-quota", "PLUGIN_E_STORAGE_QUOTA", lambda: ctx.storage.begin_write(dict(negative_input, target=dict(mode="create"))))
+            await abort(second)
+            value(await ctx.storage.write_chunk(dict(write=first, offset=0, data=base64.b64encode(negative_bytes).decode())))
+            await denied("chunk-offset", "PLUGIN_E_STORAGE_CONFLICT", lambda: ctx.storage.write_chunk(dict(write=first, offset=len(negative_bytes)+1, data="Yg==")))
+            await denied("chunk-retry-mismatch", "PLUGIN_E_STORAGE_CONFLICT", lambda: ctx.storage.write_chunk(dict(write=first, offset=0, data=base64.b64encode(b"b" * len(negative_bytes)).decode())))
+            await denied("flush-incomplete", "PLUGIN_E_STORAGE_CONFLICT", lambda: ctx.storage.flush({}))
+            await abort(first)
+            await denied("aborted-write", "PLUGIN_E_STORAGE_CONFLICT", lambda: ctx.storage.write_chunk(dict(write=first, offset=0, data="Yg==")))
+            wrong = await begin()
+            value(await ctx.storage.write_chunk(dict(write=wrong, offset=0, data=base64.b64encode(b"b" * len(negative_bytes)).decode())))
+            await denied("seal-checksum", "PLUGIN_E_STORAGE_CONFLICT", lambda: ctx.storage.seal_write(dict(write=wrong)))
+            await abort(wrong)
+            read = value(await ctx.storage.open_read(dict(id=baseline["record"]["id"], expectedRevision=baseline["record"]["revision"], schemaVersion=1)))["read"]
+            value(await ctx.storage.close_read(dict(read=read)))
+            await denied("closed-read", "PLUGIN_E_STALE_RESOURCE", lambda: ctx.storage.read_chunk(dict(read=read, offset=0, maxBytes=1)))
+            forged = "00000000-0000-4000-8000-000000000001"
+            await denied("copy-without-action", "PLUGIN_E_PERMISSION_DENIED", lambda: ctx.ui.copy_text(dict(actionRef=forged, text="forbidden")))
+            await denied("export-without-action", "PLUGIN_E_PERMISSION_DENIED", lambda: ctx.actions.export_begin(dict(actionRef=forged, suggestedName="forbidden.txt", mediaType="text/plain", byteLength=1, sha256=hashlib.sha256(b"x").hexdigest())))
+        finally:
+            for write in list(stages):
+                await abort(write)
+        value(await ctx.storage.flush({}))
+        after = await negative_snapshot(ctx)
+        assert after == baseline
+        emit("negative-after", after)
     text = dict(type="string", maxLength=128, nullable=False)
     @plugin.context_command(identity + ".interop-foreign", dict(id=text, revision=text, read=text))
     async def foreign(ctx):
@@ -214,6 +296,10 @@ def install_public_interop():
         emit("checkpoint", value(await ctx.storage.register_checkpoint(dict(id=records[0]["id"], expectedRevision=records[0]["revision"]))))
     async def final(ctx):
         request = ctx.request
+        if state.get("negative"):
+            assert not request["checkpoints"]
+            value(await ctx.storage.flush({}))
+            return dict(ok=True, value=dict(status="submitted", writes=[]))
         assert len(request["checkpoints"]) == 1
         emit("drain-enter", request)
         item = request["checkpoints"][0]

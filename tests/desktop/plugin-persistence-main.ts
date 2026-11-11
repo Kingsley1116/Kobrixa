@@ -1,7 +1,11 @@
+import { storageTree } from "./plugin-persistence-negative-storage.js";
 import {
   publicInteropObserver,
   producePublicInterop,
   verifyPublicInterop,
+  producePublicNegative,
+  verifyPublicNegative,
+  type PublicNegativeEvidence,
 } from "./plugin-persistence-public-interop.js";
 import type { Wire } from "./plugin-persistence-import.js";
 import {
@@ -69,6 +73,7 @@ export type FoundationCase =
   | "import-restart"
   | "storage-ui-pressure"
   | "compatibility"
+  | "negative-matrix"
   | "public-interop"
   | "installed";
 
@@ -76,6 +81,7 @@ import type { ContentionObservation, ContentionForm } from "./plugin-persistence
 
 export type CaseEvidence = {
   publicInterop?: CompatibilityWire;
+  negative?: PublicNegativeEvidence;
   pressure?: PressureRow;
   importSlice?: CompatibilityWire;
   compatibility?: CompatibilityWire;
@@ -966,7 +972,7 @@ import type { BuiltinDeviceProvider } from "../../apps/desktop/src/main/device-b
 let factoryAttempted = false;
 /** Reference panels are not part of the zero-panel pressure baseline. */
 export function foundationBuiltinRoles(caseId: string): readonly string[] {
-  if (caseId === "public-interop") return [];
+  if (["public-interop", "negative-matrix"].includes(caseId)) return [];
   if (caseId === "storage-ui-pressure") return ["pressure-a", "pressure-b"];
   return ["recording", "settings", ...(caseId === "import-restart" ? ["import"] : [])];
 }
@@ -1103,7 +1109,9 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
     async settled() {},
   };
   const importWitness = semanticImport ? observeImportWriter(importWriter) : undefined;
-  const interop = config.case === "public-interop" ? publicInteropObserver() : undefined;
+  const interop = ["public-interop", "negative-matrix"].includes(config.case)
+    ? publicInteropObserver()
+    : undefined;
   const compatibility = config.case === "compatibility" ? compatibilityObserver() : undefined;
   const pressure =
     config.case === "storage-ui-pressure"
@@ -1526,9 +1534,13 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           report,
         };
         composition = await composeDesktopMain(compositionInput, {
-          ...(["action-replay", "renderer-loss", "all-optional-off", "public-interop"].includes(
-            config.case,
-          )
+          ...([
+            "action-replay",
+            "renderer-loss",
+            "all-optional-off",
+            "public-interop",
+            "negative-matrix",
+          ].includes(config.case)
             ? {
                 nativeActions: interop
                   ? {
@@ -1923,9 +1935,73 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                 win.destroy();
               })()),
             async runCase(id) {
-              assert.equal(id, "public-interop");
+              assert.equal(id, config.case);
               assert.equal(ran, false);
               ran = true;
+              if (id === "negative-matrix") {
+                const captures: PublicNegativeEvidence["captures"] = [];
+                try {
+                  await producePublicNegative({
+                    captures,
+                    observer: interop,
+                    plugins: live.plugins,
+                    phase: config.negativePhase,
+                    async capture(owner) {
+                      const quota = await handles.backend.evidence.quota(owner);
+                      return {
+                        hostEpoch: handles.profile.hostEpoch,
+                        disk: await storageTree(path.join(userData, "plugins", "persistence-v1")),
+                        quota,
+                        core: handles.host.recovery.snapshot(),
+                        diagnostics: snapshots(),
+                        native: {
+                          dialogs: structuredClone(nativeActions.dialogs),
+                          writes: structuredClone(nativeActions.writes),
+                          textSha256: createHash("sha256").update(nativeActions.text).digest("hex"),
+                        },
+                      };
+                    },
+                  });
+                } catch (error) {
+                  try {
+                    await writeFile(
+                      path.join(userData, `negative-${config.negativePhase}-failure.json`),
+                      JSON.stringify(
+                        {
+                          status: "failed",
+                          phase: config.negativePhase,
+                          runId: config.runId,
+                          commit: config.commit,
+                          artifactSha256: config.artifactSha256,
+                          captures,
+                          consumers: interop.consumers,
+                          native: { dialogs: nativeActions.dialogs, writes: nativeActions.writes },
+                        },
+                        null,
+                        2,
+                      ),
+                      { flag: "wx" },
+                    );
+                  } catch (retentionError) {
+                    throw new AggregateError(
+                      [error, retentionError],
+                      "Negative failure observation could not be retained",
+                    );
+                  }
+                  throw error;
+                }
+                return {
+                  checks: {},
+                  events: [],
+                  samples: {},
+                  negative: {
+                    phase: config.negativePhase,
+                    identity: config.interop.identity,
+                    consumers: interop.consumers,
+                    captures,
+                  },
+                };
+              }
               const consumers = await producePublicInterop({
                 observer: interop,
                 plugins: live.plugins,
@@ -1942,8 +2018,28 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
               };
             },
             async finishObservation(evidence) {
-              verifyPublicInterop(interop.consumers, config.interop.identity);
-              assert.equal(evidence.publicInterop!.consumers, interop.consumers);
+              if (evidence.negative) {
+                await writeFile(
+                  path.join(userData, `negative-${config.negativePhase}-observation.json`),
+                  JSON.stringify(
+                    {
+                      status: "unverified",
+                      runId: config.runId,
+                      commit: config.commit,
+                      artifactSha256: config.artifactSha256,
+                      observation: evidence.negative,
+                    },
+                    null,
+                    2,
+                  ),
+                  { flag: "wx" },
+                );
+                verifyPublicNegative(evidence.negative);
+                assert.equal(evidence.negative.consumers, interop.consumers);
+              } else {
+                verifyPublicInterop(interop.consumers, config.interop.identity);
+                assert.equal(evidence.publicInterop!.consumers, interop.consumers);
+              }
             },
           };
           assertRealComposition(fixture);
@@ -2505,7 +2601,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           assert.equal(input.host.recovery.snapshot().items.length, 0);
         };
         const producers: Record<
-          Exclude<FoundationCase, "public-interop">,
+          Exclude<FoundationCase, "public-interop" | "negative-matrix">,
           () => Promise<CaseEvidence>
         > = {
           retirement: () => produceRetirement(input),
@@ -2925,7 +3021,11 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             let evidence: CaseEvidence;
             try {
               assert.notEqual(id, "public-interop");
-              evidence = await producers[id as Exclude<FoundationCase, "public-interop">]();
+              assert.notEqual(id, "negative-matrix");
+              evidence =
+                await producers[
+                  id as Exclude<FoundationCase, "public-interop" | "negative-matrix">
+                ]();
             } catch (error) {
               if (
                 (id === "sealed-ttl" || id === "all-optional-off") &&

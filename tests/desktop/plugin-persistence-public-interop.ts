@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -871,4 +872,304 @@ export async function producePublicInterop(input: {
     for (const restore of restores.reverse()) restore();
   }
   return observer.consumers;
+}
+
+/** Additional failure probes are a subset of B2, never all 29 rows. */
+export const PUBLIC_NEGATIVE_PROBES = {
+  "unknown-setting": ["B2-N02", "settings/update", "PLUGIN_E_SETTINGS_SCHEMA"],
+  "setting-type": ["B2-N02", "settings/update", "PLUGIN_E_SETTINGS_SCHEMA"],
+  "replacement-busy": ["B2-N04", "storage/beginWrite", "PLUGIN_E_STORAGE_CONFLICT"],
+  "delete-busy": ["B2-N04", "storage/delete", "PLUGIN_E_STORAGE_CONFLICT"],
+  "staging-quota": ["B2-N05", "storage/beginWrite", "PLUGIN_E_STORAGE_QUOTA"],
+  "chunk-offset": ["B2-N06", "storage/writeChunk", "PLUGIN_E_STORAGE_CONFLICT"],
+  "chunk-retry-mismatch": ["B2-N06", "storage/writeChunk", "PLUGIN_E_STORAGE_CONFLICT"],
+  "flush-incomplete": ["B2-N15", "storage/flush", "PLUGIN_E_STORAGE_CONFLICT"],
+  "aborted-write": ["B2-N06", "storage/writeChunk", "PLUGIN_E_STORAGE_CONFLICT"],
+  "seal-checksum": ["B2-N06", "storage/sealWrite", "PLUGIN_E_STORAGE_CONFLICT"],
+  "closed-read": ["B2-N13", "storage/readChunk", "PLUGIN_E_STALE_RESOURCE"],
+  "copy-without-action": ["B2-N25", "ui/copyText", "PLUGIN_E_PERMISSION_DENIED"],
+  "export-without-action": ["B2-N23", "storage/exportBegin", "PLUGIN_E_PERMISSION_DENIED"],
+} as const;
+export type PublicNegativePhase = "exercise" | "reopen";
+export type PublicNegativeEvidence = {
+  phase: PublicNegativePhase;
+  identity: Awaited<ReturnType<typeof readInteropIdentity>>;
+  consumers: InteropConsumer[];
+  captures: Array<{
+    pluginId: string;
+    phase: "before" | "after" | "reopened";
+    state: {
+      hostEpoch: string;
+      disk: Record<string, { bytes: number; sha256: string }>;
+      quota: unknown;
+      core: unknown;
+      diagnostics: unknown;
+      native: { dialogs: unknown[]; writes: unknown[]; textSha256: string };
+    };
+  }>;
+};
+
+/** Validate original request/reply pairs, not emitted success summaries. */
+export function verifyPublicNegative(evidence: PublicNegativeEvidence) {
+  assert.ok(["exercise", "reopen"].includes(evidence.phase));
+  assert.equal(evidence.identity.publicApi18Published, approvedHost(evidence.identity.hostVersion));
+  assert.deepEqual(evidence.consumers.map((r) => r.owner.pluginId).sort(), [...INTEROP_IDS].sort());
+  assert.deepEqual(evidence.consumers.map((r) => r.transport).sort(), ["message-port", "stdio"]);
+  const links: Array<{
+    row: string;
+    scenario: string;
+    transport: string;
+    request: number;
+    response: number;
+  }> = [];
+  const pids = new Set<number>();
+  for (const row of evidence.consumers) {
+    const boot = one(interopOutputs(row, "boot"), "Negative consumer boot");
+    assert.ok(Number.isSafeInteger(boot.pid) && boot.pid > 0 && !pids.has(boot.pid));
+    pids.add(boot.pid);
+    assert.ok(row.exit && row.exit.code === 0);
+    assert.ok(row.launch < boot.sequence && boot.sequence < row.exit.sequence);
+    let previous = row.launch;
+    for (const item of row.wire) {
+      assert.ok(previous < item.sequence && item.sequence < row.exit.sequence);
+      previous = item.sequence;
+    }
+    const init = one(interopPairs(row, "initialize", "host"), "Negative negotiation");
+    assert.equal(init.params.pluginId, row.owner.pluginId);
+    assert.equal(init.params.apiVersion, evidence.identity.hostVersion);
+    assert.equal(init.result.apiVersion, evidence.identity.hostVersion);
+    assert.equal(
+      init.result.sdk.name,
+      row.transport === "stdio" ? "kobrixa-plugin-sdk" : "@kobrixa/plugin-sdk",
+    );
+    const phases = evidence.phase === "exercise" ? ["before", "after"] : ["reopened"];
+    const captures = evidence.captures.filter((c) => c.pluginId === row.owner.pluginId);
+    assert.deepEqual(
+      captures.map((c) => c.phase),
+      phases,
+    );
+    for (const capture of captures) {
+      assert.equal(capture.state.hostEpoch, row.owner.hostEpoch);
+      assert.ok(capture.state.core && capture.state.diagnostics && capture.state.quota);
+      assert.deepEqual(capture.state.native.dialogs, [], "Forbidden export opened native chooser");
+      assert.deepEqual(capture.state.native.writes, [], "Forbidden copy reached native adapter");
+      assert.match(capture.state.native.textSha256, /^[0-9a-f]{64}$/);
+      assert.ok(Object.keys(capture.state.disk).length > 0);
+      for (const file of Object.values(capture.state.disk)) {
+        assert.match(file.sha256, /^[0-9a-f]{64}$/);
+        assert.ok(Number.isSafeInteger(file.bytes) && file.bytes >= 0);
+      }
+    }
+    for (const phase of phases) {
+      const output = one(interopOutputs(row, `negative-${phase}`), `Negative ${phase} readback`);
+      const { record, settings, quota } = output.data;
+      assert.equal(record.sha256, sha("W10 retained record\n"));
+      assert.equal(record.byteLength, Buffer.byteLength("W10 retained record\n"));
+      for (const [method, expected] of [
+        ["settings/read", settings],
+        ["storage/quota", quota],
+      ] as const)
+        assert.ok(
+          interopPairs(row, method).some(
+            (p) =>
+              p.response.sequence < output.sequence && isDeepStrictEqual(business(p), expected),
+          ),
+          `Original ${method} readback`,
+        );
+      const opened = interopPairs(row, "storage/openRead").filter(
+        (p) =>
+          p.result.ok && p.params.id === record.id && p.params.expectedRevision === record.revision,
+      );
+      assert.ok(
+        opened.some((p) =>
+          interopPairs(row, "storage/readChunk").some(
+            (r) =>
+              r.params.read === business(p).read &&
+              r.result.ok &&
+              r.response.sequence < output.sequence &&
+              business(r).data === Buffer.from("W10 retained record\n").toString("base64") &&
+              business(r).eof === true,
+          ),
+        ),
+        "Actual full record readback",
+      );
+    }
+    if (evidence.phase === "reopen") {
+      assert.equal(interopOutputs(row, "negative-start").length, 0);
+      for (const method of [
+        "storage/beginWrite",
+        "storage/writeChunk",
+        "storage/commitWrite",
+        "settings/update",
+      ])
+        assert.equal(
+          interopPairs(row, method).length,
+          0,
+          "Reopen must not seed replacement evidence",
+        );
+      continue;
+    }
+    const before = one(interopOutputs(row, "negative-before"), "Before");
+    const after = one(interopOutputs(row, "negative-after"), "After");
+    assert.deepEqual(
+      after.data,
+      before.data,
+      "Rejected operations preserve settings, record and quotas",
+    );
+    assert.deepEqual(
+      captures[1]!.state.disk,
+      captures[0]!.state.disk,
+      "Rejected operations preserve disk bytes",
+    );
+    assert.deepEqual(
+      captures[1]!.state.core,
+      captures[0]!.state.core,
+      "Rejected operations preserve core recovery",
+    );
+    assert.deepEqual(
+      captures[1]!.state.quota,
+      captures[0]!.state.quota,
+      "Rejected operations release quota reservations",
+    );
+    assert.equal(captures[1]!.state.native.textSha256, captures[0]!.state.native.textSha256);
+    const starts = interopOutputs(row, "negative-start"),
+      results = interopOutputs(row, "negative-result");
+    assert.deepEqual(
+      starts.map((s) => s.data.scenario),
+      Object.keys(PUBLIC_NEGATIVE_PROBES),
+    );
+    assert.deepEqual(
+      results.map((s) => s.data.scenario),
+      Object.keys(PUBLIC_NEGATIVE_PROBES),
+    );
+    for (const [scenario, [id, method, code]] of Object.entries(PUBLIC_NEGATIVE_PROBES)) {
+      const start = one(
+        starts.filter((s) => s.data.scenario === scenario),
+        scenario,
+      );
+      const end = one(
+        results.filter((s) => s.data.scenario === scenario),
+        scenario,
+      );
+      const pair = one(
+        interopPairs(row, method).filter(
+          (p) => p.request.sequence > start.sequence && p.response.sequence < end.sequence,
+        ),
+        `${scenario} original RPC`,
+      );
+      assert.ok(before.sequence < start.sequence && end.sequence < after.sequence);
+      assert.equal(pair.result.ok, false);
+      assert.equal(pair.result.value, undefined);
+      assert.equal(pair.result.error.code, code);
+      assert.deepEqual(end.data.result, pair.result);
+      const params = pair.params;
+      if (scenario === "unknown-setting" || scenario === "setting-type") {
+        assert.equal(params.schemaVersion, 1);
+        assert.equal(params.expectedRevision, before.data.settings.revision);
+        assert.deepEqual(params.changes, [
+          {
+            key: scenario === "unknown-setting" ? "unknown" : "fixture.enabled",
+            value: scenario === "unknown-setting" ? true : "true",
+          },
+        ]);
+      } else if (scenario === "replacement-busy") {
+        assert.deepEqual(params.target, {
+          mode: "replace",
+          id: before.data.record.id,
+          expectedRevision: before.data.record.revision,
+        });
+      } else if (scenario === "delete-busy") {
+        assert.deepEqual(params, {
+          id: before.data.record.id,
+          expectedRevision: before.data.record.revision,
+        });
+      } else if (scenario === "staging-quota") assert.equal(params.target.mode, "create");
+      else if (scenario === "chunk-offset") {
+        assert.equal(params.offset, Buffer.byteLength("W10 retained record\n") + 1);
+        assert.equal(params.data, "Yg==");
+      } else if (scenario === "chunk-retry-mismatch") {
+        assert.equal(params.offset, 0);
+        assert.equal(
+          params.data,
+          Buffer.alloc(Buffer.byteLength("W10 retained record\n"), 98).toString("base64"),
+        );
+      } else if (scenario === "copy-without-action" || scenario === "export-without-action") {
+        assert.equal(params.actionRef, "00000000-0000-4000-8000-000000000001");
+      }
+      links.push({
+        row: id,
+        scenario,
+        transport: row.transport,
+        request: pair.request.sequence,
+        response: pair.response.sequence,
+      });
+    }
+    assert.equal(
+      row.actions.filter((a) => ["claim", "export-file", "clipboard-write"].includes(a.kind))
+        .length,
+      0,
+    );
+  }
+  assert.equal(evidence.captures.length, evidence.phase === "exercise" ? 4 : 2);
+  return links;
+}
+
+/** Uses only the sole main composition's existing launcher, router and backend. */
+export async function producePublicNegative(input: {
+  observer: ReturnType<typeof publicInteropObserver>;
+  plugins: Wire;
+  phase: PublicNegativePhase;
+  captures?: PublicNegativeEvidence["captures"];
+  capture(owner: ResourceOwner): Promise<PublicNegativeEvidence["captures"][number]["state"]>;
+}) {
+  const captures: PublicNegativeEvidence["captures"] = input.captures ?? [];
+  const enabled: string[] = [];
+  const accepted = (r: Wire) => {
+    assert.equal(r.ok, true, JSON.stringify(r));
+    return r.value;
+  };
+  let failure: unknown;
+  try {
+    for (const id of INTEROP_IDS) {
+      const source = one<Wire>(
+        input.plugins.state().plugins.filter((p: Wire) => p.id === id),
+        "Actual negative source",
+      );
+      accepted(await input.plugins.setEnabled(source.sourceKey, true));
+      enabled.push(source.sourceKey);
+      accepted(
+        await input.plugins.execute(
+          `${id}.negative-${input.phase === "exercise" ? "prepare" : "reopen"}`,
+        ),
+      );
+      const row = one(
+        input.observer.consumers.filter((r) => r.owner.pluginId === id),
+        "Original negative owner",
+      );
+      if (input.phase === "exercise") {
+        captures.push({ pluginId: id, phase: "before", state: await input.capture(row.owner) });
+        accepted(await input.plugins.execute(`${id}.negative-probe`));
+        captures.push({ pluginId: id, phase: "after", state: await input.capture(row.owner) });
+      } else
+        captures.push({ pluginId: id, phase: "reopened", state: await input.capture(row.owner) });
+    }
+  } catch (error) {
+    failure = error;
+  }
+  {
+    const errors: unknown[] = [];
+    for (const source of enabled)
+      try {
+        accepted(await input.plugins.setEnabled(source, false));
+      } catch (error) {
+        errors.push(error);
+      }
+    if (errors.length)
+      throw new AggregateError(
+        [...(failure ? [failure] : []), ...errors],
+        "Negative run/cleanup failed",
+      );
+    if (failure) throw failure;
+  }
+  return captures;
 }

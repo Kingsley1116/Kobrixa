@@ -1,4 +1,22 @@
-import { verifyPublicInterop } from "./plugin-persistence-public-interop.ts";
+import { isDeepStrictEqual } from "node:util";
+import path from "node:path";
+import {
+  assertSettingsNegativeReceipt,
+  SETTINGS_NEGATIVE_IDS,
+} from "./plugin-persistence-negative-settings.ts";
+import {
+  assertStorageNegativeObservation,
+  storageNegativeScenarios,
+} from "./plugin-persistence-negative-storage.ts";
+import {
+  assertNegativeLifecycleReport,
+  lifecycleRequirements,
+} from "./plugin-persistence-negative-lifecycle.ts";
+import {
+  verifyPublicInterop,
+  verifyPublicNegative,
+  PUBLIC_NEGATIVE_PROBES,
+} from "./plugin-persistence-public-interop.ts";
 import { assertPreferencePhase } from "./import-preferences.ts";
 import { SEMANTIC_IMPORT_BOUNDARIES, assertSemanticPhase } from "./import-boundaries.ts";
 import { assertPressurePartial } from "./plugin-persistence-pressure.ts";
@@ -188,11 +206,13 @@ export function verifyMatrix(report) {
   assert.equal(get("B2-N29").sentinelBeforeHash, get("B2-N29").sentinelAfterHash);
 }
 export function verifyInterop(report) {
+  if (report.mode === "b2-aggregate") return verifyB2Aggregate(report);
   if (report.mode === "public-interop") {
     assert.equal(report.level, "real-process");
     assert.equal(report.status, "public-interop-subset");
     assert.equal(report.fullStage3Pass, false);
     assert.equal(report.reports?.length, 1);
+    verifySourceInventory(report);
     const receipt = report.reports[0];
     assert.equal(receipt.case, "public-interop");
     verifyRunReceipt(receipt);
@@ -649,6 +669,9 @@ export function verifyRunReceipt(r, expected = {}) {
     if (SEMANTIC_IMPORT_BOUNDARIES.includes(r.evidence.importSlice.slice))
       assertSemanticPhase(r.evidence.importSlice);
     else assertImportPhase(r.evidence.importSlice);
+  } else if (r.case === "negative-matrix") {
+    verifyPublicNegative(r.evidence.negative);
+    for (const row of r.evidence.negative.consumers) assert.equal(row.owner.hostEpoch, r.hostEpoch);
   } else if (r.case === "storage-ui-pressure") assertPressurePartial(r.evidence.pressure);
   else if (r.case === "public-interop") {
     const p = r.evidence.publicInterop;
@@ -1310,6 +1333,7 @@ export async function runReferenceEntry(createFixture, config, io) {
         commit: config.commit,
         bundleSha256: config.bundleSha256,
         artifactSha256: config.artifactSha256,
+        ...(config.sourceIdentity ? { sourceIdentity: config.sourceIdentity } : {}),
         pid: io.pid,
         profileId: config.profileId,
         hostEpoch: fixture.composition.profile.hostEpoch,
@@ -1387,4 +1411,427 @@ export function assertActionReplayEvidence(evidence) {
     actionSummary(evidence.actionReplay),
     "Action summary differs from raw observations",
   );
+}
+
+function verifySourceInventory(report) {
+  hash(report.sourceIdentity);
+  assert.ok(
+    report.sourceHashes && Object.keys(report.sourceHashes).length > 0,
+    "Missing compiled source inventory",
+  );
+  for (const [file, digest] of Object.entries(report.sourceHashes)) {
+    assert.ok(
+      !path.isAbsolute(file) && !file.split(/[\\/]/).includes(".."),
+      "Source inventory escapes checkout",
+    );
+    hash(digest);
+  }
+  assert.equal(
+    createHash("sha256")
+      .update(
+        JSON.stringify(Object.entries(report.sourceHashes).sort(([a], [b]) => a.localeCompare(b))),
+      )
+      .digest("hex"),
+    report.sourceIdentity,
+  );
+  for (const receipt of report.reports)
+    assert.equal(receipt.sourceIdentity, report.sourceIdentity, "Receipt source identity mismatch");
+}
+
+/** W09 attachments retain their declared partial scope and independent validators.
+ * Input: JSON array of {kind: settings|storage|lifecycle, path, sha256}, where each
+ * absolute path names ONE raw producer receipt. Never infer receipts from history.
+ */
+export async function readNegativeAttachments(file) {
+  if (!file) return [];
+  assert.ok(path.isAbsolute(file), "PERSISTENCE_NEGATIVE_ATTACHMENTS must be absolute");
+  const references = JSON.parse(await readFile(file, "utf8"));
+  assert.ok(Array.isArray(references));
+  const seen = new Set();
+  const result = [];
+  for (const reference of references) {
+    assert.ok(path.isAbsolute(reference.path));
+    assert.ok(!seen.has(reference.path), "Duplicate W09 receipt");
+    seen.add(reference.path);
+    hash(reference.sha256);
+    const bytes = await readFile(reference.path);
+    assert.equal(
+      createHash("sha256").update(bytes).digest("hex"),
+      reference.sha256,
+      "Changed W09 receipt",
+    );
+    const attachment = {
+      ...reference,
+      raw: bytes.toString("utf8"),
+      observation: JSON.parse(bytes),
+    };
+    verifyNegativeAttachment(attachment);
+    result.push(attachment);
+  }
+  return result;
+}
+function verifyNegativeAttachment(attachment) {
+  assert.ok(path.isAbsolute(attachment.path));
+  hash(attachment.sha256);
+  assert.equal(typeof attachment.raw, "string");
+  assert.equal(createHash("sha256").update(attachment.raw).digest("hex"), attachment.sha256);
+  assert.deepEqual(
+    JSON.parse(attachment.raw),
+    attachment.observation,
+    "Changed embedded W09 observation",
+  );
+  if (attachment.kind === "settings") assertSettingsNegativeReceipt(attachment.observation);
+  else if (attachment.kind === "storage") assertStorageNegativeObservation(attachment.observation);
+  else if (attachment.kind === "lifecycle") assertNegativeLifecycleReport(attachment.observation);
+  else assert.fail(`Unknown W09 attachment kind: ${attachment.kind}`);
+}
+
+/** Inventory only: original W09 subproof gaps are never erased or promoted. */
+export function negativeCoverage(reports, attachments = []) {
+  const observed = reports.flatMap((r) =>
+    verifyPublicNegative(r.evidence.negative).map((link) => ({ ...link, runId: r.runId })),
+  );
+  for (const attachment of attachments) verifyNegativeAttachment(attachment);
+  return MATRIX_IDS.map((id) => {
+    const links = observed.filter((link) => link.row === id);
+    const attached = attachments.flatMap((a, index) => {
+      if (a.kind === "settings" && a.observation.id === id)
+        return [{ index, missing: a.observation.incomplete }];
+      if (a.kind === "storage" && `B2-${a.observation.row}` === id)
+        return [{ index, missing: a.observation.gaps }];
+      if (a.kind === "lifecycle") {
+        const row = a.observation.rows.find((r) => r.id === id);
+        if (row) return [{ index, missing: row.missing }];
+      }
+      return [];
+    });
+    const key = id.slice(3);
+    const required = SETTINGS_NEGATIVE_IDS.includes(key)
+      ? [
+          "W09 settings native session, complete handles and reopened state",
+          ...(key === "N03" ? ["two real settings windows and retained losing draft"] : []),
+          ...(key === "N05"
+            ? ["W17 observed secondary startup and primary recording continuity"]
+            : []),
+        ]
+      : Object.hasOwn(storageNegativeScenarios, key)
+        ? [
+            ...storageNegativeScenarios[key],
+            "W09 storage native fault/reopen adapter and complete handles",
+          ]
+        : [...lifecycleRequirements[id], "W09 lifecycle native captures and W17/W18 joins"];
+    return { id, status: "incomplete", links, attachments: attached, missing: required };
+  });
+}
+export function verifyNegativeReport(report) {
+  assert.equal(report.level, "real-process");
+  assert.equal(report.mode, "negative-matrix");
+  assert.equal(report.status, "partial-negative-matrix");
+  assert.equal(report.fullPass, false);
+  assert.equal(report.reports.length, 2);
+  verifySourceInventory(report);
+  const [exercise, reopened] = report.reports;
+  assert.equal(exercise.evidence.negative.phase, "exercise");
+  assert.equal(reopened.evidence.negative.phase, "reopen");
+  for (const receipt of report.reports) {
+    assert.equal(receipt.case, "negative-matrix");
+    verifyRunReceipt(receipt, {
+      bundleSha256: report.bundleSha256,
+      artifactSha256: report.artifactSha256,
+    });
+  }
+  assert.equal(exercise.profileId, reopened.profileId, "Reopen same original profile");
+  assert.equal(exercise.commit, reopened.commit);
+  assert.notEqual(exercise.hostEpoch, reopened.hostEpoch);
+  assert.notEqual(exercise.runId, reopened.runId);
+  for (const before of exercise.evidence.negative.consumers) {
+    const after = reopened.evidence.negative.consumers.find(
+      (r) => r.owner.pluginId === before.owner.pluginId,
+    );
+    assert.ok(after);
+    assert.equal(before.owner.sourceKey, after.owner.sourceKey);
+    assert.notEqual(before.owner.processEpoch, after.owner.processEpoch);
+    const original = interopSnapshot(before, "negative-after"),
+      fresh = interopSnapshot(after, "negative-reopened");
+    assert.deepEqual(fresh.record, original.record, "Reopened committed record identity and bytes");
+    assert.deepEqual(fresh.settings, original.settings, "Reopened settings revision and values");
+    for (const key of [
+      "recordCount",
+      "committedBytes",
+      "reservedBytes",
+      "reservedCreates",
+      "pinnedBytes",
+    ])
+      assert.equal(fresh.quota[key], original.quota[key], `Reopened ${key}`);
+  }
+  assert.deepEqual(report.coverage, negativeCoverage(report.reports, report.attachments));
+  assert.equal(
+    report.coverage.flatMap((r) => r.links).length,
+    Object.keys(PUBLIC_NEGATIVE_PROBES).length * 2,
+  );
+}
+function interopSnapshot(row, phase) {
+  const outputs = row.output.flatMap((entry) => {
+    const index = entry.line.indexOf("PUBLIC_INTEROP:");
+    if (index < 0) return [];
+    const value = JSON.parse(entry.line.slice(index + 15));
+    return value.phase === phase ? [value.data] : [];
+  });
+  assert.equal(outputs.length, 1);
+  return outputs[0];
+}
+
+/** §12.1 groups are separate obligations; a matching method name is not coverage. */
+export const B2_GROUP_REQUIREMENTS = Object.freeze({
+  "G01-settings": [
+    "immediate-fields-reset-no-apply",
+    "invalid-coalescing-cas-conflict-retry",
+    "types-enums-maps-stale-maps",
+    "128-129-keys-64KiB-4KiB",
+    "unknown-duplicate-dangerous-keys",
+    "schema-upgrade-downgrade-corruption",
+  ],
+  "G02-capacity": [
+    "0-8MiB-overflow",
+    "256-257-records",
+    "512MiB-1GiB",
+    "replacement-double-reservation",
+    "2-3-source-16-17-host-staging",
+    "1-source-4-host-exports",
+    "scratch-metadata",
+    "50-maximum-records",
+  ],
+  "G03-records": [
+    "chunk-256KiB-overflow-base64",
+    "short-write-lost-ack",
+    "seal-checksum-idempotent-commit",
+    "cancel-timeout-publication",
+    "delete-cas-read-pin",
+    "snapshot-list-expiry",
+  ],
+  "G04-events": [
+    "watch-baseline-race",
+    "unsubscribe-tombstone-no-wire-alias",
+    "gap-validation-bounded-enqueue-ack",
+    "slow-callback",
+    "disable-reload-crash-safe-mode-stale-owner",
+    "core-errors-without-events",
+  ],
+  "G05-negatives": [
+    ...MATRIX_IDS,
+    "primary-kill-recovery",
+    "windows-replace",
+    "file-sync-only",
+    "unknown-reconciliation-active-gc",
+  ],
+  "G06-drain": [
+    "target-only-fences-healthy-settings",
+    "renderer-drain-teardown-new-bindings",
+    "null-grant-owner-lost-no-renewal",
+    "binding-validation-end-race",
+    "retire-freeze-offer",
+    "stop-before-final",
+    "hang-sealed-incomplete",
+    "30s-idle-120s-total",
+    "10s-drain-4s-process-15s-stop-5s-journal-24s-cleanup-25s-outer",
+    "disconnect-stop-save",
+    "suspend-no-wake-replay",
+    "cancel-close-stale-handles",
+  ],
+  "G07-import": [
+    "item-receipt-marker-cuts",
+    "three-identical-recoveries",
+    "source-target-missing-permission",
+    "originals-unchanged",
+    "nonce-allowlist-negatives",
+  ],
+  "G08-actions": [
+    "export-cancel-foreign-invocation-expired-replay",
+    "late-dialog-no-device-lock",
+    "disk-full-destination-race",
+    "copy-limit-no-action-os-failure",
+    "no-path-or-value-leak",
+  ],
+});
+function linkedObservation(link, reports) {
+  const receipt = reports.find((r) => r.runId === link.runId);
+  assert.ok(receipt, "Trace link references an absent run");
+  assert.ok(
+    typeof link.pointer === "string" && link.pointer.startsWith("/evidence/"),
+    "Trace link must target original evidence",
+  );
+  let value = receipt;
+  for (const escaped of link.pointer.slice(1).split("/")) {
+    const key = escaped.replaceAll("~1", "/").replaceAll("~0", "~");
+    assert.ok(value && Object.hasOwn(value, key), "Trace link target absent");
+    value = value[key];
+  }
+  hash(link.sha256);
+  assert.equal(
+    createHash("sha256").update(JSON.stringify(value)).digest("hex"),
+    link.sha256,
+    "Trace link changed",
+  );
+  return value;
+}
+export function verifyB2Aggregate(report) {
+  assert.equal(report.format, 1);
+  assert.equal(report.mode, "b2-aggregate");
+  assert.equal(report.status, "complete");
+  assert.deepEqual(report.pending, [], "Aggregate refuses partial input");
+  verifyMatrix(report);
+  assert.equal(report.interop?.mode, "public-interop", "Current dual-transport trace required");
+  verifyInterop(report.interop);
+  assert.ok(Array.isArray(report.reports) && report.reports.length > 0);
+  assert.equal(new Set(report.reports.map((r) => r.runId)).size, report.reports.length);
+  hash(report.sourceIdentity);
+  assert.match(report.commit, /^[0-9a-f]{40}$/);
+  for (const receipt of report.reports)
+    verifyRunReceipt(receipt, {
+      commit: report.commit,
+      sourceIdentity: report.sourceIdentity,
+    });
+  assert.ok(report.reports.some((r) => r.runId === report.execution.runId));
+  assert.deepEqual(
+    report.reports.find((r) => r.runId === report.execution.runId),
+    report.execution,
+  );
+  for (const receipt of report.interop.reports) {
+    assert.equal(receipt.commit, report.commit);
+    assert.equal(receipt.sourceIdentity, report.sourceIdentity);
+  }
+  verifyNativeNegativeAttachments(report.attachments, report.reports);
+  for (const row of report.cases) {
+    assert.equal(row.status, "passed");
+    assert.deepEqual(row.pending, []);
+    assert.ok(row.traceLinks.length > 0, `${row.id}: missing original trace links`);
+    for (const link of row.traceLinks) linkedObservation(link, report.reports);
+    const observed = { ...row };
+    for (const key of ["traceLinks", "observationTrace", "assertions", "status", "pending"])
+      delete observed[key];
+    assert.deepEqual(
+      linkedObservation(row.observationTrace, report.reports),
+      observed,
+      `${row.id}: matrix fields must come from original observation`,
+    );
+    for (const check of row.assertions)
+      assert.deepEqual(
+        linkedObservation(check.trace, report.reports),
+        check.actual,
+        `${row.id}: unbound assertion`,
+      );
+  }
+  assert.deepEqual(Object.keys(report.groups).sort(), Object.keys(B2_GROUP_REQUIREMENTS).sort());
+  for (const [id, required] of Object.entries(B2_GROUP_REQUIREMENTS)) {
+    const group = report.groups[id];
+    assert.deepEqual(
+      group.map((g) => g.scenario).sort(),
+      [...required].sort(),
+      `${id}: incomplete scenarios`,
+    );
+    for (const observation of group) {
+      assert.equal(observation.status, "passed");
+      assert.deepEqual(observation.pending, []);
+      assert.ok(observation.assertions.length > 0);
+      for (const check of observation.assertions) {
+        assert.deepEqual(linkedObservation(check.trace, report.reports), check.actual);
+        assert.deepEqual(check.actual, check.expected);
+      }
+    }
+  }
+}
+
+/** A W09 worker-only specimen is insufficient: every attached RPC must also exist
+ * on an original authenticated consumer channel in a verified native receipt.
+ * All lifecycle scenarios are required, including presently unfinished adapters.
+ */
+export function verifyNativeNegativeAttachments(attachments, reports) {
+  assert.ok(Array.isArray(attachments) && attachments.length > 0, "Missing W09 native attachments");
+  const inventories = new Map(["message-port", "stdio"].map((transport) => [transport, []]));
+  for (const attachment of attachments) {
+    verifyNegativeAttachment(attachment);
+    assert.ok(inventories.has(attachment.transport), "W09 native transport identity required");
+    assert.ok(
+      Array.isArray(attachment.runIds) && attachment.runIds.length >= 2,
+      "Original and reopened native receipts required",
+    );
+    assert.equal(new Set(attachment.runIds).size, attachment.runIds.length);
+    const runs = attachment.runIds.map((id) => {
+      const receipt = reports.find((r) => r.runId === id);
+      assert.ok(receipt, "W09 references absent native run");
+      verifyRunReceipt(receipt);
+      return receipt;
+    });
+    assert.equal(new Set(runs.map((r) => r.profileId)).size, 1, "W09 same-profile reopen");
+    assert.ok(new Set(runs.map((r) => r.hostEpoch)).size >= 2, "W09 fresh reopen epoch");
+    const consumers = runs
+      .flatMap((r) => r.evidence.negative?.consumers ?? r.evidence.publicInterop?.consumers ?? [])
+      .filter((r) => r.transport === attachment.transport);
+    const originalCall = (method, params, result, requestId) =>
+      assert.ok(
+        consumers.some((row) =>
+          row.wire.some(
+            (request) =>
+              request.direction === "plugin" &&
+              request.message.method === method &&
+              (requestId === undefined || request.message.id === requestId) &&
+              isDeepStrictEqual(request.message.params, params) &&
+              row.wire.some(
+                (response) =>
+                  response.direction === "host" &&
+                  !response.message.method &&
+                  response.message.id === request.message.id &&
+                  response.sequence > request.sequence &&
+                  isDeepStrictEqual(response.message.result ?? response.message.error, result),
+              ),
+          ),
+        ),
+        "W09 call absent from authenticated native trace",
+      );
+    const inventory = inventories.get(attachment.transport);
+    if (attachment.kind === "settings") {
+      const row = attachment.observation;
+      for (const wire of row.wire) {
+        const request = JSON.parse(wire.request),
+          response = JSON.parse(wire.response);
+        originalCall(request.method, request.params, response.result ?? response.error, request.id);
+      }
+      for (const snapshot of Object.values(row.snapshots))
+        assert.ok(runs.some((r) => r.hostEpoch === snapshot.hostEpoch));
+      inventory.push(row.id);
+    } else if (attachment.kind === "storage") {
+      const row = attachment.observation;
+      assert.ok(runs.some((r) => r.hostEpoch === row.owner.hostEpoch));
+      for (const call of row.calls) originalCall(call.method, call.params, call.result);
+      for (const snapshot of row.snapshots) {
+        assert.ok(snapshot.core && snapshot.handles, "Missing W09 native core/handle observations");
+        assert.ok(runs.some((r) => r.hostEpoch === snapshot.epoch));
+      }
+      inventory.push(`B2-${row.row}/${row.scenario}`);
+    } else
+      for (const row of attachment.observation.rows) {
+        assert.deepEqual(
+          row.observations.map((p) => p.scenario).sort(),
+          [...lifecycleRequirements[row.id]].sort(),
+          `${row.id}: missing native lifecycle scenarios`,
+        );
+        for (const proof of row.observations)
+          for (const state of Object.values(proof.capture))
+            assert.ok(runs.some((r) => r.hostEpoch === state.hostEpoch));
+        inventory.push(row.id);
+      }
+  }
+  const required = [
+    ...SETTINGS_NEGATIVE_IDS.map((id) => `B2-${id}`),
+    ...Object.entries(storageNegativeScenarios).flatMap(([id, scenarios]) =>
+      scenarios.map((scenario) => `B2-${id}/${scenario}`),
+    ),
+    ...Object.keys(lifecycleRequirements),
+  ].sort();
+  for (const inventory of inventories.values())
+    assert.deepEqual(
+      inventory.sort(),
+      required,
+      "Incomplete/duplicate W09 native scenario inventory",
+    );
 }
