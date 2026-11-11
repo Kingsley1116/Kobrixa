@@ -548,3 +548,125 @@ test("renderer discovery does not retry invalid responses or product failures", 
     assert.equal(calls, ["exit", "startup"].includes(outcome) ? 0 : 1);
   }
 });
+
+test("Windows CIM process observation records creation identity without localized text parsing", async () => {
+  const { processTable, parseWindowsProcessTable } = await import("./builtin-installed-client.mjs");
+  const rows = [
+    {
+      pid: 10,
+      ppid: 1,
+      created: "2026-11-11T01:00:00Z",
+      executable: "C:\\app\\kobrixa.exe",
+      commandLine: "kobrixa.exe --inspect-brk",
+    },
+    { pid: 12, ppid: 10, created: "2026-11-11T01:00:01Z", executable: null, commandLine: null },
+  ];
+  const actual = await processTable({
+    platform: "win32",
+    env: { SystemRoot: "C:\\Windows" },
+    run: async (file, args, options) => {
+      assert.equal(file, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+      assert.ok(args.includes("-NoProfile") && args.includes("-NonInteractive"));
+      assert.match(args.at(-1), /Get-CimInstance Win32_Process/);
+      assert.match(args.at(-1), /CreationDate.*ToUniversalTime/);
+      assert.equal(options.timeout, 5000);
+      return { stdout: "\uFEFF" + JSON.stringify(rows) };
+    },
+  });
+  assert.deepEqual(actual, rows);
+  assert.deepEqual(parseWindowsProcessTable(JSON.stringify(rows[0])), [rows[0]]);
+  assert.throws(() => parseWindowsProcessTable('{"pid":"10","ppid":1}'), /Malformed/);
+  assert.throws(() => parseWindowsProcessTable("not json"));
+  assert.throws(() => parseWindowsProcessTable('{"pid":10,"ppid":1,"created":0}'));
+});
+
+test("Windows ancestry retains orphan identity and excludes reused PIDs and their children", () => {
+  const known = new Map();
+  const rows = [
+    { pid: 10, ppid: 1, created: "original-root" },
+    { pid: 13, ppid: 12, created: "original-grandchild" },
+    { pid: 12, ppid: 10, created: "original-child" },
+  ];
+  assert.deepEqual(descendants(rows, 10, known), rows);
+  const orphan = { pid: 13, ppid: 1, created: "original-grandchild" };
+  const later = [
+    { pid: 10, ppid: 1, created: "reused-root" },
+    { pid: 12, ppid: 10, created: "reused-child" },
+    { pid: 14, ppid: 12, created: "unrelated-grandchild" },
+    orphan,
+  ];
+  assert.deepEqual(descendants(later, 10, known), [orphan]);
+  assert.equal(known.get(10), "original-root");
+  assert.deepEqual(descendants([], 10, known), []);
+  assert.throws(
+    () => descendants([{ pid: 99, ppid: 1, created: null }], 99, new Map()),
+    /Missing creation identity/,
+  );
+});
+
+test("Windows cleanup uses taskkill for trees, preserves errors and refuses reused PIDs", async () => {
+  const { terminateProcess } = await import("./builtin-installed-client.mjs");
+  for (const outcome of ["success", "absent", "access-denied", "exit-race", "reused"]) {
+    const errors = [],
+      calls = [];
+    const failure = new Error("taskkill localized failure");
+    let reads = 0;
+    await terminateProcess(-10, "SIGTERM", errors, {
+      platform: "win32",
+      env: { SystemRoot: "C:\\Windows" },
+      known: new Map([[10, "original"]]),
+      kill: () => assert.fail("Windows must not send POSIX signals"),
+      table: async () => {
+        reads++;
+        if (outcome === "absent" || (outcome === "exit-race" && reads > 1)) return [];
+        return [{ pid: 10, ppid: 1, created: outcome === "reused" ? "new" : "original" }];
+      },
+      run: async (file, args) => {
+        calls.push([file, args]);
+        if (["access-denied", "exit-race"].includes(outcome)) throw failure;
+      },
+    });
+    assert.deepEqual(
+      calls,
+      ["absent", "reused"].includes(outcome)
+        ? []
+        : [["C:\\Windows\\System32\\taskkill.exe", ["/PID", "10", "/T", "/F"]]],
+    );
+    if (outcome === "access-denied") assert.deepEqual(errors, [failure]);
+    else if (outcome === "reused") assert.match(errors[0].message, /reused PID/);
+    else assert.deepEqual(errors, []);
+  }
+});
+
+test("portable termination retains POSIX process group semantics", async () => {
+  const { terminateProcess } = await import("./builtin-installed-client.mjs");
+  const calls = [],
+    errors = [];
+  await terminateProcess(-10, "SIGKILL", errors, {
+    platform: "linux",
+    kill: (...args) => calls.push(args),
+    run: () => assert.fail("no Windows command"),
+  });
+  assert.deepEqual(calls, [[-10, "SIGKILL"]]);
+  assert.deepEqual(errors, []);
+});
+
+test("POSIX ancestry still accounts for children when the original parent already exited", () => {
+  const known = new Map();
+  const rows = [{ pid: 12, ppid: 10, pgid: 12 }];
+  assert.deepEqual(descendants(rows, 10, known), rows);
+  assert.ok(known.has(10));
+  assert.deepEqual(descendants([{ pid: 13, ppid: 12, pgid: 13 }], 10, known), [
+    { pid: 13, ppid: 12, pgid: 13 },
+  ]);
+});
+
+test("Windows ancestry retains a late-sampled child of an already exited observed process", () => {
+  const known = new Map([
+    [10, "root"],
+    [12, "child"],
+  ]);
+  const remaining = [{ pid: 13, ppid: 12, created: "grandchild" }];
+  assert.deepEqual(descendants(remaining, 10, known), remaining);
+  assert.equal(known.get(13), "grandchild");
+});

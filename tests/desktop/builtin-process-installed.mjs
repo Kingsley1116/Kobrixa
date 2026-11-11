@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import {
-  cp,
   lstat,
   mkdir,
   mkdtemp,
@@ -28,10 +27,116 @@ import {
   processTable,
   observeBeforeStartup,
   releaseStartingWorkers,
-  signalProcess,
+  terminateProcess,
   until,
   waitForRendererTarget,
 } from "./builtin-installed-client.mjs";
+
+import { copyDesktopBundle, verifyMacBundle } from "../../tools/release/macos-test-bundle.mjs";
+
+export function installedLayout(platform, names) {
+  assert.ok(["darwin", "linux", "win32"].includes(platform), "Unsupported installed platform");
+  const apps = names.filter((name) => name.endsWith(".app"));
+  if (platform === "darwin") assert.equal(apps.length, 1, "Expected exactly one packaged app");
+  const appName = platform === "darwin" ? apps[0] : null;
+  return {
+    appName,
+    resourceRelative: appName ? `${appName}/Contents/Resources` : "resources",
+    executableRelative: appName
+      ? `${appName}/Contents/MacOS/kobrixa`
+      : platform === "win32"
+        ? "kobrixa.exe"
+        : "kobrixa",
+  };
+}
+
+export function installedEnvironment(original, emptyPath) {
+  const env = { ...original };
+  for (const key of Object.keys(env))
+    if (
+      ["PATH", "NODE_PATH", "NODE_OPTIONS", "ELECTRON_RUN_AS_NODE", "PYTHONPATH"].includes(
+        key.toUpperCase(),
+      )
+    )
+      delete env[key];
+  return { ...env, PATH: emptyPath };
+}
+
+export function installedPlatformPolicy(platform, requestedIsolation) {
+  const blockers =
+    platform === "win32"
+      ? [
+          {
+            id: "W02b",
+            status: "blocked-by-W02b",
+            checks: ["motion admission", "Run admission"],
+            reason:
+              "3A safety journal fails closed with ENOTSUP until the native Windows adapter is integrated; no admission pass is claimed",
+          },
+        ]
+      : [];
+  if (platform === "win32" && requestedIsolation)
+    blockers.push({
+      id: "W17-isolation",
+      status: "blocked",
+      checks: ["source and dependency read denial", "outbound network denial"],
+      reason:
+        "Windows source/network isolation adapter is not implemented; copied-app observations run without claiming isolation",
+    });
+  return { isolated: requestedIsolation && platform !== "win32", blockers };
+}
+
+export function installedLaunchCommand(config, args, platform = process.platform) {
+  if (!config.isolated) return { file: config.executable, args };
+  assert.ok(["darwin", "linux"].includes(platform), "Windows isolation adapter is not implemented");
+  if (platform === "darwin")
+    return {
+      file: "/usr/bin/sandbox-exec",
+      args: ["-f", config.isolationProfile, config.executable, ...args],
+    };
+  return {
+    file: "/usr/bin/python3",
+    args: [
+      fileURLToPath(new URL("./builtin-installed-landlock.py", import.meta.url)),
+      ...config.deniedRoots,
+      "--",
+      config.executable,
+      ...args,
+    ],
+  };
+}
+
+// Continue independent Windows cases, retaining every failure for a non-zero
+// final result. A blocked prerequisite never converts an assertion into success.
+export async function observeInstalledCase(observe, platform, failures) {
+  try {
+    return await observe();
+  } catch (error) {
+    if (platform !== "win32") throw error;
+    failures.push(error);
+  }
+}
+
+export async function observeSecondaryStartup(
+  client,
+  pid,
+  executable,
+  known,
+  table = processTable,
+) {
+  let startup;
+  await observeBeforeStartup(client, async (evaluate) => {
+    startup = await evaluate(
+      "({pid:process.pid, executable:process.execPath, ready:require('electron').app.isReady()})",
+    );
+    assert.equal(startup.pid, pid);
+    assert.equal(startup.executable, executable);
+    assert.equal(startup.ready, false);
+    descendants(await table(), pid, known);
+    assert.ok(known.get(pid), "Secondary creation identity must be observed before resume");
+  });
+  return startup;
+}
 
 const root = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const motorKey = "builtin:kobrixa.motor-test";
@@ -44,6 +149,7 @@ const errorRecord = (error) => ({
   code: error.code,
   stdout: error.stdout,
   stderr: error.stderr,
+  ...(error instanceof AggregateError ? { errors: error.errors.map(errorRecord) } : {}),
 });
 async function boundedFile(rootReal, relative, limit) {
   let current = rootReal;
@@ -258,19 +364,9 @@ function requiredCompilers(state) {
 }
 
 async function launchProduct(config, receipt, check) {
-  const {
-    directory,
-    executable,
-    cwd,
-    env,
-    profile,
-    isolationProfile,
-    isolated,
-    probes,
-    deniedRoots,
-  } = config;
+  const { directory, cwd, env, profile, isolated, probes } = config;
   const clients = [];
-  const known = new Set();
+  const known = new Map();
   let child,
     exit,
     closed,
@@ -292,33 +388,30 @@ async function launchProduct(config, receipt, check) {
   receipt.rendererTargetWait = {};
   const sample = async () => {
     if (!child?.pid) return [];
-    return descendants(await processTable(), child.pid, known);
+    const rows = descendants(await processTable(), child.pid, known);
+    receipt.observedProcesses ??= [];
+    for (const row of rows)
+      if (
+        !receipt.observedProcesses.some(
+          (prior) => prior.pid === row.pid && prior.created === row.created,
+        )
+      )
+        receipt.observedProcesses.push(row);
+    return rows;
   };
   try {
-    child = spawn(
-      isolated
-        ? process.platform === "darwin"
-          ? "/usr/bin/sandbox-exec"
-          : "/usr/bin/python3"
-        : executable,
-      [
-        ...(isolated
-          ? process.platform === "darwin"
-            ? ["-f", isolationProfile, executable]
-            : [
-                fileURLToPath(new URL("./builtin-installed-landlock.py", import.meta.url)),
-                ...deniedRoots,
-                "--",
-                executable,
-              ]
-          : []),
-        "--inspect-brk=127.0.0.1:0",
-        "--remote-debugging-address=127.0.0.1",
-        "--remote-debugging-port=0",
-        `--user-data-dir=${profile}`,
-      ],
-      { cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] },
-    );
+    const launch = installedLaunchCommand(config, [
+      "--inspect-brk=127.0.0.1:0",
+      "--remote-debugging-address=127.0.0.1",
+      "--remote-debugging-port=0",
+      `--user-data-dir=${profile}`,
+    ]);
+    child = spawn(launch.file, launch.args, {
+      cwd,
+      env,
+      detached: process.platform !== "win32",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     receipt.pid = child.pid;
     child.stdout.on("data", (chunk) => {
       output += chunk;
@@ -414,6 +507,7 @@ async function launchProduct(config, receipt, check) {
     );
     assert.equal(receipt.identity.packaged, true);
     assert.equal(receipt.identity.appPath, config.archive);
+    assert.equal(receipt.identity.executable, config.executable);
     assert.equal(receipt.identity.userData, profile);
     assert.equal(receipt.identity.cwd, cwd);
     assert.equal(receipt.identity.path, env.PATH);
@@ -447,6 +541,11 @@ async function launchProduct(config, receipt, check) {
       return result.preferences;
     });
     assert.equal(receipt.preferences.usbAutoReconnect, false);
+    if (process.platform === "win32") {
+      receipt.deviceRecovery = await renderer.js("window.kobrixa.plugins.recovery.snapshot({})");
+      // Keep the actual public recovery result beside the source-based W02b
+      // prerequisite. Do not synthesize ENOTSUP as an observed product error.
+    }
     if (isolated) {
       receipt.isolation = await main.js(`(async () => {
         const require = __installedProbe.require;
@@ -504,7 +603,7 @@ async function launchProduct(config, receipt, check) {
       if (!ended && child?.pid) {
         receipt.forcedCleanup = true;
         const signalingErrors = [];
-        signalProcess(-child.pid, "SIGTERM", signalingErrors);
+        await terminateProcess(-child.pid, "SIGTERM", signalingErrors, { known });
         cleanupErrors.push(...signalingErrors.map(errorRecord));
         try {
           await until(() => ended, "termination", 3000);
@@ -512,7 +611,11 @@ async function launchProduct(config, receipt, check) {
           /* Escalate below. */
         }
       }
-      for (const fork of receipt.forks) if (Number.isSafeInteger(fork.pid)) known.add(fork.pid);
+      // On POSIX keep utility PIDs even when reparented between samples. Windows
+      // requires the creation identity captured by the OS observer.
+      if (process.platform !== "win32")
+        for (const fork of receipt.forks)
+          if (Number.isSafeInteger(fork.pid)) known.set(fork.pid, undefined);
       let remaining = await sample();
       if (ended && remaining.length) {
         try {
@@ -530,19 +633,11 @@ async function launchProduct(config, receipt, check) {
       }
       if (remaining.length) {
         receipt.forcedCleanup = true;
-        try {
-          process.kill(-child.pid, "SIGKILL");
-        } catch (error) {
-          if (error.code !== "ESRCH") cleanupErrors.push(errorRecord(error));
-        }
+        const errors = [];
+        await terminateProcess(-child.pid, "SIGKILL", errors, { known });
         // Account for observed descendants which changed process group/reparented.
-        for (const { pid } of remaining) {
-          try {
-            process.kill(pid, "SIGKILL");
-          } catch (error) {
-            if (error.code !== "ESRCH") cleanupErrors.push(errorRecord(error));
-          }
-        }
+        for (const { pid } of remaining) await terminateProcess(pid, "SIGKILL", errors, { known });
+        cleanupErrors.push(...errors.map(errorRecord));
       }
       if (config.singleInstance && ended) {
         const startedAt = Date.now();
@@ -588,7 +683,7 @@ async function launchProduct(config, receipt, check) {
     monitoring = false;
     await monitor;
     if (monitorError) cleanupErrors.push(errorRecord(monitorError));
-    receipt.observedPids = [...known];
+    receipt.observedPids = [...known.keys()];
     for (const line of output.split("\n"))
       if (line.startsWith("KOBRIXA_INSTALLED_PROBE ")) {
         try {
@@ -766,9 +861,10 @@ async function observeSingleInstance(client, config, run, binding) {
   let child,
     exit,
     closed,
+    secondaryInspector,
     ended = false,
     failure;
-  const known = new Set();
+  const known = new Map();
   let output = "";
   const secondary = observation.secondary;
   await main.js(`(() => {
@@ -796,27 +892,18 @@ async function observeSingleInstance(client, config, run, binding) {
     assert.equal(observation.defocused.focused, false);
     secondary.marker = `--b2-secondary=${randomUUID()}`;
     secondary.requestedProfile = config.profile;
-    secondary.argv = [`--user-data-dir=${config.profile}`, secondary.marker];
-    const args = config.isolated
-      ? process.platform === "darwin"
-        ? ["-f", config.isolationProfile, config.executable, ...secondary.argv]
-        : [
-            fileURLToPath(new URL("./builtin-installed-landlock.py", import.meta.url)),
-            ...config.deniedRoots,
-            "--",
-            config.executable,
-            ...secondary.argv,
-          ]
-      : secondary.argv;
-    child = spawn(
-      config.isolated
-        ? process.platform === "darwin"
-          ? "/usr/bin/sandbox-exec"
-          : "/usr/bin/python3"
-        : config.executable,
-      args,
-      { cwd: config.cwd, env: config.env, detached: true, stdio: ["ignore", "pipe", "pipe"] },
-    );
+    secondary.argv = [
+      ...(process.platform === "win32" ? ["--inspect-brk=127.0.0.1:0"] : []),
+      `--user-data-dir=${config.profile}`,
+      secondary.marker,
+    ];
+    const launch = installedLaunchCommand(config, secondary.argv);
+    child = spawn(launch.file, launch.args, {
+      cwd: config.cwd,
+      env: config.env,
+      detached: process.platform !== "win32",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     secondary.pid = child.pid;
     secondary.startedAt = Date.now();
     child.stdout.on("data", (chunk) => {
@@ -839,6 +926,23 @@ async function observeSingleInstance(client, config, run, binding) {
     });
     exit.catch(() => {});
     closed = new Promise((resolve) => child.once("close", resolve));
+    if (process.platform === "win32") {
+      // A short-lived secondary can exit between CIM samples. Hold its actual
+      // entry until the OS creation identity has been recorded, then resume it.
+      const url = await until(() => {
+        if (launchError) throw launchError;
+        assert.equal(ended, false, "Secondary exited before startup observation");
+        return output.match(/Debugger listening on (ws:\/\/[^\s]+)/)?.[1];
+      }, "secondary inspector readiness");
+      secondaryInspector = await connect(url);
+      secondary.startup = await observeSecondaryStartup(
+        secondaryInspector,
+        child.pid,
+        config.executable,
+        known,
+      );
+      secondaryInspector.close();
+    }
     await until(
       async () => {
         if (launchError) throw launchError;
@@ -865,6 +969,7 @@ async function observeSingleInstance(client, config, run, binding) {
     failure = error;
     secondary.error = errorRecord(error);
   } finally {
+    secondaryInspector?.close();
     try {
       observation.listenersRemoved = await main.js(
         "(() => {const removed=__singleInstanceProbe.remove();delete globalThis.__singleInstanceProbe;return removed;})()",
@@ -876,7 +981,7 @@ async function observeSingleInstance(client, config, run, binding) {
     if (child?.pid) {
       if (!ended) {
         secondary.forcedCleanup = true;
-        signalProcess(-child.pid, "SIGTERM", errors);
+        await terminateProcess(-child.pid, "SIGTERM", errors, { known });
       }
       try {
         await until(() => ended, "secondary reap", 3000);
@@ -884,8 +989,9 @@ async function observeSingleInstance(client, config, run, binding) {
         let remaining = descendants(await processTable(), child.pid, known);
         if (remaining.length) {
           secondary.forcedCleanup = true;
-          signalProcess(-child.pid, "SIGKILL", errors);
-          for (const row of remaining) signalProcess(row.pid, "SIGKILL", errors);
+          await terminateProcess(-child.pid, "SIGKILL", errors, { known });
+          for (const row of remaining)
+            await terminateProcess(row.pid, "SIGKILL", errors, { known });
           await until(
             async () => {
               remaining = descendants(await processTable(), child.pid, known);
@@ -900,9 +1006,9 @@ async function observeSingleInstance(client, config, run, binding) {
       } catch (error) {
         errors.push(error);
         secondary.forcedCleanup = true;
-        signalProcess(-child.pid, "SIGKILL", errors);
+        await terminateProcess(-child.pid, "SIGKILL", errors, { known });
         for (const row of descendants(await processTable(), child.pid, known))
-          signalProcess(row.pid, "SIGKILL", errors);
+          await terminateProcess(row.pid, "SIGKILL", errors, { known });
       }
       if (closed)
         try {
@@ -916,7 +1022,8 @@ async function observeSingleInstance(client, config, run, binding) {
           errors.push(error);
         }
     }
-    secondary.observedPids = [...known];
+    secondary.observedPids = [...known.keys()];
+    secondary.observedIdentities = [...known].map(([pid, created]) => ({ pid, created }));
     secondary.log = path.join(config.directory, "single-instance-secondary.log");
     await writeFile(secondary.log, output);
     secondary.logSha256 = sha256(output);
@@ -1111,16 +1218,16 @@ async function freshProfile(directory, name) {
 }
 
 export async function main() {
-  const isolated = process.argv.includes("--isolated");
+  const requestedIsolation = process.argv.includes("--isolated");
+  const { isolated, blockers } = installedPlatformPolicy(process.platform, requestedIsolation);
   const singleInstance = process.argv.includes("--single-instance");
-  assert.ok(!singleInstance || isolated, "Single-instance partial evidence requires --isolated");
-  if (process.platform === "win32") {
-    console.log("NOT RUN on win32: installed OS process-tree evidence supports macOS/Linux only");
-    return;
-  }
   assert.ok(
-    ["darwin", "linux"].includes(process.platform),
-    "OS process-tree evidence currently supports macOS/Linux only; Windows remains unrun",
+    !singleInstance || requestedIsolation,
+    "Single-instance partial evidence requires --isolated",
+  );
+  assert.ok(
+    ["darwin", "linux", "win32"].includes(process.platform),
+    "Unsupported installed platform",
   );
   assert.ok(
     !isolated || process.platform === "darwin" || ["arm64", "x64"].includes(process.arch),
@@ -1146,7 +1253,9 @@ export async function main() {
     syntheticHost: false,
     status: "running",
     runs: [],
+    requestedIsolation,
     isolated,
+    blockers,
     sourceRootDenial: "unrun",
     ...(isolated && process.platform === "linux" ? { externalAddresses } : {}),
     limitations: [
@@ -1155,21 +1264,21 @@ export async function main() {
       "Stage 3 completion is not asserted",
     ],
   };
+  for (const blocker of blockers)
+    console.error(`${blocker.status}: ${blocker.checks.join(", ")}: ${blocker.reason}`);
+  const runFailures = [];
   let server, archive, originalArchive, sourceArchive, originalExecutable, executable, failure;
   const save = () => writeFile(output, JSON.stringify(report, null, 2));
   try {
     const source = path.join(root, `apps/desktop/out/Kobrixa-${process.platform}-${process.arch}`);
     const installed = path.join(directory, "installed");
-    await cp(source, installed, { recursive: true, verbatimSymlinks: true });
-    const appName =
-      process.platform === "darwin"
-        ? (await readdir(installed)).find((name) => name.endsWith(".app"))
-        : null;
-    assert.ok(process.platform !== "darwin" || appName);
-    const resourceRelative =
-      process.platform === "darwin" ? `${appName}/Contents/Resources` : "resources";
-    const executableRelative =
-      process.platform === "darwin" ? `${appName}/Contents/MacOS/kobrixa` : "kobrixa";
+    const { appName, resourceRelative, executableRelative } = installedLayout(
+      process.platform,
+      await readdir(source),
+    );
+    if (appName) await verifyMacBundle(path.join(source, appName));
+    await copyDesktopBundle(source, installed, process.platform);
+    if (appName) await verifyMacBundle(path.join(installed, appName));
     const resources = path.join(installed, resourceRelative);
     executable = path.join(installed, executableRelative);
     archive = path.join(resources, "app.asar");
@@ -1193,7 +1302,7 @@ export async function main() {
     assert.equal(packageJson.main, ".vite/build/main.cjs");
     const entries = (await import("@electron/asar"))
       .listPackage(archive)
-      .map((name) => name.replace(/^\//, ""));
+      .map((name) => name.replaceAll("\\", "/").replace(/^\//, ""));
     const shipped = entries.filter((name) =>
       /(?:^|\/)(?:preload[^/]*\.(?:js|cjs)|index\.html)$/.test(name),
     );
@@ -1206,9 +1315,21 @@ export async function main() {
       "Actual renderer must be identified",
     );
     report.artifact = {
-      commit: (await command("/usr/bin/git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim(),
+      commit: (
+        await command(
+          process.platform === "win32" ? "git.exe" : "/usr/bin/git",
+          ["rev-parse", "HEAD"],
+          { cwd: root },
+        )
+      ).stdout.trim(),
       dirty: Boolean(
-        (await command("/usr/bin/git", ["status", "--porcelain"], { cwd: root })).stdout.trim(),
+        (
+          await command(
+            process.platform === "win32" ? "git.exe" : "/usr/bin/git",
+            ["status", "--porcelain"],
+            { cwd: root },
+          )
+        ).stdout.trim(),
       ),
       platform: process.platform,
       arch: process.arch,
@@ -1231,16 +1352,13 @@ export async function main() {
       emptyPath = path.join(directory, "empty-path");
     await mkdir(cwd);
     await mkdir(emptyPath);
-    const env = { ...process.env, PATH: emptyPath };
-    for (const key of Object.keys(env))
-      if (
-        ["NODE_PATH", "NODE_OPTIONS", "ELECTRON_RUN_AS_NODE", "PYTHONPATH"].includes(
-          key.toUpperCase(),
-        )
-      )
-        delete env[key];
+    const env = installedEnvironment(process.env, emptyPath);
     const common = (
-      await command("/usr/bin/git", ["rev-parse", "--git-common-dir"], { cwd: root })
+      await command(
+        process.platform === "win32" ? "git.exe" : "/usr/bin/git",
+        ["rev-parse", "--git-common-dir"],
+        { cwd: root },
+      )
     ).stdout.trim();
     const checkout = path.dirname(await realpath(path.resolve(root, common)));
     const dependencyFile = await realpath(
@@ -1252,7 +1370,10 @@ export async function main() {
     assert.ok(dependencyFile.includes(`${path.sep}node_modules${path.sep}`));
     const deniedRoots = [...new Set([checkout, await realpath(root), dependencyRoot])];
     for (const denied of deniedRoots)
-      assert.ok(!directory.startsWith(`${denied}/`), "Sandbox must allow only the copied artifact");
+      assert.ok(
+        !directory.startsWith(`${denied}${path.sep}`),
+        "Sandbox must allow only the copied artifact",
+      );
     const probes = {
       files: {
         checkout: path.join(checkout, "package.json"),
@@ -1283,20 +1404,23 @@ export async function main() {
     report.probeFiles = probes.files;
     const entry = path.join(leaf, "main.cjs");
     report.entry = entry;
-    const execute = async (name, profile, check) => {
+    const executeOne = async (name, profile, check) => {
       if (process.platform === "darwin") {
-        await command(
-          "/usr/bin/codesign",
-          [
-            "--force",
-            "--sign",
-            "-",
-            "--timestamp=none",
-            "--preserve-metadata=entitlements,requirements,flags",
-            path.join(installed, appName),
-          ],
-          { cwd: directory },
-        );
+        // Only the resource-negative copies need resealing. Nested code was
+        // already signed and verified during packaging and after the copy.
+        if (["missing", "tampered"].includes(name))
+          await command(
+            "/usr/bin/codesign",
+            [
+              "--force",
+              "--sign",
+              "-",
+              "--timestamp=none",
+              "--preserve-metadata=entitlements,requirements,flags",
+              path.join(installed, appName),
+            ],
+            { cwd: directory },
+          );
         await command(
           "/usr/bin/codesign",
           ["--verify", "--deep", "--strict", path.join(installed, appName)],
@@ -1349,6 +1473,21 @@ export async function main() {
       }
       return receipt;
     };
+    const execute = (name, profile, check) =>
+      observeInstalledCase(
+        async () => {
+          try {
+            return await executeOne(name, profile, check);
+          } catch (error) {
+            const receipt = report.runs.find((run) => run.name === name);
+            if (receipt) receipt.error ??= errorRecord(error);
+            await save();
+            throw error;
+          }
+        },
+        process.platform,
+        runFailures,
+      );
     const enabled = async (client, value) => {
       const result = await client.renderer.js(
         `window.kobrixa.plugins.setEnabled(${JSON.stringify(motorKey)}, ${value})`,
@@ -1513,7 +1652,12 @@ export async function main() {
     report.arbitraryCwd = cwd !== root;
     assert.equal(sha256(await readFile(archive)), originalArchive);
     assert.equal(sha256(await readFile(sourceArchive)), originalArchive);
-    report.status = singleInstance ? "partial" : "passed";
+    if (runFailures.length)
+      throw new AggregateError(
+        runFailures,
+        "Installed Windows observations failed; see individual run errors",
+      );
+    report.status = blockers.length ? "blocked" : singleInstance ? "partial" : "passed";
   } catch (error) {
     report.status = "failed";
     report.error = errorRecord(error);
@@ -1549,6 +1693,12 @@ export async function main() {
     console.log(`Real installed product receipt: ${output}`);
   }
   if (failure) throw failure;
+  if (blockers.length)
+    throw new Error(
+      blockers
+        .map((blocker) => `${blocker.status}: ${blocker.id}: ${blocker.checks.join(", ")}`)
+        .join("; "),
+    );
   try {
     if (singleInstance) {
       assertSingleInstanceReceipt(report);

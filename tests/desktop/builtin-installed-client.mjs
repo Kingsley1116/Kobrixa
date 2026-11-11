@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { setTimeout as pause } from "node:timers/promises";
+import path from "node:path";
 
 const execute = promisify(execFile);
 export async function until(read, label, milliseconds = 15_000, diagnostics) {
@@ -151,8 +152,49 @@ export async function connect(url) {
   };
 }
 
-export async function processTable() {
-  const { stdout } = await execute("/bin/ps", ["-axo", "pid=,ppid=,pgid="], {
+export function windowsSystemTool(name, env = process.env) {
+  const root = Object.entries(env).find(([key]) => key.toUpperCase() === "SYSTEMROOT")?.[1];
+  assert.ok(root && path.win32.isAbsolute(root), "Windows SystemRoot must be absolute");
+  return path.win32.join(root, "System32", name);
+}
+
+export function parseWindowsProcessTable(stdout) {
+  const parsed = JSON.parse(stdout.replace(/^\uFEFF/, "").trim());
+  const rows = Array.isArray(parsed) ? parsed : [parsed];
+  return rows.map((row) => {
+    assert.ok(
+      row && [row.pid, row.ppid].every((id) => Number.isSafeInteger(id) && id >= 0),
+      "Malformed Windows process evidence",
+    );
+    assert.ok(row.created === null || (typeof row.created === "string" && row.created.length > 0));
+    return row;
+  });
+}
+
+export async function processTable({
+  platform = process.platform,
+  run = execute,
+  env = process.env,
+} = {}) {
+  if (platform === "win32") {
+    const { stdout } = await run(
+      windowsSystemTool("WindowsPowerShell/v1.0/powershell.exe", env),
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); " +
+          "@(Get-CimInstance Win32_Process | ForEach-Object { [pscustomobject]@{ " +
+          "pid=[int]$_.ProcessId; ppid=[int]$_.ParentProcessId; " +
+          "created=$(if ($_.CreationDate) { $_.CreationDate.ToUniversalTime().ToString('o') } else { $null }); " +
+          "executable=$_.ExecutablePath; commandLine=$_.CommandLine } }) | ConvertTo-Json -Compress",
+      ],
+      { timeout: 5000, maxBuffer: 4 * 1024 * 1024, windowsHide: true },
+    );
+    return parseWindowsProcessTable(stdout);
+  }
+  const { stdout } = await run("/bin/ps", ["-axo", "pid=,ppid=,pgid="], {
     timeout: 5000,
     maxBuffer: 4 * 1024 * 1024,
   });
@@ -167,17 +209,37 @@ export async function processTable() {
     });
 }
 export function descendants(table, parent, known = new Set()) {
-  known.add(parent);
+  const remember = (row) => {
+    if (Object.hasOwn(row, "created"))
+      assert.ok(row.created, `Missing creation identity for observed PID ${row.pid}`);
+    if (known instanceof Map) known.set(row.pid, row.created);
+    else known.add(row.pid);
+  };
+  const matches = (row) =>
+    known.has(row.pid) && (!(known instanceof Map) || known.get(row.pid) === row.created);
+  const windows = table.some((row) => Object.hasOwn(row, "created"));
+  const byPid = new Map(table.map((row) => [row.pid, row]));
+  if (!known.has(parent)) {
+    const row = byPid.get(parent);
+    if (row) remember(row);
+    else if (!(known instanceof Map)) known.add(parent);
+    else if (!windows && table.length) known.set(parent, undefined);
+  }
   let changed = true;
   while (changed) {
     changed = false;
     for (const row of table)
-      if ((known.has(row.ppid) || row.pgid === parent) && !known.has(row.pid)) {
-        known.add(row.pid);
+      if (
+        ((known.has(row.ppid) &&
+          (!windows || !byPid.has(row.ppid) || matches(byPid.get(row.ppid)))) ||
+          row.pgid === parent) &&
+        !known.has(row.pid)
+      ) {
+        remember(row);
         changed = true;
       }
   }
-  return table.filter((row) => known.has(row.pid));
+  return table.filter(matches);
 }
 
 export async function command(file, args, options = {}) {
@@ -191,6 +253,43 @@ export function signalProcess(pid, signal, errors, kill = process.kill) {
     kill(pid, signal);
   } catch (error) {
     if (error.code !== "ESRCH") errors.push(error);
+  }
+}
+
+export async function terminateProcess(
+  pid,
+  signal,
+  errors,
+  {
+    platform = process.platform,
+    run = command,
+    env = process.env,
+    table = () => processTable({ platform, env }),
+    known,
+    kill = process.kill,
+  } = {},
+) {
+  if (platform !== "win32") return signalProcess(pid, signal, errors, kill);
+  const target = Math.abs(pid);
+  assert.ok(Number.isSafeInteger(target) && target > 0, "Invalid Windows termination PID");
+  try {
+    const before = (await table()).find((row) => row.pid === target);
+    if (!before) return;
+    if (known?.has(target))
+      assert.equal(before.created, known.get(target), "Refusing to terminate a reused PID");
+    try {
+      // Windows has no POSIX process groups or graceful SIGTERM. Always record
+      // this as forced cleanup, and separately observe the complete tree exiting.
+      await run(windowsSystemTool("taskkill.exe", env), ["/PID", String(target), "/T", "/F"], {
+        windowsHide: true,
+      });
+    } catch (error) {
+      // Localized taskkill stderr/exit codes cannot prove a process vanished.
+      if ((await table()).some((row) => row.pid === target && row.created === before.created))
+        throw error;
+    }
+  } catch (error) {
+    errors.push(error);
   }
 }
 

@@ -14,6 +14,12 @@ import {
   withPersistenceWorkerUnpack,
 } from "./desktop-packaging.mjs";
 import { macIdentity, required, signingModes, windowsVersion } from "../../apps/desktop/signing.ts";
+import {
+  copyDesktopBundle,
+  macBundle,
+  signMacTestBundle,
+  verifyMacBundle,
+} from "./macos-test-bundle.mjs";
 
 const desktop = path.join(repositoryRoot, "apps/desktop");
 const version = await readVersion();
@@ -207,9 +213,15 @@ await packageElectron({
   },
 });
 if (!nativeOutput) throw new Error("Desktop packaging did not report its output directory");
+if (platform === "darwin") {
+  const app = await macBundle(nativeOutput);
+  if (!signMac) await signMacTestBundle(app, path.join(desktop, "resources/entitlements.plist"));
+  else await verifyMacBundle(app);
+}
 const destination = path.join(output, `Kobrixa-${platform}-${arch}`);
 await rm(destination, { recursive: true, force: true });
-await cp(nativeOutput, destination, { recursive: true, verbatimSymlinks: true });
+await copyDesktopBundle(nativeOutput, destination, platform);
+if (platform === "darwin") await verifyMacBundle(await macBundle(destination));
 
 if (platform === "win32") {
   const { editWindowsResources } = await import("app-builder-lib/out/util/resEdit.js");
