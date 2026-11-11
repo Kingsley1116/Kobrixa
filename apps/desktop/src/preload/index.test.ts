@@ -348,3 +348,36 @@ it("recovery preload rejects namespace or token fields before IPC", async () => 
   ).rejects.toThrow();
   expect(electron.invoke).not.toHaveBeenCalled();
 });
+
+it("E7 exposes exactly the retained core device API and no feature writer", () => {
+  expect(Object.keys(api.device).sort()).toEqual([
+    "delete",
+    "deploy",
+    "disconnect",
+    "executeFiles",
+    "files",
+    "onEvent",
+    "onMonitor",
+    "prepareFiles",
+    "renewFiles",
+    "run",
+    "stop",
+    "stopFiles",
+    "upload",
+    "watchMonitor",
+  ]);
+});
+it("E7 preserves the sole core battery stream and removes its exact listener", async () => {
+  const snapshot = { sessionId: "session", sequence: 2, status: "paused" as const };
+  electron.invoke.mockResolvedValueOnce(snapshot);
+  expect(await api.device.watchMonitor("session", true)).toBe(snapshot);
+  expect(electron.invoke).toHaveBeenCalledExactlyOnceWith("device:watch-monitor", "session", true);
+  const receive = vi.fn();
+  const off = api.device.onMonitor(receive);
+  const [channel, handler] = electron.on.mock.calls[0]!;
+  expect(channel).toBe("device:monitor-update");
+  handler({}, snapshot);
+  expect(receive).toHaveBeenCalledExactlyOnceWith(snapshot);
+  off();
+  expect(electron.removeListener).toHaveBeenCalledExactlyOnceWith(channel, handler);
+});

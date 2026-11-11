@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DeviceInputModes, DeviceMonitorSnapshot } from "@kobrixa/device";
 import type { MonitorResult } from "../../shared/api.js";
-import { CoreBatteryMonitor, MonitorController } from "./monitor-controller.js";
+import { CoreBatteryMonitor } from "./monitor-controller.js";
+import { MonitorController } from "./legacy-monitor.fixture.js";
 import type { MonitorUpdate } from "../../shared/sensor-lab.js";
 
 const samplers: Array<{ dispose(): Promise<void> }> = [];

@@ -3,8 +3,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BuildEvent, DeviceEvent, KobrixaApi, MonitorResult } from "../../shared/api.js";
 import type { DeviceInputModes, DeviceMonitorSnapshot } from "@kobrixa/device";
 import type { MonitorUpdate } from "../../shared/sensor-lab.js";
-import { ExecutionController } from "../../renderer/execution/execution.js";
-import { MonitorController } from "../../renderer/device/monitor-controller.js";
+import {
+  ExecutionController,
+  type LegacyExecutionApi,
+} from "../../renderer/execution/legacy-execution.fixture.js";
+import { MonitorController } from "../../renderer/device/legacy-monitor.fixture.js";
+import { ExecutionController as CoreExecutionController } from "../../renderer/execution/execution.js";
 import { BatteryStatus } from "../../renderer/device/battery-status.js";
 import { SettingsStore } from "../../renderer/settings/settings.js";
 import {
@@ -38,9 +42,11 @@ afterEach(async () => {
 });
 const flush = () => vi.advanceTimersByTimeAsync(0);
 
-// Only transport boundaries are faked. Both controllers and all stores are real
-// checkout code. Unused KobrixaApi members are absent, so accidental calls fail.
-function executionHarness() {
+// Only transport boundaries are faked. Retired controllers are frozen test-only
+// legacy oracles; stores remain real. Unused API members are absent, so accidental calls fail.
+function executionHarness<T extends { attach(): () => void; setWorkspace(id: string): void }>(
+  createController: (api: LegacyExecutionApi) => T,
+) {
   let buildListener!: (event: BuildEvent) => void;
   let deviceListener!: (event: DeviceEvent) => void;
   const calls: string[] = [];
@@ -77,7 +83,7 @@ function executionHarness() {
     }),
     cancel: vi.fn(async () => {}),
   };
-  const controller = new ExecutionController({ device, build } as unknown as KobrixaApi);
+  const controller = createController({ device, build } as unknown as LegacyExecutionApi);
   cleanups.push(controller.attach());
   controller.setWorkspace("w1");
   const request = {
@@ -150,7 +156,7 @@ function monitorHarness() {
 
 describe("E0 legacy execution oracle (P02–P06/P10/P12)", () => {
   it("pending-run: only explicit Run creates save/build/deploy/run intent", async () => {
-    const h = executionHarness();
+    const h = executionHarness((api) => new ExecutionController(api));
     expect(h.calls).toEqual([]);
     await h.controller.run(h.request);
     expect(h.controller.getSnapshot().phase).toBe("awaitingDevice");
@@ -162,7 +168,7 @@ describe("E0 legacy execution oracle (P02–P06/P10/P12)", () => {
   it.each(["cancel", "authority"] as const)(
     "pending-%s: late connection cannot resume cancelled intent",
     async (reason) => {
-      const h = executionHarness();
+      const h = executionHarness((api) => new ExecutionController(api));
       const reply = deferred<string>();
       h.device.connect.mockReturnValueOnce(reply.promise);
       await h.controller.run(h.request);
@@ -178,7 +184,7 @@ describe("E0 legacy execution oracle (P02–P06/P10/P12)", () => {
     },
   );
   it("wifi-error-retry: a failed connect consumes pending Run, retry only connects", async () => {
-    const h = executionHarness();
+    const h = executionHarness((api) => new ExecutionController(api));
     await h.controller.run(h.request);
     h.device.connectWifi.mockRejectedValueOnce(new Error("Wi-Fi timed out"));
     await h.controller.connect("192.168.0.42");
@@ -192,14 +198,14 @@ describe("E0 legacy execution oracle (P02–P06/P10/P12)", () => {
     expect(h.calls).toEqual([]);
   });
   it("reuse-no-replay: connecting an already connected controller does no work", async () => {
-    const h = executionHarness();
+    const h = executionHarness((api) => new ExecutionController(api));
     await h.controller.connect(usb);
     await h.controller.connect(usb);
     expect(h.device.connect).toHaveBeenCalledTimes(1);
     expect(h.calls).toEqual([]);
   });
   it("recovery-cancel-late: restored events during/after cancellation cannot resurrect a session", async () => {
-    const h = executionHarness();
+    const h = executionHarness((api) => new ExecutionController(api));
     await h.controller.connect(usb);
     h.recovery("waiting");
     h.recovery("connecting");
@@ -228,7 +234,7 @@ describe("E0 legacy execution oracle (P02–P06/P10/P12)", () => {
     expect(h.calls).toEqual([]);
   });
   it("recovery-cancel-failure: replacement connect stays blocked until cleanup retry succeeds", async () => {
-    const h = executionHarness();
+    const h = executionHarness((api) => new ExecutionController(api));
     await h.controller.connect(usb);
     h.recovery("waiting");
     h.device.disconnect.mockRejectedValueOnce(new Error("cleanup failed"));
@@ -246,7 +252,7 @@ describe("E0 legacy execution oracle (P02–P06/P10/P12)", () => {
     ["exhausted", "retry-exhausted"],
     ["unavailable", "manual-required"],
   ] as const)("recovery-notices: %s", async (state, notice) => {
-    const h = executionHarness();
+    const h = executionHarness((api) => new ExecutionController(api));
     await h.controller.connect(usb);
     h.recovery("waiting");
     h.recovery(state);
@@ -264,7 +270,7 @@ describe("E0 legacy execution oracle (P02–P06/P10/P12)", () => {
   ] as const)(
     "recovery-deployment: %s/%s only preserves verified matching build",
     async (deployment, buildId, valid) => {
-      const h = executionHarness();
+      const h = executionHarness((api) => new ExecutionController(api));
       await h.controller.connect(usb);
       await h.controller.run(h.request);
       h.recovery("waiting");
@@ -278,7 +284,7 @@ describe("E0 legacy execution oracle (P02–P06/P10/P12)", () => {
     },
   );
   it("disconnect-failure: retains session/error and permits explicit retry", async () => {
-    const h = executionHarness();
+    const h = executionHarness((api) => new ExecutionController(api));
     await h.controller.connect(usb);
     h.device.disconnect.mockRejectedValueOnce(new Error("stop unconfirmed"));
     await h.controller.disconnect();
@@ -290,7 +296,7 @@ describe("E0 legacy execution oracle (P02–P06/P10/P12)", () => {
     expect(h.controller.getSnapshot().session).toBeUndefined();
   });
   it("read-only-stop: authority refuses mode writes but stop remains available", async () => {
-    const h = executionHarness();
+    const h = executionHarness((api) => new ExecutionController(api));
     await h.controller.connect(usb);
     h.controller.setDeviceControlBlocked(true);
     const write = vi.fn(async () => {});
@@ -304,7 +310,7 @@ describe("E0 legacy execution oracle (P02–P06/P10/P12)", () => {
     expect(h.device.stop).toHaveBeenCalledWith("s1");
   });
   it("file-reservation: blocks modes/run; only matching changed paths invalidate deployment", async () => {
-    const h = executionHarness();
+    const h = executionHarness((api) => new ExecutionController(api));
     await h.controller.connect(usb);
     await h.controller.run(h.request);
     const reply = deferred<void>();
@@ -323,6 +329,86 @@ describe("E0 legacy execution oracle (P02–P06/P10/P12)", () => {
     expect(h.controller.getSnapshot().deployed).toBeUndefined();
     expect(h.controller.getSnapshot().fileBusy).toBe(false);
   });
+});
+
+// Current core path consumes the same recorded legacy expectations. Connection
+// arrives through the public catalog; retired bridge methods are absent.
+describe("retained core execution against the E0 recorded oracle", () => {
+  function coreHarness() {
+    const h = executionHarness(
+      (api) =>
+        new CoreExecutionController({
+          ...api,
+          device: {
+            onEvent: api.device.onEvent,
+            disconnect: api.device.disconnect,
+            deploy: api.device.deploy,
+            run: api.device.run,
+            stop: api.device.stop,
+          },
+        } as unknown as KobrixaApi),
+    );
+    let revision = 0;
+    const connect = () =>
+      h.emit({
+        type: "session-catalog",
+        hostEpoch: "oracle-host",
+        revision: ++revision,
+        cause: "connected",
+        origin: "plugin",
+        session: {
+          sessionId: "s1",
+          providerId: "kobrixa.device-ev3",
+          providerGeneration: 1,
+          revision: 1,
+          name: usb.name,
+          transport: usb.transport,
+          capabilities: ["connection.v1"],
+          state: "connected",
+          foreground: "none",
+          recording: false,
+          sourceRevision: 1,
+        },
+      });
+    return { ...h, connect };
+  }
+  it("catalog adoption retains save/build/deploy/run ordering and invalidates only matching files", async () => {
+    const h = coreHarness();
+    await h.controller.run(h.request);
+    expect(h.controller.getSnapshot().phase).toBe("awaitingDevice");
+    expect(h.calls).toEqual([]);
+    h.connect();
+    await vi.waitFor(() => expect(h.controller.locked).toBe(false));
+    expect(h.calls).toEqual(executionOracle.runCalls);
+    expect(h.controller.getSnapshot().deployed).toMatchObject(executionOracle.deployed);
+    h.connect();
+    await Promise.resolve();
+    expect(h.calls).toEqual(executionOracle.runCalls);
+    h.emit({ type: "files-changed", sessionId: "old", requestId: "r", paths: ["/robot"] });
+    expect(h.controller.getSnapshot().deployed).toMatchObject(executionOracle.deployed);
+    h.emit({ type: "files-changed", sessionId: "s1", requestId: "r", paths: ["/robot/demo.rbf"] });
+    expect(h.controller.getSnapshot().deployed).toBeUndefined();
+    expect(h.device.connect).not.toHaveBeenCalled();
+    expect(h.device.connectWifi).not.toHaveBeenCalled();
+  });
+  it.each(["cancel", "authority"] as const)(
+    "%s fences a queued catalog Run and retains trusted Stop",
+    async (reason) => {
+      const h = coreHarness();
+      await h.controller.run(h.request);
+      h.connect();
+      if (reason === "cancel") h.controller.cancelWaiting();
+      else h.controller.setDeviceControlBlocked(true);
+      await Promise.resolve();
+      expect(h.controller.getSnapshot()).toMatchObject({ phase: "idle", session: { id: "s1" } });
+      expect(h.calls).toEqual(executionOracle.cancelledCalls);
+      expect(h.build.start).not.toHaveBeenCalled();
+      expect(h.controller.getSnapshot().logs.map((log) => log.message)).toContain("cancelled");
+      await h.controller.stop();
+      expect(h.device.stop).toHaveBeenCalledWith("s1");
+      expect(h.calls).toEqual(executionOracle.cancelledCalls);
+    },
+  );
 });
 
 describe("E0 monitor oracle (P07–P10)", () => {

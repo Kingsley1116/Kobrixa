@@ -126,19 +126,9 @@ function payloadBytes(value) {
 let failNextWrite = false;
 let openCount = 0;
 let win;
-const monitor = createMonitorFixture((event) => {
-  win.webContents.send("device:event", event);
-  if (event.type === "usb-recovery" && event.state === "waiting") {
-    void sampler.disconnect(event.previousSessionId);
-  }
-});
-const sampler = new MonitorService(
-  {
-    monitor: (id) => monitor.handle("deviceMonitor", [id]),
-    inputModes: (...args) => monitor.handle("deviceInputModes", args),
-    setInputMode: (...args) => monitor.handle("deviceSetInputMode", args),
-  },
-  (update) => win?.webContents.send("device:monitor-update", update),
+const monitor = createMonitorFixture();
+const sampler = new MonitorService(monitor, (update) =>
+  win?.webContents.send("device:monitor-update", update),
 );
 const workspace = (id = firstId) => {
   const project = fixtures.get(id);
@@ -176,13 +166,6 @@ let updateBusy = false;
 const sendUpdate = (patch) => {
   updateState = { ...updateState, ...patch, revision: updateState.revision + 1 };
   win.webContents.send("updates:state", updateState);
-};
-let devicePreferences = {
-  usbAutoReconnect: true,
-  usbRetryInterval: "backoff",
-  usbRetryLimit: "unlimited",
-  wifiConnectTimeout: 5000,
-  wifiHandshakeTimeout: 3000,
 };
 function syncLanguageFiles(fixture) {
   const diskContents = (fixture.diskContents ??= new Map());
@@ -255,8 +238,6 @@ ipcMain.handle("smoke", async (_e, name, args) => {
   if (name === "diagnosticCancelQuickFix") return diagnostics.cancelQuickFix(args);
   if (name === "documentationOpen") return diagnostics.openDocumentation(args[0]);
   if (name === "deviceWatchMonitor") return sampler.watch(...args);
-  if (name === "deviceInputModes") return sampler.inputModes(...args);
-  if (name === "deviceSetInputMode") return sampler.setInputMode(...args);
   if (name === "deviceDisconnect") {
     await sampler.disconnect(args[0]);
   }
@@ -344,11 +325,6 @@ ipcMain.handle("smoke", async (_e, name, args) => {
     return;
   }
 
-  if (name === "devicePreferences") return devicePreferences;
-  if (name === "setDevicePreferences") {
-    devicePreferences = { ...devicePreferences, ...args[0] };
-    return devicePreferences;
-  }
   if (name === "updateState") return updateState;
   if (name === "updatePreferences") {
     sendUpdate({ preferences: args[0] });

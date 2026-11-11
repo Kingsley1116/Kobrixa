@@ -6,13 +6,7 @@ import { AuthorityContexts } from "../device-broker/authority-context.js";
 
 export const DEVICE_CONTROL_DENIED =
   "Device control is held by another collaborator or is unavailable.";
-const writes = new Set([
-  "device:upload",
-  "device:deploy",
-  "device:run",
-  "device:delete",
-  "device:set-input-mode",
-]);
+const writes = new Set(["device:upload", "device:deploy", "device:run", "device:delete"]);
 const fileWrites = new Set(["upload", "mkdir", "rename", "delete"]);
 type Sender = Pick<WebContents, "id" | "once">;
 const actionOf = (value: unknown): unknown =>

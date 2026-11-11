@@ -254,30 +254,22 @@ contextBridge.exposeInMainWorld("kobrixa", {
     diagnostics: call("languageDiagnostics"),
   },
   device: {
-    getPreferences: call("devicePreferences"),
-    setPreferences: call("setDevicePreferences"),
     onEvent: (listener) => {
       const handler = (_event, value) => listener(value);
       ipcRenderer.on("device:event", handler);
       return () => ipcRenderer.removeListener("device:event", handler);
     },
-    monitor: call("deviceMonitor"),
     watchMonitor: call("deviceWatchMonitor"),
     onMonitor: (listener) => {
       const handler = (_event, value) => listener(value);
       ipcRenderer.on("device:monitor-update", handler);
       return () => ipcRenderer.removeListener("device:monitor-update", handler);
     },
-    inputModes: call("deviceInputModes"),
-    setInputMode: call("deviceSetInputMode"),
-    discover: call("deviceDiscover"),
     files: call("deviceFiles"),
     prepareFiles: call("device"),
     executeFiles: call("device"),
     renewFiles: call("device"),
     stopFiles: call("device"),
-    connect: call("deviceConnect"),
-    connectWifi: call("deviceConnectWifi"),
     disconnect: call("deviceDisconnect"),
     upload: call("device"),
     deploy: call("device"),

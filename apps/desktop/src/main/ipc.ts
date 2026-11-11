@@ -1,6 +1,5 @@
 import { UpdateInstallation } from "./updates/installation.js";
 import { filePreferencesPatchSchema } from "./workspace/preferences.js";
-import { devicePreferencesPatchSchema } from "./device/preferences.js";
 import type { UpdateService, UpdateOperationGate } from "./updates/service.js";
 import { setKeyboardContext } from "./window/keyboard.js";
 import { validStroke } from "../shared/keyboard.js";
@@ -14,7 +13,6 @@ import {
   languageSyncRequestSchema,
   completionSyncRequestSchema,
 } from "./language/quick-fix-request.js";
-import { isIP } from "node:net";
 import { z } from "zod";
 import type { BuildService } from "./workspace/build.js";
 import type { DeviceService } from "./device/device.js";
@@ -27,9 +25,6 @@ import { registerCollabMirrorIpc } from "./collab/mirror.js";
 import { DeviceControlGate, registerDeviceControlIpc } from "./collab/device-control.js";
 
 const id = z.string().uuid();
-const inputPort = z.number().int().min(0).max(3);
-const inputType = z.number().int().min(1).max(127);
-const inputMode = z.number().int().min(0).max(7);
 const file = z
   .string()
   .min(1)
@@ -49,27 +44,6 @@ const fileRevision = z
   .string()
   .regex(/^[0-9a-f]{64}$/)
   .nullable();
-const descriptor = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
-  transport: z.enum(["usb", "wifi", "mock"]),
-  address: z.string().optional(),
-  serialNumber: z.string().optional(),
-  metadata: z.record(z.string(), z.string()).optional(),
-});
-
-function parseDescriptor(value: unknown) {
-  const parsed = descriptor.parse(value);
-  return {
-    id: parsed.id,
-    name: parsed.name,
-    transport: parsed.transport,
-    ...(parsed.address ? { address: parsed.address } : {}),
-    ...(parsed.serialNumber ? { serialNumber: parsed.serialNumber } : {}),
-    ...(parsed.metadata ? { metadata: parsed.metadata } : {}),
-  };
-}
-
 /** The trusted-sender `ipcMain.handle` wrapper, for feature modules that register their own channels. */
 export type IpcHandle = <T extends unknown[], R>(
   channel: string,
@@ -344,25 +318,6 @@ export function registerIpc(
   );
   handle("language:cancel", () => language.cancel());
 
-  handle("device:monitor", (_event, sessionId: unknown) => devices.monitor(id.parse(sessionId)));
-  handle("device:input-modes", (_event, sessionId: unknown, port: unknown, type: unknown) =>
-    (sensorTools?.monitor ?? devices).inputModes(
-      id.parse(sessionId),
-      inputPort.parse(port),
-      inputType.parse(type),
-    ),
-  );
-  handle(
-    "device:set-input-mode",
-    (_event, sessionId: unknown, port: unknown, type: unknown, mode: unknown) =>
-      (sensorTools?.monitor ?? devices).setInputMode(
-        id.parse(sessionId),
-        inputPort.parse(port),
-        inputType.parse(type),
-        inputMode.parse(mode),
-      ),
-  );
-
   handle("device:files", (_event, request: unknown) =>
     devices.files(
       z
@@ -408,20 +363,6 @@ export function registerIpc(
   );
   handle("device:files-stop", (event, ref: unknown) =>
     devices.stopFiles(batchRef.parse(ref), event.sender.id),
-  );
-  handle("device:preferences", () => devices.getPreferences());
-  handle("device:set-preferences", (_event, patch: unknown) =>
-    devices.setPreferences(devicePreferencesPatchSchema.parse(patch)),
-  );
-  handle("device:discover", () => devices.discover());
-  handle("device:connect", (_event, target: unknown) => devices.connect(parseDescriptor(target)));
-  handle("device:connect-wifi", (_event, address: unknown) =>
-    devices.connectWifi(
-      z
-        .string()
-        .refine((value) => isIP(value) !== 0, "Expected an IPv4 or IPv6 address.")
-        .parse(address),
-    ),
   );
   handle("device:disconnect", (event, sessionId: unknown) => {
     const session = id.parse(sessionId);

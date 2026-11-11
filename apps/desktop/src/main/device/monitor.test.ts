@@ -69,12 +69,23 @@ function fixture() {
     device: legacy,
     files: new LegacyFiles({ begin }, () => principal),
   });
-  return { service, execute, begin, operation, request, stop, disconnect, artifacts, principal };
+  return {
+    legacy,
+    service,
+    execute,
+    begin,
+    operation,
+    request,
+    stop,
+    disconnect,
+    artifacts,
+    principal,
+  };
 }
 it("F07 one-shot monitor enters devices/session/read, never a raw transport", async () => {
   const f = fixture();
   f.request.mockResolvedValue({ ok: false, error: { message: "foreground" } } as never);
-  expect((await f.service.monitor("s")).status).toBe("error");
+  expect((await f.legacy.monitor("s")).status).toBe("error");
   expect(f.request).toHaveBeenCalledWith(
     f.principal,
     "devices/session",

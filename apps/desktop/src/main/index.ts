@@ -230,6 +230,8 @@ const primary = startPrimary(
     // Only the admitted migration mapper may read/validate the original file;
     // this store supplies the writer barrier, never authoritative preferences.
     const preferences = new DevicePreferencesStore();
+    // No legacy writer may reopen while the optional feature is disabled or importing.
+    preferences.freezeAdmission();
     const journal = createJournal(createJournalFilesystem(app.getPath("userData")), profile);
     const currentCorePrincipal = () => {
       if (!mainWindow || mainWindow.isDestroyed()) throw new Error("No current workbench.");
@@ -472,8 +474,8 @@ const primary = startPrimary(
     const devices = new DeviceService(builds, renderer, preferences, undefined, () => {
       const snapshot = deviceSettings.getSnapshot();
       if (snapshot.state !== "ready") throw new Error(snapshot.problem);
-      // Preserve the existing six-field IPC shape; renderer-only preferences stay private
-      // to the contributed settings resource. Core deploy reads this same committed view.
+      // Retained core policy DTO, not a renderer preference bridge. Core deployment
+      // reads the same committed view as the contributed settings resource.
       const {
         skipUnchangedAssets,
         usbAutoReconnect,
@@ -569,7 +571,7 @@ const primary = startPrimary(
     const collab = await createCollabService(app.getPath("userData"), collabServerUrl);
     updates = await createUpdateService(
       renderer,
-      () => operationGate.busy || builds.busy || devices.busy || monitor.busy,
+      () => operationGate.busy || builds.busy || devices.busy,
     );
     const workbench = new WorkbenchLifecycle({
       sessions: async () => {

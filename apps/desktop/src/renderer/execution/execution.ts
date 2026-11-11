@@ -1,7 +1,6 @@
 import type {
   BuildEvent,
   CompileResult,
-  DeviceDescriptor,
   DeviceEvent,
   Diagnostic,
   KobrixaApi,
@@ -61,7 +60,6 @@ export interface ExecutionState {
   operationWorkspaceId?: string | undefined;
   phase: Phase;
   fileBusy?: boolean;
-  monitorBusy?: boolean;
   recovery?:
     | {
         sessionId: string;
@@ -114,7 +112,6 @@ export class ExecutionController {
   private pendingRun: ExecutionRequest | undefined;
   private waitingBuild: WaitingBuild | undefined;
   private controlBlocked = false;
-  private ownConnection = false;
   private catalogEpoch: string | undefined;
   private catalogRevision = -1;
   private attachment = 0;
@@ -154,8 +151,8 @@ export class ExecutionController {
           )
             this.update({ deployed: undefined });
         }
-        // Connection promises own connecting/connected state. Only events for the
-        // current session may invalidate it; old sessions cannot affect a new one.
+        // The broker catalog owns session adoption. Only current-session events
+        // may invalidate it; old sessions cannot affect a new one.
         if (
           event.type === "state" &&
           event.state === "disconnected" &&
@@ -180,8 +177,6 @@ export class ExecutionController {
     if (event.revision <= this.catalogRevision) return;
     this.catalogEpoch = event.hostEpoch;
     this.catalogRevision = event.revision;
-    // The old explicit connect promise remains its sole adopter.
-    if (this.ownConnection) return;
     if (event.cause === "lost") {
       this.cancelWaiting();
       return;
@@ -246,7 +241,7 @@ export class ExecutionController {
   }
   private connectionLost(detail: string, recovering: boolean): void {
     const localBuild = this.working && !this.deviceWork;
-    const interrupted = this.deviceWork || Boolean(this.state.fileBusy || this.state.monitorBusy);
+    const interrupted = this.deviceWork || Boolean(this.state.fileBusy);
     if (!localBuild) this.generation++;
     if (this.deviceWork && this.waitingBuild) {
       this.waitingBuild.reject(new Error(detail));
@@ -318,7 +313,7 @@ export class ExecutionController {
     else this.publish();
   }
   get locked(): boolean {
-    return this.editingLocked || Boolean(this.state.fileBusy || this.state.monitorBusy);
+    return this.editingLocked || Boolean(this.state.fileBusy);
   }
   get editingLocked(): boolean {
     return this.working || Boolean(this.pendingRun || this.disconnectingSession);
@@ -348,18 +343,6 @@ export class ExecutionController {
       throw error;
     } finally {
       this.update({ fileBusy: false });
-    }
-  }
-  /** Mode changes reserve device actions without treating samples as activity. */
-  async withMonitor<T>(work: () => Promise<T>): Promise<T> {
-    if (this.controlBlocked) throw new Error(DEVICE_CONTROL_DENIED);
-    if (this.locked || this.state.recovery)
-      throw new Error("Another EV3 operation is in progress.");
-    this.update({ monitorBusy: true });
-    try {
-      return await work();
-    } finally {
-      this.update({ monitorBusy: false });
     }
   }
   private publish(): void {
@@ -620,46 +603,6 @@ export class ExecutionController {
       request.workspaceId,
       run,
     );
-  }
-  async connect(target: DeviceDescriptor | string): Promise<void> {
-    if (this.working || this.state.session || this.disconnectingSession) return;
-    if (this.state.recovery) await this.disconnect();
-    // Failed cancellation restores recovery; pending cancellation must never
-    // authorize a replacement connection or clear its cleanup error.
-    if (this.working || this.state.session || this.state.recovery || this.disconnectingSession)
-      return;
-    this.update({ connectionNotice: undefined });
-    this.ownConnection = true;
-    try {
-      await this.perform(async (generation) => {
-        this.phase("connecting");
-        const id =
-          typeof target === "string"
-            ? await this.api.device.connectWifi(target)
-            : await this.api.device.connect(target);
-        if (generation !== this.generation) {
-          void this.api.device.disconnect(id).catch(() => {});
-          throw new Cancelled();
-        }
-        this.update({
-          session: {
-            id,
-            name: typeof target === "string" ? `EV3 · ${target}` : target.name,
-            transport: typeof target === "string" ? "wifi" : target.transport,
-          },
-          deployed: undefined,
-        });
-        this.log("connected");
-      }, this.pendingRun?.workspaceId ?? this.workspaceId);
-    } finally {
-      this.ownConnection = false;
-    }
-    const pending = this.pendingRun;
-    // Connection failures clear the intent: retries never run a robot unexpectedly.
-    this.pendingRun = undefined;
-    this.operationWorkspaceId = undefined;
-    if (pending && this.state.session) await this.buildAndMaybeRun(pending, true);
-    else this.publish();
   }
   async disconnect(): Promise<void> {
     if (this.disconnectingSession) return;

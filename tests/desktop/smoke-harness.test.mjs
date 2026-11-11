@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { buildSync } from "esbuild";
+import { createMonitorFixture } from "./monitor-smoke.mjs";
 import { fileURLToPath } from "node:url";
 import {
   basicPlusSmokeCatalog,
@@ -295,6 +297,7 @@ test("smoke preload contains the real preload's complete API key tree", async ()
     const real = loadPreload(compiled, platform).api;
     const smoke = loadPreload(preload, platform).api;
     assertApiKeys(smoke, real);
+    assert.deepEqual(Object.keys(smoke.device).sort(), Object.keys(real.device).sort());
     assert.equal(Object.hasOwn(smoke, "windowChrome"), Object.hasOwn(real, "windowChrome"));
   }
   const real = loadPreload(compiled).api;
@@ -350,4 +353,93 @@ test("smoke preload forwards the frozen static-language IPC and disposes event l
   ipcRenderer.emit("plugins:event", {}, event);
   assert.deepEqual(received, [event]);
   assert.equal(ipcRenderer.listenerCount("plugins:event"), 0);
+});
+
+test("smoke battery fixture drives the retained MonitorService watch port and releases demand", async () => {
+  const source = buildSync({
+    entryPoints: ["apps/desktop/src/main/device/monitor-service.ts"],
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+    packages: "external",
+    write: false,
+  }).outputFiles[0].text;
+  const module = { exports: {} };
+  runInNewContext(source, {
+    module,
+    exports: module.exports,
+    require: createRequire(import.meta.url),
+    TextEncoder,
+    TextDecoder,
+  });
+  const { MonitorService } = module.exports;
+  const fixture = createMonitorFixture();
+  const updates = [];
+  const service = new MonitorService(fixture, (update) => updates.push(update));
+  try {
+    await service.watch("core-session", true);
+    await service.watch("core-session", true);
+    assert.deepEqual(fixture.stats(), { calls: 1, active: 1, releases: 0 });
+    assert.equal(updates.length, 1);
+    assert.deepEqual(structuredClone(updates[0].snapshot.battery), { percent: 76, voltage: 7.42 });
+    await service.disconnect("core-session");
+    assert.deepEqual(fixture.stats(), { calls: 1, active: 0, releases: 1 });
+    await service.watch("replacement", true);
+    await service.pause();
+    assert.deepEqual(fixture.stats(), { calls: 2, active: 0, releases: 2 });
+    for (const name of [
+      "deviceMonitor",
+      "deviceInputModes",
+      "deviceSetInputMode",
+      "deviceDiscover",
+      "deviceConnect",
+      "deviceConnectWifi",
+    ])
+      assert.equal(fixture.handles(name), false);
+    await assert.rejects(fixture.handle("deviceConnect", []), /Unknown core device fixture call/);
+  } finally {
+    await service.dispose();
+  }
+  assert.deepEqual(fixture.stats(), { calls: 2, active: 0, releases: 2 });
+});
+
+test("retired device oracles are unreachable from desktop and delivered builtin production entries", () => {
+  // Include workers spawned by URL as well as Forge's main/preload/renderer and
+  // delivered builtin process entries. In-memory only: no shared build outputs.
+  const entries = [
+    "apps/desktop/src/main/index.ts",
+    "apps/desktop/src/preload/index.ts",
+    "apps/desktop/src/renderer/index.tsx",
+    "apps/desktop/src/main/workspace/build-worker.ts",
+    "apps/desktop/src/main/language/language-worker.ts",
+    "apps/desktop/src/main/plugins/persistence/worker.ts",
+    "apps/desktop/src/simulation/worker.ts",
+    "plugins/motor-test/src/main.ts",
+    "plugins/sensor-lab/src/main.ts",
+    "plugins/device-ev3/src/main.ts",
+  ];
+  const result = buildSync({
+    entryPoints: entries,
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    packages: "external",
+    loader: { ".css": "empty", ".svg": "dataurl" },
+    write: false,
+    outdir: "/tmp/w07c-in-memory-only",
+    metafile: true,
+    logLevel: "silent",
+  });
+  const inputs = Object.keys(result.metafile.inputs);
+  for (const entry of entries)
+    assert.ok(inputs.includes(entry), `Missing production entry ${entry}`);
+  assert.ok(inputs.includes("apps/desktop/src/renderer/device/monitor-controller.ts"));
+  for (const input of inputs)
+    assert.doesNotMatch(
+      input,
+      /(?:legacy-(?:execution|monitor)\.fixture|monitor-panel|parity-fixtures|\.test\.)/,
+    );
+  const output = result.outputFiles.map((file) => file.text).join("\n");
+  assert.match(output, /CoreBatteryMonitor/);
+  assert.doesNotMatch(output, /class MonitorController|class MonitorPanel|device:set-input-mode/);
 });

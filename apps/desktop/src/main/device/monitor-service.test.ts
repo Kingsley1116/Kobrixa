@@ -4,10 +4,7 @@ import type { LegacyDevice } from "../device-broker/legacy-device.js";
 it("F07 separate owners share broker demand and hiding one owner preserves the other", async () => {
   const remove = vi.fn(async () => {}),
     watch = vi.fn(async () => remove);
-  const service = new MonitorService(
-    { watch, inputModes: vi.fn(), setInputMode: vi.fn() } as unknown as LegacyDevice,
-    () => {},
-  );
+  const service = new MonitorService({ watch }, () => {});
   await service.watch("s", true, 1);
   await service.watch("s", true, 2);
   expect(watch).toHaveBeenCalledTimes(2);
@@ -53,4 +50,30 @@ it("T5fix a closed feed pauses Monitor and allows the same owner to watch again"
   await service.watch("s", true, 1);
   expect(watch).toHaveBeenCalledTimes(2);
   await service.dispose();
+});
+
+it("E7 repeated core battery demand uses one feed and exposes no feature setter or observer", async () => {
+  const remove = vi.fn(async () => {});
+  const watch = vi.fn(async () => remove);
+  const service = new MonitorService({ watch }, () => {});
+  await service.watch("session", true);
+  await service.watch("session", true);
+  expect(watch).toHaveBeenCalledExactlyOnceWith(
+    "session",
+    500,
+    expect.any(Function),
+    expect.any(Function),
+  );
+  for (const method of ["inputModes", "setInputMode", "subscribe", "recordingSession", "busy"])
+    expect(service).not.toHaveProperty(method);
+  await service.pause();
+  expect(remove).toHaveBeenCalledOnce();
+  await service.watch("session", true);
+  expect(watch).toHaveBeenCalledTimes(2);
+  await service.disconnect("session");
+  expect(remove).toHaveBeenCalledTimes(2);
+  expect(service.latest("session")).toBeUndefined();
+  await service.dispose();
+  expect(remove).toHaveBeenCalledTimes(2);
+  await expect(service.watch("session", true)).rejects.toThrow("closed");
 });

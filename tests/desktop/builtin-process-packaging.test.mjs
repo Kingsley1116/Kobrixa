@@ -106,7 +106,7 @@ function assertStartupObservation(run) {
   assert.equal(run.workerInspector.waitForDebuggerOnStart, false);
   const targets = run.workerInspector.targets;
   assert.ok(
-    targets.some((row) => /\/persistence-worker\.cjs$/.test(row.workerInfo.url)),
+    targets.some((row) => /[\\/]persistence-worker\.cjs$/.test(row.workerInfo.url)),
     "Persistence worker inspector target must be observed",
   );
   for (const row of targets) {
@@ -117,7 +117,7 @@ function assertStartupObservation(run) {
     assert.ok(Number.isSafeInteger(row.detachedAt) && row.detachedAt >= row.releasedAt);
   }
   const persistence = run.workerTimeline.find(
-    (row) => row.event === "construct" && /\/persistence-worker\.cjs$/.test(row.arguments[0]),
+    (row) => row.event === "construct" && /[\\/]persistence-worker\.cjs$/.test(row.arguments[0]),
   );
   assert.ok(persistence, "Original persistence Worker constructor must be observed");
   const ready = run.workerTimeline.find(
@@ -189,7 +189,8 @@ export function assertProductReceipt(report) {
     assert.equal(run.identity.packaged, true);
     assert.equal(run.identity.removedEnvironment, true);
     assert.ok(run.identity.appPath.endsWith("app.asar"));
-    assert.ok(report.entry.startsWith(`${run.identity.appPath}.unpacked/`));
+    const artifactPath = report.artifact.platform === "win32" ? path.win32 : path.posix;
+    assert.ok(report.entry.startsWith(`${run.identity.appPath}.unpacked${artifactPath.sep}`));
     assert.equal(run.identity.userData, run.profile);
     for (const id of ["kobrixa.basic-plus", "kobrixa.ev3"]) {
       const plugin = run.beforeQuit.plugins.find((item) => item.id === id);
@@ -200,7 +201,7 @@ export function assertProductReceipt(report) {
       (item) => item.serviceName === "Kobrixa plugin kobrixa.motor-test",
     )) {
       assert.equal(fork.entry, report.entry);
-      assert.equal(fork.cwd, path.dirname(report.entry));
+      assert.equal(fork.cwd, artifactPath.dirname(report.entry));
     }
     const motors = run.forks.filter((item) => item.entry === report.entry);
     assert.equal(motors.length, run.name === "healthy" ? 2 : run.name === "restart" ? 1 : 0);
@@ -355,6 +356,10 @@ test("startup receipt requires pre-ready observation, worker release/detach, and
     ],
   };
   assertStartupObservation(run);
+  const windows = structuredClone(run);
+  windows.workerTimeline[0].arguments[0] = "C:\\installed\\persistence-worker.cjs";
+  windows.workerInspector.targets[0].workerInfo.url = "file:///C:/installed/persistence-worker.cjs";
+  assertStartupObservation(windows);
   for (const mutate of [
     (r) => {
       r.probeBeforeReady = false;
@@ -390,6 +395,9 @@ test("startup receipt requires pre-ready observation, worker release/detach, and
     const invalid = structuredClone(run);
     mutate(invalid);
     assert.throws(() => assertStartupObservation(invalid));
+    const invalidWindows = structuredClone(windows);
+    mutate(invalidWindows);
+    assert.throws(() => assertStartupObservation(invalidWindows));
   }
 });
 

@@ -1,33 +1,20 @@
 import type { LegacyDevice } from "../device-broker/legacy-device.js";
 import { monitorProjection } from "../device-broker/legacy-device.js";
 import type { MonitorUpdate } from "../../shared/sensor-lab.js";
+/** Retained core battery demand: uses the one broker feed, never a feature sampler or mode writer. */
 export class MonitorService {
   private demands = new Map<string, { cancelled: boolean; ready: Promise<() => Promise<void>> }>();
   private updates = new Map<string, MonitorUpdate>();
-  private listeners = new Set<(update: MonitorUpdate) => void>();
   private disposed = false;
   private sequence = 0;
   constructor(
-    private devices: LegacyDevice,
+    private devices: Pick<LegacyDevice, "watch">,
     private publish: (update: MonitorUpdate) => void,
   ) {}
   latest = (id: string): MonitorUpdate | undefined => this.updates.get(id);
-  get busy(): boolean {
-    return false;
-  }
-  get recordingSession(): string | undefined {
-    return undefined;
-  }
-  subscribe(listener: (update: MonitorUpdate) => void): () => void {
-    this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
-  }
   private emit(update: MonitorUpdate): void {
     this.updates.set(update.sessionId, update);
     this.publish(update);
-    for (const listener of this.listeners) listener(update);
   }
   async watch(id: string, enabled: boolean, owner = 0): Promise<MonitorUpdate> {
     const key = `${owner}:${id}`;
@@ -76,12 +63,6 @@ export class MonitorService {
     }
     return this.latest(id) ?? { sessionId: id, sequence: this.sequence, status: "paused" };
   }
-  inputModes(id: string, port: number, type: number) {
-    return this.devices.inputModes(id, port, type);
-  }
-  setInputMode(id: string, port: number, type: number, mode: number) {
-    return this.devices.setInputMode(id, port, type, mode);
-  }
   async disconnect(id: string): Promise<void> {
     for (const [key, entry] of [...this.demands])
       if (key.endsWith(`:${id}`)) {
@@ -106,6 +87,5 @@ export class MonitorService {
   async dispose(): Promise<void> {
     this.disposed = true;
     await this.pause();
-    this.listeners.clear();
   }
 }

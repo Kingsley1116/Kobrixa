@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BuildEvent, CompileResult, DeviceEvent, KobrixaApi } from "../../shared/api.js";
-import { DEVICE_CONTROL_DENIED, ExecutionController, filesToSave } from "./execution.js";
+import { ExecutionController, filesToSave } from "./execution.js";
 import { readTheme } from "../settings/theme.js";
 
 const success: CompileResult = {
@@ -50,6 +50,7 @@ function setup() {
   let buildListener: (event: BuildEvent) => void = () => {};
   let deviceListener: (event: DeviceEvent) => void = () => {};
   let sequence = 0;
+  let catalogRevision = 0;
   const calls: string[] = [];
   const api = {
     simulator: {
@@ -82,11 +83,6 @@ function setup() {
     device: {
       watchMonitor: vi.fn(),
       onMonitor: () => () => {},
-      monitor: vi.fn(),
-      inputModes: vi.fn(),
-      setInputMode: vi.fn(),
-      getPreferences: vi.fn(),
-      setPreferences: vi.fn(),
       files: vi.fn(),
       prepareFiles: vi.fn(),
       renewFiles: vi.fn(),
@@ -96,10 +92,7 @@ function setup() {
         deviceListener = listener;
         return () => {};
       }),
-      connect: vi.fn(async () => "s1"),
-      connectWifi: vi.fn(async () => "s2"),
       disconnect: vi.fn(async () => {}),
-      discover: vi.fn(),
       upload: vi.fn(),
       deploy: vi.fn(async () => {
         calls.push("deploy");
@@ -126,6 +119,10 @@ function setup() {
   const request = { workspaceId: "w1", saveAll };
   return {
     api,
+    async adoptSession(id = "s1") {
+      deviceListener(publicCatalog(++catalogRevision, "connected", id));
+      await vi.waitFor(() => expect(controller.locked).toBe(false));
+    },
     controller,
     request,
     calls,
@@ -143,8 +140,8 @@ describe("execution flow", () => {
     expect(h.calls).toEqual(["save", "build"]);
     expect(h.api.build.start).toHaveBeenCalledWith("w1", {}, true);
     expect(h.api.build.preview).toHaveBeenCalledWith("b1");
-    expect(h.api.device.discover).not.toHaveBeenCalled();
-    expect(h.api.device.connect).not.toHaveBeenCalled();
+    expect(h.api.device).not.toHaveProperty("discover");
+    expect(h.api.device).not.toHaveProperty("connect");
     expect(h.api.device.deploy).not.toHaveBeenCalled();
     expect(h.api.device.run).not.toHaveBeenCalled();
   });
@@ -166,31 +163,41 @@ describe("execution flow", () => {
     expect(h.controller.getSnapshot().error?.detail).toBe("Preview snapshot missing");
     expect(h.controller.locked).toBe(false);
   });
-  it("locks device actions during a mode change without logging each monitor sample", async () => {
+  it("locks device actions during a retained file operation and releases the lock after failure", async () => {
     const h = setup();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     const before = h.controller.getSnapshot().logs.length;
     const change = deferred<void>();
-    const pending = h.controller.withMonitor(() => change.promise);
+    const pending = h.controller.withFiles(() => change.promise, "upload");
     expect(h.controller.locked).toBe(true);
     expect(h.controller.editingLocked).toBe(false);
     await h.controller.run(h.request);
     expect(h.api.build.start).not.toHaveBeenCalled();
-    await expect(h.controller.withFiles(async () => {}, "upload")).rejects.toThrow("in progress");
+    await expect(h.controller.withFiles(async () => {}, "list")).rejects.toThrow("in progress");
+    expect(h.controller.getSnapshot().logs).toHaveLength(before);
     change.resolve();
     await pending;
     expect(h.controller.locked).toBe(false);
-    expect(h.controller.getSnapshot().logs).toHaveLength(before);
+    expect(h.controller.getSnapshot().logs).toHaveLength(before + 1);
+    expect(h.controller.getSnapshot().logs.at(-1)).toMatchObject({
+      message: "files",
+      detail: "upload",
+    });
     await expect(
-      h.controller.withMonitor(async () => {
-        throw new Error("mode failed");
-      }),
-    ).rejects.toThrow("mode failed");
+      h.controller.withFiles(async () => {
+        throw new Error("file failed");
+      }, "upload"),
+    ).rejects.toThrow("file failed");
     expect(h.controller.locked).toBe(false);
+    expect(h.controller.getSnapshot().logs.at(-1)).toMatchObject({
+      message: "files",
+      detail: "upload: file failed",
+      failed: true,
+    });
   });
   it("refuses device writes without collaboration device control but still stops", async () => {
     const h = setup();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     await h.controller.build(h.request);
     await h.controller.upload();
     h.controller.setDeviceControlBlocked(true);
@@ -201,7 +208,7 @@ describe("execution flow", () => {
     await h.controller.upload();
     await h.controller.runDeployed();
     await h.controller.deleteDeployed();
-    await expect(h.controller.withMonitor(async () => {})).rejects.toThrow(DEVICE_CONTROL_DENIED);
+    expect(h.controller).not.toHaveProperty("withMonitor");
     expect(h.api.device.deploy).not.toHaveBeenCalled();
     expect(h.api.device.run).not.toHaveBeenCalled();
     expect(h.api.device.delete).not.toHaveBeenCalled();
@@ -216,12 +223,12 @@ describe("execution flow", () => {
     await h.controller.run(h.request);
     expect(h.controller.getSnapshot().phase).toBe("awaitingDevice");
     h.controller.setDeviceControlBlocked(true);
-    await h.controller.connect(usb);
+    await h.adoptSession();
     expect(h.calls).toEqual([]);
   });
   it("saves, builds, deploys assets, then runs the actual artifact path", async () => {
     const h = setup();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     await h.controller.run(h.request);
     expect(h.calls).toEqual(["save", "build", "stop", "deploy", "run"]);
     expect(h.api.build.start).toHaveBeenCalledWith("w1", {});
@@ -233,7 +240,7 @@ describe("execution flow", () => {
   it("waits for a confirmed stop before uploading and ignores another F5", async () => {
     const h = setup(),
       stopped = deferred<void>();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     h.api.device.stop.mockImplementationOnce(() => stopped.promise);
     const run = h.controller.run(h.request);
     await vi.waitFor(() => expect(h.controller.getSnapshot().phase).toBe("stopping"));
@@ -249,7 +256,7 @@ describe("execution flow", () => {
   });
   it("keeps stop failures separate from upload failures", async () => {
     const h = setup();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     h.api.device.stop.mockRejectedValueOnce(new Error("Stop was not confirmed"));
     await h.controller.run(h.request);
     expect(h.api.device.deploy).not.toHaveBeenCalled();
@@ -262,7 +269,7 @@ describe("execution flow", () => {
   });
   it("does not claim startup success when an uploaded program cannot start", async () => {
     const h = setup();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     h.api.device.run.mockRejectedValueOnce(new Error("EV3 could not load the uploaded program."));
     await h.controller.run(h.request);
     const state = h.controller.getSnapshot();
@@ -277,7 +284,7 @@ describe("execution flow", () => {
   });
   it("upload-only does not stop or start a user program", async () => {
     const h = setup();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     await h.controller.build(h.request);
     await h.controller.upload();
     expect(h.api.device.stop).not.toHaveBeenCalled();
@@ -287,7 +294,7 @@ describe("execution flow", () => {
   it("does not upload or restart after disconnecting during the stop", async () => {
     const h = setup(),
       stopped = deferred<void>();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     h.api.device.stop.mockImplementationOnce(() => stopped.promise);
     const run = h.controller.run(h.request);
     await vi.waitFor(() => expect(h.controller.getSnapshot().phase).toBe("stopping"));
@@ -300,7 +307,7 @@ describe("execution flow", () => {
   });
   it("does not automatically stop after losing collaboration control during build", async () => {
     const h = setup();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     h.api.build.start.mockImplementationOnce(async (workspaceId) => {
       h.controller.setDeviceControlBlocked(true);
       h.emitBuild({ type: "complete", workspaceId, buildId: "b1", result: success });
@@ -316,28 +323,28 @@ describe("execution flow", () => {
     await h.controller.run(h.request);
     expect(h.controller.getSnapshot().phase).toBe("awaitingDevice");
     expect(h.calls).toEqual([]);
-    await h.controller.connect(usb);
+    await h.adoptSession();
     expect(h.calls).toEqual(["save", "build", "stop", "deploy", "run"]);
   });
   it("cancels connection intent without starting after a later connection", async () => {
     const h = setup();
     await h.controller.run(h.request);
     h.controller.cancelWaiting();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     expect(h.calls).toEqual([]);
   });
   it("does not run automatically after a failed connection is retried", async () => {
     const h = setup();
     await h.controller.run(h.request);
-    h.api.device.connect.mockRejectedValueOnce(new Error("Connection refused"));
-    await h.controller.connect(usb);
-    await h.controller.connect(usb);
+    h.emitDevice(publicCatalog(1, "changed", null));
+    h.emitDevice(publicCatalog(2));
+    await Promise.resolve();
     expect(h.calls).toEqual([]);
     expect(h.controller.locked).toBe(false);
   });
   it("stops on save failure and never builds", async () => {
     const h = setup();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     h.request.saveAll.mockRejectedValueOnce(new Error("Disk full"));
     await h.controller.run(h.request);
     expect(h.api.build.start).not.toHaveBeenCalled();
@@ -345,7 +352,7 @@ describe("execution flow", () => {
   });
   it("does not deploy a failed build or substitute the previous successful build", async () => {
     const h = setup();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     await h.controller.build(h.request);
     h.api.build.start.mockImplementationOnce(async (workspaceId) => {
       h.emitBuild({ type: "complete", workspaceId, buildId: "bad", result: failure });
@@ -359,7 +366,7 @@ describe("execution flow", () => {
   });
   it("does not run after a partial upload failure, but leaves connection ownership to the service", async () => {
     const h = setup();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     h.api.device.deploy.mockRejectedValueOnce(new Error("EV3 rejected the upload"));
     await h.controller.run(h.request);
     expect(h.api.device.run).not.toHaveBeenCalled();
@@ -370,7 +377,7 @@ describe("execution flow", () => {
   it("serializes double clicks, including the saving stage", async () => {
     const h = setup();
     const saved = deferred<void>();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     h.request.saveAll.mockImplementationOnce(() => saved.promise);
     const first = h.controller.run(h.request);
     await h.controller.run(h.request);
@@ -382,7 +389,7 @@ describe("execution flow", () => {
   });
   it("cancels a build even when its id is still in flight", async () => {
     const h = setup();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     const started = deferred<string>();
     h.api.build.start.mockImplementationOnce(() => started.promise);
     const run = h.controller.run(h.request);
@@ -423,7 +430,7 @@ describe("execution flow", () => {
   });
   it("finishes upload and run for A while B is selected, and never exposes A's deployed command to B", async () => {
     const h = setup();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     const upload = deferred<void>();
     h.api.device.deploy.mockImplementationOnce(() => upload.promise);
     const run = h.controller.run(h.request);
@@ -461,7 +468,7 @@ describe("execution flow", () => {
   });
   it("ignores an old session disconnect but clears a current disconnected session", async () => {
     const h = setup();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     await h.controller.run(h.request);
     h.emitDevice({ type: "state", state: "disconnected", sessionId: "old" });
     expect(h.controller.getSnapshot().deployed).toBeDefined();
@@ -471,7 +478,7 @@ describe("execution flow", () => {
   });
   it("stops the chain when disconnect arrives during upload", async () => {
     const h = setup();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     const uploaded = deferred<void>();
     h.api.device.deploy.mockImplementationOnce(() => uploaded.promise);
     const run = h.controller.run(h.request);
@@ -484,13 +491,9 @@ describe("execution flow", () => {
   });
   it("cancels the queued run while a connection is already in flight", async () => {
     const h = setup();
-    const connected = deferred<string>();
     await h.controller.run(h.request);
-    h.api.device.connect.mockImplementationOnce(() => connected.promise);
-    const connection = h.controller.connect(usb);
     h.controller.cancelWaiting();
-    connected.resolve("s1");
-    await connection;
+    await h.adoptSession();
     expect(h.calls).toEqual([]);
     expect(h.controller.getSnapshot().session?.id).toBe("s1");
     expect(h.controller.locked).toBe(false);
@@ -514,7 +517,7 @@ describe("execution flow", () => {
   });
   it("never reports run success from a command completed after disconnection", async () => {
     const h = setup();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     const ran = deferred<void>();
     h.api.device.run.mockImplementationOnce(() => ran.promise);
     const run = h.controller.run(h.request);
@@ -529,17 +532,17 @@ describe("execution flow", () => {
   });
   it("clears uploaded version when disconnecting and reconnecting", async () => {
     const h = setup();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     await h.controller.run(h.request);
     await h.controller.disconnect();
-    await h.controller.connect("192.168.0.2");
+    await h.adoptSession("s2");
     await h.controller.runDeployed();
     expect(h.api.device.run).toHaveBeenCalledTimes(1);
     expect(h.controller.getSnapshot().deployed).toBeUndefined();
   });
   it("deletes only the program actually uploaded to this session", async () => {
     const h = setup();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     await h.controller.run(h.request);
     await h.controller.deleteDeployed();
     expect(h.api.device.delete).toHaveBeenCalledWith("s1", "/robot/demo.rbf");
@@ -566,7 +569,7 @@ describe("USB recovery state", () => {
 
   it("clears exhausted recovery and requires manual reconnect without starting the robot", async () => {
     const h = setup();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     h.emitDevice(waiting);
     h.emitDevice({ ...waiting, state: "exhausted" });
     expect(h.controller.getSnapshot()).toMatchObject({
@@ -582,7 +585,7 @@ describe("USB recovery state", () => {
 
   it("restores a verified uploaded version without automatically running or blocking local builds", async () => {
     const h = setup();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     await h.controller.run(h.request);
     h.emitDevice(waiting);
     expect(h.controller.getSnapshot().session).toBeUndefined();
@@ -607,7 +610,7 @@ describe("USB recovery state", () => {
 
   it("keeps a pure local build running across unplug and reconnect", async () => {
     const h = setup();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     const saved = deferred<void>();
     h.request.saveAll.mockReturnValueOnce(saved.promise);
     const build = h.controller.build(h.request);
@@ -623,7 +626,7 @@ describe("USB recovery state", () => {
 
   it("does not resume a Run chain interrupted while building or deploying", async () => {
     const h = setup();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     const upload = deferred<void>();
     h.api.device.deploy.mockReturnValueOnce(upload.promise);
     const run = h.controller.run(h.request);
@@ -641,7 +644,7 @@ describe("USB recovery state", () => {
 
   it("cancels a Run build without cancelling a replacement session", async () => {
     const h = setup();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     h.api.build.start.mockResolvedValueOnce("pending");
     const run = h.controller.run(h.request);
     await vi.waitFor(() => expect(h.controller.getSnapshot().activeBuildId).toBe("pending"));
@@ -655,7 +658,7 @@ describe("USB recovery state", () => {
 
   it("ignores a restored event arriving after cancellation and stale old-session events", async () => {
     const h = setup();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     h.emitDevice(waiting);
     const cancelled = deferred<void>();
     h.api.device.disconnect.mockReturnValueOnce(cancelled.promise);
@@ -665,7 +668,7 @@ describe("USB recovery state", () => {
     expect(h.controller.getSnapshot().recovery).toBeUndefined();
     cancelled.resolve();
     await cancellation;
-    await h.controller.connect("192.168.0.2");
+    await h.adoptSession("s2");
     h.emitDevice(waiting);
     h.emitDevice(recovered);
     expect(h.controller.getSnapshot().session?.id).toBe("s2");
@@ -673,7 +676,7 @@ describe("USB recovery state", () => {
 
   it("retains recovery for retry when cancellation cleanup fails", async () => {
     const h = setup();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     h.emitDevice(waiting);
     const recovery = h.controller.getSnapshot().recovery;
     h.api.device.disconnect.mockRejectedValueOnce(new Error("Stop is unconfirmed"));
@@ -683,64 +686,53 @@ describe("USB recovery state", () => {
     expect(h.controller.getSnapshot().error?.detail).toContain("unconfirmed");
   });
 
-  it.each([usb, "192.168.0.2"])(
-    "does not connect after failed recovery cancellation, but permits an explicit retry (%s)",
-    async (target) => {
-      const h = setup();
-      await h.controller.connect(usb);
-      h.emitDevice(waiting);
-      const recovery = h.controller.getSnapshot().recovery;
-      h.api.device.disconnect.mockRejectedValueOnce(new Error("Stop is unconfirmed"));
-      await h.controller.connect(target);
-      expect(h.api.device.connect).toHaveBeenCalledTimes(1);
-      expect(h.api.device.connectWifi).not.toHaveBeenCalled();
-      expect(h.controller.getSnapshot().session).toBeUndefined();
-      expect(h.controller.getSnapshot().recovery).toEqual(recovery);
-      expect(h.controller.getSnapshot().error?.detail).toContain("unconfirmed");
-      await h.controller.connect(target);
-      expect(h.api.device.disconnect).toHaveBeenCalledTimes(2);
-      expect(h.controller.getSnapshot().recovery).toBeUndefined();
-      expect(h.controller.getSnapshot().session?.id).toBe(typeof target === "string" ? "s2" : "s1");
-      expect(h.controller.getSnapshot().error).toBeUndefined();
-    },
-  );
+  it("rejects public session adoption after failed recovery cancellation until explicit retry", async () => {
+    const h = setup();
+    await h.adoptSession();
+    h.emitDevice(waiting);
+    const recovery = h.controller.getSnapshot().recovery;
+    h.api.device.disconnect.mockRejectedValueOnce(new Error("Stop is unconfirmed"));
+    await h.controller.disconnect();
+    h.emitDevice(publicCatalog(2, "connected", "s2"));
+    expect(h.controller.getSnapshot().session).toBeUndefined();
+    expect(h.controller.getSnapshot().recovery).toEqual(recovery);
+    expect(h.controller.getSnapshot().error?.detail).toContain("unconfirmed");
+    await h.controller.disconnect();
+    expect(h.api.device.disconnect).toHaveBeenCalledTimes(2);
+    h.emitDevice(publicCatalog(3, "connected", "s2"));
+    expect(h.controller.getSnapshot().recovery).toBeUndefined();
+    expect(h.controller.getSnapshot().session?.id).toBe("s2");
+    expect(h.controller.getSnapshot().error).toBeUndefined();
+    expect(h.api.device.run).not.toHaveBeenCalled();
+  });
 
-  it.each(["disconnect", "connect"] as const)(
-    "does not start another connection while %s cancels recovery",
-    async (initiator) => {
-      const h = setup();
-      await h.controller.connect(usb);
-      h.emitDevice(waiting);
-      const cancelled = deferred<void>();
-      h.api.device.disconnect.mockReturnValueOnce(cancelled.promise);
-      const pending =
-        initiator === "disconnect"
-          ? h.controller.disconnect()
-          : h.controller.connect("192.168.0.2");
-      try {
-        expect(h.controller.locked).toBe(true);
-        await h.controller.connect(usb);
-        await h.controller.connect("192.168.0.3");
-        h.emitDevice(recovered);
-        expect(h.api.device.connect).toHaveBeenCalledTimes(1);
-        expect(h.api.device.connectWifi).not.toHaveBeenCalled();
-        expect(h.controller.getSnapshot().session).toBeUndefined();
-        expect(h.controller.getSnapshot().recovery).toBeUndefined();
-      } finally {
-        cancelled.resolve();
-        await pending;
-      }
-      expect(h.controller.locked).toBe(false);
-      expect(h.api.device.connect).toHaveBeenCalledTimes(1);
-      expect(h.api.device.connectWifi).toHaveBeenCalledTimes(initiator === "connect" ? 1 : 0);
-      if (initiator === "connect")
-        expect(h.api.device.connectWifi).toHaveBeenCalledWith("192.168.0.2");
-    },
-  );
+  it("does not adopt another connection while trusted Disconnect cancels recovery", async () => {
+    const h = setup();
+    await h.adoptSession();
+    h.emitDevice(waiting);
+    const cancelled = deferred<void>();
+    h.api.device.disconnect.mockReturnValueOnce(cancelled.promise);
+    const pending = h.controller.disconnect();
+    try {
+      expect(h.controller.locked).toBe(true);
+      h.emitDevice(publicCatalog(2, "connected", "s2"));
+      h.emitDevice(publicCatalog(3, "connected", "s3"));
+      h.emitDevice(recovered);
+      expect(h.controller.getSnapshot().session).toBeUndefined();
+      expect(h.controller.getSnapshot().recovery).toBeUndefined();
+      expect(h.api.device.disconnect).toHaveBeenCalledOnce();
+    } finally {
+      cancelled.resolve();
+      await pending;
+    }
+    expect(h.controller.locked).toBe(false);
+    expect(h.controller.getSnapshot().session).toBeUndefined();
+    expect(h.api.device.run).not.toHaveBeenCalled();
+  });
 
   it("does not restore changed files or a closed project's uploaded version", async () => {
     const h = setup();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     await h.controller.run(h.request);
     h.emitDevice(waiting);
     h.emitDevice({ ...recovered, deployment: "changed" });
@@ -778,7 +770,7 @@ describe("saved preferences and source snapshot", () => {
 describe("file operation isolation", () => {
   it("blocks deployment and robot commands during file operations while preserving editing", async () => {
     const h = setup();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     await h.controller.run(h.request);
     h.calls.length = 0;
     h.api.device.stop.mockClear();
@@ -798,7 +790,7 @@ describe("file operation isolation", () => {
   });
   it("invalidates deployed versions only for matching sessions and related paths", async () => {
     const h = setup();
-    await h.controller.connect(usb);
+    await h.adoptSession();
     await h.controller.run(h.request);
     const deployed = h.controller.getSnapshot().deployed!;
     h.emitDevice({
@@ -841,7 +833,7 @@ it("keeps a successful non-deployable build without a build error", async () => 
   });
   expect(h.controller.getSnapshot().error).toBeUndefined();
   expect(h.controller.getSnapshot().logs.at(-1)).toMatchObject({ message: "built", failed: false });
-  await h.controller.connect(usb);
+  await h.adoptSession();
   await h.controller.upload();
   await h.controller.run(h.request);
   expect(h.api.device.stop).not.toHaveBeenCalled();
@@ -855,8 +847,8 @@ it("keeps a successful non-deployable build without a build error", async () => 
 });
 
 it("F17 core Disconnect keeps the session until stop/save/disconnect acknowledges", async () => {
-  const { controller, api } = setup();
-  await controller.connect(usb);
+  const { controller, api, adoptSession } = setup();
+  await adoptSession();
   let reject!: (error: Error) => void;
   api.device.disconnect.mockImplementationOnce(
     () =>
@@ -1011,17 +1003,14 @@ it("E5 disconnected/newer catalog and foreign epoch fence late adoption", async 
   expect(h.controller.getSnapshot().session).toBeUndefined();
   expect(h.calls).toEqual([]);
 });
-it("E5 legacy promise-owned connect does not double-adopt or double-run", async () => {
+it("E7 has no private connection entry and duplicate public catalog cannot double-run", async () => {
   const h = setup();
-  const connected = deferred<string>();
-  h.api.device.connect.mockReturnValueOnce(connected.promise);
+  expect(h.controller).not.toHaveProperty("connect");
   await h.controller.run(h.request);
-  const work = h.controller.connect(usb);
   h.emitDevice(publicCatalog(1, "connected", "s1"));
-  expect(h.controller.getSnapshot().session).toBeUndefined();
-  connected.resolve("s1");
-  await work;
-  expect(h.calls).toEqual(["save", "build", "stop", "deploy", "run"]);
+  h.emitDevice(publicCatalog(2, "connected", "s1"));
+  await vi.waitFor(() => expect(h.calls).toEqual(["save", "build", "stop", "deploy", "run"]));
+  expect(h.controller.getSnapshot().session?.id).toBe("s1");
 });
 
 it("C retirement sends adopted public-session Stop through the retained core API without a project", async () => {

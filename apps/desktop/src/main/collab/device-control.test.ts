@@ -55,15 +55,14 @@ it("F03 denies missing reports and F14 preserves reads and stop after revoke", (
   f.report(true, "local");
   expect(() => f.gate.assert(7, "device:run", [])).not.toThrow();
   f.report(false);
-  for (const name of [
-    "device:upload",
-    "device:deploy",
-    "device:run",
-    "device:delete",
-    "device:set-input-mode",
-  ])
+  for (const name of ["device:upload", "device:deploy", "device:run", "device:delete"])
     expect(() => f.gate.assert(7, name, [])).toThrow(DEVICE_CONTROL_DENIED);
-  for (const name of ["device:monitor", "device:input-modes", "device:stop", "device:files-stop"])
+  for (const name of [
+    "device:watch-monitor",
+    "device:stop",
+    "device:disconnect",
+    "device:files-stop",
+  ])
     expect(() => f.gate.assert(7, name, [])).not.toThrow();
   for (const action of ["list", "download"])
     expect(() => f.gate.assert(7, "device:files", [{ action }])).not.toThrow();

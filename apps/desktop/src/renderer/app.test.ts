@@ -70,9 +70,10 @@ it("D route cleanup removes legacy Lab mount/subscriptions but keeps core close 
     /SensorLabController|SensorLabPanel|RecordingStatus|sensorLab\.(initialize|dispose|subscribe)/,
   );
   expect(app).not.toContain("window.kobrixa.sensorLab");
-  expect(app).toContain("monitor.drain");
+  expect(app.match(/await battery\.drain\(\)/g)).toHaveLength(2);
   expect(app).toContain("<PluginStatusHost session={pluginUi.session}");
   expect(app).toContain("plugins={pluginUi.session}");
   expect(app).toContain("<MonitorWorkspace");
-  expect(app).toContain("new BatteryStatus(window.kobrixa.device)");
+  expect(app).toContain("new CoreBatteryMonitor(window.kobrixa.device)");
+  expect(app).not.toContain("new MonitorController(");
 });

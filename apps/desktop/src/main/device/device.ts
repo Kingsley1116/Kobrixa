@@ -152,16 +152,11 @@ export class DeviceService {
       throw normalizeDeviceError(error, "connection");
     }
   };
-  setPreferences(patch: Partial<DevicePreferences>): Promise<DevicePreferences> {
-    if (this.authoritativePreferences)
-      return Promise.reject(
-        new DeviceOperationError("permission", "Use the contributed device settings form."),
-      );
-    return this.preferences.set(patch, () => {});
-  }
   setBeforeDisconnect(stop: (id: string) => Promise<void>): void {
     this.beforeDisconnect = stop;
   }
+  /** Retained host-only broker adapter for core recovery fixtures. No renderer
+   * discovery/connection IPC is registered; product feature connects use public RPC. */
   discover(signal?: AbortSignal): Promise<DeviceDescriptor[]> {
     return this.ports.device.discover(signal);
   }
@@ -204,15 +199,6 @@ export class DeviceService {
   }
   async reset(): Promise<void> {
     await Promise.allSettled(this.ports.device.sessionIds().map((id) => this.disconnect(id)));
-  }
-  monitor(id: string) {
-    return this.ports.device.monitor(id);
-  }
-  inputModes(id: string, port: number, type: number) {
-    return this.ports.device.inputModes(id, port, type);
-  }
-  setInputMode(id: string, port: number, type: number, mode: number) {
-    return this.ports.device.setInputMode(id, port, type, mode);
   }
   upload(id: string, buildId: string, remotePath: string): Promise<void> {
     return this.track(() =>

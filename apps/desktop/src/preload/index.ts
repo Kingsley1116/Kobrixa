@@ -223,21 +223,11 @@ const api: KobrixaApi = {
       ipcRenderer.on("device:monitor-update", handler);
       return () => ipcRenderer.removeListener("device:monitor-update", handler);
     },
-    monitor: (sessionId) => ipcRenderer.invoke("device:monitor", sessionId),
-    inputModes: (sessionId, port, expectedType) =>
-      ipcRenderer.invoke("device:input-modes", sessionId, port, expectedType),
-    setInputMode: (sessionId, port, expectedType, mode) =>
-      ipcRenderer.invoke("device:set-input-mode", sessionId, port, expectedType, mode),
-    getPreferences: () => ipcRenderer.invoke("device:preferences"),
-    setPreferences: (patch) => ipcRenderer.invoke("device:set-preferences", patch),
     prepareFiles: (request) => ipcRenderer.invoke("device:files-prepare", request),
     executeFiles: (ref, policy) => ipcRenderer.invoke("device:files-execute", ref, policy),
     renewFiles: (ref) => ipcRenderer.invoke("device:files-renew", ref),
     stopFiles: (ref) => ipcRenderer.invoke("device:files-stop", ref),
     files: (request) => ipcRenderer.invoke("device:files", request),
-    discover: () => ipcRenderer.invoke("device:discover"),
-    connect: (descriptor) => ipcRenderer.invoke("device:connect", descriptor),
-    connectWifi: (address) => ipcRenderer.invoke("device:connect-wifi", address),
     disconnect: (sessionId) => ipcRenderer.invoke("device:disconnect", sessionId),
     upload: (sessionId, buildId, remotePath) =>
       ipcRenderer.invoke("device:upload", sessionId, buildId, remotePath),

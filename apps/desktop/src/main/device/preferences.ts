@@ -31,7 +31,9 @@ export const devicePreferencesPatchSchema = devicePreferencesSchema
       ) as Partial<DevicePreferences>,
   );
 
-/** Main-process ownership prevents renderer reloads from changing recovery policy. */
+/** Retained original-writer migration barrier and legacy fixtures. Product startup
+ * freezes admission before composing optional plugins; no device preference IPC
+ * reaches this store. Authoritative runtime policy comes from admitted settings. */
 export class DevicePreferencesStore {
   private writes: Promise<unknown> = Promise.resolve();
   private frozen = false;

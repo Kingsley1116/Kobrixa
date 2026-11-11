@@ -164,7 +164,7 @@ function authoritativeFixture() {
 it("E5 preserves the legacy preference fixture when no authoritative reader is attached", async () => {
   const old = new DevicePreferencesStore();
   const service = new DeviceService({} as BuildService, () => undefined, old);
-  await service.setPreferences({ skipUnchangedAssets: false });
+  await old.set({ skipUnchangedAssets: false }, () => {});
   expect(service.getPreferences().skipUnchangedAssets).toBe(false);
 });
 
@@ -179,19 +179,13 @@ it("E5 reads current authoritative values and never falls back after withdrawal"
   expect(f.oldRead).not.toHaveBeenCalled();
 });
 
-it("E5 denies legacy preference IPC writes before and after readiness without touching the old writer", async () => {
+it("E7 has no preference writer before or after authoritative readiness", () => {
   const f = authoritativeFixture();
   f.set(undefined);
-  await expect(f.service.setPreferences({ usbAutoReconnect: false })).rejects.toMatchObject({
-    name: "DeviceOperationError",
-    category: "permission",
-  });
+  expect(f.service).not.toHaveProperty("setPreferences");
   f.set({ ...DEFAULT_DEVICE_PREFERENCES });
   f.old.freezeAdmission();
-  await expect(f.service.setPreferences({ usbAutoReconnect: false })).rejects.toMatchObject({
-    name: "DeviceOperationError",
-    category: "permission",
-  });
+  expect(f.service).not.toHaveProperty("setPreferences");
   expect(f.persist).not.toHaveBeenCalled();
 });
 

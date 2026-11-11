@@ -72,6 +72,7 @@ export interface CalibrationProfile {
   calibration: SensorCalibration;
 }
 
+/** Retained broker-backed core battery event, also used by the independent legacy oracle. */
 export interface MonitorUpdate {
   sessionId: string;
   sequence: number;

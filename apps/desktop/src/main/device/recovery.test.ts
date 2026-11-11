@@ -349,22 +349,26 @@ it.each(["cancelled", "exhausted"])(
   },
 );
 
+import { readBrokerSessionCatalog } from "../device-broker/broker.js";
 import { ExecutionController } from "../../renderer/execution/execution.js";
 import type { KobrixaApi } from "../../shared/api.js";
 it("T5fix2 DeviceService waiting -> restored is adopted by ExecutionController", async () => {
   vi.useFakeTimers();
   const f = await realFixture(true);
+  let publish!: Parameters<DeviceService["subscribe"]>[0];
   const controller = new ExecutionController({
     build: { onEvent: () => () => {} },
     device: {
-      onEvent: (listener: Parameters<DeviceService["subscribe"]>[0]) =>
-        f.service.subscribe(listener),
-      connect: async () => f.id,
+      onEvent: (listener: Parameters<DeviceService["subscribe"]>[0]) => {
+        publish = listener;
+        return f.service.subscribe(listener);
+      },
     },
   } as unknown as KobrixaApi);
   const detach = controller.attach();
   try {
-    await controller.connect(f.service.descriptor(f.id));
+    publish({ type: "session-catalog", ...readBrokerSessionCatalog(f.broker)! });
+    expect(controller.getSnapshot().session?.id).toBe(f.id);
     f.provider.lose();
     expect(controller.getSnapshot().recovery?.state).toBe("waiting");
     await vi.advanceTimersByTimeAsync(1000);

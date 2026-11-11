@@ -2,88 +2,47 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-export const monitorDescriptor = {
-  id: "monitor-usb",
-  name: "Monitor EV3",
-  transport: "usb",
-  serialNumber: "MONITOR-SMOKE",
-};
-const input = (port, patch) => ({
-  port,
-  type: 0,
-  connection: 0,
-  mode: 0,
-  state: "empty",
-  name: "",
-  modeName: "",
-  unit: "",
-  decimals: 0,
-  values: [],
-  switchable: false,
-  ...patch,
-});
-const snapshot = () => ({
-  sampledAt: Date.now(),
-  battery: { percent: 76, voltage: 7.42 },
-  program: { status: "stopped", rawStatus: 0x40, result: 0 },
-  inputs: [
-    input(0, {
-      type: 29,
-      connection: 122,
-      state: "ready",
-      name: "EV3 Color",
-      modeName: "COL-REFLECT",
-      unit: "%",
-      values: [42],
-      switchable: true,
-    }),
-    input(1, { type: 32, connection: 122, state: "initializing", name: "EV3 Gyro" }),
-    input(2, {
-      type: 33,
-      connection: 122,
-      mode: 1,
-      state: "ready",
-      name: "EV3 Infrared",
-      modeName: "IR-SEEK",
-      values: [-10, 0, 25, null, 40, 4, 5, 7],
-      switchable: true,
-    }),
-    input(3, { type: 100, connection: 120, state: "unknown", name: "Third-party sensor" }),
-  ],
-  outputs: [
-    { port: 0, type: 7, state: "ready", name: "EV3 Large motor", angle: -120 },
-    { port: 1, type: 126, state: "empty", name: "", angle: null },
-    { port: 2, type: 100, state: "unknown", name: "Unknown motor", angle: null },
-    { port: 3, type: 125, state: "error", name: "", angle: null },
-  ],
-});
-
-// All state and controls stay in the smoke main process, outside the shipped API.
-export function createMonitorFixture(send) {
-  const descriptor = monitorDescriptor;
-  let current = snapshot();
-  let sessionId = "00000000-0000-4000-8000-000000000101";
-  let nextReply;
+// Test-only broker watch port for the retained battery demand. No private feature routes.
+export function createMonitorFixture() {
   let calls = 0;
   let active = 0;
-  let maxActive = 0;
-  const requests = [];
-  const changes = [];
+  let releases = 0;
   return {
-    handles: (name) =>
-      [
-        "deviceMonitor",
-        "deviceInputModes",
-        "deviceSetInputMode",
-        "deviceDiscover",
-        "deviceConnect",
-        "deviceConnectWifi",
-        "deviceDisconnect",
-        "deviceFiles",
-      ].includes(name),
+    async watch(sessionId, _interval, receive) {
+      calls++;
+      active++;
+      receive(
+        {
+          sessionId,
+          status: "fresh",
+          frame: {
+            status: "ok",
+            sampledAt: Date.now(),
+            program: "stopped",
+            values: [
+              { channelId: "battery-percent", value: 76 },
+              { channelId: "battery-voltage", value: 7.42 },
+            ],
+          },
+        },
+        {
+          channels: [
+            { channelId: "battery-percent", kind: "battery-percent" },
+            { channelId: "battery-voltage", kind: "battery-voltage" },
+          ],
+        },
+      );
+      let released = false;
+      return async () => {
+        if (!released) {
+          released = true;
+          active--;
+          releases++;
+        }
+      };
+    },
+    handles: (name) => ["deviceDisconnect", "deviceFiles"].includes(name),
     async handle(name, args) {
-      if (name === "deviceDiscover") return [descriptor];
-      if (name === "deviceConnect" || name === "deviceConnectWifi") return sessionId;
       if (name === "deviceDisconnect") return;
       if (name === "deviceFiles")
         return {
@@ -92,81 +51,9 @@ export function createMonitorFixture(send) {
           ok: true,
           entries: [],
         };
-      if (name === "deviceInputModes")
-        return {
-          status: "ok",
-          value: {
-            port: args[1],
-            type: args[2],
-            modes: [
-              { mode: 0, name: "COL-REFLECT" },
-              { mode: 1, name: "COL-AMBIENT" },
-              { mode: 2, name: "COL-COLOR" },
-            ],
-          },
-        };
-      if (name === "deviceSetInputMode") {
-        changes.push(args);
-        if (args[0] !== sessionId || current.program.status !== "stopped")
-          return { status: "error", category: "protocol", message: "Program must be stopped." };
-        current.inputs[args[1]].mode = args[3];
-        current.inputs[args[1]].modeName = ["COL-REFLECT", "COL-AMBIENT", "COL-COLOR"][args[3]];
-        return { status: "ok", value: structuredClone({ ...current, sampledAt: Date.now() }) };
-      }
-      calls++;
-      active++;
-      maxActive = Math.max(maxActive, active);
-      requests.push(args[0]);
-      const reply = nextReply;
-      nextReply = undefined;
-      const value = structuredClone({ ...current, sampledAt: Date.now() });
-      try {
-        if (reply) return await reply(value);
-        return { status: "ok", value };
-      } finally {
-        active--;
-      }
+      throw new Error(`Unknown core device fixture call: ${name}`);
     },
-    patch(update) {
-      update(current);
-    },
-    snapshot: () => structuredClone({ ...current, sampledAt: Date.now() }),
-    sessionId: () => sessionId,
-    stats: () => ({
-      calls,
-      active,
-      maxActive,
-      requests: [...requests],
-      changes: structuredClone(changes),
-    }),
-    respondOnce(result) {
-      nextReply = async () => result;
-    },
-    holdNext() {
-      let release;
-      const gate = new Promise((resolve) => {
-        release = resolve;
-      });
-      nextReply = async (value) => {
-        await gate;
-        return { status: "ok", value };
-      };
-      return release;
-    },
-    recover() {
-      const previousSessionId = sessionId;
-      send({ type: "usb-recovery", state: "waiting", previousSessionId, descriptor });
-      sessionId = "00000000-0000-4000-8000-000000000102";
-      return () =>
-        send({
-          type: "usb-recovery",
-          state: "restored",
-          previousSessionId,
-          sessionId,
-          descriptor,
-          deployment: "none",
-        });
-    },
+    stats: () => ({ calls, active, releases }),
   };
 }
 

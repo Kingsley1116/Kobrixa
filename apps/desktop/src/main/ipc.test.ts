@@ -2018,3 +2018,32 @@ it("has no private Lab IPC but retains the monitor subscription endpoint", () =>
   expect([...handlers.keys()].filter((name) => name.startsWith("sensor-lab:"))).toEqual([]);
   expect(handlers.has("device:watch-monitor")).toBe(true);
 });
+
+it("E7 exposes exactly the retained core device invocation allowlist", () => {
+  fixture();
+  expect([...handlers.keys()].filter((key) => key.startsWith("device:")).sort()).toEqual([
+    "device:delete",
+    "device:deploy",
+    "device:disconnect",
+    "device:files",
+    "device:files-execute",
+    "device:files-prepare",
+    "device:files-renew",
+    "device:files-stop",
+    "device:run",
+    "device:stop",
+    "device:upload",
+    "device:watch-monitor",
+  ]);
+  for (const channel of [
+    "device:monitor",
+    "device:input-modes",
+    "device:set-input-mode",
+    "device:preferences",
+    "device:set-preferences",
+    "device:discover",
+    "device:connect",
+    "device:connect-wifi",
+  ])
+    expect(handlers.has(channel), channel).toBe(false);
+});

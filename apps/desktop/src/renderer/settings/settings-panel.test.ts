@@ -12,6 +12,7 @@ vi.mock("../keybindings/shortcuts-panel.js", () => ({ ShortcutsPanel: () => null
 vi.mock("../updates/updates.js", () => ({ UpdatesPanel: () => null }));
 let root: Root, container: HTMLDivElement, values: Settings;
 const patch = vi.fn();
+const getDevicePreferences = vi.fn();
 const filePatch = vi.fn();
 const getFilePreferences = vi.fn();
 let fileValues: FilePreferences;
@@ -61,7 +62,7 @@ beforeEach(async () => {
   vi.stubGlobal("kobrixa", {
     plugins: {},
     device: {
-      getPreferences: vi.fn(async () => ({ ...DEFAULT_DEVICE_PREFERENCES })),
+      getPreferences: getDevicePreferences,
       setPreferences: patch,
     },
     workspace: {
@@ -70,6 +71,7 @@ beforeEach(async () => {
     },
   });
   Element.prototype.scrollTo = vi.fn();
+  getDevicePreferences.mockReset().mockResolvedValue({ ...DEFAULT_DEVICE_PREFERENCES });
   patch
     .mockReset()
     .mockImplementation(async (change) => ({ ...DEFAULT_DEVICE_PREFERENCES, ...change }));
@@ -114,13 +116,13 @@ it("shows disabled dependent settings in search results, with a usable reset", a
   expect(values.autoSaveDelay).toBe(1000);
 });
 it("never reads or writes retired device preferences, including after failed legacy APIs", async () => {
-  vi.mocked(window.kobrixa.device.getPreferences).mockRejectedValue(new Error("disk full"));
+  getDevicePreferences.mockRejectedValue(new Error("disk full"));
   patch.mockRejectedValue(new Error("disk full"));
   for (const query of ["device.", "kobrixa.connectionMode", "kobrixa.rememberWifiAddress"]) {
     await search(query);
     expect(container.querySelectorAll(".setting-entry")).toHaveLength(0);
   }
-  expect(window.kobrixa.device.getPreferences).not.toHaveBeenCalled();
+  expect(getDevicePreferences).not.toHaveBeenCalled();
   expect(patch).not.toHaveBeenCalled();
   expect(container.querySelector('[role="alert"]')).toBeNull();
 });
@@ -554,13 +556,13 @@ it("mounted typed choice keeps the conflicting dotted-key draft until explicit r
 });
 
 it("device retirement removes legacy writers unconditionally while keeping unrelated settings", async () => {
-  vi.mocked(window.kobrixa.device.getPreferences).mockClear();
+  getDevicePreferences.mockClear();
   await act(async () => render());
   await search("connection");
   expect(container.querySelector("#setting-connectionMode")).toBeNull();
   expect(container.querySelector("#setting-rememberWifiAddress")).toBeNull();
   expect(container.querySelector("#setting-usbAutoReconnect")).toBeNull();
-  expect(window.kobrixa.device.getPreferences).not.toHaveBeenCalled();
+  expect(getDevicePreferences).not.toHaveBeenCalled();
   expect(patch).not.toHaveBeenCalled();
   await search("word wrap");
   await click("#setting-wordWrap");
