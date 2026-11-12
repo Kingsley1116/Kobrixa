@@ -18,6 +18,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn, execFileSync } from "node:child_process";
 import { rawResourcePlugin } from "./raw-resource-plugin.mjs";
 
+import { createWindowsProcessObserver } from "./builtin-installed-win32.mjs";
 import { processTable, descendants } from "./builtin-installed-client.mjs";
 import { createProcessMonitor, finishProcessObservation } from "./device-ui-stdio-run.mjs";
 import { copyInstalledLeaf } from "./sensor-lab-installed-artifacts.mjs";
@@ -810,6 +811,9 @@ export function verifyRestartReceipt(r) {
 }
 
 async function runPublicProcess(directory, electron, env, phase = "") {
+  const observer =
+    phase && process.platform === "win32" ? await createWindowsProcessObserver() : null;
+  const poll = observer ? observer.poll : processTable;
   const child = spawn(
     electron,
     [
@@ -828,7 +832,7 @@ async function runPublicProcess(directory, electron, env, phase = "") {
     monitorErrors = [];
   const monitor = phase
     ? createProcessMonitor({
-        poll: processTable,
+        poll,
         observe: (rows) => {
           descendants(rows, child.pid, known);
         },
@@ -860,12 +864,13 @@ async function runPublicProcess(directory, electron, env, phase = "") {
   await monitor?.stop();
   const survivors = phase
     ? await finishProcessObservation({
-        poll: processTable,
+        poll,
         parent: child.pid,
         known,
         onError: (e) => monitorErrors.push(String(e)),
       })
     : [];
+  observer?.close();
   const processResult = { ...outside, pid: child.pid, timedOut, survivors, monitorErrors };
   await writeFile(
     path.join(directory, phase ? `process-restart-${phase}.json` : "process.json"),
