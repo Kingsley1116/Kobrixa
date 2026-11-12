@@ -109,6 +109,7 @@ export class CleanupBlocked extends Error {
   constructor(
     readonly device: DeviceDisposition | null,
     readonly storage: readonly DrainReport[],
+    readonly reason?: "journal-corrupt" | "journal-unwritable" | "resource-limit",
   ) {
     super("Device or persistence disposition is incomplete.");
   }
@@ -445,8 +446,20 @@ export class LifecycleCoordinator {
     // close already clears only its settled attempt. Keep #closeStarted, all work promises and grants.
   }
   #assert(device: DeviceDisposition, storage: readonly DrainReport[]): void {
-    if (!device.stopConfirmed || !device.journalCommitted)
-      throw new CleanupBlocked(device, storage);
+    if (!device.stopConfirmed || !device.journalCommitted) {
+      const health = this.input.recovery?.snapshot().journalHealth;
+      throw new CleanupBlocked(
+        device,
+        storage,
+        health === "corrupt"
+          ? "journal-corrupt"
+          : health === "unwritable"
+            ? "journal-unwritable"
+            : health === "full"
+              ? "resource-limit"
+              : undefined,
+      );
+    }
     this.#assertStorage(storage, device);
   }
   #assertStorage(storage: readonly DrainReport[], device: DeviceDisposition | null = null): void {

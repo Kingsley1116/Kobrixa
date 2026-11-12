@@ -1,4 +1,5 @@
 import { journalDocument } from "./journal.js";
+import type { JournalPort } from "./journal-port.js";
 import { isDeepStrictEqual } from "node:util";
 import { randomUUID } from "node:crypto";
 import {
@@ -257,11 +258,23 @@ const merge = async (promises: Promise<DeviceDisposition>[]): Promise<DeviceDisp
     faultIds: [...new Set(all.flatMap((v) => v.faultIds))],
   };
 };
+// A drained transport says nothing about retained faults, including those from
+// earlier sessions. Read current committed evidence on every cleanup attempt so
+// an explicit reconciliation can unblock a retry without rewriting old receipts.
+function journalDisposition(journal: JournalPort): DeviceDisposition {
+  const snapshot = journal.snapshot();
+  return {
+    stopConfirmed: snapshot.blockers.length === 0,
+    journalCommitted: snapshot.journalHealth === "ready",
+    faultIds: [...snapshot.blockers],
+  };
+}
 // The first quiescence keeps its identity and original operation receipts. New
 // explicit recovery can add evidence, but never restarts those operations/clocks.
 async function settleRecovery(
   current: Session,
   original: Promise<DeviceDisposition[]>,
+  journal: JournalPort,
   close = false,
   observe?: (disposition: DeviceDisposition, recovery: Session["recoveryDisposition"]) => void,
 ): Promise<DeviceDisposition> {
@@ -292,10 +305,14 @@ async function settleRecovery(
         return value;
       return { stopConfirmed: true, journalCommitted: true, faultIds: [] };
     });
+    const retained = journalDisposition(journal);
     const disposition = {
-      stopConfirmed: effective.every((value) => value.stopConfirmed),
-      journalCommitted: effective.every((value) => value.journalCommitted),
-      faultIds: [...new Set(effective.flatMap((value) => value.faultIds))],
+      stopConfirmed: retained.stopConfirmed && effective.every((value) => value.stopConfirmed),
+      journalCommitted:
+        retained.journalCommitted && effective.every((value) => value.journalCommitted),
+      faultIds: [
+        ...new Set([...retained.faultIds, ...effective.flatMap((value) => value.faultIds)]),
+      ],
     };
     // Every quarantining owner needs its own fault-bound proof. In particular,
     // an unrelated journal fault cannot cover a passive transport timeout.
@@ -1020,7 +1037,7 @@ export function createBroker(
       sessionId: current.snapshot.sessionId,
       ended,
       get settled() {
-        return settleRecovery(current, original, false, (disposition, recovery) => {
+        return settleRecovery(current, original, input.journal, false, (disposition, recovery) => {
           if (current.quiescence === receipt)
             current.resumeEvidence = { receipt, disposition, recovery };
         });
@@ -1052,7 +1069,12 @@ export function createBroker(
         const quiescence = current.quiescence;
         if (!quiescence) return actionFailure();
         current.suspendOnly = false;
-        const disposition = await settleRecovery(current, current.originalDisposition!, true);
+        const disposition = await settleRecovery(
+          current,
+          current.originalDisposition!,
+          input.journal,
+          true,
+        );
         if (!disposition.stopConfirmed || !disposition.journalCommitted)
           return deviceFailure("PLUGIN_E_DEVICE_STOP_UNCONFIRMED", "readback-failed", "unknown");
         const core: Principal = {
@@ -1170,7 +1192,7 @@ export function createBroker(
       if (!current || current.provider.id !== id || current.generation !== generation) return [];
       current.quiescence ??= finishSession(current, "disconnected");
       current.suspendOnly = false;
-      return [settleRecovery(current, current.originalDisposition!, true)];
+      return [settleRecovery(current, current.originalDisposition!, input.journal, true)];
     },
     revokeAll() {
       closing = true;
@@ -1178,10 +1200,10 @@ export function createBroker(
       disposeRecoveryObservers();
       coreTelemetry.dispose();
       events.dispose();
-      if (!session) return [];
+      if (!session) return [Promise.resolve(journalDisposition(input.journal))];
       session.quiescence ??= finishSession(session, "suspended");
       session.suspendOnly = false;
-      return [settleRecovery(session, session.originalDisposition!, true)];
+      return [settleRecovery(session, session.originalDisposition!, input.journal, true)];
     },
   };
   const resources = factories.participant(resourceDriver);

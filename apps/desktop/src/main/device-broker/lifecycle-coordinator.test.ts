@@ -590,7 +590,7 @@ it("F19 coalesces repeated Disconnect without another quiesce, grant or final ha
   expect(f.legacyFlush).toHaveBeenCalledExactlyOnceWith("close");
   expect(f.sessions.disconnect).toHaveBeenCalledOnce();
 });
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createJournal } from "./journal.js";
@@ -602,11 +602,16 @@ import { PluginManager } from "@kobrixa/plugin-runtime";
 import { BUILTIN_PLUGIN_SOURCES } from "../plugins/builtin.js";
 import type { ProviderCatalogPort } from "./provider.js";
 async function providerComposition(safeMode = false, disabled = false, wrongId = false) {
-  const root = await mkdtemp(join(tmpdir(), "kobrixa-d150-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "kobrixa-d150-")));
   const now = () => performance.now();
   const profile = { hostEpoch: id(1), assertHeld: vi.fn() };
   const authority = new AuthorityContexts(profile.hostEpoch);
-  const journal = createJournal(createJournalFilesystem(root), profile);
+  // This provider-composition fixture needs a healthy journal, not native
+  // durability acceptance. Windows barriers are exercised by the native suite.
+  const journal = createJournal(
+    createJournalFilesystem(root, process.platform === "win32" ? async () => {} : undefined),
+    profile,
+  );
   const coreActions = createCoreActionLedger({ now, current: () => false });
   const catalogs: ProviderCatalogPort[] = [];
   const controls: FakeProviderControl[] = [];
@@ -634,6 +639,7 @@ async function providerComposition(safeMode = false, disabled = false, wrongId =
       return fake.provider;
     },
   });
+  expect(journal.snapshot()).toMatchObject({ journalHealth: "ready", blockers: [] });
   const register = foundation.broker.registerProvider.bind(foundation.broker);
   const removals: Array<ReturnType<typeof vi.fn<() => Promise<void>>>> = [];
   const registration = vi
