@@ -1,3 +1,4 @@
+import { stageProductionJournal, withJournalUnpack } from "./journal-win32.mjs";
 import { build as viteBuild } from "vite";
 import { build as packageElectron } from "electron-builder";
 import { createRequire } from "node:module";
@@ -53,6 +54,7 @@ await mkdir(stage, { recursive: true });
 await cp(path.join(desktop, ".vite"), path.join(stage, ".vite"), { recursive: true });
 await validateBuiltinPayloads(stage, fixtureBuild);
 await copyNativeDependencies(stage, platform, arch);
+await stageProductionJournal(stage, platform, arch);
 // Stage a standalone app: workspace packages are bundled, only actual runtime dependencies remain.
 const dependencyVersions = new Map();
 const notices = [];
@@ -167,7 +169,7 @@ await packageElectron({
     beforeBuild: async () => false,
     nodeGypRebuild: false,
     asar: { smartUnpack: false },
-    asarUnpack: [withPersistenceWorkerUnpack(BUILTIN_PAYLOAD_UNPACK)],
+    asarUnpack: [withJournalUnpack(withPersistenceWorkerUnpack(BUILTIN_PAYLOAD_UNPACK), platform)],
     files: [
       "**/*",
       { from: path.join(stage, "node_modules"), to: "node_modules", filter: ["**/*"] },

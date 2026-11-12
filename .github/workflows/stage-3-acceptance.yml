@@ -47,6 +47,9 @@ jobs:
       - name: Inventory exact commands and prerequisites
         run: node tests/desktop/stage-3-closeout-run.mjs ${{ matrix.gate }} --inventory
       - run: pnpm build:core
+      - name: Build production Windows journal for native harnesses
+        if: runner.os == 'Windows'
+        run: node tools/release/journal-win32.mjs
       - run: pnpm build:desktop
       - name: Configure Electron sandbox
         if: runner.os == 'Linux'
@@ -114,7 +117,7 @@ jobs:
         run: echo 'This job does not sign B2 reports, maximum-load, hardware or human acceptance. Run dispatched B2 validation with actual complete reports.' >> "$GITHUB_STEP_SUMMARY"
 
   journal-win32:
-    name: Windows safety-journal adapter prototype
+    name: Windows safety-journal native acceptance (26 cases)
     runs-on: windows-2022
     timeout-minutes: 30
     steps:
@@ -125,39 +128,53 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Build against Electron headers and run the native suite
+      - name: Build production and test-hook addons against pinned Electron headers
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $repo = (Get-Location).Path
-          $buildRoot = Join-Path $env:RUNNER_TEMP ('w02a-' + [guid]::NewGuid().ToString())
+          $buildRoot = Join-Path $env:RUNNER_TEMP ('kobrixa-journal-suite-' + [guid]::NewGuid())
           New-Item -ItemType Directory -Path $buildRoot | Out-Null
-          "W02A_BUILD_ROOT=$buildRoot" >> $env:GITHUB_ENV
-          Copy-Item apps/desktop/native/journal-win32/binding.gyp $buildRoot
-          Copy-Item apps/desktop/native/journal-win32/journal.cc $buildRoot
-          $electronVersion = (& node -p "require('electron/package.json').version").Trim()
+          "JOURNAL_BUILD_ROOT=$buildRoot" >> $env:GITHUB_ENV
+          $production = Join-Path $buildRoot 'production'
+          $hooks = Join-Path $buildRoot 'hooks'
+          foreach ($directory in @($production, $hooks)) {
+            New-Item -ItemType Directory -Path $directory | Out-Null
+            Copy-Item apps/desktop/native/journal-win32/binding.gyp $directory
+            Copy-Item apps/desktop/native/journal-win32/journal.cc $directory
+          }
+          $electronVersion = (& node -p "require('./apps/desktop/node_modules/electron/package.json').version").Trim()
           if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve pinned Electron version' }
-          $electron = (& node -e "console.log(require('electron'))" | Select-Object -Last 1).Trim()
+          & node node_modules/node-gyp/bin/node-gyp.js rebuild "--directory=$production" "--target=$electronVersion" --arch=x64 --dist-url=https://electronjs.org/headers "--devdir=$production/headers" --journal_test_hooks=0 2>&1 | Tee-Object (Join-Path $buildRoot 'production-build.log')
+          if ($LASTEXITCODE -ne 0) { throw 'Production native Electron-header build failed' }
+          & node node_modules/node-gyp/bin/node-gyp.js rebuild "--directory=$hooks" "--target=$electronVersion" --arch=x64 --dist-url=https://electronjs.org/headers "--devdir=$hooks/headers" --journal_test_hooks=1 2>&1 | Tee-Object (Join-Path $buildRoot 'hooks-build.log')
+          if ($LASTEXITCODE -ne 0) { throw 'Test-hook native Electron-header build failed' }
+          "KOBRIXA_JOURNAL_WIN32_ADDON=$(Join-Path $production 'build/Release/journal_win32.node')" >> $env:GITHUB_ENV
+          "KOBRIXA_JOURNAL_WIN32_TEST_ADDON=$(Join-Path $hooks 'build/Release/journal_win32.node')" >> $env:GITHUB_ENV
+          Get-FileHash -Algorithm SHA256 (Join-Path $production 'journal.cc'), (Join-Path $production 'binding.gyp'), (Join-Path $production 'build/Release/journal_win32.node'), (Join-Path $hooks 'build/Release/journal_win32.node') | Format-List | Out-File (Join-Path $buildRoot 'hashes.txt')
+          "Electron=$electronVersion arch=x64" | Out-File (Join-Path $buildRoot 'runtime.txt')
+      - name: Require all 26 native cases with no skips
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $electron = (& node -p "require('./apps/desktop/node_modules/electron')" | Select-Object -Last 1).Trim()
           if ($LASTEXITCODE -ne 0) { throw 'Pinned Electron binary is not installed' }
-          $nodeGyp = (& node -p "require.resolve('node-gyp/bin/node-gyp.js')").Trim()
-          if ($LASTEXITCODE -ne 0) { throw 'Frozen install did not expose node-gyp' }
-          & node $nodeGyp rebuild "--directory=$buildRoot" "--target=$electronVersion" --arch=x64 --dist-url=https://electronjs.org/headers "--devdir=$buildRoot/headers" 2>&1 | Tee-Object (Join-Path $buildRoot 'build.log')
-          if ($LASTEXITCODE -ne 0) { throw 'Native Electron-header build failed' }
-          $env:KOBRIXA_JOURNAL_WIN32_ADDON = Join-Path $buildRoot 'build/Release/journal_win32.node'
-          $suite = Join-Path $repo 'tests/desktop/journal-win32-native.test.mjs'
-          Get-FileHash -Algorithm SHA256 $env:KOBRIXA_JOURNAL_WIN32_ADDON
           $env:ELECTRON_RUN_AS_NODE = '1'
-          & $electron --test --test-reporter=tap $suite 2>&1 | Tee-Object (Join-Path $buildRoot 'electron-test.tap')
-          if ($LASTEXITCODE -ne 0) { throw 'Windows Electron native suite failed' }
-      - name: Retain build log and TAP output
+          try {
+            & $electron --test --test-reporter=tap tests/desktop/journal-win32-native.test.mjs 2>&1 | Tee-Object (Join-Path $env:JOURNAL_BUILD_ROOT 'electron-test.tap')
+            if ($LASTEXITCODE -ne 0) { throw 'Windows Electron native suite failed' }
+            $tap = Get-Content -Raw (Join-Path $env:JOURNAL_BUILD_ROOT 'electron-test.tap')
+            foreach ($required in @('tests 26', 'pass 26', 'fail 0', 'skipped 0')) {
+              if ($tap -notmatch "(?m)^# $required\r?$") { throw "Native suite incomplete: $required" }
+            }
+          } finally { Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue }
+      - name: Retain both build logs, source/addon hashes and TAP
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: journal-win32-prototype
-          path: |
-            ${{ env.W02A_BUILD_ROOT }}/build.log
-            ${{ env.W02A_BUILD_ROOT }}/electron-test.tap
-          if-no-files-found: warn
+          name: journal-win32-native
+          path: ${{ env.JOURNAL_BUILD_ROOT }}/**
+          if-no-files-found: error
+          retention-days: 7
 
   b2-reports:
     name: Full B2 supplied report validation

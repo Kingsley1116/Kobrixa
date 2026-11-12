@@ -111,8 +111,21 @@ export async function requireInstalledReceipt(output, singleInstance) {
     assert.deepEqual(report.unrun, [], "Single-instance observations remain unrun");
 }
 
+export function nativeHarnessArgs(args, platform = process.platform) {
+  return platform === "win32" &&
+    [
+      t("motor-test-public-run.mjs"),
+      t("sensor-lab-public-run.mjs"),
+      t("sensor-lab-stdio-run.mjs"),
+      t("device-ui-public-run.mjs"),
+      t("device-ui-stdio-run.mjs"),
+    ].includes(args[0])
+    ? ["--import", "./tools/release/journal-harness.mjs", ...args]
+    : args;
+}
+
 export async function execute(args, env) {
-  const child = spawn(process.execPath, args, {
+  const child = spawn(process.execPath, nativeHarnessArgs(args), {
     cwd: root,
     env,
     stdio: ["ignore", "pipe", "pipe"],

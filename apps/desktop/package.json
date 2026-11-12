@@ -5,7 +5,7 @@
   "type": "module",
   "main": ".vite/build/main.cjs",
   "scripts": {
-    "dev": "electron-forge start",
+    "dev": "node ../../tools/release/journal-win32.mjs && electron-forge start",
     "build": "install-electron && node ../../tools/release/build-desktop.mjs",
     "package": "install-electron && node ../../tools/release/build-desktop.mjs",
     "check": "tsc -p tsconfig.json --noEmit",

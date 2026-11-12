@@ -89,19 +89,46 @@ export function installedEnvironment(original, emptyPath) {
   return { ...env, PATH: emptyPath };
 }
 
+export function assertWindowsJournalReady(pages, native) {
+  assert.equal(
+    native?.capabilities?.supported,
+    true,
+    "Installed Windows addon must support the actual profile",
+  );
+  assert.equal(
+    native?.barrier?.supported,
+    true,
+    "Installed Windows directory barrier must be supported",
+  );
+  assert.equal(native?.barrier?.flushed, true, "Installed Windows directory barrier must flush");
+  assert.ok(Array.isArray(pages) && pages.length > 0, "Require actual public recovery pages");
+  const cursors = new Set();
+  for (const [index, page] of pages.entries()) {
+    assert.equal(page?.ok, true, "Windows recovery snapshot must succeed");
+    assert.equal(page.value.hostEpoch, pages[0].value.hostEpoch);
+    assert.equal(page.value.revision, pages[0].value.revision);
+    assert.ok(Array.isArray(page.value.items));
+    for (const item of page.value.items)
+      assert.ok(
+        !(
+          item.sourceKey === "builtin:kobrixa.core" &&
+          item.kind === "device" &&
+          item.state === "save-failed"
+        ),
+        `Windows installed production journal unavailable: ${JSON.stringify(item)}`,
+      );
+    if (index === pages.length - 1)
+      assert.equal(page.value.nextCursor, null, "Read every recovery page");
+    else {
+      assert.equal(typeof page.value.nextCursor, "string");
+      assert.equal(cursors.has(page.value.nextCursor), false, "Repeated recovery cursor");
+      cursors.add(page.value.nextCursor);
+    }
+  }
+}
+
 export function installedPlatformPolicy(platform, requestedIsolation) {
-  const blockers =
-    platform === "win32"
-      ? [
-          {
-            id: "W02b",
-            status: "blocked-by-W02b",
-            checks: ["motion admission", "Run admission"],
-            reason:
-              "3A safety journal fails closed with ENOTSUP until the native Windows adapter is integrated; no admission pass is claimed",
-          },
-        ]
-      : [];
+  const blockers = [];
   if (platform === "win32" && requestedIsolation)
     blockers.push({
       id: "W17-isolation",
@@ -712,9 +739,29 @@ async function launchProduct(config, receipt, check) {
     });
     assert.equal(receipt.preferences.usbAutoReconnect, false);
     if (process.platform === "win32") {
-      receipt.deviceRecovery = await renderer.js("window.kobrixa.plugins.recovery.snapshot({})");
-      // Keep the actual public recovery result beside the source-based W02b
-      // prerequisite. Do not synthesize ENOTSUP as an observed product error.
+      receipt.deviceRecovery = await renderer.js(`(async () => {
+        const pages = [], cursors = new Set();
+        let cursor;
+        do {
+          const page = await window.kobrixa.plugins.recovery.snapshot(cursor ? {cursor} : {});
+          pages.push(page);
+          if (!page.ok) break;
+          cursor = page.value.nextCursor;
+          if (cursor && cursors.has(cursor)) throw new Error('Repeated recovery cursor');
+          cursors.add(cursor);
+        } while (cursor);
+        return pages;
+      })()`);
+      receipt.nativeJournal = await main.js(`(() => {
+        const require = __installedProbe.require, path = require('node:path');
+        const filename = path.join(process.resourcesPath, 'app.asar.unpacked/native/journal-win32/journal_win32.node');
+        const addon = require(filename), profile = __installedProbe.electron.app.getPath('userData');
+        const root = path.join(profile, 'device-broker');
+        require('node:assert/strict').deepEqual(Object.keys(addon).sort(), ['apiVersion','arch','capabilities','durableReplace','napiVersion','syncDirectory'].sort());
+        return {filename, sha256: require('node:crypto').createHash('sha256').update(require('node:fs').readFileSync(filename)).digest('hex'),
+          capabilities: addon.capabilities(root), barrier: addon.syncDirectory(root)};
+      })()`);
+      assertWindowsJournalReady(receipt.deviceRecovery, receipt.nativeJournal);
     }
     if (isolated) {
       receipt.isolation = await main.js(`(async () => {

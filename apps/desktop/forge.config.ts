@@ -1,3 +1,4 @@
+import { stageProductionJournal, withJournalUnpack } from "../../tools/release/journal-win32.mjs";
 import {
   copyNativeDependencies,
   BUILTIN_PAYLOAD_UNPACK,
@@ -41,7 +42,12 @@ const config: ForgeConfig = {
     },
     ...macSigningConfig(),
     icon: platformIcon,
-    asar: { unpack: withPersistenceWorkerUnpack(BUILTIN_PAYLOAD_UNPACK) },
+    asar: {
+      unpack: withJournalUnpack(
+        withPersistenceWorkerUnpack(BUILTIN_PAYLOAD_UNPACK),
+        process.platform,
+      ),
+    },
     ignore: (file) =>
       Boolean(file) &&
       ![
@@ -58,6 +64,7 @@ const config: ForgeConfig = {
     packageAfterCopy: async (_forgeConfig, buildPath, _electronVersion, platform, arch) => {
       await validateBuiltinPayloads(buildPath, fixtureBuild);
       await copyNativeDependencies(buildPath, platform, arch);
+      await stageProductionJournal(buildPath, platform, arch);
     },
   },
   plugins: [

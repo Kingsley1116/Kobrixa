@@ -95,6 +95,9 @@ jobs:
           python-version: "3.12"
       - run: pnpm check:desktop
       - run: pnpm build:core
+      - name: Build production Windows journal for native harnesses
+        if: runner.os == 'Windows'
+        run: node tools/release/journal-win32.mjs
       - name: Verify static language schemas and generated core ids
         shell: bash
         run: |
@@ -166,6 +169,14 @@ jobs:
           TARGET_PLATFORM: ${{ matrix.platform }}
           TARGET_ARCH: ${{ matrix.arch }}
       - run: pnpm package:updates
+      - name: Retain Windows journal build logs and hashes
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-journal-win32-${{ matrix.arch }}
+          path: ${{ runner.temp }}/kobrixa-journal-production-*/**
+          if-no-files-found: error
+          retention-days: 7
       - uses: actions/upload-artifact@v7
         if: github.event_name == 'workflow_dispatch' && inputs.upload_artifacts
         with:

@@ -4,6 +4,7 @@ import path from "node:path";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import {
+  assertWindowsJournalReady,
   installedLayout,
   installedEnvironment,
   installedPlatformPolicy,
@@ -104,10 +105,9 @@ test("Windows launches the exe directly with unchanged inspector/profile argumen
 test("Windows prerequisite blocks cannot become isolated acceptance", async () => {
   const policy = installedPlatformPolicy("win32", true);
   assert.equal(policy.isolated, false);
-  assert.equal(policy.blockers[0].status, "blocked-by-W02b");
-  assert.deepEqual(policy.blockers[0].checks, ["motion admission", "Run admission"]);
-  assert.equal(policy.blockers[1].id, "W17-isolation");
-  assert.equal(installedPlatformPolicy("win32", false).blockers.length, 1);
+  assert.equal(policy.blockers.length, 1);
+  assert.equal(policy.blockers[0].id, "W17-isolation");
+  assert.equal(installedPlatformPolicy("win32", false).blockers.length, 0);
   assert.deepEqual(installedPlatformPolicy("darwin", true), { isolated: true, blockers: [] });
   assert.deepEqual(installedPlatformPolicy("linux", true), { isolated: true, blockers: [] });
   const directory = await mkdtemp(path.join(tmpdir(), "installed-blocked-unit-"));
@@ -229,4 +229,34 @@ test("Windows secondary resumes only after its paused entry and OS creation iden
       assert.equal(calls.includes("Debugger.resume"), false);
     }
   }
+});
+
+test("Windows installed journal requires native receipts and every healthy public recovery page", () => {
+  const native = { capabilities: { supported: true }, barrier: { supported: true, flushed: true } };
+  const page = {
+    ok: true,
+    value: { hostEpoch: "epoch", revision: 1, items: [], nextCursor: null },
+  };
+  assertWindowsJournalReady([page], native);
+  for (const pages of [
+    undefined,
+    [],
+    [{ ok: false }],
+    [{ ...page, value: { ...page.value, nextCursor: "more" } }],
+  ])
+    assert.throws(() => assertWindowsJournalReady(pages, native));
+  for (const bad of [undefined, {}, { ...native, barrier: { supported: true, flushed: false } }])
+    assert.throws(() => assertWindowsJournalReady([page], bad));
+  const failure = { sourceKey: "builtin:kobrixa.core", kind: "device", state: "save-failed" };
+  assert.throws(
+    () =>
+      assertWindowsJournalReady(
+        [
+          { ...page, value: { ...page.value, nextCursor: "page-2" } },
+          { ...page, value: { ...page.value, items: [failure] } },
+        ],
+        native,
+      ),
+    /production journal unavailable/,
+  );
 });

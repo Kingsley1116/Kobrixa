@@ -4,8 +4,13 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
+import ts from "typescript";
 import { parse } from "yaml";
 import {
+  nativeHarnessArgs,
   execute,
   gates,
   inventory,
@@ -159,4 +164,114 @@ test("slow native jobs are separately required on every platform; B2 consumes su
   assert.ok(b2.steps.some((s) => s.uses?.startsWith("actions/download-artifact@")));
   assert.ok(b2.steps.at(-1).env.PERSISTENCE_EVIDENCE);
   assert.ok(b2.steps.at(-1).env.KOBRIXA_SINGLE_INSTANCE_REPORT);
+});
+
+test("Windows native gates install the addon in temporary app roots without changing installed paths", () => {
+  for (const gate of ["motor", "lab", "device"]) {
+    for (const args of gates[gate].commands.filter((args) => args[0] !== "--test")) {
+      assert.deepEqual(nativeHarnessArgs(args, "win32"), [
+        "--import",
+        "./tools/release/journal-harness.mjs",
+        ...args,
+      ]);
+      for (const platform of ["darwin", "linux"])
+        assert.deepEqual(nativeHarnessArgs(args, platform), args);
+    }
+  }
+  for (const args of gates.installed.commands)
+    assert.deepEqual(nativeHarnessArgs(args, "win32"), args);
+});
+
+// Count registrations, including loop-generated cases, under Windows skip
+// conditions. Never invoke callbacks or load native addons: this is a workflow
+// consistency check, not native execution evidence.
+async function windowsJournalCases() {
+  const url = new URL("./journal-win32-native.test.mjs", import.meta.url);
+  const source = ts.createSourceFile(
+    url.pathname,
+    await readFile(url, "utf8"),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.JS,
+  );
+  const registrations = [];
+  const code = source.statements
+    .filter((statement) => !ts.isImportDeclaration(statement))
+    .map((statement) => statement.getText(source))
+    .join("\n")
+    .replaceAll("import.meta.url", JSON.stringify(url.href));
+  runInNewContext(code, {
+    process: { platform: "win32", env: {} },
+    createRequire: () => () => ({}),
+    fileURLToPath,
+    URL,
+    path,
+    Buffer,
+    createHash,
+    test(name, options, callback) {
+      if (typeof options === "function") callback = options;
+      else {
+        assert.ok(!options.skip && !options.todo && !options.only, name);
+      }
+      assert.equal(typeof callback, "function", name);
+      registrations.push(name);
+    },
+  });
+  assert.ok(registrations.length > 0);
+  assert.equal(new Set(registrations).size, registrations.length);
+  return registrations.length;
+}
+
+test("Windows workflows build both native variants, retain evidence and prepare production before gates", async () => {
+  const acceptance = parse(
+    await readFile(path.join(root, ".github/workflows/stage-3-acceptance.yml"), "utf8"),
+  );
+  const ci = parse(await readFile(path.join(root, ".github/workflows/ci.yml"), "utf8"));
+  const journal = acceptance.jobs["journal-win32"];
+  assert.doesNotMatch(journal.name, /prototype/);
+  const build = journal.steps.find((s) => s.name?.startsWith("Build production and test-hook"));
+  for (const pattern of [
+    /--journal_test_hooks=0/,
+    /--journal_test_hooks=1/,
+    /--target=\$electronVersion/,
+    /--arch=x64/,
+    /Get-FileHash/,
+    /hashes.txt/,
+  ])
+    assert.match(build.run, pattern);
+  const cases = await windowsJournalCases();
+  assert.equal(journal.name, `Windows safety-journal native acceptance (${cases} cases)`);
+  const suite = journal.steps.find(
+    (s) => s.name === `Require all ${cases} native cases with no skips`,
+  );
+  assert.ok(suite, `workflow must require all ${cases} registered Windows cases`);
+  assert.match(suite.run, new RegExp(`'tests ${cases}'`));
+  assert.match(suite.run, new RegExp(`'pass ${cases}'`));
+  assert.match(suite.run, /fail 0/);
+  assert.match(suite.run, /skipped 0/);
+  for (const job of [acceptance.jobs.native, ci.jobs.platform]) {
+    const index = job.steps.findIndex((s) => s.run === "node tools/release/journal-win32.mjs");
+    assert.ok(index > 0);
+    assert.equal(job.steps[index].if, "runner.os == 'Windows'");
+    assert.ok(
+      index <
+        job.steps.findIndex((s) =>
+          /Execute required native gate|Declarative UI bridge/.test(s.name),
+        ),
+    );
+    assert.ok(
+      job.steps.some(
+        (s) => s.uses?.startsWith("actions/upload-artifact") && s.if?.includes("always()"),
+      ),
+    );
+  }
+  const scripts = JSON.parse(await readFile(path.join(root, "package.json"), "utf8")).scripts;
+  assert.equal(
+    (
+      scripts["test:declarative-ui:smoke"].match(
+        /--import \.\/tools\/release\/journal-harness.mjs/g,
+      ) ?? []
+    ).length,
+    2,
+  );
 });

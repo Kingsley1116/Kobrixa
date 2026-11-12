@@ -130,7 +130,10 @@ test("release builder registers the same persistence worker and unpack rule as F
   assert.match(builder, /await buildDesktopEntry\(config, entry, name\)/);
   const helper = await readFile(new URL("./desktop-packaging.mjs", import.meta.url), "utf8");
   assert.match(helper, /forgeConfigSelf: \{ entry \}/);
-  assert.match(builder, /asarUnpack: \[withPersistenceWorkerUnpack\(BUILTIN_PAYLOAD_UNPACK\)\]/);
+  assert.match(
+    builder,
+    /withJournalUnpack\(withPersistenceWorkerUnpack\(BUILTIN_PAYLOAD_UNPACK\), platform\)/,
+  );
 });
 
 test(
@@ -174,3 +177,51 @@ test(
     assert.deepEqual(await exit, [0]);
   },
 );
+
+test("Windows packages contain only the production journal at the exact unpacked loader path", async (t) => {
+  const { stageProductionJournal, withJournalUnpack, JOURNAL_PACKAGED } =
+    await import("./journal-win32.mjs");
+  const { journalFixture } = await import("./journal-win32-fixture.mjs");
+  const root = await mkdtemp(path.join(tmpdir(), "kobrixa-journal-package-unit-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const production = path.join(root, "production.node");
+  const hooks = path.join(root, "hooks.node");
+  await writeFile(production, journalFixture());
+  await writeFile(hooks, journalFixture("x64", true));
+  for (const platform of ["win32", "darwin", "linux"]) {
+    const stage = path.join(root, platform);
+    await mkdir(stage);
+    await writeFile(path.join(stage, "package.json"), "{}");
+    let builds = 0;
+    await stageProductionJournal(stage, platform, "x64", async (target) => {
+      assert.deepEqual(target, { platform: "win32", arch: "x64" });
+      builds++;
+      return production;
+    });
+    assert.equal(builds, platform === "win32" ? 1 : 0);
+    const archive = path.join(root, `${platform}.asar`);
+    const base = withPersistenceWorkerUnpack(BUILTIN_PAYLOAD_UNPACK);
+    const unpack = withJournalUnpack(base, platform);
+    if (platform !== "win32") assert.equal(unpack, base, "POSIX unpack rule must not change");
+    await createPackageWithOptions(stage, archive, { unpack });
+    const journalMembers = listPackage(archive).filter((member) => member.endsWith(".node"));
+    if (platform === "win32") {
+      assert.deepEqual(journalMembers, [path.join(path.sep, JOURNAL_PACKAGED)]);
+      assert.equal(statFile(archive, path.normalize(JOURNAL_PACKAGED)).unpacked, true);
+      assert.deepEqual(
+        await readFile(path.join(`${archive}.unpacked`, JOURNAL_PACKAGED)),
+        journalFixture(),
+      );
+    } else assert.deepEqual(journalMembers, []);
+  }
+  const rejected = path.join(root, "rejected");
+  await assert.rejects(
+    stageProductionJournal(rejected, "win32", "x64", async () => hooks),
+    /Test-hook addon cannot ship/,
+  );
+  await assert.rejects(readFile(path.join(rejected, JOURNAL_PACKAGED)), { code: "ENOENT" });
+  await assert.rejects(
+    stageProductionJournal(rejected, "win32", "arm64", async () => production),
+    /architecture does not match/,
+  );
+});

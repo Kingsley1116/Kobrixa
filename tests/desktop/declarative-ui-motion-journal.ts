@@ -11,7 +11,7 @@ export async function requireMotionJournalFilesystem(
   } catch (error) {
     if (platform === "win32" && (error as NodeJS.ErrnoException)?.code === "ENOTSUP")
       throw new Error(
-        "blocked-by-W02b: production safety journal directory durability barrier returned ENOTSUP; motion cannot dispatch until the verified Windows native journal adapter is integrated",
+        "Windows production safety journal unavailable (ENOTSUP); a working native adapter and supported private profile are required for motion acceptance",
         { cause: error },
       );
     throw error;
