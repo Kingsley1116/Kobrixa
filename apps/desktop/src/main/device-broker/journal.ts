@@ -383,22 +383,36 @@ export function createJournal(fs: JournalFilesystem, profile: ProfileWriterLock)
             throw new Error("journal replacement quota");
           const temporary = `faults.next-${randomUUID()}.json`;
           created.add(temporary);
-          await fs.write(temporary, bytes);
-          await fs.sync(temporary);
+          if (!fs.durableReplace) {
+            await fs.write(temporary, bytes);
+            await fs.sync(temporary);
+          }
           if (committed.revision > 0) {
             const backup = `faults.backup-${randomUUID()}.json`;
             created.add(backup);
-            await fs.write(backup, previous);
-            await fs.sync(backup);
+            if (!fs.durableReplace) {
+              await fs.write(backup, previous);
+              await fs.sync(backup);
+            }
             profile.assertHeld();
             if (expired) throw new Error("journal deadline");
-            await fs.replace(backup, "faults.previous.json");
-            await fs.syncDirectory();
+            if (fs.durableReplace) {
+              const receipt = await fs.durableReplace(backup, "faults.previous.json", previous);
+              if (receipt.directoryFlushed !== true) throw new Error("journal directory receipt");
+            } else {
+              await fs.replace(backup, "faults.previous.json");
+              await fs.syncDirectory();
+            }
           }
           profile.assertHeld();
           if (expired) throw new Error("journal deadline");
-          await fs.replace(temporary, "faults.json");
-          await fs.syncDirectory();
+          if (fs.durableReplace) {
+            const receipt = await fs.durableReplace(temporary, "faults.json", bytes);
+            if (receipt.directoryFlushed !== true) throw new Error("journal directory receipt");
+          } else {
+            await fs.replace(temporary, "faults.json");
+            await fs.syncDirectory();
+          }
           if (expired) throw new Error("journal deadline");
           if (recovering) {
             for (const name of orphans) await fs.remove(name);

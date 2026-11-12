@@ -1,4 +1,5 @@
 {
+  "variables": { "journal_test_hooks%": 0 },
   "targets": [
     {
       "target_name": "journal_win32",
@@ -11,15 +12,23 @@
         "CLANG_CXX_LANGUAGE_STANDARD": "c++17"
       },
       "conditions": [
-        ["OS=='win'", {
-          "defines": ["UNICODE", "_UNICODE", "NOMINMAX", "_WIN32_WINNT=0x0602"],
-          "msvs_settings": {
-            "VCCLCompilerTool": {
-              "ExceptionHandling": 1,
-              "AdditionalOptions": ["/std:c++17"]
+        [
+          "journal_test_hooks==1 or journal_test_hooks=='1'",
+          { "defines": ["JOURNAL_TEST_HOOKS=1"] }
+        ],
+        [
+          "OS=='win'",
+          {
+            "libraries": ["Advapi32.lib"],
+            "defines": ["UNICODE", "_UNICODE", "NOMINMAX", "_WIN32_WINNT=0x0A00"],
+            "msvs_settings": {
+              "VCCLCompilerTool": {
+                "ExceptionHandling": 1,
+                "AdditionalOptions": ["/std:c++17"]
+              }
             }
           }
-        }]
+        ]
       ]
     }
   ]

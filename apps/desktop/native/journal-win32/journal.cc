@@ -1,11 +1,16 @@
-// W02a feasibility prototype. Nothing here enables production journal admission.
-// Candidate receipts describe completed syscalls, NOT verified crash durability.
+// Windows safety journal. R1 2026-11-12: documented API semantics plus CI
+// process-kill evidence; physical power loss has not been tested.
 #include <node_api.h>
 #include <stdexcept>
+#include <cstddef>
+#include <cstring>
 #include <string>
 #include <vector>
 #ifdef _WIN32
 #include <windows.h>
+#include <winternl.h>
+#include <aclapi.h>
+#include <memory>
 #include <algorithm>
 #include <iomanip>
 #include <sstream>
@@ -41,30 +46,40 @@ napi_value Object(napi_env env) {
   Check(napi_create_object(env, &v));
   return v;
 }
-#ifdef _WIN32
-void Number(napi_env env, napi_value obj, const char* key, unsigned long value) {
-  napi_value v;
-  Check(napi_create_uint32(env, value, &v));
-  Set(env, obj, key, v);
-}
-napi_value Error(napi_env env, const Failure& f, const char* phase,
-                 bool publicationAttempted) {
-  napi_value err;
-  Check(napi_create_error(env, String(env, f.code), String(env, f.message), &err));
-  Number(env, err, "win32Code", f.native);
-  Set(env, err, "phase", String(env, phase));
-  Set(env, err, "publicationState",
-      String(env, publicationAttempted ? "uncertain" : "not-published"));
-  Check(napi_throw(env, err));
+// Error reporting must never allocate C++ strings or throw out of a callback,
+// including when N-API already has an exception or cannot allocate an Error.
+napi_value Error(napi_env env, const char* code, const char* message,
+                 unsigned long native, const char* phase, bool attempted) noexcept {
+  bool pending = false;
+  if (napi_is_exception_pending(env, &pending) != napi_ok || pending) return nullptr;
+  napi_value err, c, m, n, p, state;
+  if (napi_create_string_utf8(env, code, NAPI_AUTO_LENGTH, &c) == napi_ok &&
+      napi_create_string_utf8(env, message, NAPI_AUTO_LENGTH, &m) == napi_ok &&
+      napi_create_error(env, c, m, &err) == napi_ok &&
+      napi_create_uint32(env, native, &n) == napi_ok &&
+      napi_create_string_utf8(env, phase, NAPI_AUTO_LENGTH, &p) == napi_ok &&
+      napi_create_string_utf8(env, attempted ? "uncertain" : "not-published",
+                              NAPI_AUTO_LENGTH, &state) == napi_ok &&
+      napi_set_named_property(env, err, "win32Code", n) == napi_ok &&
+      napi_set_named_property(env, err, "phase", p) == napi_ok &&
+      napi_set_named_property(env, err, "publicationState", state) == napi_ok &&
+      napi_throw(env, err) == napi_ok) return nullptr;
+  // Preserve an exception produced by any of the calls above.
+  if (napi_is_exception_pending(env, &pending) == napi_ok && !pending)
+    napi_throw_error(env, "EIO", "native journal error reporting failed");
   return nullptr;
 }
-#endif
+[[maybe_unused]] napi_value Error(napi_env env, const Failure& f, const char* phase,
+                 bool attempted) noexcept {
+  return Error(env, f.code.c_str(), f.message.c_str(), f.native, phase, attempted);
+}
 napi_value Unsupported(napi_env env, napi_callback_info) {
   napi_throw_error(env, "ENOTSUP",
-      "Windows journal durability is unverified; production remains fail-closed");
+      "Windows journal adapter requires verified local fixed NTFS");
   return nullptr;
 }
-napi_value Capabilities(napi_env env, napi_callback_info) {
+napi_value StubCapabilities(napi_env env, napi_callback_info) {
+  try {
   auto obj = Object(env);
 #ifdef _WIN32
   Bool(env, obj, "prototypeAvailable", true);
@@ -72,8 +87,9 @@ napi_value Capabilities(napi_env env, napi_callback_info) {
   Bool(env, obj, "prototypeAvailable", false);
 #endif
   Bool(env, obj, "supported", false);
-  Set(env, obj, "status", String(env, "to be verified on a Windows runner"));
+  Set(env, obj, "status", String(env, "unsupported platform"));
   return obj;
+  } catch (...) { return Error(env, "EIO", "stub capabilities failed", 0, "capabilities", false); }
 }
 
 #ifdef _WIN32
@@ -148,7 +164,7 @@ std::wstring Name(napi_env env, napi_value value, bool temp) {
   auto name = Wide(env, value);
   if (!temp && (name == L"faults.json" || name == L"faults.previous.json")) return name;
   if (temp) {
-    const std::wstring prefix = L"faults.next-";
+    const std::wstring prefix = name.rfind(L"faults.backup-", 0) == 0 ? L"faults.backup-" : L"faults.next-";
     if (name.size() == prefix.size() + 36 + 5 && name.substr(0, prefix.size()) == prefix &&
         name.substr(name.size() - 5) == L".json") {
       auto id = name.substr(prefix.size(), 36);
@@ -187,10 +203,101 @@ std::string Identity(HANDLE h, bool directory) {
   for (auto b : id.FileId.Identifier) out << std::setw(2) << static_cast<unsigned>(b);
   return out.str();
 }
+
+// NtCreateFile's documented RootDirectory binds a single component to its pinned
+// parent. No path normalization, junction following, or global cwd changes.
+Handle RelativeOpen(HANDLE parent, const std::wstring& name, DWORD access,
+                    DWORD share, bool create = false) {
+  auto module = GetModuleHandleW(L"ntdll.dll");
+  auto createFile = reinterpret_cast<decltype(&NtCreateFile)>(
+      GetProcAddress(module, "NtCreateFile"));
+  using MapError = ULONG (WINAPI*)(NTSTATUS);
+  auto mapError = reinterpret_cast<MapError>(GetProcAddress(module, "RtlNtStatusToDosError"));
+  if (!createFile || !mapError) throw Failure{"ENOTSUP", "relative file API unavailable"};
+  UNICODE_STRING text{};
+  text.Buffer = const_cast<PWSTR>(name.c_str());
+  text.Length = static_cast<USHORT>(name.size() * sizeof(wchar_t));
+  text.MaximumLength = text.Length;
+  OBJECT_ATTRIBUTES attributes{};
+  attributes.Length = sizeof(attributes);
+  attributes.RootDirectory = parent;
+  attributes.ObjectName = &text;
+  attributes.Attributes = 0x40; // OBJ_CASE_INSENSITIVE
+  IO_STATUS_BLOCK io{};
+  HANDLE handle = INVALID_HANDLE_VALUE;
+  auto status = createFile(&handle, access | SYNCHRONIZE, &attributes, &io, nullptr,
+      FILE_ATTRIBUTE_NORMAL, share, create ? 2 : 1, // FILE_CREATE / FILE_OPEN
+      0x00200000 | 0x00000020 | 0x00004000 | (create ? 0x2 : 0), // OPEN_REPARSE_POINT / SYNCHRONOUS_IO_NONALERT / BACKUP_INTENT / WRITE_THROUGH
+      nullptr, 0);
+  if (status < 0) WinError("NtCreateFile(relative)", mapError(status));
+  return Handle(handle);
+}
+// Accept only the current user, SYSTEM and Administrators as writers/owners.
+// Do not silently rewrite existing ACLs: an unsafe inherited ACL is a refusal.
+void PrivateAcl(HANDLE handle) {
+  HANDLE rawToken;
+  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &rawToken)) WinError("OpenProcessToken");
+  Handle token(rawToken);
+  DWORD size = 0;
+  GetTokenInformation(token.value, TokenUser, nullptr, 0, &size);
+  std::vector<unsigned char> user(size);
+  if (!GetTokenInformation(token.value, TokenUser, user.data(), size, &size))
+    WinError("GetTokenInformation");
+  auto sid = reinterpret_cast<TOKEN_USER*>(user.data())->User.Sid;
+  auto trusted = [&](PSID candidate) {
+    return IsValidSid(candidate) && (EqualSid(sid, candidate) ||
+        IsWellKnownSid(candidate, WinLocalSystemSid) ||
+        IsWellKnownSid(candidate, WinBuiltinAdministratorsSid));
+  };
+  PSECURITY_DESCRIPTOR raw = nullptr;
+  PSID owner = nullptr;
+  PACL acl = nullptr;
+  DWORD error = GetSecurityInfo(handle, SE_FILE_OBJECT,
+      OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+      &owner, nullptr, &acl, nullptr, &raw);
+  if (error != ERROR_SUCCESS) WinError("GetSecurityInfo", error);
+  struct Free { void operator()(void* p) const { LocalFree(p); } };
+  std::unique_ptr<void, Free> descriptor(raw);
+  if (!owner || !trusted(owner) || !acl)
+    throw Failure{"EUNSAFE", "journal requires a private owner and DACL"};
+  for (DWORD i = 0; i < acl->AceCount; ++i) {
+    void* rawAce;
+    if (!GetAce(acl, i, &rawAce)) WinError("GetAce");
+    auto header = static_cast<ACE_HEADER*>(rawAce);
+    if (header->AceFlags & INHERIT_ONLY_ACE) continue;
+    if (header->AceType == ACCESS_DENIED_ACE_TYPE) continue;
+    if (header->AceType != ACCESS_ALLOWED_ACE_TYPE)
+      throw Failure{"EUNSAFE", "unverifiable journal DACL ACE"};
+    auto ace = static_cast<ACCESS_ALLOWED_ACE*>(rawAce);
+    constexpr DWORD mutation = GENERIC_ALL | GENERIC_WRITE | FILE_WRITE_DATA |
+        FILE_APPEND_DATA | FILE_WRITE_EA | FILE_WRITE_ATTRIBUTES | FILE_DELETE_CHILD |
+        DELETE | WRITE_DAC | WRITE_OWNER;
+    if ((ace->Mask & mutation) && !trusted(&ace->SidStart))
+      throw Failure{"EUNSAFE", "journal DACL permits another principal to mutate evidence"};
+  }
+}
+std::wstring HandlePath(HANDLE handle) {
+  std::vector<wchar_t> path(32768);
+  DWORD length = GetFinalPathNameByHandleW(handle, path.data(), static_cast<DWORD>(path.size()),
+                                        FILE_NAME_NORMALIZED | VOLUME_NAME_GUID);
+  if (!length || length >= path.size()) WinError("GetFinalPathNameByHandleW");
+  return std::wstring(path.data(), length);
+}
 struct PinnedDirectory {
   std::vector<Handle> ancestors;
   std::string identity;
-  explicit PinnedDirectory(const std::wstring& path) {
+  explicit PinnedDirectory(const std::wstring& path, bool production = false) {
+    if (production) {
+      // Conservative production floor: Windows 10 1709 / Server 2022 or newer.
+      using GetVersion = LONG (WINAPI*)(PRTL_OSVERSIONINFOW);
+      auto getVersion = reinterpret_cast<GetVersion>(
+          GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlGetVersion"));
+      RTL_OSVERSIONINFOW version{};
+      version.dwOSVersionInfoSize = sizeof(version);
+      if (!getVersion || getVersion(&version) != 0 || version.dwMajorVersion < 10 ||
+          (version.dwMajorVersion == 10 && version.dwBuildNumber < 16299))
+        throw Failure{"ENOTSUP", "FileRenameInfoEx requires Windows 10 1709 or newer"};
+    }
     auto drive = path.substr(0, 3);
     if (GetDriveTypeW(drive.c_str()) != DRIVE_FIXED)
       throw Failure{"ENOTSUP", "remote/removable/unknown volume is unverified"};
@@ -198,19 +305,31 @@ struct PinnedDirectory {
     size_t end = 2;
     for (;;) {
       auto prefix = path.substr(0, end == 2 ? 3 : end);
-      auto h = Open(prefix, FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                    OPEN_EXISTING);
+      const bool final = end == path.size();
+      // LIST_DIRECTORY participates in share checks; attribute-only pins do not.
+      // The leaf's write access is for FlushFileBuffers. Share READ|WRITE so the
+      // I/O manager can open the rename target parent for write, never DELETE.
+      DWORD access = production && final ? GENERIC_READ | GENERIC_WRITE :
+          FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES;
+      DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE;
+      auto h = ancestors.empty() ? Open(prefix, access, share, OPEN_EXISTING) :
+          RelativeOpen(ancestors.back().value, prefix.substr(prefix.find_last_of(L'\\') + 1),
+                       access, share);
+      if (production && final) PrivateAcl(h.value);
       identity = Identity(h.value, true);
       ancestors.push_back(std::move(h));
       if (end == path.size()) break;
       end = path.find(L'\\', end + 1);
       if (end == std::wstring::npos) end = path.size();
     }
+    auto volume = HandlePath(ancestors.front().value);
+    if (GetDriveTypeW(volume.c_str()) != DRIVE_FIXED)
+      throw Failure{"ENOTSUP", "pinned volume is not a local fixed drive"};
     wchar_t fs[32]{};
-    if (!GetVolumeInformationW(drive.c_str(), nullptr, 0, nullptr, nullptr, nullptr, fs, 32))
-      WinError("GetVolumeInformationW");
+    if (!GetVolumeInformationByHandleW(ancestors.back().value, nullptr, 0, nullptr, nullptr, nullptr, fs, 32))
+      WinError("GetVolumeInformationByHandleW");
     if (std::wstring(fs) != L"NTFS")
-      throw Failure{"ENOTSUP", "only local NTFS is a prototype candidate"};
+      throw Failure{"ENOTSUP", "only local fixed NTFS is supported"};
   }
 };
 std::string FileIdentity(const std::wstring& path) {
@@ -224,6 +343,16 @@ std::string FileIdentity(const std::wstring& path) {
   }
   Handle h(raw);
   return Identity(h.value, false);
+}
+std::string RelativeIdentity(HANDLE parent, const std::wstring& name) {
+  try {
+    auto h = RelativeOpen(parent, name, FILE_READ_ATTRIBUTES,
+                          FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE);
+    return Identity(h.value, false);
+  } catch (const Failure& f) {
+    if (f.native == ERROR_FILE_NOT_FOUND) return "missing";
+    throw;
+  }
 }
 void Match(const std::string& actual, const std::string& expected) {
   if (actual != expected) throw Failure{"ESTALE", "journal identity changed"};
@@ -243,7 +372,8 @@ napi_value Inspect(napi_env env, napi_callback_info info) {
         FileIdentity(dir + L"\\" + Name(env, args[1], false)));
   } catch (const PendingException&) { return nullptr; }
     catch (const Failure& f) { return Error(env, f, "inspect", false); }
-    catch (const std::exception& e) { return Error(env, {"EIO", e.what()}, "inspect", false); }
+    catch (const std::exception& e) { return Error(env, "EIO", e.what(), 0, "inspect", false); }
+    catch (...) { return Error(env, "EIO", "unknown native exception", 0, "inspect", false); }
 }
 napi_value DirectoryProbe(napi_env env, napi_callback_info info) {
   // This is a diagnostic, never a successful production directory barrier.
@@ -264,7 +394,8 @@ napi_value DirectoryProbe(napi_env env, napi_callback_info info) {
     return result;
   } catch (const PendingException&) { return nullptr; }
     catch (const Failure& f) { return Error(env, f, phase, false); }
-    catch (const std::exception& e) { return Error(env, {"EIO", e.what()}, phase, false); }
+    catch (const std::exception& e) { return Error(env, "EIO", e.what(), 0, phase, false); }
+    catch (...) { return Error(env, "EIO", "unknown native exception", 0, phase, false); }
 }
 napi_value ReplaceCandidate(napi_env env, napi_callback_info info) {
   const char* phase = "validate";
@@ -312,7 +443,7 @@ napi_value ReplaceCandidate(napi_env env, napi_callback_info info) {
     Match(FileIdentity(temp), tempId);
     Match(FileIdentity(target), targetId);
     // Deliberately no COPY_ALLOWED, no delete/unlink fallback, no retry.
-    // Path-based check/move race remains an explicit production blocker.
+    // Historical candidate stays path-based; production uses a held-source rename.
     phase = "move";
     attempted = true;
     if (!MoveFileExW(temp.c_str(), target.c_str(),
@@ -335,8 +466,142 @@ napi_value ReplaceCandidate(napi_env env, napi_callback_info info) {
     return result;
   } catch (const PendingException&) { return nullptr; }
     catch (const Failure& f) { return Error(env, f, phase, attempted); }
-    catch (const std::exception& e) { return Error(env, {"EIO", e.what()}, phase, attempted); }
+    catch (const std::exception& e) { return Error(env, "EIO", e.what(), 0, phase, attempted); }
+    catch (...) { return Error(env, "EIO", "unknown native exception", 0, phase, attempted); }
 }
+
+napi_value Capabilities(napi_env env, napi_callback_info info) {
+  try {
+    auto args = Args(env, info, 1);
+    PinnedDirectory pinned(Directory(env, args[0]), true);
+    auto result = Object(env);
+    Bool(env, result, "supported", true);
+    Set(env, result, "scope", String(env, "local-fixed-NTFS"));
+    return result;
+  } catch (const PendingException&) { return nullptr; }
+    catch (const Failure& f) { return Error(env, f, "capabilities", false); }
+    catch (const std::exception& e) { return Error(env, "EIO", e.what(), 0, "capabilities", false); }
+    catch (...) { return Error(env, "EIO", "unknown native exception", 0, "capabilities", false); }
+}
+napi_value SyncDirectory(napi_env env, napi_callback_info info) {
+  try {
+    auto args = Args(env, info, 1);
+    PinnedDirectory pinned(Directory(env, args[0]), true);
+    if (!FlushFileBuffers(pinned.ancestors.back().value)) WinError("FlushFileBuffers(directory)");
+    pinned.ancestors.back().Close();
+    auto result = Object(env);
+    Bool(env, result, "flushed", true);
+    Bool(env, result, "supported", true);
+    return result;
+  } catch (const PendingException&) { return nullptr; }
+    catch (const Failure& f) { return Error(env, f, "flush-directory", false); }
+    catch (const std::exception& e) { return Error(env, "EIO", e.what(), 0, "flush-directory", false); }
+    catch (...) { return Error(env, "EIO", "unknown native exception", 0, "flush-directory", false); }
+}
+napi_value DurableReplaceImpl(napi_env env, napi_callback_info info, bool testHook) {
+  const char* phase = "validate";
+  bool attempted = false;
+  try {
+    auto args = Args(env, info, testHook ? 5 : 4);
+    auto dir = Directory(env, args[0]);
+    auto target = Name(env, args[1], false), temp = Name(env, args[2], true);
+    bool isBuffer = false;
+    Check(napi_is_buffer(env, args[3], &isBuffer));
+    if (!isBuffer) throw Failure{"EINVAL", "payload must be a Buffer"};
+    void* data;
+    size_t size;
+    Check(napi_get_buffer_info(env, args[3], &data, &size));
+    if (!size || size > 8388608) throw Failure{"EINVAL", "journal byte budget"};
+    PinnedDirectory pinned(dir, true);
+    HANDLE parent = pinned.ancestors.back().value;
+    // The old target denies data writers but shares DELETE for POSIX replacement.
+    // It stays alive across the rename; a target-name substitution race remains.
+    std::unique_ptr<Handle> old;
+    try {
+      old = std::make_unique<Handle>(RelativeOpen(parent, target, GENERIC_READ,
+                                                 FILE_SHARE_READ | FILE_SHARE_DELETE));
+      Identity(old->value, false);
+      PrivateAcl(old->value);
+    } catch (const Failure& f) {
+      if (f.native != ERROR_FILE_NOT_FOUND) throw;
+    }
+    phase = "create-temp";
+    auto staging = RelativeOpen(parent, temp, GENERIC_READ | GENERIC_WRITE | DELETE,
+                                FILE_SHARE_READ, true);
+    auto identity = Identity(staging.value, false);
+    PrivateAcl(staging.value);
+    phase = "write-temp";
+    for (size_t offset = 0; offset < size;) {
+      DWORD count = 0;
+      if (!WriteFile(staging.value, static_cast<unsigned char*>(data) + offset,
+                     static_cast<DWORD>(size - offset), &count, nullptr)) WinError("WriteFile");
+      if (!count) throw Failure{"EIO", "zero-length WriteFile"};
+      offset += count;
+    }
+    phase = "flush-temp";
+    if (!FlushFileBuffers(staging.value)) WinError("FlushFileBuffers(temp)");
+#ifdef JOURNAL_TEST_HOOKS
+    if (testHook) Hook(env, args[4], "after-temp-flush");
+#endif
+    phase = "pre-publication";
+    Match(RelativeIdentity(parent, temp), identity);
+    Match(RelativeIdentity(parent, target), old ? Identity(old->value, false) : "missing");
+    // Keep the original writer/DELETE handle: no close/reopen or path-based
+    // source lookup, and no other writer/deleter can open this staging file.
+    const DWORD nameBytes = static_cast<DWORD>(target.size() * sizeof(wchar_t));
+    const DWORD renameBytes = static_cast<DWORD>(sizeof(FILE_RENAME_INFO)) + nameBytes;
+    std::vector<unsigned char> storage(renameBytes, 0);
+    auto rename = reinterpret_cast<FILE_RENAME_INFO*>(storage.data());
+    rename->Flags = FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS;
+    rename->RootDirectory = parent;
+    rename->FileNameLength = nameBytes;
+    std::memcpy(rename->FileName, target.data(), nameBytes);
+    phase = "move";
+    attempted = true;
+    if (!SetFileInformationByHandle(staging.value, FileRenameInfoEx, rename, renameBytes)) {
+      DWORD code = GetLastError();
+      if (code == ERROR_INVALID_PARAMETER || code == ERROR_NOT_SUPPORTED ||
+          code == ERROR_INVALID_FUNCTION || code == ERROR_CALL_NOT_IMPLEMENTED)
+        throw Failure{"ENOTSUP", "FileRenameInfoEx POSIX replacement unsupported", code};
+      WinError("SetFileInformationByHandle(FileRenameInfoEx)", code);
+    }
+#ifdef JOURNAL_TEST_HOOKS
+    if (testHook) Hook(env, args[4], "after-move");
+#endif
+    phase = "flush-published";
+    Match(RelativeIdentity(parent, target), identity);
+    PrivateAcl(staging.value);
+    // FileRenameInfoEx has no WRITE_THROUGH flag. Require explicit file and
+    // directory flush receipts; never equate rename success with durable commit.
+    if (!FlushFileBuffers(staging.value)) WinError("FlushFileBuffers(published)");
+#ifdef JOURNAL_TEST_HOOKS
+    if (testHook) Hook(env, args[4], "after-published-flush");
+#endif
+    if (old) old->Close();
+    phase = "flush-directory";
+    if (!FlushFileBuffers(parent)) WinError("FlushFileBuffers(directory)");
+    staging.Close();
+    pinned.ancestors.back().Close();
+    auto result = Object(env);
+    Bool(env, result, "supported", true);
+    Bool(env, result, "published", true);
+    Bool(env, result, "fileFlushed", true);
+    Bool(env, result, "directoryFlushed", true);
+    Set(env, result, "identity", String(env, identity));
+    return result;
+  } catch (const PendingException&) { return nullptr; }
+    catch (const Failure& f) { return Error(env, f, phase, attempted); }
+    catch (const std::exception& e) { return Error(env, "EIO", e.what(), 0, phase, attempted); }
+    catch (...) { return Error(env, "EIO", "unknown native exception", 0, phase, attempted); }
+}
+napi_value DurableReplace(napi_env env, napi_callback_info info) {
+  return DurableReplaceImpl(env, info, false);
+}
+#ifdef JOURNAL_TEST_HOOKS
+napi_value DurableReplaceForTest(napi_env env, napi_callback_info info) {
+  return DurableReplaceImpl(env, info, true);
+}
+#endif
 napi_value WithExclusiveFile(napi_env env, napi_callback_info info) {
   try {
     auto args = Args(env, info, 3);
@@ -351,18 +616,26 @@ napi_value WithExclusiveFile(napi_env env, napi_callback_info info) {
     return result;
   } catch (const PendingException&) { return nullptr; }
     catch (const Failure& f) { return Error(env, f, "exclusive-file", false); }
-    catch (const std::exception& e) { return Error(env, {"EIO", e.what()}, "exclusive-file", false); }
+    catch (const std::exception& e) { return Error(env, "EIO", e.what(), 0, "exclusive-file", false); }
+    catch (...) { return Error(env, "EIO", "unknown native exception", 0, "exclusive-file", false); }
 }
 #endif
 
 napi_value Init(napi_env env, napi_value exports) {
+  try {
   struct Entry { const char* name; napi_callback callback; };
   const Entry entries[] = {
-    {"capabilities", Capabilities}, {"durableReplace", Unsupported},
-#ifdef _WIN32
+    #ifdef _WIN32
+    {"capabilities", Capabilities}, {"durableReplace", DurableReplace},
+    {"syncDirectory", SyncDirectory},
+#ifdef JOURNAL_TEST_HOOKS
+    {"durableReplaceForTest", DurableReplaceForTest},
     {"inspect", Inspect}, {"probeDirectoryFlush", DirectoryProbe},
     {"replaceCandidate", ReplaceCandidate}, {"withExclusiveFile", WithExclusiveFile},
+#endif
 #else
+    {"capabilities", StubCapabilities}, {"durableReplace", Unsupported},
+    {"syncDirectory", Unsupported},
     {"inspect", Unsupported}, {"probeDirectoryFlush", Unsupported},
     {"replaceCandidate", Unsupported}, {"withExclusiveFile", Unsupported},
 #endif
@@ -373,7 +646,17 @@ napi_value Init(napi_env env, napi_value exports) {
                              nullptr, &function) != napi_ok ||
         napi_set_named_property(env, exports, entry.name, function) != napi_ok) return nullptr;
   }
+  Set(env, exports, "apiVersion", String(env, "1"));
+#if defined(_M_ARM64) || defined(__aarch64__)
+  Set(env, exports, "arch", String(env, "arm64"));
+#elif defined(_M_X64) || defined(__x86_64__)
+  Set(env, exports, "arch", String(env, "x64"));
+#else
+  Set(env, exports, "arch", String(env, "unsupported"));
+#endif
+  Set(env, exports, "napiVersion", String(env, "8"));
   return exports;
+  } catch (...) { return Error(env, "EIO", "native journal initialization failed", 0, "init", false); }
 }
 }  // namespace
 NAPI_MODULE(NODE_GYP_MODULE_NAME, Init)

@@ -36,4 +36,4 @@ JS 使用 `devices.connectionRecovery.read({})`，Python 使用 `devices.connect
 
 以上是 Stage 3 開發中的契約。完整 native／installed 遷移與[硬體及介面清單](../../tests/hardware/device-ui.md)仍是分別驗收的門檻。
 
-Windows Stage 3 設備執行／復原驗收仍等待 native journal 持久性證明及封裝整合。R1 保留完整保證；production 在不支援的 directory barrier 回 `ENOTSUP`。馬達／程式受理可能在 dispatch 前失敗，可信 Stop 也可能在前置 journal commit 失敗；startup 失敗後的空 faults 清單不代表 profile 乾淨。見[平台政策](device-support.md#windows-stage-3-journal-policy)，B2 storage 政策不能豁免此要求。
+R1 的 2026-11-12 follow-up 以文件語意加 kill-at-phase tests 為依據，支援可驗證 local fixed NTFS 上的 Windows native journal。production 使用 handle-relative `FileRenameInfoEx` replace／POSIX 語意，加上 file／directory flush（Windows 10 1709+）。未做實體斷電測試，也不要求此測試。歷史 candidate tests 不證明這次 production sequence；目前 Windows native／installed acceptance 在新 CI 證據出現前仍為 **NOT RUN／尚未執行**。不支援的 volume、不安全路徑／ACL、缺失／不相容 addon 與 barrier 失敗仍 fail closed。已驗證的舊 faults 保持可見；journal failure 仍阻擋 motion／Run 與 resolution，可信 Stop 則 best-effort dispatch，並保留未解決的 close/update 義務。見[平台政策](device-support.md#windows-stage-3-journal-policy)。B2 storage-policy waiver 不適用。

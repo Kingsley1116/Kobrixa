@@ -78,6 +78,8 @@ Bluetooth 不屬於 v1，因為各作業系統的搜尋、配對、serial profil
 
 ## Windows Stage 3 日誌政策
 
-R1 選擇驗證 native durable replacement／barrier adapter，保留完整安全保證與原定 Windows 範圍。prototype 不代表 production 支援；Windows 可行性、namespace／斷電語意及封裝整合仍待完成。production 目前在 directory sync 以 `ENOTSUP` fail closed。馬達與程式啟動可能在 dispatch 前失敗；可信 Stop 也可能在前置 journal commit 失敗。startup barrier 可能在盤點 faults 前失敗，因此空清單不能證明 profile 乾淨。這不表示所有操作都失敗：編輯／編譯、被動讀取與乾淨 idle quit 須分開判定。
+R1 的 2026-11-12 follow-up 允許 native safety-journal adapter 在可驗證的 local fixed NTFS 上支援，以文件語意與 kill-at-phase tests 作為依據。production 使用 handle-relative `SetFileInformationByHandle(FileRenameInfoEx)` 的 replace／POSIX flags、temp／published-file `FlushFileBuffers` 與逐次檢查的 directory flush；要求 Windows 10 1709+。未做實體斷電測試，也不要求此 gate。歷史 19/19 candidate suite 使用 `MoveFileExW` 與 attribute-only pins，不是目前 production code 的驗收。目前 Windows native／installed acceptance 在新 CI 證據出現前仍為 **NOT RUN／尚未執行**。
+
+不支援的 volume、缺失／不相容 addon、不安全路徑／ACL 及 barrier 失敗仍 fail closed；Windows production 不再一律回 `ENOTSUP`。初始化無法授權寫入時，仍顯示已驗證的舊 faults。commit 失敗會阻擋 motion／program admission 與 resolution；可信 Stop 仍 best-effort dispatch 實體停止，保留 journal failure 與未解決的 close/update 義務。編輯／編譯、被動讀取與乾淨 idle quit 須分開判定。同 user／privileged target-name 與 ACL race 限制見[架構政策](architecture.md)。
 
 上述關卡通過前，Windows Stage 3 設備執行／復原**尚未驗收**。沒有核准縮減平台範圍或降低安全保證，B2 record-store 政策也不能豁免設備 journal。見 [Windows 驗收帳本](../superpowers/plans/2026-10-17-plugin-system-3a-acceptance.md)。所有交付平台仍須最終 native／installed 證據及具名實機／人工結果。第二次啟動只能聚焦／還原 primary，不得產生另一 writer／provider／recording；真實 suspend 必須結束工作，wake 不重播。硬體／介面清單保留這些明確案例。

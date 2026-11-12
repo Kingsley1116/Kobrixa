@@ -1,6 +1,8 @@
 import { constants } from "node:fs";
 import { lstat, mkdir, open, readdir, realpath, rename, unlink } from "node:fs/promises";
 import path from "node:path";
+import { createWin32JournalAdapter } from "./journal-win32.js";
+import type { Win32JournalAdapter } from "./journal-win32.js";
 export interface JournalFilesystem {
   // Failed durability initialization must not prevent independently validated reads
   // of existing evidence. It never authorizes writes or repair.
@@ -12,6 +14,11 @@ export interface JournalFilesystem {
   replace(from: string, to: string): Promise<void>;
   syncDirectory(): Promise<void>;
   remove(name: string): Promise<void>;
+  durableReplace?(
+    temporary: string,
+    target: string,
+    bytes: Uint8Array,
+  ): Promise<{ directoryFlushed: true }>;
 }
 export async function writeAll(
   bytes: Uint8Array,
@@ -25,8 +32,7 @@ export async function writeAll(
   }
 }
 // Unlike plugin persistence, the safety journal cannot report file-sync-only success.
-// Node has no Windows directory flush barrier; fail closed until a verified native
-// durable replacement adapter is available. Never classify POSIX EIO/EPERM as unsupported.
+// Windows uses the native adapter below. Never classify POSIX EIO/EPERM as unsupported.
 async function syncJournalDirectory(target: string): Promise<void> {
   if (process.platform === "win32")
     throw Object.assign(new Error("journal directory sync unsupported"), { code: "ENOTSUP" });
@@ -40,9 +46,15 @@ async function syncJournalDirectory(target: string): Promise<void> {
 export function createJournalFilesystem(
   userData: string,
   // Host-only barrier injection for adapter tests; production uses the policy above.
-  directoryBarrier: (target: string) => Promise<void> = syncJournalDirectory,
+  directoryBarrier?: (target: string) => Promise<void>,
+  windowsAdapter?: Win32JournalAdapter,
 ): JournalFilesystem {
   const root = path.resolve(userData, "device-broker");
+  // Explicit host-only injections allow unit tests without loading Electron/native code.
+  const windows =
+    windowsAdapter ??
+    (process.platform === "win32" && !directoryBarrier ? createWin32JournalAdapter() : undefined);
+  const barrier = directoryBarrier ?? (windows ? windows.syncDirectory : syncJournalDirectory);
   let readable = false;
   let writable = false;
   const assertWritable = (): void => {
@@ -70,8 +82,21 @@ export function createJournalFilesystem(
       throw error;
     }
   };
-  const syncDirectory = (target = root): Promise<void> => directoryBarrier(target);
+  const syncDirectory = (target = root): Promise<void> => barrier(target);
   return {
+    ...(windows
+      ? {
+          async durableReplace(temporary: string, target: string, bytes: Uint8Array) {
+            assertWritable();
+            safe(temporary);
+            safe(target);
+            await directory();
+            await windows.durableReplace(root, target, temporary, bytes);
+            // Adapter resolves only after validating the complete native receipt.
+            return { directoryFlushed: true as const };
+          },
+        }
+      : {}),
     async initialize() {
       readable = false;
       writable = false;
@@ -156,7 +181,11 @@ export function createJournalFilesystem(
     syncDirectory: () => syncDirectory(),
     async remove(name) {
       assertWritable();
-      if (await regular(name)) await unlink(safe(name));
+      if (await regular(name)) {
+        // Deadline cleanup cannot unlink staging while native publication is live.
+        windows?.assertIdle();
+        await unlink(safe(name));
+      }
     },
   };
 }

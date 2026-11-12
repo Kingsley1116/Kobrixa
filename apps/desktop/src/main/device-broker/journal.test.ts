@@ -588,3 +588,57 @@ it("deadline cleans already-created temp and backup while backup sync is stalled
   await vi.runAllTimersAsync();
   expect(parseJournal(m.files.get("faults.json")!).revision).toBe(1);
 });
+
+it("native publication after the journal deadline cannot acknowledge or clear close/update blockers", async () => {
+  vi.useFakeTimers();
+  const m = fixture();
+  const marker = entry();
+  const initial = journalDocument(1, [marker]);
+  m.files.set("faults.json", Buffer.from(JSON.stringify(initial)));
+  const journal = createJournal(m.fs, m.profile);
+  await journal.load();
+  let release!: () => void;
+  let complete!: () => void;
+  const completed = new Promise<void>((resolve) => {
+    complete = resolve;
+  });
+  const hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const publish = vi.fn(async (_temporary: string, target: string, bytes: Uint8Array) => {
+    if (target === "faults.json") await hold;
+    m.files.set(target, bytes.slice());
+    if (target === "faults.json") complete();
+    return { directoryFlushed: true as const };
+  });
+  m.fs.durableReplace = publish;
+  const next = journalDocument(2, [{ ...marker, revision: 2, updatedAt: 2, state: "unconfirmed" }]);
+  const dispatch = vi.fn();
+  const pending = journal.commit(next).then(dispatch);
+  const rejected = expect(pending).rejects.toThrow("journal deadline");
+  await vi.advanceTimersByTimeAsync(4999);
+  expect(publish).toHaveBeenCalledTimes(2);
+  expect(journal.snapshot().revision).toBe(1);
+  await vi.advanceTimersByTimeAsync(1);
+  await rejected;
+  release();
+  await completed;
+  await vi.runAllTimersAsync();
+  expect(parseJournal(m.files.get("faults.json")!).revision).toBe(2);
+  expect(parseJournal(m.files.get("faults.previous.json")!).revision).toBe(1);
+  expect(journal.snapshot()).toMatchObject({
+    revision: 1,
+    journalHealth: "unwritable",
+    blockers: [marker.id],
+  });
+  expect(dispatch).not.toHaveBeenCalled();
+  await expect(journal.commit(next)).rejects.toThrow("journal write blocked");
+  expect(publish).toHaveBeenCalledTimes(2);
+  const reopened = createJournal(m.fs, m.profile);
+  await reopened.load();
+  expect(reopened.snapshot()).toMatchObject({
+    revision: 2,
+    blockers: [marker.id],
+    faults: [{ state: "unconfirmed", movement: "unknown", cause: "host-restarted" }],
+  });
+});

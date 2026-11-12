@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
+  closeSync,
+  openSync,
   existsSync,
   linkSync,
   mkdirSync,
@@ -34,7 +36,11 @@ const addonPath = path.resolve(
     ),
 );
 // On Windows an absent, wrong-ABI or unloadable addon is a hard test failure.
-const native = process.platform === "win32" ? require(addonPath) : undefined;
+const production = process.platform === "win32" ? require(addonPath) : undefined;
+// Build the same source separately with --journal_test_hooks=1 for historical
+// candidate/kill frontiers. Never ship that binary or enable callbacks via env.
+const testAddonPath = process.env.KOBRIXA_JOURNAL_WIN32_TEST_ADDON;
+const native = process.platform === "win32" ? require(testAddonPath ?? addonPath) : undefined;
 const notRun = process.platform === "win32" ? false : "NOT RUN: requires real Windows Win32 I/O";
 
 function snapshot(revision, state) {
@@ -64,6 +70,27 @@ function fixture(t) {
     previous: path.join(dir, "faults.previous.json"),
   };
 }
+function privateFixture(t) {
+  const result = fixture(t);
+  const who = spawnSync("whoami.exe", ["/user", "/fo", "csv", "/nh"], { encoding: "utf8" });
+  assert.equal(who.status, 0, who.stdout + who.stderr);
+  const sid = who.stdout.match(/S-1-[0-9-]+/)?.[0];
+  assert.ok(sid, "current user SID");
+  const acl = spawnSync(
+    "icacls.exe",
+    [
+      result.dir,
+      "/inheritance:r",
+      "/grant:r",
+      `*${sid}:(OI)(CI)F`,
+      "*S-1-5-18:(OI)(CI)F",
+      "*S-1-5-32-544:(OI)(CI)F",
+    ],
+    { encoding: "utf8" },
+  );
+  assert.equal(acl.status, 0, acl.stdout + acl.stderr);
+  return result;
+}
 function replace(dir, bytes, options = {}) {
   return native.replaceCandidate(
     dir,
@@ -86,14 +113,21 @@ function fault(code, nativeCode) {
 
 if (process.env.KOBRIXA_JOURNAL_WIN32_CHILD === "interrupt") {
   const dir = process.env.KOBRIXA_JOURNAL_WIN32_DIR;
-  replace(dir, newBytes, {
-    hook(phase) {
-      if (phase !== process.env.KOBRIXA_JOURNAL_WIN32_PHASE) return;
-      writeFileSync(process.env.KOBRIXA_JOURNAL_WIN32_MARKER, phase);
-      // Parent kills the process while native publication is suspended here.
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
-    },
-  });
+  const hook = (phase) => {
+    if (phase !== process.env.KOBRIXA_JOURNAL_WIN32_PHASE) return;
+    writeFileSync(process.env.KOBRIXA_JOURNAL_WIN32_MARKER, phase);
+    // Parent kills the process while native publication is suspended here.
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+  };
+  if (process.env.KOBRIXA_JOURNAL_WIN32_PRODUCTION_SEQUENCE === "1")
+    native.durableReplaceForTest(
+      dir,
+      "faults.json",
+      `faults.next-${randomUUID()}.json`,
+      newBytes,
+      hook,
+    );
+  else replace(dir, newBytes, { hook });
   throw new Error("interruption child unexpectedly completed");
 } else {
   test("directory-link fixture cleanup preserves target bytes (not native adapter evidence)", (t) => {
@@ -114,18 +148,143 @@ if (process.env.KOBRIXA_JOURNAL_WIN32_CHILD === "interrupt") {
   });
 
   test(
-    "candidate capability never enables production durable replacement",
+    "production pin mode repeatedly replaces previous/current with no phase callbacks",
     { skip: notRun },
     (t) => {
-      const { dir, current } = fixture(t);
-      assert.equal(native.capabilities().prototypeAvailable, true);
-      assert.equal(native.capabilities().supported, false);
-      assert.throws(() => native.durableReplace(dir, newBytes), { code: "ENOTSUP" });
-      assert.equal(existsSync(current), false);
-      assert.deepEqual(readdirSync(dir), []);
-      t.diagnostic(`runtime=${JSON.stringify(process.versions)} addon=${addonPath}`);
+      const { dir, current, previous } = privateFixture(t);
+      assert.equal(production.capabilities(dir).supported, true);
+      assert.equal(production.capabilities(dir).scope, "local-fixed-NTFS");
+      assert.equal(production.apiVersion, "1");
+      assert.equal(production.arch, process.arch);
+      assert.equal(production.replaceCandidate, undefined);
+      assert.equal(production.durableReplaceForTest, undefined);
+      assert.equal(production.withExclusiveFile, undefined);
+      assert.equal(production.probeDirectoryFlush, undefined);
+      assert.equal(production.syncDirectory(dir).flushed, true);
+      const publish = (name, bytes) =>
+        production.durableReplace(dir, name, `faults.next-${randomUUID()}.json`, bytes);
+      let prior = oldBytes;
+      let previousReceipt = publish("faults.json", prior);
+      assert.equal(previousReceipt.supported, true);
+      assert.equal(previousReceipt.directoryFlushed, true);
+      // Three consecutive commits replace existing current; the final two also
+      // replace existing previous, using the production pins and held-old handle.
+      for (let revision = 2; revision <= 4; revision++) {
+        const bytes = snapshot(revision, "pending");
+        const backup = publish("faults.previous.json", prior);
+        const currentReceipt = publish("faults.json", bytes);
+        for (const receipt of [backup, currentReceipt]) {
+          assert.equal(receipt.supported, true);
+          assert.equal(receipt.fileFlushed, true);
+          assert.equal(receipt.directoryFlushed, true);
+          assert.equal(receipt.published, true);
+        }
+        assert.notEqual(previousReceipt.identity, currentReceipt.identity);
+        assert.deepEqual(readSnapshot(current).bytes, bytes);
+        assert.deepEqual(readSnapshot(previous).bytes, prior);
+        previousReceipt = currentReceipt;
+        prior = bytes;
+      }
+      assert.deepEqual(readdirSync(dir).sort(), ["faults.json", "faults.previous.json"]);
+      t.diagnostic(
+        `runtime=${JSON.stringify(process.versions)} production=${addonPath} test=${testAddonPath}`,
+      );
     },
   );
+
+  test(
+    "production pins deny ancestor/leaf renames and preserve callback exceptions",
+    { skip: notRun },
+    (t) => {
+      const { root, dir, current } = privateFixture(t);
+      production.durableReplace(dir, "faults.json", `faults.next-${randomUUID()}.json`, oldBytes);
+      const temporary = `faults.next-${randomUUID()}.json`;
+      const sentinel = new Error("test callback failed");
+      assert.throws(
+        () =>
+          native.durableReplaceForTest(dir, "faults.json", temporary, newBytes, (phase) => {
+            assert.equal(phase, "after-temp-flush");
+            // All pins have data/list access, so denying DELETE is share-enforced.
+            for (const directory of [root, dir]) {
+              assert.throws(() => renameSync(directory, `${directory}-moved`));
+              assert.equal(existsSync(directory), true);
+              assert.equal(existsSync(`${directory}-moved`), false);
+            }
+            assert.throws(() =>
+              renameSync(path.join(dir, temporary), path.join(dir, "retained-temp.json")),
+            );
+            throw sentinel;
+          }),
+        (error) => error === sentinel,
+      );
+      assert.deepEqual(readSnapshot(current).bytes, oldBytes);
+      assert.deepEqual(readSnapshot(path.join(dir, temporary)).bytes, newBytes);
+      // Callback exceptions must unwind pins without throwing C++ across N-API.
+      renameSync(dir, `${dir}-moved`);
+      renameSync(`${dir}-moved`, dir);
+    },
+  );
+
+  test("production refuses pre-existing writable handles", { skip: notRun }, (t) => {
+    const { dir, current } = privateFixture(t);
+    writeFileSync(current, oldBytes);
+    const fd = openSync(current, "r+");
+    try {
+      assert.throws(
+        () =>
+          production.durableReplace(
+            dir,
+            "faults.json",
+            `faults.next-${randomUUID()}.json`,
+            newBytes,
+          ),
+        fault("EBUSY", 32),
+      );
+      assert.deepEqual(readFileSync(current), oldBytes);
+      assert.deepEqual(readdirSync(dir), ["faults.json"]);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  test("production refuses another principal's writable directory ACL", { skip: notRun }, (t) => {
+    const { dir, current } = privateFixture(t);
+    const result = spawnSync("icacls.exe", [dir, "/grant", "*S-1-1-0:(OI)(CI)M"], {
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.throws(() => production.capabilities(dir), fault("EUNSAFE"));
+    assert.throws(
+      () =>
+        production.durableReplace(dir, "faults.json", `faults.next-${randomUUID()}.json`, newBytes),
+      fault("EUNSAFE"),
+    );
+    assert.equal(existsSync(current), false);
+  });
+
+  test("production refuses unsafe leaves and oversized payloads", { skip: notRun }, (t) => {
+    const { root, dir, current } = privateFixture(t);
+    const outside = path.join(root, "retained.json");
+    writeFileSync(outside, oldBytes);
+    linkSync(outside, current);
+    assert.throws(
+      () =>
+        production.durableReplace(dir, "faults.json", `faults.next-${randomUUID()}.json`, newBytes),
+      fault("EUNSAFE"),
+    );
+    assert.deepEqual(readFileSync(outside), oldBytes);
+    assert.throws(
+      () =>
+        production.durableReplace(
+          dir,
+          "faults.json",
+          `faults.next-${randomUUID()}.json`,
+          Buffer.alloc(8388609),
+        ),
+      fault("EINVAL"),
+    );
+    assert.throws(() => production.capabilities("\\\\server\\share"), fault("ENOTSUP"));
+  });
 
   test(
     "missing native module is a load failure, never a successful barrier",
@@ -134,8 +293,8 @@ if (process.env.KOBRIXA_JOURNAL_WIN32_CHILD === "interrupt") {
       const { root, dir } = fixture(t);
       assert.throws(() => require(path.join(root, "missing.node")), { code: "MODULE_NOT_FOUND" });
       assert.deepEqual(readdirSync(dir), []);
-      // W02b must translate loader failures to journal ENOTSUP; it is not implemented here.
-      assert.throws(() => native.durableReplace(), { code: "ENOTSUP" });
+      // Production validates arguments; loader missing/ABI diagnostics are unit tested.
+      assert.throws(() => production.durableReplace(), { code: "EINVAL" });
     },
   );
 
@@ -298,73 +457,94 @@ if (process.env.KOBRIXA_JOURNAL_WIN32_CHILD === "interrupt") {
           "Directory FlushFileBuffers returned success; namespace/power-loss guarantee still UNVERIFIED.",
         );
       }
-      assert.throws(() => native.durableReplace(), { code: "ENOTSUP" });
+      assert.throws(() => production.durableReplace(), { code: "EINVAL" });
     },
   );
 
-  for (const phase of ["after-temp-flush", "after-move", "after-published-flush"]) {
-    test(
-      `killed publication child: ${phase}, recover complete old/new evidence`,
-      { skip: notRun, timeout: 30000 },
-      async (t) => {
-        const { root, dir, current, previous } = fixture(t);
-        replace(dir, oldBytes);
-        replace(dir, oldBytes, { name: "faults.previous.json" });
-        const marker = path.join(root, "phase.txt");
-        const child = spawn(process.execPath, [filename], {
-          env: {
-            ...process.env,
-            KOBRIXA_JOURNAL_WIN32_ADDON: addonPath,
-            KOBRIXA_JOURNAL_WIN32_CHILD: "interrupt",
-            KOBRIXA_JOURNAL_WIN32_DIR: dir,
-            KOBRIXA_JOURNAL_WIN32_PHASE: phase,
-            KOBRIXA_JOURNAL_WIN32_MARKER: marker,
-          },
-          stdio: ["ignore", "pipe", "pipe"],
-        });
-        let output = "";
-        child.stdout.on("data", (chunk) => {
-          output += chunk;
-        });
-        child.stderr.on("data", (chunk) => {
-          output += chunk;
-        });
-        let spawnError;
-        child.on("error", (error) => {
-          spawnError = error;
-        });
-        const closed = new Promise((resolve) => child.once("close", resolve));
-        try {
-          const deadline = Date.now() + 15000;
-          while (
-            !existsSync(marker) &&
-            child.exitCode === null &&
-            !spawnError &&
-            Date.now() < deadline
-          )
-            await delay(20);
-          assert.equal(spawnError, undefined);
-          assert.equal(existsSync(marker), true, `child never reached ${phase}: ${output}`);
-          assert.equal(readFileSync(marker, "utf8"), phase);
-          assert.equal(child.kill("SIGKILL"), true);
-          await closed;
-          assert.ok(child.exitCode !== null || child.signalCode !== null);
-          assert.deepEqual(readSnapshot(previous).bytes, oldBytes);
-          const staged = readdirSync(dir).filter((name) => name.startsWith("faults.next-"));
-          if (phase === "after-temp-flush") {
-            assert.deepEqual(readSnapshot(current).bytes, oldBytes);
-            assert.equal(staged.length, 1);
-            assert.deepEqual(readSnapshot(path.join(dir, staged[0])).bytes, newBytes);
+  for (const productionSequence of [false, true]) {
+    for (const phase of ["after-temp-flush", "after-move", "after-published-flush"]) {
+      test(
+        `${productionSequence ? "production" : "candidate"} killed publication child: ${phase}, recover complete old/new evidence`,
+        { skip: notRun, timeout: 30000 },
+        async (t) => {
+          const { root, dir, current, previous } = productionSequence
+            ? privateFixture(t)
+            : fixture(t);
+          if (productionSequence) {
+            production.durableReplace(
+              dir,
+              "faults.json",
+              `faults.next-${randomUUID()}.json`,
+              oldBytes,
+            );
+            production.durableReplace(
+              dir,
+              "faults.previous.json",
+              `faults.backup-${randomUUID()}.json`,
+              oldBytes,
+            );
           } else {
-            assert.deepEqual(readSnapshot(current).bytes, newBytes);
-            assert.equal(staged.length, 0);
+            replace(dir, oldBytes);
+            replace(dir, oldBytes, { name: "faults.previous.json" });
           }
-        } finally {
-          if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-          await closed;
-        }
-      },
-    );
+          const marker = path.join(root, "phase.txt");
+          const child = spawn(process.execPath, [filename], {
+            env: {
+              ...process.env,
+              KOBRIXA_JOURNAL_WIN32_ADDON: addonPath,
+              KOBRIXA_JOURNAL_WIN32_TEST_ADDON: testAddonPath,
+              KOBRIXA_JOURNAL_WIN32_CHILD: "interrupt",
+              KOBRIXA_JOURNAL_WIN32_PRODUCTION_SEQUENCE: productionSequence ? "1" : "0",
+              KOBRIXA_JOURNAL_WIN32_DIR: dir,
+              KOBRIXA_JOURNAL_WIN32_PHASE: phase,
+              KOBRIXA_JOURNAL_WIN32_MARKER: marker,
+            },
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+          let output = "";
+          child.stdout.on("data", (chunk) => {
+            output += chunk;
+          });
+          child.stderr.on("data", (chunk) => {
+            output += chunk;
+          });
+          let spawnError;
+          child.on("error", (error) => {
+            spawnError = error;
+          });
+          const closed = new Promise((resolve) => child.once("close", resolve));
+          try {
+            const deadline = Date.now() + 15000;
+            while (
+              !existsSync(marker) &&
+              child.exitCode === null &&
+              !spawnError &&
+              Date.now() < deadline
+            )
+              await delay(20);
+            assert.equal(spawnError, undefined);
+            assert.equal(existsSync(marker), true, `child never reached ${phase}: ${output}`);
+            assert.equal(readFileSync(marker, "utf8"), phase);
+            assert.equal(child.kill("SIGKILL"), true);
+            await closed;
+            assert.ok(child.exitCode !== null || child.signalCode !== null);
+            assert.deepEqual(readSnapshot(previous).bytes, oldBytes);
+            const staged = readdirSync(dir).filter((name) => name.startsWith("faults.next-"));
+            if (phase === "after-temp-flush") {
+              assert.deepEqual(readSnapshot(current).bytes, oldBytes);
+              assert.equal(staged.length, 1);
+              assert.deepEqual(readSnapshot(path.join(dir, staged[0])).bytes, newBytes);
+            } else {
+              assert.deepEqual(readSnapshot(current).bytes, newBytes);
+              assert.equal(staged.length, 0);
+            }
+          } finally {
+            if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+            await closed;
+          }
+        },
+      );
+    }
   }
 
   test(
