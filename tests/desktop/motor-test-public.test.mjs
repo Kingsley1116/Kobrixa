@@ -19,6 +19,7 @@ import {
   observeNativeIpc,
   requireMotionJournalFilesystem,
   nativeClick,
+  nativeTargetProbe,
   observePanelsBeforeOpen,
 } from "./motor-test-public-run.mjs";
 
@@ -64,7 +65,7 @@ test("pre-open readiness permits lazy owners but rejects panels from any owner",
   assert.equal(events.listenerCount("state"), 0);
 });
 
-test("motion journal probes the real barrier and identifies only Windows ENOTSUP as W02b", async () => {
+test("motion journal probes the real barrier and identifies only Windows ENOTSUP as an unavailable journal", async () => {
   let calls = 0;
   await requireMotionJournalFilesystem(
     {
@@ -92,7 +93,7 @@ test("motion journal probes the real barrier and identifies only Windows ENOTSUP
       ),
       (error) => {
         if (platform === "win32" && code === "ENOTSUP") {
-          assert.match(error.message, /blocked-by-W02b.*ENOTSUP/);
+          assert.match(error.message, /safety journal unavailable \(ENOTSUP\)/);
           assert.equal(error.cause, original);
         } else assert.equal(error, original);
         return true;
@@ -754,3 +755,34 @@ for (const committed of [false, true])
     for (const name of ["did-navigate", "did-start-navigation", "render-process-gone", "destroyed"])
       assert.equal(f.contents.listenerCount(name), 0, name);
   });
+
+test("native close targeting waits for trusted routing and rechecks geometry before down", async () => {
+  let point = { x: 10, y: 20, targetId: 7 };
+  const receipts = [];
+  const moves = [];
+  const probe = nativeTargetProbe(
+    async () => ({ ...point }),
+    (p) => moves.push(p),
+    receipts,
+  );
+  assert.equal(await probe(), false);
+  assert.equal(await probe(), false, "No receipt is not readiness");
+  assert.equal(moves.length, 1, "Do not flood the native input queue while awaiting delivery");
+  receipts.push({ received: 1, type: "pointermove", isTrusted: false, targetId: 7 });
+  assert.equal(await probe(), false, "Synthetic movement cannot authorize input");
+  receipts.push({ received: 2, type: "pointermove", isTrusted: true, targetId: 99 });
+  assert.equal(await probe(), false, "DOM bounds alone cannot authorize a misrouted native move");
+  assert.equal(moves.length, 2);
+  receipts.push({ received: 3, type: "pointermove", isTrusted: true, ...point });
+  point = { ...point, y: 30 };
+  assert.equal(await probe(), false, "Scroll after delivery invalidates the old point");
+  receipts.push({ received: 4, type: "pointermove", isTrusted: true, ...point });
+  point = { ...point, targetId: 8 };
+  assert.equal(await probe(), false, "Replacement nodes need their own native observation");
+  assert.equal(await probe(), false, "Old receipts cannot authorize the new probe");
+  receipts.push({ received: 5, type: "pointermove", isTrusted: true, ...point, x: point.x + 1 });
+  assert.equal(await probe(), false, "Same target at another coordinate is not the sent probe");
+  receipts.push({ received: 6, type: "pointermove", isTrusted: true, ...point });
+  assert.deepEqual(await probe(), point);
+  assert.equal(moves.length, 5);
+});

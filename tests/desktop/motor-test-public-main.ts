@@ -58,9 +58,45 @@ type InputReceipt = {
   node?: string;
   close?: boolean;
   targetId?: number;
+  x?: number;
+  y?: number;
   key?: string;
   repeat?: boolean;
 };
+type NativePoint = { x: number; y: number; targetId: number };
+// DOM hit testing does not acknowledge Chromium's native input routing after a
+// scroll. Probe with movement only; never retry a down/up gesture. A delayed or
+// misdirected move cannot authorize the click, nor can stale geometry.
+export function nativeTargetProbe(
+  locate: () => Promise<NativePoint>,
+  move: (point: NativePoint) => void,
+  receipts: InputReceipt[],
+) {
+  let pending: { point: NativePoint; after: number } | undefined;
+  return async (): Promise<NativePoint | false> => {
+    if (pending) {
+      const receipt = receipts.find(
+        (r) => r.received > pending!.after && r.type === "pointermove" && r.isTrusted,
+      );
+      if (!receipt) return false;
+      const point = await locate();
+      if (
+        receipt.targetId === pending.point.targetId &&
+        receipt.x === pending.point.x &&
+        receipt.y === pending.point.y &&
+        point.targetId === pending.point.targetId &&
+        point.x === pending.point.x &&
+        point.y === pending.point.y
+      )
+        return point;
+      pending = undefined;
+    }
+    const point = await locate();
+    pending = { point, after: receipts.at(-1)?.received ?? 0 };
+    move(point);
+    return false;
+  };
+}
 // Reacquire a moving target for release, but never substitute a replacement DOM node.
 export async function nativeClick(
   locate: () => Promise<{ x: number; y: number; targetId: number }>,
@@ -1261,7 +1297,10 @@ export function runNativeMotor() {
             return stable ? bounds : null;
           }, `native target stable ${selector}`);
         };
-        const mouse = (type: "mouseDown" | "mouseUp", bounds: { x: number; y: number }) => {
+        const mouse = (
+          type: "mouseDown" | "mouseUp" | "mouseMove",
+          bounds: { x: number; y: number },
+        ) => {
           native.push({ at: wall(), type, detail: bounds });
           window.webContents.sendInputEvent({
             type,
@@ -1811,8 +1850,22 @@ export function runNativeMotor() {
             const clickReceiptSequence = receiptSequence;
             const clickAt = wall();
             let receipt: IpcReceipt | undefined;
+            const closeSelector = '[data-close-contribution="true"]';
+            const probe = nativeTargetProbe(
+              () => target(closeSelector),
+              (point) => mouse("mouseMove", point),
+              inputReceipts,
+            );
+            // Only the first locate needs hover acknowledgement. Release still
+            // reacquires the same DOM node, and down/up keep their own receipts.
+            let located = false;
             const targetId = await nativeClick(
-              () => target('[data-close-contribution="true"]'),
+              async () => {
+                if (located) return target(closeSelector);
+                const point = await until(probe, "trusted native close hit target");
+                located = true;
+                return point;
+              },
               mouse,
               paint,
               {

@@ -48,7 +48,15 @@ function nativeTargetId(element: Element) {
 }
 Object.assign(window, { motorNativeTargetId: nativeTargetId });
 // Observe trusted browser events without synthesizing events or invoking feature code.
-for (const type of ["pointerdown", "pointerup", "pointercancel", "keydown", "keyup", "input"]) {
+for (const type of [
+  "pointermove",
+  "pointerdown",
+  "pointerup",
+  "pointercancel",
+  "keydown",
+  "keyup",
+  "input",
+]) {
   window.addEventListener(
     type,
     (event) => {
@@ -64,6 +72,8 @@ for (const type of ["pointerdown", "pointerup", "pointercancel", "keydown", "key
             node: target?.getAttribute("data-ui-node"),
             close: !!element?.closest('[data-close-contribution="true"]'),
             targetId: control ? nativeTargetId(control) : null,
+            x: event instanceof PointerEvent ? event.clientX : null,
+            y: event instanceof PointerEvent ? event.clientY : null,
             key: event instanceof KeyboardEvent ? event.key : null,
             repeat: event instanceof KeyboardEvent ? event.repeat : null,
           }),

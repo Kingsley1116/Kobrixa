@@ -115,6 +115,7 @@ async function loadDriver() {
 }
 const driver = await loadDriver();
 export const nativeClick = driver.nativeClick;
+export const nativeTargetProbe = driver.nativeTargetProbe;
 export const observePanelsBeforeOpen = driver.observePanelsBeforeOpen;
 export const matchingHoldEnd = driver.matchingHoldEnd;
 export const requireSustainedPause = driver.requireSustainedPause;
