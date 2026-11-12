@@ -57,20 +57,48 @@ jobs:
           test -f "$sandbox"
           sudo chown root:root "$sandbox"
           sudo chmod 4755 "$sandbox"
+      - name: Allow installed Chromium user namespaces on AppArmor hosts
+        if: runner.os == 'Linux' && matrix.gate == 'installed'
+        shell: bash
+        run: |
+          # Landlock sets no_new_privs, so the copied product cannot use a
+          # setuid sandbox. Permit Chromium's userns sandbox only at test-copy
+          # executable paths; do not disable AppArmor or Chromium's sandbox.
+          if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)" = 1 ]; then
+            node tests/desktop/builtin-installed-linux.mjs --apparmor-profile "$RUNNER_TEMP" > "$RUNNER_TEMP/kobrixa-installed-apparmor.profile"
+            sudo apparmor_parser -r "$RUNNER_TEMP/kobrixa-installed-apparmor.profile"
+            echo "KOBRIXA_INSTALLED_APPARMOR_LOADED=1" >> "$GITHUB_ENV"
+          fi
       - name: Execute required native gate
         shell: bash
         run: |
           set -o pipefail
           if [ "$RUNNER_OS" = "Linux" ]; then
             if [ '${{ matrix.gate }}' = installed ]; then
-              # Keep the desktop display but remove external interfaces for source-free isolation.
-              xvfb-run -a sudo --preserve-env=DISPLAY,XAUTHORITY,PATH,TMPDIR,TMP,TEMP unshare --net -- sudo --preserve-env=DISPLAY,XAUTHORITY,PATH,TMPDIR,TMP,TEMP -u "#$(id -u)" node tests/desktop/stage-3-closeout-run.mjs installed --run 2>&1 | tee stage-3-native.log
+              # A new netns starts with lo DOWN. Keep Xvfb's Unix display socket
+              # and auth, bring up only lo, then drop root. sudo's secure_path
+              # must not replace the setup-node binary (the old run used Node 22).
+              installed_node="$(node -p 'process.execPath')"
+              xvfb-run -a sudo --preserve-env=DISPLAY,XAUTHORITY,TMPDIR,TMP,TEMP unshare --net -- /bin/sh -ec '
+                /usr/sbin/ip link set lo up
+                exec sudo --preserve-env=DISPLAY,XAUTHORITY,TMPDIR,TMP,TEMP -u "$1" -- "$2" tests/desktop/stage-3-closeout-run.mjs installed --run
+              ' sh "#$(id -u)" "$installed_node" 2>&1 | tee stage-3-native.log
             else
               xvfb-run -a node tests/desktop/stage-3-closeout-run.mjs '${{ matrix.gate }}' --run 2>&1 | tee stage-3-native.log
             fi
           else
             node tests/desktop/stage-3-closeout-run.mjs '${{ matrix.gate }}' --run 2>&1 | tee stage-3-native.log
           fi
+      - name: Retain installed Linux kernel denials and remove test AppArmor profile
+        if: always() && runner.os == 'Linux' && matrix.gate == 'installed'
+        shell: bash
+        run: |
+          installed_audit_status=0
+          sudo journalctl -k --no-pager -n 2000 > "$RUNNER_TEMP/kobrixa-installed-kernel.log" || installed_audit_status=$?
+          if [ "${KOBRIXA_INSTALLED_APPARMOR_LOADED:-}" = 1 ]; then
+            sudo apparmor_parser -R "$RUNNER_TEMP/kobrixa-installed-apparmor.profile"
+          fi
+          exit "$installed_audit_status"
       - uses: actions/upload-artifact@v7
         if: always()
         with:

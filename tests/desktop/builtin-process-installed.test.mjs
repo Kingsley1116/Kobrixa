@@ -9,8 +9,29 @@ import {
   installedPlatformPolicy,
   installedLaunchCommand,
   observeInstalledCase,
+  installedFailureDiagnostics,
 } from "./builtin-process-installed.mjs";
 import { requireInstalledReceipt } from "./stage-3-closeout-run.mjs";
+
+test("early product failure diagnostics retain the exit and final stderr without inventing a cause", () => {
+  const receipt = {
+    name: "healthy",
+    exit: { code: null, signal: "SIGTRAP" },
+    error: { message: "Product exited before evidence" },
+    cleanupErrors: [{ message: "cleanup failed" }],
+  };
+  const output = "x".repeat(20_000) + "\nFATAL: actual stderr after exit\n";
+  assert.deepEqual(installedFailureDiagnostics(receipt, output), {
+    ...receipt,
+    outputTail: output.slice(-16_384),
+  });
+  assert.equal(installedFailureDiagnostics(receipt, output).outputTail.length, 16_384);
+  assert.match(
+    installedFailureDiagnostics(receipt, output).outputTail,
+    /FATAL: actual stderr after exit/,
+  );
+  assert.equal(installedFailureDiagnostics(receipt, "").outputTail, "");
+});
 
 test("installed platform layouts select the actual packaged executable and resources", () => {
   assert.deepEqual(installedLayout("win32", ["kobrixa.exe", "resources"]), {

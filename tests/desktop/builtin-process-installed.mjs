@@ -33,6 +33,21 @@ import {
 } from "./builtin-installed-client.mjs";
 
 import { copyDesktopBundle, verifyMacBundle } from "../../tools/release/macos-test-bundle.mjs";
+import { assertInstalledLinuxNetwork } from "./builtin-installed-linux.mjs";
+import {
+  checkMacInstalledSandbox,
+  MACOS_NESTED_SANDBOX_BLOCKED,
+} from "./builtin-installed-macos.mjs";
+
+export function installedFailureDiagnostics(receipt, output) {
+  return {
+    name: receipt.name,
+    exit: receipt.exit,
+    error: receipt.error,
+    cleanupErrors: receipt.cleanupErrors,
+    outputTail: output.slice(-16_384),
+  };
+}
 
 export function openInstalledArchive(
   archive,
@@ -865,6 +880,14 @@ async function launchProduct(config, receipt, check) {
         "Installed cleanup failed",
       );
     }
+    if (failure) {
+      // Wait for stream closure above: an exit event can precede the fatal
+      // Chromium stderr. Keep full logs and print a bounded tail in CI too.
+      receipt.failureDiagnostics = installedFailureDiagnostics(receipt, output);
+      console.error(
+        `Installed product failure details: ${JSON.stringify(receipt.failureDiagnostics)}`,
+      );
+    }
   }
   if (failure) throw failure;
 }
@@ -1393,12 +1416,7 @@ export async function main() {
   const externalAddresses = Object.values(networkInterfaces())
     .flat()
     .filter((entry) => entry && !entry.internal);
-  if (isolated && process.platform === "linux")
-    assert.equal(
-      externalAddresses.length,
-      0,
-      "Linux isolated proof requires a networkless namespace in addition to Landlock TCP denial",
-    );
+  if (isolated && process.platform === "linux") assertInstalledLinuxNetwork(networkInterfaces());
   const directory = await realpath(
     await mkdtemp(path.join(tmpdir(), "kobrixa-installed-product-")),
   );
@@ -1543,26 +1561,29 @@ export async function main() {
       },
     };
     const isolationProfile = path.join(directory, "isolation.sb");
+    report.deniedRoots = deniedRoots;
+    report.probeFiles = probes.files;
     if (isolated) {
       for (const file of Object.values(probes.files)) await readFile(file); // Establish that EPERM isn't a missing file.
-      server = createServer((socket) => socket.end());
-      await new Promise((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(0, "127.0.0.1", resolve);
-      });
-      probes.port = server.address().port;
       report.isolationProfile = `(version 1)\n(allow default)\n(deny network*)\n(allow network-inbound (local ip "localhost:*"))\n(allow network-bind (local ip "localhost:*"))\n${deniedRoots.map((denied) => `(deny file-read* (subpath ${JSON.stringify(denied)}))`).join("\n")}\n`;
-      if (process.platform === "darwin") await writeFile(isolationProfile, report.isolationProfile);
-      else {
+      if (process.platform === "darwin") {
+        await writeFile(isolationProfile, report.isolationProfile);
+        report.macSandboxPreflight = {};
+        await checkMacInstalledSandbox(isolationProfile, report.macSandboxPreflight);
+      } else {
         report.isolationProfile =
           "Landlock ABI >= 4: deny source subtree filesystem access and all outbound TCP; inherited across exec/children";
         report.isolationLauncherSha256 = sha256(
           await readFile(new URL("./builtin-installed-landlock.py", import.meta.url)),
         );
       }
+      server = createServer((socket) => socket.end());
+      await new Promise((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      probes.port = server.address().port;
     }
-    report.deniedRoots = deniedRoots;
-    report.probeFiles = probes.files;
     const entry = path.join(leaf, "main.cjs");
     report.entry = entry;
     const executeOne = async (name, profile, check) => {
@@ -1820,7 +1841,20 @@ export async function main() {
       );
     report.status = blockers.length ? "blocked" : singleInstance ? "partial" : "passed";
   } catch (error) {
-    report.status = "failed";
+    report.status = error.code === MACOS_NESTED_SANDBOX_BLOCKED ? "blocked" : "failed";
+    if (error.code === MACOS_NESTED_SANDBOX_BLOCKED) {
+      report.isolated = false;
+      report.blockers.push({
+        id: "F18-macos-isolation",
+        status: "blocked",
+        checks: [
+          "source and dependency read denial",
+          "outbound network denial",
+          "Chromium helper startup",
+        ],
+        reason: error.message,
+      });
+    }
     report.error = errorRecord(error);
     failure = error;
   } finally {
