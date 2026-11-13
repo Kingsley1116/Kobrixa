@@ -85,6 +85,165 @@ async function stage(s: AtomicStore, t: PublicationTicket, bytes: Uint8Array) {
     await s.append(t, offset, bytes.subarray(offset, offset + 262144));
   await s.seal(t, bytes.length, hash(bytes));
 }
+it.each([
+  ["import", "import-marker"],
+  ["import", "after-publish"],
+  ["settings", "after-publish"],
+  ["settings", "head-dir-sync"],
+] as const)("F27: settings reads join an in-flight %s publication at %s", async (kind, point) => {
+  let entered!: () => void, rejected!: (error: unknown) => void, resume!: () => void;
+  const reached = new Promise<void>((resolve, reject) => {
+      entered = resolve;
+      rejected = reject;
+    }),
+    release = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+  const env = await setup(async (at) => {
+    if (at === point) {
+      entered();
+      await release;
+    }
+  });
+  const t: PublicationTicket = {
+    id: randomUUID(),
+    owner,
+    deadlineMonotonicMs: 120000,
+    target: kind === "import" ? { kind, key: "read-race" } : { kind, expectedRevision: null },
+    metadata:
+      kind === "import"
+        ? { kind, key: "read-race" }
+        : { kind, schemaVersion: 1, validationDigest: "a".repeat(64) },
+  };
+  const values = [{ key: "usbAutoReconnect", value: false }];
+  const bytes = Buffer.from(
+    JSON.stringify({
+      formatVersion: 1,
+      schemaVersion: 1,
+      validationDigest: "a".repeat(64),
+      values,
+    }),
+  );
+  let publishing: ReturnType<AtomicStore["publish"]> | undefined;
+  try {
+    await stage(env.store, t, bytes);
+    expect(await env.store.settings(owner)).toBeNull();
+    publishing = env.store.publish(t);
+    void publishing.catch(rejected);
+    await reached;
+    // Explicit reconciliation/cancellation must still report the dispatched syscall
+    // as unknown. Only an ordinary read joins the original publication.
+    expect(await env.store.reconcile(t)).toEqual({ disposition: "unknown" });
+    const observations: unknown[] = [];
+    const reading = env.store.settings(owner).then(
+      (value) => {
+        observations.push(value);
+        return value;
+      },
+      (error: unknown) => {
+        observations.push(error);
+        return error;
+      },
+    );
+    const digest = env.store.settingsDigest(owner).then(
+      (value) => {
+        observations.push(value);
+        return value;
+      },
+      (error: unknown) => {
+        observations.push(error);
+        return error;
+      },
+    );
+    // settled() has only a microtask-only prune before checking this marker.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(observations).toEqual([]);
+    // Joining is source-scoped; unrelated settings stay available.
+    expect(await env.store.settings({ ...owner, sourceKey: "builtin:other" })).toBeNull();
+    resume();
+    const outcome = await publishing;
+    expect(outcome.disposition).toBe("committed");
+    expect(await reading).toEqual(
+      kind === "import"
+        ? null
+        : {
+            schemaVersion: 1,
+            revision: outcome.receipt!.revision,
+            values,
+          },
+    );
+    expect(await digest).toEqual(
+      kind === "import"
+        ? null
+        : {
+            schemaVersion: 1,
+            validationDigest: "a".repeat(64),
+            revision: outcome.receipt!.revision,
+          },
+    );
+  } finally {
+    resume();
+    await publishing;
+    await env.close();
+  }
+});
+it("F27: a genuinely uncertain publication keeps reads and mutations blocked until verified", async () => {
+  let entered!: () => void, resume!: () => void;
+  const reached = new Promise<void>((resolve) => {
+      entered = resolve;
+    }),
+    release = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+  let fail = false;
+  const env = await setup(async (point) => {
+    if (point === "after-publish") {
+      fail = true;
+      entered();
+      await release;
+    }
+  });
+  const sync = env.fs.syncDirectory.bind(env.fs);
+  env.fs.syncDirectory = async (directory) => {
+    if (fail) throw Object.assign(new Error("injected-sync"), { code: "EIO" });
+    return sync(directory);
+  };
+  const t = ticket(new Uint8Array([7]));
+  let publishing: ReturnType<AtomicStore["publish"]> | undefined;
+  try {
+    await stage(env.store, t, new Uint8Array([7]));
+    publishing = env.store.publish(t);
+    await reached;
+    const reading = env.store.settings(owner).catch((error: unknown) => error);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    resume();
+    expect(await publishing).toEqual({ disposition: "unknown" });
+    expect(await reading).toEqual(new Error("publish-uncertain"));
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await expect(env.store.settings(owner)).rejects.toThrow("publish-uncertain");
+      await expect(env.store.settingsDigest(owner)).rejects.toThrow("publish-uncertain");
+      await expect(env.store.reserve(ticket(new Uint8Array([8])), 1)).rejects.toThrow(
+        "publish-uncertain",
+      );
+      expect(await env.store.reconcile(t)).toEqual({ disposition: "unknown" });
+      expect(env.store.settledDisposition(t.id)).toBeNull();
+    }
+    fail = false;
+    const confirmed = await env.store.reconcile(t);
+    expect(confirmed.disposition).toBe("committed");
+    expect(await env.store.settings(owner)).toBeNull();
+    expect(await env.store.reconcile(t)).toEqual(confirmed);
+    const next = ticket(new Uint8Array([8]));
+    await env.store.reserve(next, 1);
+    await env.store.abort(next);
+  } finally {
+    resume();
+    await publishing;
+    fail = false;
+    await env.store.reconcile(t);
+    await env.close();
+  }
+});
 it("B2-RF1: cancellation before dispatch wins; after dispatch stays unknown until original reconciliation", async () => {
   const env = await setup();
   try {

@@ -15,7 +15,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { build } from "vite";
 import { beforeAll, afterAll, afterEach, it, expect, vi } from "vitest";
-import { startPersistenceWorker } from "./worker.js";
+import { startPersistenceWorker, type PersistenceFaultControl } from "./worker.js";
 import { openStoreRoot } from "./filesystem.js";
 import { createLegacyWriterBarrier, importIdFor, snapshotBytes } from "./import-sources.js";
 import { createLegacyImportCoordinator } from "./import-coordinator.js";
@@ -58,16 +58,24 @@ afterEach(async () => {
 afterAll(async () => {
   await rm(directory, { recursive: true, force: true });
 });
-async function fixture(existing?: string, authorityEnabled = true) {
+async function fixture(existing?: string, authorityEnabled = true, faults = false) {
   const userData = existing ?? path.join(directory, randomUUID());
   await mkdir(userData, { recursive: true });
   const profile = { hostEpoch: randomUUID(), assertHeld() {} };
   const root = await openStoreRoot({ userData, profile });
+  let control!: PersistenceFaultControl;
   const { backend } = await startPersistenceWorker({
     profile,
     root,
     workerEntry: entry,
     now: () => performance.now(),
+    ...(faults
+      ? {
+          testControl: (value: PersistenceFaultControl) => {
+            control = value;
+          },
+        }
+      : {}),
   });
   let disposed = false;
   const close = async () => {
@@ -140,6 +148,7 @@ async function fixture(existing?: string, authorityEnabled = true) {
   return {
     userData,
     backend,
+    control,
     close,
     coordinator,
     scope,
@@ -164,6 +173,70 @@ async function fixture(existing?: string, authorityEnabled = true) {
     },
   };
 }
+it.each(["import-marker", "after-publish"] as const)(
+  "F27: a settings read joins the real device import paused at %s",
+  async (point) => {
+    const f = await fixture(undefined, true, true);
+    await writeFile(path.join(f.userData, "device-settings.json"), '{"usbAutoReconnect":false}');
+    await f.capture();
+    expect(await f.backend.reads.settings(f.owner)).toBeNull();
+    let entered!: () => void;
+    const reached = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    if (point === "after-publish") {
+      const publish = f.backend.engine.publish.bind(f.backend.engine);
+      vi.spyOn(f.backend.engine, "publish").mockImplementation((ticket) => {
+        if (ticket.target.kind === "settings") {
+          f.control.arm(point, "pause");
+          void f.control.reached(point).then(entered);
+        }
+        return publish(ticket);
+      });
+    } else {
+      f.control.arm(point, "pause");
+      void f.control.reached(point).then(entered);
+    }
+    const running = f.run();
+    try {
+      await reached;
+      const observations: unknown[] = [];
+      const reading = f.backend.reads.settings(f.owner).then(
+        (value) => {
+          observations.push(value);
+          return value;
+        },
+        (error: unknown) => {
+          observations.push(error);
+          return error;
+        },
+      );
+      // A separate source round trip proves the worker is processing requests
+      // while the original publication is held, without waiting on a timer.
+      expect(await f.backend.reads.settings({ ...f.owner, sourceKey: "builtin:other" })).toBeNull();
+      expect(observations).toEqual([]);
+      f.control.release(point);
+      if (point === "import-marker") expect(await reading).toBeNull();
+      else
+        expect(await reading).toMatchObject({
+          values: expect.arrayContaining([{ key: "usbAutoReconnect", value: false }]),
+        });
+      expect(await running).toEqual({ state: "complete", completedItems: 1, totalItems: 1 });
+      expect((await f.saved())?.complete).toBe(true);
+      expect((await f.backend.reads.settings(f.owner))?.values).toContainEqual({
+        key: "usbAutoReconnect",
+        value: false,
+      });
+      expect(await readFile(path.join(f.userData, "device-settings.json"), "utf8")).toBe(
+        '{"usbAutoReconnect":false}',
+      );
+    } finally {
+      f.control.release(point);
+      await running;
+    }
+  },
+  30000,
+);
 // Real worker migration and namespace reopening exceed 5 s under concurrent disk load.
 it("publishes one null-target nine-field receipt from both originals, and completion survives a fresh worker", async () => {
   const f = await fixture();

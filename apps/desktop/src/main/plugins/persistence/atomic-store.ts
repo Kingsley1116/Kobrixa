@@ -1154,9 +1154,21 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
   private async settled(owner: PersistenceOwner): Promise<Namespace> {
     if (owner.hostEpoch !== this.fs.profile.hostEpoch) throw new Error("stale");
     await this.prune();
-    const id = this.uncertain.get(owner.sourceKey);
-    if (id) {
+    for (
+      let id = this.uncertain.get(owner.sourceKey);
+      id;
+      id = this.uncertain.get(owner.sourceKey)
+    ) {
       const e = this.entries.get(id)!;
+      const publishing = this.publication.get(owner.sourceKey);
+      if (e.busy && publishing) {
+        // Dispatch fences the source before rename/sync completes. A read must
+        // join that work, not mistake reconcile's nonblocking "busy" observation
+        // for a failed publication. Recheck the marker after the join: a queued
+        // publication may now own it, or a real failure may still need reconciliation.
+        await publishing.catch(() => {});
+        continue;
+      }
       if ((await this.reconcile(e.ticket)).disposition === "unknown")
         throw new Error("publish-uncertain");
     }
