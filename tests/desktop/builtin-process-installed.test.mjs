@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { createRequire } from "node:module";
 import { JOURNAL_PRODUCTION_EXPORTS } from "../../tools/release/journal-win32.mjs";
 import { runInNewContext } from "node:vm";
@@ -8,6 +9,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import {
   devicePreferencesExpression,
+  observeInstalledWorkers,
   installedJournalExpression,
   assertWindowsJournalReady,
   installedLayout,
@@ -266,6 +268,120 @@ test("Windows installed journal requires native receipts and every healthy publi
   );
 });
 
+const deviceEntry = {
+  sourceKey: "builtin:kobrixa.device-ev3",
+  pluginId: "kobrixa.device-ev3",
+  availability: "available",
+};
+const catalogPage = (entries, nextCursor = null) => ({
+  ok: true,
+  value: { entries, nextCursor },
+});
+const admittedDeviceCatalog = () => ({ catalog: async () => catalogPage([deviceEntry]) });
+
+test("settings waits for public device catalog admission before opening, including later pages", async () => {
+  let admitted = false,
+    opens = 0;
+  const cursors = [];
+  const plugins = {
+    ui: {
+      async catalog(input) {
+        cursors.push(input.cursor);
+        if (!admitted) return catalogPage([{ ...deviceEntry, sourceKey: "builtin:other" }]);
+        return input.cursor ? catalogPage([deviceEntry]) : catalogPage([], "page-2");
+      },
+    },
+    settings: {
+      async open() {
+        opens++;
+        return {
+          binding: {},
+          snapshot: { revision: "committed", values: [{ key: "usbAutoReconnect", value: false }] },
+        };
+      },
+      dispose() {},
+    },
+  };
+  const read = () =>
+    runInNewContext(devicePreferencesExpression("a".repeat(64)), {
+      window: { kobrixa: { plugins } },
+    });
+  assert.equal(await read(), null);
+  assert.equal(opens, 0, "Absent catalog admission must not probe settings.open");
+  admitted = true;
+  assert.equal((await read()).usbAutoReconnect, false);
+  assert.equal(opens, 1);
+  assert.deepEqual(cursors, [undefined, undefined, "page-2"]);
+});
+
+test("catalog failure, unavailable device and broken pagination fail before settings.open", async () => {
+  for (const catalog of [
+    async () => ({ ok: false, error: { code: "PLUGIN_E_STALE_RESOURCE" } }),
+    async () => catalogPage([{ ...deviceEntry, availability: "unavailable" }]),
+    async () => catalogPage([], "repeated"),
+    async () => ({ ok: true, value: { entries: [], nextCursor: undefined } }),
+    (() => {
+      let page = 0;
+      return async () => catalogPage([], `page-${++page}`);
+    })(),
+  ]) {
+    let opens = 0;
+    await assert.rejects(
+      runInNewContext(devicePreferencesExpression("a".repeat(64)), {
+        window: {
+          kobrixa: {
+            plugins: {
+              ui: { catalog },
+              settings: {
+                open() {
+                  opens++;
+                  throw new Error("must not open");
+                },
+              },
+            },
+          },
+        },
+      }),
+    );
+    assert.equal(opens, 0);
+  }
+});
+
+test("worker failure diagnostics are bounded and preserve original message delivery", () => {
+  class Worker extends EventEmitter {
+    threadId = 1;
+  }
+  const threads = { Worker },
+    emitted = [];
+  const probe = observeInstalledWorkers(
+    threads,
+    (row) => emitted.push(row),
+    () => ({}),
+  );
+  const child = new threads.Worker();
+  let received;
+  child.on("message", (message) => {
+    received = message;
+  });
+  for (let id = 1; id <= 40; id++) {
+    const message = { version: 1, id, ok: false, error: { code: "io", message: "permission" } };
+    assert.equal(child.emit("message", message), true);
+    assert.equal(received, message);
+  }
+  assert.equal(emitted.filter((row) => row.event === "request-error").length, 32);
+  assert.equal(emitted.filter((row) => row.event === "request-errors-truncated").length, 1);
+  assert.deepEqual(emitted.find((row) => row.event === "request-error").message.error, {
+    code: "io",
+    message: "permission",
+  });
+  const count = emitted.length;
+  child.emit("message", { version: 1, id: 41, ok: true, value: "private settings" });
+  assert.equal(emitted.length, count, "Successful payloads are not logged");
+  child.emit("exit", 0);
+  assert.equal(Object.hasOwn(child, "emit"), false);
+  assert.equal(probe.restore(), true);
+});
+
 test("public settings observation retains false, uses packaged digest and disposes the binding", async () => {
   const binding = { owner: "unit" };
   let disposed;
@@ -283,7 +399,7 @@ test("public settings observation retains false, uses packaged digest and dispos
     },
   };
   const result = await runInNewContext(devicePreferencesExpression("a".repeat(64)), {
-    window: { kobrixa: { plugins: { settings } } },
+    window: { kobrixa: { plugins: { settings, ui: admittedDeviceCatalog() } } },
   });
   assert.equal(result.usbAutoReconnect, false);
   assert.equal(disposed, binding);
@@ -311,6 +427,14 @@ test("public settings observation retries only the public disabled code and seri
     [new Error("Settings source is not admitted."), false],
     [new Error("[object Object]"), false],
     [{ code: "PLUGIN_E_SETTINGS_SAVE", message: "Settings migration is not ready." }, false],
+    [
+      {
+        code: "PLUGIN_E_SETTINGS_SAVE",
+        message: "Settings request could not be completed.",
+        detail: { kind: "persistence", reason: "io" },
+      },
+      false,
+    ],
     ["disk failure", false],
   ]) {
     const read = () =>
@@ -318,6 +442,7 @@ test("public settings observation retries only the public disabled code and seri
         window: {
           kobrixa: {
             plugins: {
+              ui: admittedDeviceCatalog(),
               settings: {
                 async open() {
                   throw error;
@@ -402,6 +527,7 @@ test("public settings waits for publication, not for the expected preference val
       window: {
         kobrixa: {
           plugins: {
+            ui: admittedDeviceCatalog(),
             settings: {
               async open() {
                 return {
@@ -439,6 +565,7 @@ test("malformed settings revisions fail instead of silently retrying or acceptin
         window: {
           kobrixa: {
             plugins: {
+              ui: admittedDeviceCatalog(),
               settings: {
                 async open() {
                   return { binding: {}, snapshot: { revision, values: [] } };

@@ -66,6 +66,29 @@ export function openInstalledArchive(
 // The digest comes from the copied product, never the development source tree.
 export function devicePreferencesExpression(resourceDigest) {
   return `(async () => {
+    // refreshCatalog admits persistence sources before publishing UI entries.
+    // The renderer also uses this public catalog to retry legacy capture. It
+    // proves source admission, not that the import has committed.
+    const cursors = new Set();
+    let cursor, admitted = false;
+    for (let page = 0; page < 32; page++) {
+      const result = await window.kobrixa.plugins.ui.catalog(cursor ? {cursor} : {});
+      if (!result.ok) throw new Error('Device catalog rejected: ' + JSON.stringify(result));
+      const entries = result.value.entries.filter(entry =>
+        entry.sourceKey === 'builtin:kobrixa.device-ev3' && entry.pluginId === 'kobrixa.device-ev3');
+      for (const entry of entries) {
+        if (entry.availability !== 'available')
+          throw new Error('Device contribution unavailable: ' + JSON.stringify(entry));
+        admitted = true;
+      }
+      cursor = result.value.nextCursor;
+      if (cursor === null) break;
+      if (typeof cursor !== 'string' || !cursor || cursors.has(cursor))
+        throw new Error('Invalid device catalog cursor.');
+      cursors.add(cursor);
+      if (page === 31) throw new Error('Device catalog page bound exceeded.');
+    }
+    if (!admitted) return null;
     const settings = window.kobrixa.plugins.settings;
     let opened;
     try {
@@ -527,12 +550,21 @@ export function observeInstalledWorkers(threads, emit, clock) {
       record(worker, "constructed", { threadId: child.threadId });
       const originalEmit = child.emit;
       const ownEmit = Object.getOwnPropertyDescriptor(child, "emit");
+      let requestErrors = 0;
       function observedEmit(event, ...values) {
         if (event === "online") record(worker, "online", { threadId: child.threadId });
         if (event === "error") record(worker, "error", { error: describe(values[0]) });
         if (event === "exit") record(worker, "exit", { code: values[0] });
         if (event === "message" && values[0]?.kind === "ready")
           record(worker, "message", { message: describe(values[0]) });
+        // The settings boundary can collapse backend errors to SAVE/io. Retain
+        // the worker's original sanitized failure without observing payloads or
+        // changing request delivery. This is diagnostic evidence, never readiness.
+        if (event === "message" && values[0]?.version === 1 && values[0]?.ok === false) {
+          if (requestErrors++ < 32)
+            record(worker, "request-error", { message: describe(values[0]) });
+          else if (requestErrors === 33) record(worker, "request-errors-truncated");
+        }
         try {
           return Reflect.apply(originalEmit, this, [event, ...values]);
         } finally {
