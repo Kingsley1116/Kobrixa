@@ -387,7 +387,8 @@ if (process.env.KOBRIXA_JOURNAL_WIN32_CHILD === "interrupt") {
       }
       for (const [index, code, win32, ntStatus] of [
         [6, "EACCES", 5, 0xc0000022],
-        [9, "EINVAL", 87, 0xc000000d],
+        // windows-2022 NTFS answers unknown rename flags with STATUS_NOT_SUPPORTED.
+        [9, "ENOTSUP", 50, 0xc00000bb],
       ]) {
         for (const outcome of outcomes.filter((entry) => entry.index === index)) {
           const { error, dir, temporary } = outcome;
