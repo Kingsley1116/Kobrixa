@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { observeBlockedCleanup } from "./declarative-ui-browser-cleanup.js";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -20,6 +21,7 @@ const fail = (error: unknown) => {
     app.exit(1),
   );
 };
+observeBlockedCleanup(console, fail);
 process.on("uncaughtException", fail);
 process.on("unhandledRejection", fail);
 setTimeout(

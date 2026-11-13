@@ -289,11 +289,29 @@ test("public settings observation retains false, uses packaged digest and dispos
   assert.equal(disposed, binding);
 });
 
-test("public settings observation retries only admission and propagates other failures", async () => {
-  for (const message of [
-    "Settings source is not admitted.",
-    "Stale settings binding.",
-    "disk failure",
+test("public settings observation retries only the public disabled code and serializes failures", async () => {
+  const disabled = { code: "PLUGIN_E_DISABLED", message: "Settings migration is not ready." };
+  const conflict = {
+    code: "PLUGIN_E_SETTINGS_CONFLICT",
+    message: "revision mismatch",
+    detail: { reason: "digest" },
+  };
+  for (const [error, pending] of [
+    [disabled, true],
+    [{ ok: false, error: disabled }, true],
+    [
+      new Error(
+        `Error invoking remote method 'plugins:settings:open': Error: ${JSON.stringify(disabled)}`,
+      ),
+      true,
+    ],
+    [conflict, false],
+    [{ ok: false, error: conflict }, false],
+    [new Error(JSON.stringify(conflict)), false],
+    [new Error("Settings source is not admitted."), false],
+    [new Error("[object Object]"), false],
+    [{ code: "PLUGIN_E_SETTINGS_SAVE", message: "Settings migration is not ready." }, false],
+    ["disk failure", false],
   ]) {
     const read = () =>
       runInNewContext(devicePreferencesExpression("a".repeat(64)), {
@@ -302,15 +320,72 @@ test("public settings observation retries only admission and propagates other fa
             plugins: {
               settings: {
                 async open() {
-                  throw new Error(message);
+                  throw error;
                 },
               },
             },
           },
         },
       });
-    if (message === "Settings source is not admitted.") assert.equal(await read(), null);
-    else await assert.rejects(read, { message });
+    if (pending) assert.equal(await read(), null);
+    else
+      await assert.rejects(read, (failure) => {
+        assert.match(failure.message, /Device settings open rejected:/);
+        const serialized = JSON.parse(
+          failure.message.slice("Device settings open rejected: ".length),
+        );
+        if (error instanceof Error) {
+          assert.equal(serialized.message, error.message);
+          assert.equal(serialized.stack, error.stack);
+        } else assert.deepEqual(serialized, error);
+        return true;
+      });
+  }
+});
+
+test("settings open IPC preserves structured rejections across Electron's message-only boundary", async (t) => {
+  const { build } = await import("esbuild");
+  const directory = await mkdtemp(path.join(tmpdir(), "kobrixa-settings-ipc-unit-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const outfile = path.join(directory, "ipc.cjs");
+  await build({
+    entryPoints: ["apps/desktop/src/main/plugins/ipc.ts"],
+    outfile,
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+  });
+  const { registerSettingsIpc170 } = createRequire(import.meta.url)(outfile);
+  for (const rejection of [
+    { code: "PLUGIN_E_DISABLED", message: "Settings migration is not ready." },
+    { ok: false, error: { code: "PLUGIN_E_SETTINGS_SCHEMA", message: "invalid-resource" } },
+    { code: "PLUGIN_E_SETTINGS_SAVE", message: "io", reason: "journal-unwritable" },
+  ]) {
+    const handlers = new Map();
+    registerSettingsIpc170({
+      handle: (name, fn) => handlers.set(name, fn),
+      service: {
+        async open() {
+          throw rejection;
+        },
+      },
+      scope: () => ({ hostEpoch: "host", workbenchInstance: "window" }),
+      publish() {},
+    });
+    await assert.rejects(
+      handlers.get("plugins:settings:open")(
+        {},
+        {
+          sourceKey: "builtin:kobrixa.device-ev3",
+          resourceDigest: "a".repeat(64),
+        },
+      ),
+      (error) => {
+        assert.ok(error instanceof Error);
+        assert.deepEqual(JSON.parse(error.message), rejection);
+        return true;
+      },
+    );
   }
 });
 
@@ -406,4 +481,42 @@ test("installed Windows exact-export check uses the release production set", () 
     if (defect) assert.throws(run);
     else assert.equal(run().barrier.flushed, true);
   }
+});
+
+test("both installed CI paths use the shared scoped AppArmor lifecycle", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const { parse } = await import("yaml");
+  for (const file of ["ci.yml", "stage-3-acceptance.yml"]) {
+    const workflow = parse(
+      await readFile(new URL(`../../.github/workflows/${file}`, import.meta.url), "utf8"),
+    );
+    const steps = Object.values(workflow.jobs).flatMap((job) => job.steps ?? []);
+    const load = steps.find(
+      (step) => step.name === "Allow installed Chromium user namespaces on AppArmor hosts",
+    );
+    const unload = steps.find(
+      (step) =>
+        step.name === "Retain installed Linux kernel denials and remove test AppArmor profile",
+    );
+    assert.equal(load.uses, "./.github/actions/installed-apparmor");
+    assert.equal(load.with.operation, "load");
+    assert.match(load.if, /runner.os == 'Linux'/);
+    assert.equal(unload.uses, load.uses);
+    assert.equal(unload.with.operation, "unload");
+    assert.match(unload.if, /always\(\)/);
+    assert.ok(steps.indexOf(load) < steps.indexOf(unload));
+  }
+  const action = parse(
+    await readFile(
+      new URL("../../.github/actions/installed-apparmor/action.yml", import.meta.url),
+      "utf8",
+    ),
+  );
+  const script = action.runs.steps[0].run;
+  assert.match(script, /apparmor_restrict_unprivileged_userns/);
+  assert.match(script, /require\("node:os"\).tmpdir\(\)/);
+  assert.match(script, /--apparmor-profile "\$installed_temp"/);
+  assert.match(script, /apparmor_parser -r/);
+  assert.match(script, /apparmor_parser -R/);
+  assert.doesNotMatch(script, /--no-sandbox|--disable-setuid-sandbox|sysctl -w/);
 });

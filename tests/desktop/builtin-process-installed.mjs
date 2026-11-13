@@ -72,8 +72,19 @@ export function devicePreferencesExpression(resourceDigest) {
       opened = await settings.open({ sourceKey: 'builtin:kobrixa.device-ev3',
         resourceDigest: ${JSON.stringify(resourceDigest)} });
     } catch (error) {
-      if (String(error).includes('Settings source is not admitted.')) return null;
-      throw error;
+      const serialized = JSON.stringify(error, (_key, value) =>
+        value && typeof value === 'object' && typeof value.message === 'string'
+          ? { ...value, name: value.name, message: value.message, stack: value.stack }
+          : value);
+      let structured = error;
+      if (typeof error?.message === 'string') {
+        const prefix = "Error invoking remote method 'plugins:settings:open': ";
+        const message = error.message.startsWith(prefix) ? error.message.slice(prefix.length) : error.message;
+        try { structured = JSON.parse(message.replace(/^Error: /, '')); } catch { /* Unstructured errors fail closed. */ }
+      }
+      const publicError = structured?.error ?? structured;
+      if (publicError?.code === 'PLUGIN_E_DISABLED' && typeof publicError.message === 'string') return null;
+      throw new Error('Device settings open rejected: ' + serialized);
     }
     try {
       // Admission can precede the renderer's legacy capture and pristine import.

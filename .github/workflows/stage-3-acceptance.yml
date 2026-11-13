@@ -62,16 +62,9 @@ jobs:
           sudo chmod 4755 "$sandbox"
       - name: Allow installed Chromium user namespaces on AppArmor hosts
         if: runner.os == 'Linux' && matrix.gate == 'installed'
-        shell: bash
-        run: |
-          # Landlock sets no_new_privs, so the copied product cannot use a
-          # setuid sandbox. Permit Chromium's userns sandbox only at test-copy
-          # executable paths; do not disable AppArmor or Chromium's sandbox.
-          if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)" = 1 ]; then
-            node tests/desktop/builtin-installed-linux.mjs --apparmor-profile "$RUNNER_TEMP" > "$RUNNER_TEMP/kobrixa-installed-apparmor.profile"
-            sudo apparmor_parser -r "$RUNNER_TEMP/kobrixa-installed-apparmor.profile"
-            echo "KOBRIXA_INSTALLED_APPARMOR_LOADED=1" >> "$GITHUB_ENV"
-          fi
+        uses: ./.github/actions/installed-apparmor
+        with:
+          operation: load
       - name: Execute required native gate
         shell: bash
         run: |
@@ -94,14 +87,9 @@ jobs:
           fi
       - name: Retain installed Linux kernel denials and remove test AppArmor profile
         if: always() && runner.os == 'Linux' && matrix.gate == 'installed'
-        shell: bash
-        run: |
-          installed_audit_status=0
-          sudo journalctl -k --no-pager -n 2000 > "$RUNNER_TEMP/kobrixa-installed-kernel.log" || installed_audit_status=$?
-          if [ "${KOBRIXA_INSTALLED_APPARMOR_LOADED:-}" = 1 ]; then
-            sudo apparmor_parser -R "$RUNNER_TEMP/kobrixa-installed-apparmor.profile"
-          fi
-          exit "$installed_audit_status"
+        uses: ./.github/actions/installed-apparmor
+        with:
+          operation: unload
       - name: Stage regular installed evidence files
         if: always() && matrix.gate == 'installed'
         shell: bash
@@ -144,7 +132,7 @@ jobs:
         run: echo 'This job does not sign B2 reports, maximum-load, hardware or human acceptance. Run dispatched B2 validation with actual complete reports.' >> "$GITHUB_STEP_SUMMARY"
 
   journal-win32:
-    name: Windows safety-journal native acceptance (32 cases)
+    name: Windows safety-journal native acceptance (34 cases)
     runs-on: windows-2022
     timeout-minutes: 30
     steps:
@@ -179,7 +167,7 @@ jobs:
           "KOBRIXA_JOURNAL_WIN32_TEST_ADDON=$(Join-Path $hooks 'build/Release/journal_win32.node')" >> $env:GITHUB_ENV
           Get-FileHash -Algorithm SHA256 (Join-Path $production 'journal.cc'), (Join-Path $production 'binding.gyp'), (Join-Path $production 'build/Release/journal_win32.node'), (Join-Path $hooks 'build/Release/journal_win32.node') | Format-List | Out-File (Join-Path $buildRoot 'hashes.txt')
           "Electron=$electronVersion arch=x64" | Out-File (Join-Path $buildRoot 'runtime.txt')
-      - name: Require all 32 native cases with no skips
+      - name: Require all 34 native cases with no skips
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -190,7 +178,7 @@ jobs:
             & $electron --test --test-reporter=tap tests/desktop/journal-win32-native.test.mjs 2>&1 | Tee-Object (Join-Path $env:JOURNAL_BUILD_ROOT 'electron-test.tap')
             if ($LASTEXITCODE -ne 0) { throw 'Windows Electron native suite failed' }
             $tap = Get-Content -Raw (Join-Path $env:JOURNAL_BUILD_ROOT 'electron-test.tap')
-            foreach ($required in @('tests 32', 'pass 32', 'fail 0', 'skipped 0')) {
+            foreach ($required in @('tests 34', 'pass 34', 'fail 0', 'skipped 0')) {
               if ($tap -notmatch "(?m)^# $required\r?$") { throw "Native suite incomplete: $required" }
             }
           } finally { Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue }

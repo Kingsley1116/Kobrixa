@@ -1,3 +1,4 @@
+import "../../tools/release/journal-harness.mjs";
 import assert from "node:assert/strict";
 import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { createRequire } from "node:module";

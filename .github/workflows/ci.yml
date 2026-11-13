@@ -155,6 +155,11 @@ jobs:
           else
             pnpm test:declarative-ui:smoke
           fi
+      - name: Allow installed Chromium user namespaces on AppArmor hosts
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/installed-apparmor
+        with:
+          operation: load
       - name: Smoke test the packaged application
         shell: bash
         run: |
@@ -163,6 +168,11 @@ jobs:
           else
             pnpm test:desktop:packaged
           fi
+      - name: Retain installed Linux kernel denials and remove test AppArmor profile
+        if: always() && runner.os == 'Linux'
+        uses: ./.github/actions/installed-apparmor
+        with:
+          operation: unload
       - run: pnpm package:installers
       - run: pnpm package:archive
         env:

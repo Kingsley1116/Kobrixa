@@ -11,7 +11,10 @@ import { JOURNAL_DEVELOPMENT, validateProductionJournal } from "./journal-win32.
 
 export function prepareJournalHarness(file, args, { electron, source, arch }) {
   if (path.resolve(file).toLowerCase() !== path.resolve(electron).toLowerCase()) return false;
-  const main = args?.find((arg) => path.isAbsolute(arg) && path.basename(arg) === "main.cjs");
+  const main = args?.find(
+    (arg) =>
+      path.isAbsolute(arg) && ["main.cjs", "ui-browser-main.cjs"].includes(path.basename(arg)),
+  );
   if (!main) return false;
   const bytes = readFileSync(source); // Missing or hook-enabled builds fail before launch.
   validateProductionJournal(bytes, arch);

@@ -132,11 +132,23 @@ test("installed workflow raises loopback before dropping root and pins the selec
     (step) => step.name === "Allow installed Chromium user namespaces on AppArmor hosts",
   );
   assert.equal(apparmor.if, "runner.os == 'Linux' && matrix.gate == 'installed'");
-  assert.match(apparmor.run, /apparmor_parser -r/);
+  assert.equal(apparmor.uses, "./.github/actions/installed-apparmor");
+  assert.equal(apparmor.with.operation, "load");
+  const action = parse(
+    await readFile(
+      new URL("../../.github/actions/installed-apparmor/action.yml", import.meta.url),
+      "utf8",
+    ),
+  );
+  const policy = action.runs.steps.map((step) => step.run).join("\n");
+  assert.match(policy, /apparmor_parser -r/);
+  assert.doesNotMatch(policy, /--no-sandbox|--disable-setuid-sandbox|sysctl -w/);
   const cleanup = steps.find(
     (step) =>
       step.name === "Retain installed Linux kernel denials and remove test AppArmor profile",
   );
   assert.match(cleanup.if, /always\(\)/);
-  assert.match(cleanup.run, /apparmor_parser -R/);
+  assert.equal(cleanup.uses, "./.github/actions/installed-apparmor");
+  assert.equal(cleanup.with.operation, "unload");
+  assert.match(policy, /apparmor_parser -R/);
 });
