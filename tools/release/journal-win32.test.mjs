@@ -8,6 +8,7 @@ import {
   journalBuildArgs,
   validateProductionJournal,
   JOURNAL_DEVELOPMENT,
+  JOURNAL_TEST_EXPORTS,
 } from "./journal-win32.mjs";
 import { prepareJournalHarness } from "./journal-harness.mjs";
 import { journalFixture } from "./journal-win32-fixture.mjs";
@@ -27,6 +28,11 @@ test("fresh production builds pin Electron headers, target architecture and disa
   }
   assert.throws(() => journalBuildArgs("isolated", "44.7.0", "ia32"), /Unsupported/);
   assert.throws(() => validateProductionJournal(Buffer.from("invalid"), "x64"), /PE addon/);
+  for (const name of JOURNAL_TEST_EXPORTS.slice(1)) {
+    const bytes = journalFixture();
+    bytes.write(`${name}\0`, 0x180);
+    assert.throws(() => validateProductionJournal(bytes, "x64"), /Test-hook addon cannot ship/);
+  }
 });
 
 test("temporary Electron main resolves validated production bytes via the development contract", async (t) => {

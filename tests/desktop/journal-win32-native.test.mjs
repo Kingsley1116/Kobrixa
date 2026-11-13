@@ -80,15 +80,22 @@ function icacls(file, ...args) {
   const result = spawnSync("icacls.exe", [file, ...args], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stdout + result.stderr);
 }
-function powershell(script, file) {
-  const result = spawnSync(
+function powershell(script, file, environment = process.env, launch = spawnSync) {
+  // Electron is an intermediate process, so pwsh's compatibility cleanup for
+  // directly launched powershell.exe does not run. Let Windows PowerShell build
+  // its own module paths; inherited PS7 modules cannot load in the 5.1 runtime.
+  const env = Object.fromEntries(
+    Object.entries(environment).filter(([key]) => key.toUpperCase() !== "PSMODULEPATH"),
+  );
+  const result = launch(
     "powershell.exe",
-    ["-NoProfile", "-NonInteractive", "-Command", script],
+    ["-NoProfile", "-NonInteractive", "-Command", `$ErrorActionPreference = 'Stop'; ${script}`],
     {
       encoding: "utf8",
-      env: { ...process.env, JOURNAL_ACL_PATH: file },
+      env: { ...env, JOURNAL_ACL_PATH: file },
     },
   );
+  if (result.error) throw result.error;
   assert.equal(result.status, 0, result.stdout + result.stderr);
   return JSON.parse(result.stdout.trim());
 }
@@ -143,6 +150,15 @@ function fault(code, nativeCode) {
     assert.equal(error.code, code);
     if (nativeCode !== undefined) assert.equal(error.win32Code, nativeCode);
     assert.equal(typeof error.phase, "string");
+    if (error.win32Code) {
+      assert.match(error.message, new RegExp(`Win32=${error.win32Code}\\b`));
+      assert.ok(Number.isInteger(error.ntStatus) || error.ntStatus === null);
+      assert.equal(typeof error.ntStatusSource, "string");
+      assert.match(error.message, /NTSTATUS=/);
+      assert.match(error.message, new RegExp(`phase=${error.phase}\\b`));
+      assert.match(error.nativeContext, /handle=/);
+      assert.match(error.nativeContext, /flags=/);
+    }
     return true;
   };
 }
@@ -166,6 +182,61 @@ if (process.env.KOBRIXA_JOURNAL_WIN32_CHILD === "interrupt") {
   else replace(dir, newBytes, { hook });
   throw new Error("interruption child unexpectedly completed");
 } else {
+  test("ACL shell isolates inherited PS7 modules and preserves command failures (helper only)", () => {
+    const inherited = {
+      PSModulePath: "C:\\Program Files\\PowerShell\\7\\Modules",
+      psmodulepath: "C:\\another-PS7-path",
+      PATH: "retained-path",
+      SystemRoot: "C:\\Windows",
+    };
+    const expected = { owner: "S-1-5-21-example", protected: true, rules: [] };
+    let calls = 0;
+    assert.deepEqual(
+      powershell("Get-Acl", "C:\\journal", inherited, (command, args, options) => {
+        calls++;
+        assert.equal(command, "powershell.exe");
+        assert.deepEqual(args, [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "$ErrorActionPreference = 'Stop'; Get-Acl",
+        ]);
+        assert.deepEqual(options.env, {
+          PATH: "retained-path",
+          SystemRoot: "C:\\Windows",
+          JOURNAL_ACL_PATH: "C:\\journal",
+        });
+        return { status: 0, stdout: JSON.stringify(expected), stderr: "" };
+      }),
+      expected,
+    );
+    assert.equal(calls, 1);
+    assert.equal(inherited.PSModulePath, "C:\\Program Files\\PowerShell\\7\\Modules");
+    assert.throws(
+      () =>
+        powershell("Get-Acl", "unused", inherited, () => ({
+          status: 1,
+          stdout: JSON.stringify(expected),
+          stderr: "ACL query failed",
+        })),
+      /ACL query failed/,
+    );
+    assert.throws(
+      () =>
+        powershell("Get-Acl", "unused", inherited, () => ({
+          status: 0,
+          stdout: "invalid JSON",
+          stderr: "",
+        })),
+      SyntaxError,
+    );
+    const failure = new Error("shell missing");
+    assert.throws(
+      () => powershell("Get-Acl", "unused", inherited, () => ({ error: failure })),
+      (error) => error === failure,
+    );
+  });
+
   test("directory-link fixture cleanup preserves target bytes (not native adapter evidence)", (t) => {
     const { root, current } = fixture(t);
     const outside = path.join(root, "outside");
@@ -196,6 +267,7 @@ if (process.env.KOBRIXA_JOURNAL_WIN32_CHILD === "interrupt") {
       assert.equal(production.durableReplaceForTest, undefined);
       assert.equal(production.withExclusiveFile, undefined);
       assert.equal(production.probeDirectoryFlush, undefined);
+      assert.equal(production.probeRenameForTest, undefined);
       assert.equal(production.syncDirectory(dir).flushed, true);
       const publish = (name, bytes) =>
         production.durableReplace(dir, name, `faults.next-${randomUUID()}.json`, bytes);
@@ -225,6 +297,110 @@ if (process.env.KOBRIXA_JOURNAL_WIN32_CHILD === "interrupt") {
       t.diagnostic(
         `runtime=${JSON.stringify(process.versions)} production=${addonPath} test=${testAddonPath}`,
       );
+    },
+  );
+
+  test(
+    "native rename variants report exact outcomes with an open old target",
+    { skip: notRun },
+    (t) => {
+      const variants = [
+        "NT exact relative writable root (production)",
+        "Win32 exact relative writable root",
+        "Win32 legacy oversized relative writable root",
+        "NT legacy oversized relative writable root",
+        "NT exact read-only root",
+        "NT exact root denying write sharing",
+        "NT exact staging without DELETE",
+        "NT exact same-directory name with null root",
+        "Win32 exact absolute path with null root",
+        "NT exact invalid flags",
+      ];
+      const outcomes = [false, true].flatMap((existing) =>
+        variants.map((variant, index) => {
+          const { dir, current } = privateFixture(t);
+          if (existing) writeFileSync(current, oldBytes);
+          const temporary = `faults.next-${randomUUID()}.json`;
+          try {
+            const receipt = native.probeRenameForTest(
+              dir,
+              "faults.json",
+              temporary,
+              newBytes,
+              index,
+            );
+            t.diagnostic(JSON.stringify({ variant, existing, outcome: "success", receipt }));
+            return { dir, current, temporary, receipt, existing, index };
+          } catch (error) {
+            t.diagnostic(
+              JSON.stringify({
+                variant,
+                existing,
+                outcome: "failure",
+                message: error.message,
+                code: error.code,
+                win32Code: error.win32Code,
+                ntStatus: error.ntStatus,
+                ntStatusSource: error.ntStatusSource,
+                phase: error.phase,
+                publicationState: error.publicationState,
+                context: error.nativeContext,
+              }),
+            );
+            return { dir, current, temporary, error, existing, index };
+          }
+        }),
+      );
+      // Record every variant before asserting. Diagnostic failures are observations,
+      // never successful publication receipts or production fallbacks.
+      const assertUnpublished = ({ existing, current }) => {
+        if (existing) assert.deepEqual(readFileSync(current), oldBytes);
+        else assert.equal(existsSync(current), false);
+      };
+      for (const outcome of outcomes) {
+        const { dir, current, temporary, receipt, error } = outcome;
+        if (receipt) {
+          assert.equal(receipt.published, true);
+          assert.equal(receipt.directoryFlushed, true);
+          assert.equal(receipt.fileFlushed, true);
+          assert.deepEqual(readFileSync(current), newBytes);
+          assert.equal(existsSync(path.join(dir, temporary)), false);
+        } else {
+          assert.ok(error.win32Code > 0);
+          fault(error.code, error.win32Code)(error);
+          if (existsSync(path.join(dir, temporary))) {
+            assertUnpublished(outcome);
+            assert.deepEqual(readFileSync(path.join(dir, temporary)), newBytes);
+          } else if (error.phase === "flush-directory") {
+            // A read-only root can permit rename but must fail its directory flush.
+            assert.deepEqual(readFileSync(current), newBytes);
+          } else {
+            assert.ok(["pin-directory", "open-target", "create-temp"].includes(error.phase));
+            assertUnpublished(outcome);
+          }
+        }
+      }
+      for (const outcome of outcomes.filter(({ index }) => index === 0)) {
+        assert.ifError(outcome.error);
+        assert.equal(outcome.receipt.supported, true);
+        assert.equal(outcome.receipt.ntStatus, 0);
+      }
+      for (const [index, code, win32, ntStatus] of [
+        [6, "EACCES", 5, 0xc0000022],
+        [9, "EINVAL", 87, 0xc000000d],
+      ]) {
+        for (const outcome of outcomes.filter((entry) => entry.index === index)) {
+          const { error, dir, temporary } = outcome;
+          assert.ok(error, variants[index]);
+          fault(code, win32)(error);
+          assert.equal(error.ntStatus, ntStatus);
+          assert.equal(error.ntStatusSource, "NtSetInformationFile");
+          assert.equal(error.phase, "move");
+          assert.equal(error.publicationState, "uncertain");
+          assertUnpublished(outcome);
+          assert.deepEqual(readFileSync(path.join(dir, temporary)), newBytes);
+        }
+      }
     },
   );
 
@@ -513,7 +689,8 @@ if (process.env.KOBRIXA_JOURNAL_WIN32_CHILD === "interrupt") {
               `delete-sharing denial: ${error.message} ${error.code} Win32=${error.win32Code} phase=${error.phase} publicationState=${error.publicationState}`,
             );
             assert.equal(fault("EACCES", 5)(error), true);
-            assert.equal(error.message, "MoveFileExW");
+            assert.equal(error.operation, "MoveFileExW");
+            assert.match(error.message, /^MoveFileExW \[phase=move Win32=5 NTSTATUS=/);
             assert.equal(error.phase, "move");
             assert.equal(error.publicationState, "uncertain");
             return true;
@@ -550,7 +727,8 @@ if (process.env.KOBRIXA_JOURNAL_WIN32_CHILD === "interrupt") {
           }),
         (error) => {
           assert.equal(fault("EBUSY", 32)(error), true);
-          assert.equal(error.message, "CreateFileW");
+          assert.equal(error.operation, "CreateFileW");
+          assert.match(error.message, /^CreateFileW \[phase=.+ Win32=32 NTSTATUS=/);
           assert.equal(error.phase, "exclusive-file");
           assert.equal(error.publicationState, "not-published");
           return true;

@@ -26,6 +26,7 @@ export const JOURNAL_TEST_EXPORTS = [
   "probeDirectoryFlush",
   "replaceCandidate",
   "withExclusiveFile",
+  "probeRenameForTest",
 ];
 export function withJournalUnpack(pattern, platform) {
   return platform === "win32" ? `{${pattern},${JOURNAL_PACKAGED}}` : pattern;
@@ -44,7 +45,7 @@ export function validateProductionJournal(bytes, arch) {
     "Journal architecture does not match target",
   );
   // "inspect" is also an internal error phase in the production source. The
-  // other three names occur only in the hook export table; do not mistake dead
+  // other names occur only in the hook export table; do not mistake dead
   // diagnostic strings for registered exports. Electron checks the full API below.
   for (const name of JOURNAL_TEST_EXPORTS.slice(1))
     assert.equal(
