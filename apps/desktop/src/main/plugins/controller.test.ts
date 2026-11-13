@@ -2137,11 +2137,16 @@ async function compositionInput() {
   const profile = { hostEpoch: randomUUID(), assertHeld() {} };
   const now = () => performance.now();
   const scope = { hostEpoch: profile.hostEpoch, workbenchInstance: randomUUID() };
+  // Node/Vitest has no Electron app context. Model only the Windows unit barrier;
+  // native DACL/durability acceptance belongs to journal-win32-native.test.mjs.
   const foundationOptions = {
     profile,
     now,
     authority: new AuthorityContexts(profile.hostEpoch),
-    journal: createJournal(createJournalFilesystem(root), profile),
+    journal: createJournal(
+      createJournalFilesystem(root, process.platform === "win32" ? async () => {} : undefined),
+      profile,
+    ),
     coreActions: createCoreActionLedger({
       now,
       current: (candidate) =>
@@ -4620,7 +4625,10 @@ it("actual primary profile remains held through backend disposal and confirmed w
       f.input.foundationOptions.profile = profile;
       f.input.foundationOptions.authority = new AuthorityContexts(profile.hostEpoch);
       f.input.foundationOptions.journal = createJournal(
-        createJournalFilesystem(f.input.plugins.userData),
+        createJournalFilesystem(
+          f.input.plugins.userData,
+          process.platform === "win32" ? async () => {} : undefined,
+        ),
         profile,
       );
       f.input.foundationOptions.coreActions = createCoreActionLedger({

@@ -20,6 +20,7 @@ function fakeAddon() {
     napiVersion: "8",
     arch: "x64",
     capabilities: vi.fn(() => ({ supported: true })),
+    initializeDirectory: vi.fn(() => ({ supported: true, flushed: true })),
     syncDirectory: vi.fn(() => ({ supported: true, flushed: true })),
     durableReplace: vi.fn(() => receipt),
   };
@@ -267,4 +268,32 @@ it("disposal while loading prevents a late worker from being started", async () 
   release(location);
   await expect(pending).rejects.toThrow("after fence");
   expect(workerFactory).not.toHaveBeenCalled();
+});
+
+it("initializes an absent directory before capability traversal and requires both flushes", async () => {
+  const addon = fakeAddon();
+  addon.capabilities.mockImplementation(() => {
+    throw new Error("directory absent");
+  });
+  await invokeWin32JournalAddon(() => addon, "initializeDirectory", ["root"], "x64", 8);
+  expect(addon.initializeDirectory).toHaveBeenCalledExactlyOnceWith("root");
+  expect(addon.capabilities).not.toHaveBeenCalled();
+  addon.initializeDirectory.mockReturnValue({ supported: true, flushed: false });
+  await expect(
+    invokeWin32JournalAddon(() => addon, "initializeDirectory", ["root"], "x64", 8),
+  ).rejects.toMatchObject({ code: "ENOTSUP", diagnostic: "invalid-native-receipt" });
+});
+it("does not cache failed initialization or swallow unsafe pre-existing ACL diagnostics", async () => {
+  const addon = fakeAddon();
+  const failure = Object.assign(
+    new Error("journal DACL permits another principal to mutate evidence"),
+    { code: "EUNSAFE" },
+  );
+  addon.initializeDirectory.mockImplementation(() => {
+    throw failure;
+  });
+  await expect(
+    invokeWin32JournalAddon(() => addon, "initializeDirectory", ["root"], "x64", 8),
+  ).rejects.toBe(failure);
+  expect(addon.durableReplace).not.toHaveBeenCalled();
 });

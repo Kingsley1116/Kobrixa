@@ -239,6 +239,8 @@ test("Windows workflows build both native variants, retain evidence and prepare 
     /hashes.txt/,
   ])
     assert.match(build.run, pattern);
+  assert.match(build.run, /createRequire.*apps\/desktop\/package\.json.*electron\/package\.json/);
+  assert.doesNotMatch(build.run, /apps\/desktop\/node_modules\/electron/);
   const cases = await windowsJournalCases();
   assert.equal(journal.name, `Windows safety-journal native acceptance (${cases} cases)`);
   const suite = journal.steps.find(
@@ -247,6 +249,8 @@ test("Windows workflows build both native variants, retain evidence and prepare 
   assert.ok(suite, `workflow must require all ${cases} registered Windows cases`);
   assert.match(suite.run, new RegExp(`'tests ${cases}'`));
   assert.match(suite.run, new RegExp(`'pass ${cases}'`));
+  assert.match(suite.run, /createRequire.*apps\/desktop\/package\.json.*electron/);
+  assert.doesNotMatch(suite.run, /apps\/desktop\/node_modules\/electron/);
   assert.match(suite.run, /fail 0/);
   assert.match(suite.run, /skipped 0/);
   for (const job of [acceptance.jobs.native, ci.jobs.platform]) {

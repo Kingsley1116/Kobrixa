@@ -10,6 +10,7 @@
 #include <windows.h>
 #include <winternl.h>
 #include <aclapi.h>
+#include <sddl.h>
 #include <memory>
 #include <algorithm>
 #include <iomanip>
@@ -204,10 +205,49 @@ std::string Identity(HANDLE h, bool directory) {
   return out.str();
 }
 
+// Supply the descriptor at creation, never expose an inherited writable object
+// and repair it afterwards. The token user is explicit even for elevated tokens
+// whose default owner is BUILTIN\Administrators.
+struct LocalFreeDeleter { void operator()(void* p) const { LocalFree(p); } };
+std::vector<unsigned char> CurrentUser() {
+  HANDLE rawToken;
+  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &rawToken)) WinError("OpenProcessToken");
+  Handle token(rawToken);
+  DWORD size = 0;
+  GetTokenInformation(token.value, TokenUser, nullptr, 0, &size);
+  std::vector<unsigned char> user(size);
+  if (!GetTokenInformation(token.value, TokenUser, user.data(), size, &size))
+    WinError("GetTokenInformation");
+  return user;
+}
+struct PrivateSecurity {
+  std::unique_ptr<void, LocalFreeDeleter> descriptor;
+  SECURITY_ATTRIBUTES attributes{};
+  explicit PrivateSecurity(bool directory) {
+    auto user = CurrentUser();
+    LPWSTR rawSid = nullptr;
+    if (!ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER*>(user.data())->User.Sid, &rawSid))
+      WinError("ConvertSidToStringSidW");
+    std::unique_ptr<void, LocalFreeDeleter> sid(rawSid);
+    const std::wstring flags = directory ? L"OICI" : L"";
+    const std::wstring owner(rawSid);
+    const auto sddl = L"O:" + owner + L"D:P(A;" + flags + L";FA;;;" + owner +
+        L")(A;" + flags + L";FA;;;SY)(A;" + flags + L";FA;;;BA)";
+    PSECURITY_DESCRIPTOR raw = nullptr;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1,
+                                                               &raw, nullptr))
+      WinError("ConvertStringSecurityDescriptorToSecurityDescriptorW");
+    descriptor.reset(raw);
+    attributes.nLength = sizeof(attributes);
+    attributes.lpSecurityDescriptor = raw;
+    attributes.bInheritHandle = FALSE;
+  }
+};
+
 // NtCreateFile's documented RootDirectory binds a single component to its pinned
 // parent. No path normalization, junction following, or global cwd changes.
 Handle RelativeOpen(HANDLE parent, const std::wstring& name, DWORD access,
-                    DWORD share, bool create = false) {
+                    DWORD share, bool create = false, SECURITY_ATTRIBUTES* security = nullptr) {
   auto module = GetModuleHandleW(L"ntdll.dll");
   auto createFile = reinterpret_cast<decltype(&NtCreateFile)>(
       GetProcAddress(module, "NtCreateFile"));
@@ -223,6 +263,9 @@ Handle RelativeOpen(HANDLE parent, const std::wstring& name, DWORD access,
   attributes.RootDirectory = parent;
   attributes.ObjectName = &text;
   attributes.Attributes = 0x40; // OBJ_CASE_INSENSITIVE
+  // NtCreateFile takes the creation descriptor through OBJECT_ATTRIBUTES, the
+  // handle-relative equivalent of CreateFileW's SECURITY_ATTRIBUTES argument.
+  attributes.SecurityDescriptor = security ? security->lpSecurityDescriptor : nullptr;
   IO_STATUS_BLOCK io{};
   HANDLE handle = INVALID_HANDLE_VALUE;
   auto status = createFile(&handle, access | SYNCHRONIZE, &attributes, &io, nullptr,
@@ -232,17 +275,11 @@ Handle RelativeOpen(HANDLE parent, const std::wstring& name, DWORD access,
   if (status < 0) WinError("NtCreateFile(relative)", mapError(status));
   return Handle(handle);
 }
-// Accept only the current user, SYSTEM and Administrators as writers/owners.
+// Accept the current user, SYSTEM and Administrators as writers/owners.
+// OWNER RIGHTS grants refer to the owner already verified below.
 // Do not silently rewrite existing ACLs: an unsafe inherited ACL is a refusal.
 void PrivateAcl(HANDLE handle) {
-  HANDLE rawToken;
-  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &rawToken)) WinError("OpenProcessToken");
-  Handle token(rawToken);
-  DWORD size = 0;
-  GetTokenInformation(token.value, TokenUser, nullptr, 0, &size);
-  std::vector<unsigned char> user(size);
-  if (!GetTokenInformation(token.value, TokenUser, user.data(), size, &size))
-    WinError("GetTokenInformation");
+  auto user = CurrentUser();
   auto sid = reinterpret_cast<TOKEN_USER*>(user.data())->User.Sid;
   auto trusted = [&](PSID candidate) {
     return IsValidSid(candidate) && (EqualSid(sid, candidate) ||
@@ -272,7 +309,8 @@ void PrivateAcl(HANDLE handle) {
     constexpr DWORD mutation = GENERIC_ALL | GENERIC_WRITE | FILE_WRITE_DATA |
         FILE_APPEND_DATA | FILE_WRITE_EA | FILE_WRITE_ATTRIBUTES | FILE_DELETE_CHILD |
         DELETE | WRITE_DAC | WRITE_OWNER;
-    if ((ace->Mask & mutation) && !trusted(&ace->SidStart))
+    if ((ace->Mask & mutation) && !trusted(&ace->SidStart) &&
+        !IsWellKnownSid(&ace->SidStart, WinCreatorOwnerRightsSid))
       throw Failure{"EUNSAFE", "journal DACL permits another principal to mutate evidence"};
   }
 }
@@ -286,7 +324,8 @@ std::wstring HandlePath(HANDLE handle) {
 struct PinnedDirectory {
   std::vector<Handle> ancestors;
   std::string identity;
-  explicit PinnedDirectory(const std::wstring& path, bool production = false) {
+  explicit PinnedDirectory(const std::wstring& path, bool production = false,
+                           bool privateLeaf = true) {
     if (production) {
       // Conservative production floor: Windows 10 1709 / Server 2022 or newer.
       using GetVersion = LONG (WINAPI*)(PRTL_OSVERSIONINFOW);
@@ -315,7 +354,7 @@ struct PinnedDirectory {
       auto h = ancestors.empty() ? Open(prefix, access, share, OPEN_EXISTING) :
           RelativeOpen(ancestors.back().value, prefix.substr(prefix.find_last_of(L'\\') + 1),
                        access, share);
-      if (production && final) PrivateAcl(h.value);
+      if (production && final && privateLeaf) PrivateAcl(h.value);
       identity = Identity(h.value, true);
       ancestors.push_back(std::move(h));
       if (end == path.size()) break;
@@ -483,6 +522,35 @@ napi_value Capabilities(napi_env env, napi_callback_info info) {
     catch (const std::exception& e) { return Error(env, "EIO", e.what(), 0, "capabilities", false); }
     catch (...) { return Error(env, "EIO", "unknown native exception", 0, "capabilities", false); }
 }
+napi_value InitializeDirectory(napi_env env, napi_callback_info info) {
+  try {
+    auto args = Args(env, info, 1);
+    auto dir = Directory(env, args[0]);
+    auto parentPath = dir.substr(0, dir.find_last_of(L'\\'));
+    if (parentPath.size() == 2) parentPath += L"\\";
+    // The profile/runner-temp parent is not evidence storage. Pin and validate
+    // its path/volume, but do not require it to have the journal's private ACL.
+    PinnedDirectory parent(parentPath, true, false);
+    PrivateSecurity security(true);
+    if (!CreateDirectoryW(dir.c_str(), &security.attributes)) {
+      DWORD code = GetLastError();
+      if (code != ERROR_ALREADY_EXISTS) WinError("CreateDirectoryW(private journal)", code);
+    }
+    // An existing directory is inspected, never repaired (including create races).
+    PinnedDirectory pinned(dir, true);
+    if (!FlushFileBuffers(pinned.ancestors.back().value)) WinError("FlushFileBuffers(directory)");
+    if (!FlushFileBuffers(parent.ancestors.back().value)) WinError("FlushFileBuffers(parent)");
+    pinned.ancestors.back().Close();
+    parent.ancestors.back().Close();
+    auto result = Object(env);
+    Bool(env, result, "flushed", true);
+    Bool(env, result, "supported", true);
+    return result;
+  } catch (const PendingException&) { return nullptr; }
+    catch (const Failure& f) { return Error(env, f, "initialize-directory", false); }
+    catch (const std::exception& e) { return Error(env, "EIO", e.what(), 0, "initialize-directory", false); }
+    catch (...) { return Error(env, "EIO", "unknown native exception", 0, "initialize-directory", false); }
+}
 napi_value SyncDirectory(napi_env env, napi_callback_info info) {
   try {
     auto args = Args(env, info, 1);
@@ -526,8 +594,9 @@ napi_value DurableReplaceImpl(napi_env env, napi_callback_info info, bool testHo
       if (f.native != ERROR_FILE_NOT_FOUND) throw;
     }
     phase = "create-temp";
+    PrivateSecurity security(false);
     auto staging = RelativeOpen(parent, temp, GENERIC_READ | GENERIC_WRITE | DELETE,
-                                FILE_SHARE_READ, true);
+                                FILE_SHARE_READ, true, &security.attributes);
     auto identity = Identity(staging.value, false);
     PrivateAcl(staging.value);
     phase = "write-temp";
@@ -627,7 +696,7 @@ napi_value Init(napi_env env, napi_value exports) {
   const Entry entries[] = {
     #ifdef _WIN32
     {"capabilities", Capabilities}, {"durableReplace", DurableReplace},
-    {"syncDirectory", SyncDirectory},
+    {"syncDirectory", SyncDirectory}, {"initializeDirectory", InitializeDirectory},
 #ifdef JOURNAL_TEST_HOOKS
     {"durableReplaceForTest", DurableReplaceForTest},
     {"inspect", Inspect}, {"probeDirectoryFlush", DirectoryProbe},
@@ -635,7 +704,7 @@ napi_value Init(napi_env env, napi_value exports) {
 #endif
 #else
     {"capabilities", StubCapabilities}, {"durableReplace", Unsupported},
-    {"syncDirectory", Unsupported},
+    {"syncDirectory", Unsupported}, {"initializeDirectory", Unsupported},
     {"inspect", Unsupported}, {"probeDirectoryFlush", Unsupported},
     {"replaceCandidate", Unsupported}, {"withExclusiveFile", Unsupported},
 #endif

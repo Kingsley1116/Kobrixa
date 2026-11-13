@@ -100,13 +100,32 @@ export function createJournalFilesystem(
     async initialize() {
       readable = false;
       writable = false;
-      await mkdir(root, { recursive: true, mode: 0o700 });
-      await directory();
-      // Retain read-only recovery access even when either durability probe fails.
-      readable = true;
-      // This is a capability probe, not a silent file-sync-only downgrade.
-      await syncDirectory();
-      await syncDirectory(path.dirname(root));
+      if (windows) {
+        // Only the profile parent may use mkdir. Native creation protects the
+        // journal DACL atomically and flushes both journal and pinned parent.
+        await mkdir(path.dirname(root), { recursive: true, mode: 0o700 });
+        try {
+          await windows.initializeDirectory(root);
+        } catch (error) {
+          // Native initialization can refuse writes while old evidence remains
+          // readable. Independently validate it without creating or repairing it.
+          try {
+            await directory();
+            readable = true;
+          } catch {
+            // Preserve the original native diagnostic.
+          }
+          throw error;
+        }
+        await directory();
+        readable = true;
+      } else {
+        await mkdir(root, { recursive: true, mode: 0o700 });
+        await directory();
+        readable = true;
+        await syncDirectory();
+        await syncDirectory(path.dirname(root));
+      }
       writable = true;
     },
     async inventory() {

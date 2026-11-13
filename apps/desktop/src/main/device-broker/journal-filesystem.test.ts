@@ -1,4 +1,13 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -134,9 +143,12 @@ it("F10 rejects a non-canonical symlinked root", async () => {
     const linkedRoot = path.join(root, "linked-root");
     await symlink(root, linkedRoot, "dir");
     expect(await realpath(linkedRoot)).toBe(root);
-    await expect(createJournalFilesystem(linkedRoot).initialize()).rejects.toThrow(
-      "journal directory",
-    );
+    await expect(
+      createJournalFilesystem(
+        linkedRoot,
+        process.platform === "win32" ? async () => {} : undefined,
+      ).initialize(),
+    ).rejects.toThrow("journal directory");
   } finally {
     await rm(temp, { recursive: true, force: true });
   }
@@ -260,6 +272,10 @@ async function windowsFixture() {
     napiVersion: "8",
     arch: "x64",
     capabilities: () => ({ supported: true }),
+    initializeDirectory: vi.fn(async (directory: string) => {
+      await mkdir(directory);
+      return { supported: true, flushed: true };
+    }),
     syncDirectory: vi.fn(() => ({ supported: true, flushed: true })),
     async durableReplace(directory: string, target: string, _temporary: string, bytes: Buffer) {
       publications.push(target);
@@ -310,8 +326,11 @@ it("W02b uses native publication in previous/current order and reopens committed
       JSON.parse(await readFile(path.join(root, "device-broker/faults.previous.json"), "utf8")),
     ).toEqual(journalDocument(1, []));
     expect(journal.snapshot().journalHealth).toBe("ready");
-    // Initialization root + parent only; each replacement already flushes its directory.
-    expect(addon.syncDirectory).toHaveBeenCalledTimes(2);
+    // Native initialization includes both barriers; replacements include their own.
+    expect(addon.initializeDirectory).toHaveBeenCalledExactlyOnceWith(
+      path.join(root, "device-broker"),
+    );
+    expect(addon.syncDirectory).not.toHaveBeenCalled();
   } finally {
     await rm(temp, { recursive: true, force: true });
   }
@@ -418,7 +437,8 @@ it("W02b timeout cleanup leaves native staging fenced even after late settlement
   const root = await realpath(temp);
   const adapter = createWin32JournalAdapter({
     location: async () => ({ packaged: true, resourcesPath: root, appPath: root }),
-    execute: async (_filename, operation) => {
+    execute: async (_filename, operation, args) => {
+      if (operation === "initializeDirectory") await mkdir(args[0]);
       if (operation === "durableReplace")
         await new Promise<void>((resolve) => {
           settle = resolve;
@@ -496,6 +516,9 @@ it.each(["missing", "wrong-abi", "unsupported-volume"])(
                 arch: "x64",
                 napiVersion: "8",
                 capabilities: () => ({ supported: false }),
+                initializeDirectory: () => {
+                  throw Object.assign(new Error("unsupported volume"), { code: "ENOTSUP" });
+                },
                 syncDirectory: mutation,
                 durableReplace: mutation,
               };
@@ -523,3 +546,75 @@ it.each(["missing", "wrong-abi", "unsupported-volume"])(
     }
   },
 );
+
+it("Windows delegates absent journal creation before exposing a writable filesystem", async () => {
+  const temp = await mkdtemp(path.join(tmpdir(), "journal-private-create-"));
+  const root = await realpath(temp);
+  const leaf = path.join(root, "device-broker");
+  const initializeDirectory = vi.fn(async (directory: string) => {
+    expect(directory).toBe(leaf);
+    await expect(lstat(leaf)).rejects.toMatchObject({ code: "ENOENT" });
+    await mkdir(leaf); // Unit stand-in; native suite checks the actual creation DACL.
+  });
+  const syncDirectory = vi.fn(async () => {});
+  const durableReplace = vi.fn(async () => {});
+  const fs = createJournalFilesystem(root, undefined, {
+    initializeDirectory,
+    syncDirectory,
+    durableReplace,
+    assertIdle() {},
+    dispose() {},
+  });
+  try {
+    await expect(
+      fs.durableReplace!(
+        "faults.next-00000000-0000-4000-8000-000000000001.json",
+        "faults.json",
+        Buffer.from("x"),
+      ),
+    ).rejects.toThrow("journal not writable");
+    await fs.initialize();
+    expect(initializeDirectory).toHaveBeenCalledExactlyOnceWith(leaf);
+    expect(syncDirectory).not.toHaveBeenCalled(); // Native initialization flushes both directories.
+    expect(await fs.inventory()).toEqual([]);
+    expect(durableReplace).not.toHaveBeenCalled();
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+it("unsafe existing Windows ACL refusal preserves readable evidence and blocks writes", async () => {
+  const temp = await mkdtemp(path.join(tmpdir(), "journal-private-refusal-"));
+  const root = await realpath(temp);
+  const leaf = path.join(root, "device-broker");
+  const failure = Object.assign(
+    new Error("journal DACL permits another principal to mutate evidence"),
+    { code: "EUNSAFE" },
+  );
+  const durableReplace = vi.fn(async () => {});
+  const fs = createJournalFilesystem(root, undefined, {
+    initializeDirectory: async () => {
+      throw failure;
+    },
+    syncDirectory: async () => {},
+    durableReplace,
+    assertIdle() {},
+    dispose() {},
+  });
+  try {
+    await mkdir(leaf);
+    await writeFile(path.join(leaf, "faults.json"), "retained");
+    await expect(fs.initialize()).rejects.toBe(failure);
+    expect(Buffer.from((await fs.read("faults.json"))!).toString()).toBe("retained");
+    expect(await fs.inventory()).toEqual([{ name: "faults.json", bytes: 8 }]);
+    await expect(
+      fs.durableReplace!(
+        "faults.next-00000000-0000-4000-8000-000000000001.json",
+        "faults.json",
+        Buffer.from("x"),
+      ),
+    ).rejects.toThrow("journal not writable");
+    expect(durableReplace).not.toHaveBeenCalled();
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});

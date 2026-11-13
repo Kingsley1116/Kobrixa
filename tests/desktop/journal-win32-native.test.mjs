@@ -72,24 +72,60 @@ function fixture(t) {
 }
 function privateFixture(t) {
   const result = fixture(t);
-  const who = spawnSync("whoami.exe", ["/user", "/fo", "csv", "/nh"], { encoding: "utf8" });
-  assert.equal(who.status, 0, who.stdout + who.stderr);
-  const sid = who.stdout.match(/S-1-[0-9-]+/)?.[0];
-  assert.ok(sid, "current user SID");
-  const acl = spawnSync(
-    "icacls.exe",
-    [
-      result.dir,
-      "/inheritance:r",
-      "/grant:r",
-      `*${sid}:(OI)(CI)F`,
-      "*S-1-5-18:(OI)(CI)F",
-      "*S-1-5-32-544:(OI)(CI)F",
-    ],
-    { encoding: "utf8" },
-  );
-  assert.equal(acl.status, 0, acl.stdout + acl.stderr);
+  rmSync(result.dir, { recursive: true });
+  assert.equal(production.initializeDirectory(result.dir).flushed, true);
   return result;
+}
+function icacls(file, ...args) {
+  const result = spawnSync("icacls.exe", [file, ...args], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+}
+function powershell(script, file) {
+  const result = spawnSync(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-Command", script],
+    {
+      encoding: "utf8",
+      env: { ...process.env, JOURNAL_ACL_PATH: file },
+    },
+  );
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  return JSON.parse(result.stdout.trim());
+}
+function currentSid() {
+  return powershell(
+    "[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value | ConvertTo-Json",
+  );
+}
+function aclSnapshot(file) {
+  return powershell(
+    `
+    $acl = Get-Acl -LiteralPath $env:JOURNAL_ACL_PATH
+    [pscustomobject]@{
+      owner = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value
+      protected = $acl.AreAccessRulesProtected
+      sddl = $acl.Sddl
+      rules = @($acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | ForEach-Object {
+        [pscustomobject]@{ sid = $_.IdentityReference.Value; rights = [int]$_.FileSystemRights; inherited = $_.IsInherited; type = [int]$_.AccessControlType }
+      })
+    } | ConvertTo-Json -Depth 4
+  `,
+    file,
+  );
+}
+function assertPrivate(file, sid) {
+  const acl = aclSnapshot(file);
+  assert.equal(acl.owner, sid);
+  assert.equal(acl.protected, true);
+  assert.deepEqual(
+    acl.rules.map((rule) => rule.sid).sort(),
+    [sid, "S-1-5-18", "S-1-5-32-544"].sort(),
+  );
+  for (const rule of acl.rules) {
+    assert.equal(rule.inherited, false);
+    assert.equal(rule.type, 0); // Allow
+    assert.equal(rule.rights, 0x1f01ff); // FileSystemRights.FullControl
+  }
 }
 function replace(dir, bytes, options = {}) {
   return native.replaceCandidate(
@@ -247,12 +283,125 @@ if (process.env.KOBRIXA_JOURNAL_WIN32_CHILD === "interrupt") {
     }
   });
 
+  test(
+    "product creates protected private directory and files under permissive inheritance",
+    { skip: notRun },
+    (t) => {
+      const { root, dir, current, previous } = fixture(t);
+      rmSync(dir, { recursive: true });
+      icacls(root, "/grant", "*S-1-1-0:(OI)(CI)M");
+      const parent = aclSnapshot(root);
+      assert.equal(production.initializeDirectory(dir).flushed, true);
+      assert.equal(production.capabilities(dir).supported, true);
+      const sid = currentSid();
+      assertPrivate(dir, sid);
+      const temporary = `faults.next-${randomUUID()}.json`;
+      const sentinel = new Error("retain staged evidence");
+      assert.throws(
+        () =>
+          native.durableReplaceForTest(dir, "faults.json", temporary, oldBytes, (phase) => {
+            if (phase === "after-temp-flush") {
+              assertPrivate(path.join(dir, temporary), sid);
+              throw sentinel;
+            }
+          }),
+        (error) => error === sentinel,
+      );
+      assert.deepEqual(readFileSync(path.join(dir, temporary)), oldBytes);
+      production.durableReplace(dir, "faults.json", `faults.next-${randomUUID()}.json`, oldBytes);
+      production.durableReplace(
+        dir,
+        "faults.previous.json",
+        `faults.backup-${randomUUID()}.json`,
+        oldBytes,
+      );
+      production.durableReplace(dir, "faults.json", `faults.next-${randomUUID()}.json`, newBytes);
+      assertPrivate(current, sid);
+      assertPrivate(previous, sid);
+      assert.deepEqual(aclSnapshot(root), parent);
+    },
+  );
+
+  test(
+    "pre-existing profile-style inherited user and CREATOR OWNER permissions are accepted",
+    { skip: notRun },
+    (t) => {
+      const { dir } = privateFixture(t);
+      icacls(dir, "/grant", "*S-1-3-0:(OI)(CI)(IO)F");
+      const child = path.join(dir, "profile-journal");
+      mkdirSync(child);
+      const before = aclSnapshot(child);
+      assert.equal(before.protected, false);
+      assert.ok(before.rules.some((rule) => rule.inherited && rule.sid === currentSid()));
+      assert.equal(production.initializeDirectory(child).flushed, true);
+      assert.deepEqual(aclSnapshot(child), before);
+      production.durableReplace(child, "faults.json", `faults.next-${randomUUID()}.json`, oldBytes);
+      assertPrivate(path.join(child, "faults.json"), currentSid());
+    },
+  );
+
+  test(
+    "the current APPDATA profile passes the native ACL policy without mutation",
+    { skip: notRun },
+    () => {
+      assert.ok(process.env.APPDATA, "Windows user profile must supply APPDATA");
+      const before = aclSnapshot(process.env.APPDATA);
+      assert.equal(production.capabilities(process.env.APPDATA).supported, true);
+      assert.deepEqual(aclSnapshot(process.env.APPDATA), before);
+    },
+  );
+
+  test(
+    "pre-existing elevated-token Administrators owner is accepted without repair",
+    { skip: notRun },
+    (t) => {
+      const { dir } = privateFixture(t);
+      icacls(dir, "/setowner", "*S-1-5-32-544");
+      const before = aclSnapshot(dir);
+      assert.equal(before.owner, "S-1-5-32-544");
+      assert.equal(production.initializeDirectory(dir).flushed, true);
+      assert.equal(production.capabilities(dir).supported, true);
+      assert.deepEqual(aclSnapshot(dir), before);
+    },
+  );
+
+  test("OWNER RIGHTS refers to the verified trusted owner", { skip: notRun }, (t) => {
+    const { dir } = privateFixture(t);
+    icacls(dir, "/grant", "*S-1-3-4:(OI)(CI)F");
+    const before = aclSnapshot(dir);
+    assert.equal(production.initializeDirectory(dir).flushed, true);
+    assert.deepEqual(aclSnapshot(dir), before);
+  });
+
+  test(
+    "other principals may read but each evidence mutation right is refused",
+    { skip: notRun },
+    (t) => {
+      const { dir } = privateFixture(t);
+      icacls(dir, "/grant:r", "*S-1-1-0:(R)");
+      assert.equal(production.capabilities(dir).supported, true);
+      for (const right of ["WD", "AD", "WEA", "WA", "DC", "D", "WDAC", "WO"]) {
+        icacls(dir, "/grant:r", `*S-1-1-0:(${right})`);
+        assert.throws(() => production.capabilities(dir), {
+          code: "EUNSAFE",
+          message: "journal DACL permits another principal to mutate evidence",
+        });
+      }
+    },
+  );
+
   test("production refuses another principal's writable directory ACL", { skip: notRun }, (t) => {
-    const { dir, current } = privateFixture(t);
-    const result = spawnSync("icacls.exe", [dir, "/grant", "*S-1-1-0:(OI)(CI)M"], {
-      encoding: "utf8",
+    const { root, dir, current } = fixture(t);
+    rmSync(dir, { recursive: true });
+    icacls(root, "/grant", "*S-1-1-0:(OI)(CI)M");
+    mkdirSync(dir);
+    assert.ok(aclSnapshot(dir).rules.some((rule) => rule.inherited && rule.sid === "S-1-1-0"));
+    const before = aclSnapshot(dir);
+    assert.throws(() => production.initializeDirectory(dir), {
+      code: "EUNSAFE",
+      message: "journal DACL permits another principal to mutate evidence",
     });
-    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.deepEqual(aclSnapshot(dir), before);
     assert.throws(() => production.capabilities(dir), fault("EUNSAFE"));
     assert.throws(
       () =>

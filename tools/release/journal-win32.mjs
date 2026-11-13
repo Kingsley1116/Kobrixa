@@ -12,6 +12,15 @@ const desktop = path.join(repositoryRoot, "apps/desktop");
 const require = createRequire(path.join(desktop, "package.json"));
 export const JOURNAL_PACKAGED = "native/journal-win32/journal_win32.node";
 export const JOURNAL_DEVELOPMENT = "native/journal-win32/build/Release/journal_win32.node";
+export const JOURNAL_PRODUCTION_EXPORTS = Object.freeze([
+  "apiVersion",
+  "arch",
+  "capabilities",
+  "durableReplace",
+  "initializeDirectory",
+  "napiVersion",
+  "syncDirectory",
+]);
 export const JOURNAL_TEST_EXPORTS = [
   "inspect",
   "probeDirectoryFlush",
@@ -43,7 +52,7 @@ export function validateProductionJournal(bytes, arch) {
       false,
       `Test-hook addon cannot ship: ${name}`,
     );
-  for (const name of ["capabilities", "durableReplace", "syncDirectory"])
+  for (const name of ["capabilities", "durableReplace", "syncDirectory", "initializeDirectory"])
     assert.ok(
       bytes.includes(Buffer.from(`${name}\0`)),
       `Missing production journal export: ${name}`,
@@ -109,7 +118,7 @@ export async function buildProductionJournal({
       const assert = require('node:assert/strict'), addon = require(process.argv[1]);
       assert.equal(addon.apiVersion, '1'); assert.equal(addon.napiVersion, '8');
       assert.equal(addon.arch, process.arch);
-      assert.deepEqual(Object.keys(addon).sort(), ['apiVersion','arch','capabilities','durableReplace','napiVersion','syncDirectory'].sort());
+      assert.deepEqual(Object.keys(addon).sort(), ${JSON.stringify(JOURNAL_PRODUCTION_EXPORTS)}.sort());
       console.log(JSON.stringify({ electron: process.versions.electron, arch: process.arch, exports: Object.keys(addon) }));
     `,
         binary,

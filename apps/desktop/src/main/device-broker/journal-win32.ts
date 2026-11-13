@@ -1,10 +1,11 @@
 import { Worker } from "node:worker_threads";
 import path from "node:path";
 
-export type Win32JournalOperation = "syncDirectory" | "durableReplace";
+export type Win32JournalOperation = "initializeDirectory" | "syncDirectory" | "durableReplace";
 export interface Win32JournalAdapter {
   assertIdle(): void;
   dispose(): void;
+  initializeDirectory(directory: string): Promise<void>;
   syncDirectory(directory: string): Promise<void>;
   durableReplace(
     directory: string,
@@ -74,7 +75,7 @@ export async function invokeWin32JournalAddon(
     typeof addon[operation] !== "function"
   )
     throw unsupported("addon-incompatible-api-abi-or-arch");
-  if (!checkedDirectories.has(args[0])) {
+  if (operation !== "initializeDirectory" && !checkedDirectories.has(args[0])) {
     const capabilities = (await addon.capabilities(args[0])) as { supported?: boolean };
     if (capabilities?.supported !== true) throw unsupported("unsupported-volume");
     checkedDirectories.add(args[0]);
@@ -92,7 +93,7 @@ export async function invokeWin32JournalAddon(
   };
   if (
     result?.supported !== true ||
-    (operation === "syncDirectory"
+    (operation !== "durableReplace"
       ? result.flushed !== true
       : result.published !== true ||
         result.fileFlushed !== true ||
@@ -264,6 +265,7 @@ export function createWin32JournalAdapter(
   return {
     assertIdle,
     dispose,
+    initializeDirectory: (directory) => call("initializeDirectory", [directory]),
     syncDirectory: (directory) => call("syncDirectory", [directory]),
     durableReplace(directory, target, temporary, bytes) {
       if (!bytes.length || bytes.length > 8388608)
