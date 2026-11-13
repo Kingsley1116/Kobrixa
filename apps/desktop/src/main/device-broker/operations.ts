@@ -121,6 +121,7 @@ export class OperationStore {
       result: null,
     };
     const id = this.rows.add(ownerKey(input.principal), row);
+    this.deps.journal.noteRiskAdmission?.();
     row.snapshot.operationId = id;
     this.#changed(row);
     return this.query(input.principal, id);

@@ -7,7 +7,7 @@ import type {
   SafetyFaultEntry,
   ProfileWriterLock,
 } from "@kobrixa/plugin-runtime";
-import type { JournalPort, DeviceRecoverySnapshot } from "./journal-port.js";
+import type { JournalPort, JournalHistory, DeviceRecoverySnapshot } from "./journal-port.js";
 import type { JournalFilesystem } from "./journal-filesystem.js";
 const handle = z
   .string()
@@ -184,6 +184,42 @@ export function createJournal(fs: JournalFilesystem, profile: ProfileWriterLock)
   let recovering = false,
     pending = 0,
     tail: Promise<void> = Promise.resolve();
+  const history: Omit<JournalHistory, "io"> = {
+    initialized: false,
+    inventory: "unknown",
+    writeAttempted: false,
+    publicationUncertain: false,
+    riskWorkAdmitted: false,
+    resourceLimited: false,
+  };
+  let loading: Promise<FaultJournalDocument> | undefined;
+  let ioExpired = false;
+  const recordFailure = (error: unknown): void => {
+    const detail = error as {
+      code?: string;
+      publicationState?: string;
+      diagnostic?: string;
+    } | null;
+    if (detail?.code === "ETIMEDOUT") ioExpired = true;
+    if (detail?.publicationState === "uncertain" || detail?.diagnostic === "invalid-native-receipt")
+      history.publicationUncertain = true;
+    if (["ENOSPC", "ENOMEM", "EMFILE", "ENFILE", "EFBIG"].includes(detail?.code ?? ""))
+      history.resourceLimited = true;
+  };
+  const readHistory = (): JournalHistory => {
+    let io: JournalHistory["io"] = "unknown";
+    if (ioExpired) io = "expired";
+    else if ((!loaded && loading) || pending) io = "pending";
+    else if (loaded && fs.assertIdle) {
+      try {
+        fs.assertIdle();
+        io = "idle";
+      } catch {
+        // Native expiry remains fenced even after the late syscall settles.
+      }
+    }
+    return { ...history, io };
+  };
   const carried = new Set<string>(),
     orphans = new Set<string>();
   const project = (item: SafetyFaultEntry): SafetyFaultEntry =>
@@ -201,10 +237,11 @@ export function createJournal(fs: JournalFilesystem, profile: ProfileWriterLock)
     const faults = committed.entries.map((item) => project(structuredClone(item)));
     return {
       revision: committed.revision,
-      journalHealth:
-        health === "ready" &&
-        faults.length === 64 &&
-        faults.every((item) => item.state !== "resolved")
+      journalHealth: !loaded
+        ? "unwritable"
+        : health === "ready" &&
+            faults.length === 64 &&
+            faults.every((item) => item.state !== "resolved")
           ? "full"
           : health,
       faults,
@@ -221,99 +258,120 @@ export function createJournal(fs: JournalFilesystem, profile: ProfileWriterLock)
     }
   };
   return {
+    history: readHistory,
+    noteRiskAdmission() {
+      history.riskWorkAdmitted = true;
+    },
     async load() {
       profile.assertHeld();
-      if (loaded) return structuredClone(committed);
-      const found: FaultJournalDocument[] = [];
-      let initializationFailed = false;
-      try {
+      if (loaded) return Promise.resolve(structuredClone(committed));
+      if (loading) return loading;
+      loading = (async () => {
+        const found: FaultJournalDocument[] = [];
+        let initializationFailed = false;
         try {
-          await fs.initialize();
-        } catch {
-          initializationFailed = true;
-          health = "unwritable";
-          // A missing durability barrier is not evidence of an empty profile.
-          // Inventory/read retain their own path, type and byte-limit validation.
-        }
-        const files = await fs.inventory();
-        const overBudget = files.reduce((n, file) => n + file.bytes, 0) > 8388608;
-        // Still read valid documents so a budget violation cannot hide their blockers.
-        if (overBudget) health = "corrupt";
-        const committedDocuments: FaultJournalDocument[] = [];
-        let current: FaultJournalDocument | undefined;
-        for (const file of files) {
-          if (!/^faults(?:\.previous|\.(?:next|backup)-[0-9a-f-]{36})?\.json$/.test(file.name)) {
-            health = "corrupt";
-            continue;
-          }
           try {
-            const bytes = await fs.read(file.name);
-            if (!bytes) throw new Error("journal missing file");
-            const doc = parseJournal(bytes);
-            found.push(doc);
-            if (/^faults\.(next|backup)-/.test(file.name)) orphans.add(file.name);
-            else committedDocuments.push(doc);
-            if (file.name === "faults.json") current = doc;
-          } catch {
+            await fs.initialize();
+            history.initialized = true;
+          } catch (error) {
+            recordFailure(error);
+            initializationFailed = true;
+            health = "unwritable";
+            // A missing durability barrier is not evidence of an empty profile.
+            // Inventory/read retain their own path, type and byte-limit validation.
+          }
+          const files = await fs.inventory();
+          history.inventory = files.length === 0 ? "validated-empty" : "evidence";
+          const overBudget = files.reduce((n, file) => n + file.bytes, 0) > 8388608;
+          // Still read valid documents so a budget violation cannot hide their blockers.
+          if (overBudget) {
+            history.resourceLimited = true;
             health = "corrupt";
           }
-        }
-        if (files.length && !current && !orphans.size) health = "corrupt";
-        if (current) committed = current;
-        const newer = committedDocuments.filter((doc) => doc.revision > committed.revision);
-        if (newer.length) health = "corrupt";
-        recovering = orphans.size > 0 && health === "ready";
-        if (orphans.size || health !== "ready") {
-          if (health !== "unwritable") health = "corrupt";
-          const evidence = new Map<string, SafetyFaultEntry>(
-            committed.entries.map((item) => [item.id, item]),
-          );
-          for (const doc of found)
-            for (const item of doc.entries) {
-              const old = evidence.get(item.id);
-              if (
-                item.state !== "resolved" &&
-                (!old || old.state === "resolved" || item.revision > old.revision)
-              )
-                evidence.set(item.id, item);
+          const committedDocuments: FaultJournalDocument[] = [];
+          let current: FaultJournalDocument | undefined;
+          for (const file of files) {
+            if (!/^faults(?:\.previous|\.(?:next|backup)-[0-9a-f-]{36})?\.json$/.test(file.name)) {
+              history.inventory = "unknown";
+              health = "corrupt";
+              continue;
             }
-          const entries = [...evidence.values()];
-          const retained =
-            entries.length > 64
-              ? [
-                  ...entries.filter((item) => item.state !== "resolved"),
-                  ...entries.filter((item) => item.state === "resolved"),
-                ].slice(0, 64)
-              : entries;
-          committed = journalDocument(
-            Math.max(committed.revision, ...found.map((doc) => doc.revision)),
-            retained,
-          );
-          if (entries.length > 64) throw new Error("journal evidence exceeds display bound");
+            try {
+              const bytes = await fs.read(file.name);
+              if (!bytes) throw new Error("journal missing file");
+              const doc = parseJournal(bytes);
+              found.push(doc);
+              if (/^faults\.(next|backup)-/.test(file.name)) orphans.add(file.name);
+              else committedDocuments.push(doc);
+              if (file.name === "faults.json") current = doc;
+            } catch (error) {
+              recordFailure(error);
+              history.inventory = "unknown";
+              health = "corrupt";
+            }
+          }
+          if (files.length && !current && !orphans.size) health = "corrupt";
+          if (current) committed = current;
+          const newer = committedDocuments.filter((doc) => doc.revision > committed.revision);
+          if (newer.length) health = "corrupt";
+          recovering = orphans.size > 0 && health === "ready";
+          if (orphans.size || health !== "ready") {
+            if (health !== "unwritable") health = "corrupt";
+            const evidence = new Map<string, SafetyFaultEntry>(
+              committed.entries.map((item) => [item.id, item]),
+            );
+            for (const doc of found)
+              for (const item of doc.entries) {
+                const old = evidence.get(item.id);
+                if (
+                  item.state !== "resolved" &&
+                  (!old || old.state === "resolved" || item.revision > old.revision)
+                )
+                  evidence.set(item.id, item);
+              }
+            const entries = [...evidence.values()];
+            const retained =
+              entries.length > 64
+                ? [
+                    ...entries.filter((item) => item.state !== "resolved"),
+                    ...entries.filter((item) => item.state === "resolved"),
+                  ].slice(0, 64)
+                : entries;
+            committed = journalDocument(
+              Math.max(committed.revision, ...found.map((doc) => doc.revision)),
+              retained,
+            );
+            if (entries.length > 64) throw new Error("journal evidence exceeds display bound");
+          }
+        } catch (error) {
+          recordFailure(error);
+          history.inventory = "unknown";
+          recovering = false;
+          if (health !== "unwritable") health = "corrupt";
         }
-      } catch {
-        recovering = false;
-        if (health !== "unwritable") health = "corrupt";
-      }
-      if (initializationFailed) {
-        // Corrupt evidence needs the more specific recovery guidance even without
-        // a durability barrier. Both states block writes and new risk.
-        if (health !== "corrupt") health = "unwritable";
-        recovering = false;
-      }
-      for (const item of committed.entries) if (item.state !== "resolved") carried.add(item.id);
-      loaded = true;
-      blocked = health !== "ready" && !recovering;
-      emit();
-      return structuredClone(committed);
+        if (initializationFailed) {
+          // Corrupt evidence needs the more specific recovery guidance even without
+          // a durability barrier. Both states block writes and new risk.
+          if (health !== "corrupt") health = "unwritable";
+          recovering = false;
+        }
+        for (const item of committed.entries) if (item.state !== "resolved") carried.add(item.id);
+        loaded = true;
+        blocked = health !== "ready" && !recovering;
+        emit();
+        return structuredClone(committed);
+      })();
+      return loading;
     },
     commit(input) {
+      history.writeAttempted = true;
       profile.assertHeld();
       if (!loaded || blocked || pending >= 64)
         return Promise.reject(new Error("journal write blocked"));
       let next = parseJournal(Buffer.from(canonical(input)));
       pending++;
       let expired = false;
+      let publishing = false;
       const created = new Set<string>();
       const cleanup = async (): Promise<void> => {
         for (const name of created) {
@@ -396,6 +454,7 @@ export function createJournal(fs: JournalFilesystem, profile: ProfileWriterLock)
             }
             profile.assertHeld();
             if (expired) throw new Error("journal deadline");
+            publishing = true;
             if (fs.durableReplace) {
               const receipt = await fs.durableReplace(backup, "faults.previous.json", previous);
               if (receipt.directoryFlushed !== true) throw new Error("journal directory receipt");
@@ -403,9 +462,11 @@ export function createJournal(fs: JournalFilesystem, profile: ProfileWriterLock)
               await fs.replace(backup, "faults.previous.json");
               await fs.syncDirectory();
             }
+            publishing = false;
           }
           profile.assertHeld();
           if (expired) throw new Error("journal deadline");
+          publishing = true;
           if (fs.durableReplace) {
             const receipt = await fs.durableReplace(temporary, "faults.json", bytes);
             if (receipt.directoryFlushed !== true) throw new Error("journal directory receipt");
@@ -413,6 +474,7 @@ export function createJournal(fs: JournalFilesystem, profile: ProfileWriterLock)
             await fs.replace(temporary, "faults.json");
             await fs.syncDirectory();
           }
+          publishing = false;
           if (expired) throw new Error("journal deadline");
           if (recovering) {
             for (const name of orphans) await fs.remove(name);
@@ -427,6 +489,8 @@ export function createJournal(fs: JournalFilesystem, profile: ProfileWriterLock)
           emit();
         })
         .catch(async (error: unknown) => {
+          recordFailure(error);
+          history.publicationUncertain ||= publishing;
           blocked = true;
           health = "unwritable";
           emit();
@@ -440,6 +504,8 @@ export function createJournal(fs: JournalFilesystem, profile: ProfileWriterLock)
       return new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => {
           expired = true;
+          ioExpired = true;
+          history.publicationUncertain ||= publishing;
           blocked = true;
           health = "unwritable";
           emit();

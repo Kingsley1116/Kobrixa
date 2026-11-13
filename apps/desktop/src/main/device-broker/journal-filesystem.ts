@@ -7,6 +7,8 @@ export interface JournalFilesystem {
   // Failed durability initialization must not prevent independently validated reads
   // of existing evidence. It never authorizes writes or repair.
   initialize(): Promise<void>;
+  /** Positive idle proof, including native calls that outlive a rejected promise. */
+  assertIdle?(): void;
   inventory(): Promise<Array<{ name: string; bytes: number }>>;
   read(name: string): Promise<Uint8Array | null>;
   write(name: string, bytes: Uint8Array): Promise<void>;
@@ -55,7 +57,6 @@ export function createJournalFilesystem(
     windowsAdapter ??
     (process.platform === "win32" && !directoryBarrier ? createWin32JournalAdapter() : undefined);
   const barrier = directoryBarrier ?? (windows ? windows.syncDirectory : syncJournalDirectory);
-  let readable = false;
   let writable = false;
   const assertWritable = (): void => {
     if (!writable) throw new Error("journal not writable");
@@ -84,6 +85,9 @@ export function createJournalFilesystem(
   };
   const syncDirectory = (target = root): Promise<void> => barrier(target);
   return {
+    assertIdle() {
+      windows?.assertIdle();
+    },
     ...(windows
       ? {
           async durableReplace(temporary: string, target: string, bytes: Uint8Array) {
@@ -98,38 +102,38 @@ export function createJournalFilesystem(
         }
       : {}),
     async initialize() {
-      readable = false;
       writable = false;
       if (windows) {
         // Only the profile parent may use mkdir. Native creation protects the
         // journal DACL atomically and flushes both journal and pinned parent.
         await mkdir(path.dirname(root), { recursive: true, mode: 0o700 });
-        try {
-          await windows.initializeDirectory(root);
-        } catch (error) {
-          // Native initialization can refuse writes while old evidence remains
-          // readable. Independently validate it without creating or repairing it.
-          try {
-            await directory();
-            readable = true;
-          } catch {
-            // Preserve the original native diagnostic.
-          }
-          throw error;
-        }
+        await windows.initializeDirectory(root);
         await directory();
-        readable = true;
       } else {
         await mkdir(root, { recursive: true, mode: 0o700 });
         await directory();
-        readable = true;
         await syncDirectory();
         await syncDirectory(path.dirname(root));
       }
       writable = true;
     },
     async inventory() {
-      if (!readable) throw new Error("journal not initialized");
+      // This read path is independent of write initialization. ENOENT counts
+      // only after validating the canonical existing parent, never a broken link.
+      const parent = path.dirname(root);
+      const parentInfo = await lstat(parent);
+      if (
+        !parentInfo.isDirectory() ||
+        parentInfo.isSymbolicLink() ||
+        (await realpath(parent)) !== parent
+      )
+        throw new Error("journal parent directory");
+      try {
+        await lstat(root);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+        throw error;
+      }
       await directory();
       const names = await readdir(root);
       if (names.length > 256) throw new Error("journal directory entry budget");

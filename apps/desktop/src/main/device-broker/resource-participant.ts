@@ -1,3 +1,4 @@
+import { combineDispositions } from "./journal-disposition.js";
 import type { Counter } from "@kobrixa/plugin-protocol";
 import type { DeviceDisposition, DeviceResourceParticipant } from "@kobrixa/plugin-runtime";
 // The coordinator owns onEnded -> endReservation -> drain and legacy save. The
@@ -54,20 +55,17 @@ export function createDeviceResourceParticipant(driver: ResourceDriver): DeviceR
     preserveErrors = false,
   ): Promise<DeviceDisposition> => {
     const results = await Promise.allSettled(work);
-    const value: DeviceDisposition = { stopConfirmed: true, journalCommitted: true, faultIds: [] };
+    const dispositions: DeviceDisposition[] = [];
     const errors: unknown[] = [];
     for (const result of results) {
       if (result.status === "rejected") {
-        value.stopConfirmed = false;
-        value.journalCommitted = false;
+        dispositions.push({ stopConfirmed: false, journalCommitted: false, faultIds: [] });
         errors.push(result.reason);
         continue;
       }
-      value.stopConfirmed &&= result.value.stopConfirmed;
-      value.journalCommitted &&= result.value.journalCommitted;
-      value.faultIds.push(...result.value.faultIds);
+      dispositions.push(result.value);
     }
-    value.faultIds = [...new Set(value.faultIds)];
+    const value = combineDispositions(dispositions);
     if (preserveErrors && errors.length) throw new ProviderResourceFailure(errors, value);
     return value;
   };

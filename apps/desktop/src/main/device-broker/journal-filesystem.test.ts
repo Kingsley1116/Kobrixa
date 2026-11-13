@@ -618,3 +618,30 @@ it("unsafe existing Windows ACL refusal preserves readable evidence and blocks w
     await rm(temp, { recursive: true, force: true });
   }
 });
+
+it("F23 inventory validates absence without initialization and rejects an unknown or redirected parent", async () => {
+  const temp = await mkdtemp(path.join(tmpdir(), "F23-inventory-"));
+  try {
+    const root = await realpath(temp);
+    const barrier = vi.fn(async () => {
+      throw new Error("unsupported");
+    });
+    expect(await createJournalFilesystem(root, barrier).inventory()).toEqual([]);
+    expect(barrier).not.toHaveBeenCalled();
+    await expect(
+      createJournalFilesystem(path.join(root, "missing"), barrier).inventory(),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    const linked = path.join(root, "linked");
+    await symlink(root, linked, "dir");
+    await expect(createJournalFilesystem(linked, barrier).inventory()).rejects.toThrow(
+      "journal parent directory",
+    );
+    await symlink(path.join(root, "missing-target"), path.join(root, "device-broker"), "dir");
+    await expect(createJournalFilesystem(root, barrier).inventory()).rejects.toThrow(
+      "journal directory",
+    );
+    expect(barrier).not.toHaveBeenCalled();
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});

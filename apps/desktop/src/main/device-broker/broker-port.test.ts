@@ -195,7 +195,7 @@ async function realSetup(durabilityAvailable = true) {
 // T10 Step 18 removes this gate.
 it.each([true, false])("W02b program dispatch requires durability=%s", async (available) => {
   const h = await realSetup(available);
-  const operation = await h.broker.begin({
+  const admission = h.broker.begin({
     principal: {
       kind: "core",
       adapter: "program",
@@ -207,18 +207,22 @@ it.each([true, false])("W02b program dispatch requires durability=%s", async (av
     operationClass: "program-launch",
     signal: signal(),
   });
+  if (!available) {
+    // Non-ready journals now refuse risk admission itself, before marker writes.
+    await expect(admission).rejects.toMatchObject({
+      result: { error: { detail: { reason: "journal-unwritable", dispatch: "not-sent" } } },
+    });
+    expect(h.provider.calls).not.toContain("run");
+    expect(h.files.size).toBe(0);
+    expect(h.broker.recovery.snapshot().journalHealth).toBe("unwritable");
+    return;
+  }
+  const operation = await admission;
   try {
     const running = operation.execute({ kind: "run", remotePath: "/test.rbf" });
-    if (available) {
-      expect((await running).error).toBeNull();
-      expect(h.provider.calls.filter((call) => call === "run")).toHaveLength(1);
-      expect(parseJournal(h.files.get("faults.json")!).entries[0]?.state).toBe("active-program");
-    } else {
-      await expect(running).rejects.toThrow("journal write blocked");
-      expect(h.provider.calls).not.toContain("run");
-      expect(h.files.size).toBe(0);
-      expect(h.broker.recovery.snapshot().journalHealth).toBe("unwritable");
-    }
+    expect((await running).error).toBeNull();
+    expect(h.provider.calls.filter((call) => call === "run")).toHaveLength(1);
+    expect(parseJournal(h.files.get("faults.json")!).entries[0]?.state).toBe("active-program");
   } finally {
     await operation.cancel();
   }

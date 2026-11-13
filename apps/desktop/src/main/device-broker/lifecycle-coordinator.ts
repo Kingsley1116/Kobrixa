@@ -1,3 +1,4 @@
+import { permitsUnavailableClose } from "./journal-disposition.js";
 import type { DrainReason } from "@kobrixa/plugin-protocol";
 import { randomUUID } from "node:crypto";
 import { resumeQuiescedSession } from "./broker.js";
@@ -184,6 +185,11 @@ export class LifecycleCoordinator {
   #close: Promise<void> | undefined;
   #closeStarted: number | undefined;
   #closed = false;
+  #closeDevice: DeviceDisposition | undefined;
+  /** Actual successful close receipt, including an unavailable/no-evidence journal. */
+  closeDisposition(): DeviceDisposition | undefined {
+    return this.#closeDevice && structuredClone(this.#closeDevice);
+  }
   constructor(private readonly input: CoordinatorInput) {
     if (input.ports.device !== input.resources || input.ports.persistence !== input.persistence)
       throw new Error("Coordinator must share the runtime participants.");
@@ -440,13 +446,16 @@ export class LifecycleCoordinator {
     const row = this.#retiring.get(ownerKey(owner))!;
     if (!row.settled) await pending.catch(() => undefined);
     if (!row.report) throw new CleanupBlocked(null, []);
-    this.#assert(row.report.device, [row.report.storage]);
+    this.#assert(row.report.device, [row.report.storage], true);
   }
   allowCloseRetry(): void {
     // close already clears only its settled attempt. Keep #closeStarted, all work promises and grants.
   }
-  #assert(device: DeviceDisposition, storage: readonly DrainReport[]): void {
-    if (!device.stopConfirmed || !device.journalCommitted) {
+  #assert(device: DeviceDisposition, storage: readonly DrainReport[], closing = false): void {
+    if (
+      !device.stopConfirmed ||
+      (!device.journalCommitted && !(closing && permitsUnavailableClose(device)))
+    ) {
       const health = this.input.recovery?.snapshot().journalHealth;
       throw new CleanupBlocked(
         device,
@@ -623,12 +632,13 @@ export class LifecycleCoordinator {
         }),
       ),
     ]).then(async ([d, , , reports]) => {
-      this.#assert(d, reports);
+      this.#assert(d, reports, true);
       await this.#bounded(
         this.input.shutdown(),
         Math.min(t0 + 24_000, this.input.now() + 4_000),
         "Plugin process exit is unconfirmed.",
       );
+      this.#closeDevice = structuredClone(d);
     });
     const bounded = this.#bounded(
       attempt,
@@ -822,7 +832,10 @@ export async function createDesktopFoundation(
       const attempt = (async () => {
         input.profile.assertHeld();
         const disposition = await broker.resources.beginShutdown();
-        if (!disposition.stopConfirmed || !disposition.journalCommitted)
+        if (
+          !disposition.stopConfirmed ||
+          (!disposition.journalCommitted && !permitsUnavailableClose(disposition))
+        )
           throw new CleanupBlocked(disposition, []);
         await detach?.();
         disposed = true;

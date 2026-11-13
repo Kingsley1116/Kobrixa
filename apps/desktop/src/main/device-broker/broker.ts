@@ -1,3 +1,8 @@
+import {
+  combineDispositions,
+  journalDisposition,
+  permitsUnavailableClose,
+} from "./journal-disposition.js";
 import { journalDocument } from "./journal.js";
 import type { JournalPort } from "./journal-port.js";
 import { isDeepStrictEqual } from "node:util";
@@ -250,25 +255,8 @@ type Candidate = {
   recoveryCheck?: () => void;
   recoveryAdopt?: (snapshot: DeviceSessionSnapshot) => void;
 };
-const merge = async (promises: Promise<DeviceDisposition>[]): Promise<DeviceDisposition> => {
-  const all = await Promise.all(promises);
-  return {
-    stopConfirmed: all.every((v) => v.stopConfirmed),
-    journalCommitted: all.every((v) => v.journalCommitted),
-    faultIds: [...new Set(all.flatMap((v) => v.faultIds))],
-  };
-};
-// A drained transport says nothing about retained faults, including those from
-// earlier sessions. Read current committed evidence on every cleanup attempt so
-// an explicit reconciliation can unblock a retry without rewriting old receipts.
-function journalDisposition(journal: JournalPort): DeviceDisposition {
-  const snapshot = journal.snapshot();
-  return {
-    stopConfirmed: snapshot.blockers.length === 0,
-    journalCommitted: snapshot.journalHealth === "ready",
-    faultIds: [...snapshot.blockers],
-  };
-}
+const merge = async (promises: Promise<DeviceDisposition>[]): Promise<DeviceDisposition> =>
+  combineDispositions(await Promise.all(promises));
 // The first quiescence keeps its identity and original operation receipts. New
 // explicit recovery can add evidence, but never restarts those operations/clocks.
 async function settleRecovery(
@@ -306,14 +294,7 @@ async function settleRecovery(
       return { stopConfirmed: true, journalCommitted: true, faultIds: [] };
     });
     const retained = journalDisposition(journal);
-    const disposition = {
-      stopConfirmed: retained.stopConfirmed && effective.every((value) => value.stopConfirmed),
-      journalCommitted:
-        retained.journalCommitted && effective.every((value) => value.journalCommitted),
-      faultIds: [
-        ...new Set([...retained.faultIds, ...effective.flatMap((value) => value.faultIds)]),
-      ],
-    };
+    const disposition = combineDispositions([retained, ...effective]);
     // Every quarantining owner needs its own fault-bound proof. In particular,
     // an unrelated journal fault cannot cover a passive transport timeout.
     if (
@@ -332,7 +313,11 @@ async function settleRecovery(
       (close && (current.lane.occupied || current.providerPending.size))
     )
       disposition.stopConfirmed = false;
-    if (close && disposition.stopConfirmed && disposition.journalCommitted)
+    if (
+      close &&
+      disposition.stopConfirmed &&
+      (disposition.journalCommitted || permitsUnavailableClose(disposition))
+    )
       current.recoveryClosed = true;
     observe?.(disposition, recovery);
     return disposition;
@@ -810,6 +795,16 @@ export function createBroker(
     sessionId: string | null,
     phase: "admission" | "continuation",
   ) => {
+    if (operationClass === "finite-motion" || operationClass === "program-launch") {
+      const health = input.journal.snapshot().journalHealth;
+      if (health !== "ready") {
+        if (health === "full") return quota("journal", 64);
+        return deviceFailure(
+          "PLUGIN_E_DEVICE_UNAVAILABLE",
+          health === "corrupt" ? "journal-corrupt" : "journal-unwritable",
+        );
+      }
+    }
     const result = input.operationGate({ principal, operationClass, sessionId, phase });
     if (!result.ok) throw new BrokerFailure(result);
   };
@@ -2958,7 +2953,11 @@ export function createBroker(
           const [deviceResult, storageResult] = await Promise.allSettled([device, storage]);
           const errors: unknown[] = [];
           if (deviceResult.status === "rejected") errors.push(deviceResult.reason);
-          else if (!deviceResult.value.stopConfirmed || !deviceResult.value.journalCommitted)
+          else if (
+            !deviceResult.value.stopConfirmed ||
+            (!deviceResult.value.journalCommitted &&
+              !(closing && permitsUnavailableClose(deviceResult.value)))
+          )
             errors.push(new ProviderRetirementBlocked(deviceResult.value));
           if (storageResult.status === "rejected") errors.push(storageResult.reason);
           if (errors.length === 1) throw errors[0];
@@ -3032,6 +3031,7 @@ export function createBroker(
         id = randomUUID();
       gate(principal, operationClass, sessionId, "admission");
       current.lane.reserve(id);
+      if (operationClass === "program-launch") input.journal.noteRiskAdmission?.();
       const hardDeadline = input.now() + 600000;
       let confirmationDeadline = Math.min(hardDeadline, input.now() + 120000),
         closed = false,
