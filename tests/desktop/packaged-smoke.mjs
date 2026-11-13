@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { devicePreferencesExpression } from "./builtin-process-installed.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
@@ -11,16 +13,8 @@ import { checkPackagedStaticLanguages } from "./static-languages-packaged.mjs";
 
 // Exercise the shipped main/preload/renderer and dependency closure with an isolated profile.
 // No test update feed or test version is exposed in the production application.
-const PREFERENCES_PENDING = "Device settings are not admitted.";
-// Stage 3 admits device settings after the window is up; reads before that reject.
-const devicePreferences = (js, until) =>
-  until(() =>
-    js(`window.kobrixa.device.getPreferences().then(
-      preferences => ({ preferences }), error => {
-        if (String(error).includes(${JSON.stringify(PREFERENCES_PENDING)})) return null;
-        throw error;
-      })`).then((result) => result?.preferences),
-  );
+const devicePreferences = (js, until, digest) =>
+  until(() => js(devicePreferencesExpression(digest)));
 
 const profile = await mkdtemp(path.join(tmpdir(), "kobrixa-packaged-smoke-"));
 try {
@@ -41,6 +35,20 @@ try {
         ? "kobrixa.exe"
         : "kobrixa",
   );
+  const resources = path.join(
+    installedDirectory,
+    process.platform === "darwin" ? "Kobrixa.app/Contents/Resources" : "resources",
+  );
+  const settingsDigest = createHash("sha256")
+    .update(
+      await readFile(
+        path.join(
+          resources,
+          "app.asar.unpacked/.vite/build/plugins/device-ev3/settings/preferences.json",
+        ),
+      ),
+    )
+    .digest("hex");
   await writeFile(
     path.join(profile, "updates.json"),
     JSON.stringify({ enabled: false, channel: "stable" }),
@@ -206,16 +214,10 @@ try {
     assert.equal(state.phase, "idle");
     assert.deepEqual(state.preferences, { enabled: false, channel: "stable" });
     await js('window.kobrixa.updates.setPreferences({enabled:false,channel:"preview"})');
-    initialPreferences = await devicePreferences(js, until);
+    initialPreferences = await devicePreferences(js, until, settingsDigest);
     assert.equal(initialPreferences.usbAutoReconnect, true);
-    // Stage 3 moved device settings writes to the contributed settings form;
-    // the legacy renderer write path must refuse instead of bypassing it.
-    assert.match(
-      await js(
-        "window.kobrixa.device.setPreferences({usbRetryInterval:2000,usbRetryLimit:3,wifiConnectTimeout:10000}).then(()=>'accepted',error=>String(error))",
-      ),
-      /Use the contributed device settings form\./,
-    );
+    // The retired write bridge cannot bypass the contributed settings form.
+    assert.equal(await js("typeof window.kobrixa.device.setPreferences"), "undefined");
     await js('localStorage.setItem("kobrixa-packaged-smoke", "retained")');
     await js('document.querySelector(".settings-trigger").click()');
     await pause(250);
@@ -253,8 +255,8 @@ try {
       channel: "preview",
     });
     assert.equal(await js('localStorage.getItem("kobrixa-packaged-smoke")'), "retained");
-    // The refused legacy write changed nothing, and the settings survive a restart.
-    assert.deepEqual(await devicePreferences(js, until), initialPreferences);
+    // The absent legacy write bridge changed nothing, and the settings survive a restart.
+    assert.deepEqual(await devicePreferences(js, until, settingsDigest), initialPreferences);
     await pause(250);
     assert.match(
       await js('document.querySelector(".view-lines").textContent'),

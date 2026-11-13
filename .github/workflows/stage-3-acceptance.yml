@@ -102,13 +102,40 @@ jobs:
             sudo apparmor_parser -R "$RUNNER_TEMP/kobrixa-installed-apparmor.profile"
           fi
           exit "$installed_audit_status"
+      - name: Stage regular installed evidence files
+        if: always() && matrix.gate == 'installed'
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { readdir, lstat, mkdir, copyFile, writeFile } from 'node:fs/promises';
+          import path from 'node:path';
+          const destination = path.join(process.env.RUNNER_TEMP, 'installed-upload');
+          await mkdir(destination, {recursive: true});
+          const excluded = [];
+          async function copy(source, target) {
+            const stat = await lstat(source);
+            if (stat.isDirectory()) {
+              await mkdir(target, {recursive: true});
+              for (const name of await readdir(source)) await copy(path.join(source, name), path.join(target, name));
+            } else if (stat.isFile()) {
+              await copyFile(source, target);
+            } else {
+              excluded.push({path: source, type: stat.isSymbolicLink() ? 'symlink' : stat.isSocket() ? 'socket' : stat.isFIFO() ? 'fifo' : 'special'});
+            }
+          }
+          for (const name of await readdir(process.env.RUNNER_TEMP)) {
+            if (name.startsWith('kobrixa-')) await copy(path.join(process.env.RUNNER_TEMP, name), path.join(destination, name));
+          }
+          await writeFile(path.join(destination, 'excluded-special-entries.json'), JSON.stringify(excluded, null, 2));
+          NODE
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: stage-3-${{ matrix.gate }}-${{ matrix.os }}
           path: |
             stage-3-native.log
-            ${{ runner.temp }}/kobrixa-*/**
+            ${{ runner.temp }}/${{ matrix.gate == 'installed' && 'installed-upload' || 'kobrixa-*' }}/**
+          include-hidden-files: ${{ matrix.gate == 'installed' }}
           if-no-files-found: error
           retention-days: 7
       - name: State remaining evidence scope
@@ -117,7 +144,7 @@ jobs:
         run: echo 'This job does not sign B2 reports, maximum-load, hardware or human acceptance. Run dispatched B2 validation with actual complete reports.' >> "$GITHUB_STEP_SUMMARY"
 
   journal-win32:
-    name: Windows safety-journal native acceptance (26 cases)
+    name: Windows safety-journal native acceptance (32 cases)
     runs-on: windows-2022
     timeout-minutes: 30
     steps:
@@ -142,7 +169,7 @@ jobs:
             Copy-Item apps/desktop/native/journal-win32/binding.gyp $directory
             Copy-Item apps/desktop/native/journal-win32/journal.cc $directory
           }
-          $electronVersion = (& node -p "require('./apps/desktop/node_modules/electron/package.json').version").Trim()
+          $electronVersion = (& node -p "require('node:module').createRequire(require('node:path').resolve('apps/desktop/package.json'))('electron/package.json').version").Trim()
           if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve pinned Electron version' }
           & node node_modules/node-gyp/bin/node-gyp.js rebuild "--directory=$production" "--target=$electronVersion" --arch=x64 --dist-url=https://electronjs.org/headers "--devdir=$production/headers" --journal_test_hooks=0 2>&1 | Tee-Object (Join-Path $buildRoot 'production-build.log')
           if ($LASTEXITCODE -ne 0) { throw 'Production native Electron-header build failed' }
@@ -152,18 +179,18 @@ jobs:
           "KOBRIXA_JOURNAL_WIN32_TEST_ADDON=$(Join-Path $hooks 'build/Release/journal_win32.node')" >> $env:GITHUB_ENV
           Get-FileHash -Algorithm SHA256 (Join-Path $production 'journal.cc'), (Join-Path $production 'binding.gyp'), (Join-Path $production 'build/Release/journal_win32.node'), (Join-Path $hooks 'build/Release/journal_win32.node') | Format-List | Out-File (Join-Path $buildRoot 'hashes.txt')
           "Electron=$electronVersion arch=x64" | Out-File (Join-Path $buildRoot 'runtime.txt')
-      - name: Require all 26 native cases with no skips
+      - name: Require all 32 native cases with no skips
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $electron = (& node -p "require('./apps/desktop/node_modules/electron')" | Select-Object -Last 1).Trim()
+          $electron = (& node -p "require('node:module').createRequire(require('node:path').resolve('apps/desktop/package.json'))('electron')" | Select-Object -Last 1).Trim()
           if ($LASTEXITCODE -ne 0) { throw 'Pinned Electron binary is not installed' }
           $env:ELECTRON_RUN_AS_NODE = '1'
           try {
             & $electron --test --test-reporter=tap tests/desktop/journal-win32-native.test.mjs 2>&1 | Tee-Object (Join-Path $env:JOURNAL_BUILD_ROOT 'electron-test.tap')
             if ($LASTEXITCODE -ne 0) { throw 'Windows Electron native suite failed' }
             $tap = Get-Content -Raw (Join-Path $env:JOURNAL_BUILD_ROOT 'electron-test.tap')
-            foreach ($required in @('tests 26', 'pass 26', 'fail 0', 'skipped 0')) {
+            foreach ($required in @('tests 32', 'pass 32', 'fail 0', 'skipped 0')) {
               if ($tap -notmatch "(?m)^# $required\r?$") { throw "Native suite incomplete: $required" }
             }
           } finally { Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue }

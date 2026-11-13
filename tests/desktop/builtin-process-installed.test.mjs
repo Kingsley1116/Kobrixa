@@ -1,9 +1,14 @@
+import { createRequire } from "node:module";
+import { JOURNAL_PRODUCTION_EXPORTS } from "../../tools/release/journal-win32.mjs";
+import { runInNewContext } from "node:vm";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import path from "node:path";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import {
+  devicePreferencesExpression,
+  installedJournalExpression,
   assertWindowsJournalReady,
   installedLayout,
   installedEnvironment,
@@ -259,4 +264,146 @@ test("Windows installed journal requires native receipts and every healthy publi
       ),
     /production journal unavailable/,
   );
+});
+
+test("public settings observation retains false, uses packaged digest and disposes the binding", async () => {
+  const binding = { owner: "unit" };
+  let disposed;
+  const settings = {
+    async open(input) {
+      assert.equal(input.sourceKey, "builtin:kobrixa.device-ev3");
+      assert.equal(input.resourceDigest, "a".repeat(64));
+      return {
+        binding,
+        snapshot: { revision: "committed", values: [{ key: "usbAutoReconnect", value: false }] },
+      };
+    },
+    dispose(value) {
+      disposed = value;
+    },
+  };
+  const result = await runInNewContext(devicePreferencesExpression("a".repeat(64)), {
+    window: { kobrixa: { plugins: { settings } } },
+  });
+  assert.equal(result.usbAutoReconnect, false);
+  assert.equal(disposed, binding);
+});
+
+test("public settings observation retries only admission and propagates other failures", async () => {
+  for (const message of [
+    "Settings source is not admitted.",
+    "Stale settings binding.",
+    "disk failure",
+  ]) {
+    const read = () =>
+      runInNewContext(devicePreferencesExpression("a".repeat(64)), {
+        window: {
+          kobrixa: {
+            plugins: {
+              settings: {
+                async open() {
+                  throw new Error(message);
+                },
+              },
+            },
+          },
+        },
+      });
+    if (message === "Settings source is not admitted.") assert.equal(await read(), null);
+    else await assert.rejects(read, { message });
+  }
+});
+
+test("public settings waits for publication, not for the expected preference value", async () => {
+  let disposed = 0;
+  const snapshots = [
+    { revision: null, value: true },
+    { revision: null, value: false },
+    { revision: "imported", value: false },
+    { revision: "wrong-import", value: true },
+  ];
+  for (const { revision, value } of snapshots) {
+    const result = await runInNewContext(devicePreferencesExpression("a".repeat(64)), {
+      window: {
+        kobrixa: {
+          plugins: {
+            settings: {
+              async open() {
+                return {
+                  binding: revision,
+                  snapshot: {
+                    revision,
+                    values: [{ key: "usbAutoReconnect", value }],
+                  },
+                };
+              },
+              dispose(binding) {
+                assert.equal(binding, revision);
+                disposed++;
+              },
+            },
+          },
+        },
+      },
+    });
+    if (revision === null) assert.equal(result, null);
+    else if (value === false) assert.equal(result.usbAutoReconnect, false);
+    else {
+      assert.notEqual(result, null, "A committed wrong value must not be retried");
+      assert.throws(() => assert.equal(result.usbAutoReconnect, false));
+    }
+  }
+  assert.equal(disposed, snapshots.length);
+});
+
+test("malformed settings revisions fail instead of silently retrying or accepting defaults", async () => {
+  for (const revision of [undefined, "", 0]) {
+    let disposed = false;
+    await assert.rejects(
+      runInNewContext(devicePreferencesExpression("a".repeat(64)), {
+        window: {
+          kobrixa: {
+            plugins: {
+              settings: {
+                async open() {
+                  return { binding: {}, snapshot: { revision, values: [] } };
+                },
+                dispose() {
+                  disposed = true;
+                },
+              },
+            },
+          },
+        },
+      }),
+      /Invalid device settings revision/,
+    );
+    assert.equal(disposed, true);
+  }
+});
+
+test("installed Windows exact-export check uses the release production set", () => {
+  const require = createRequire(import.meta.url);
+  assert.ok(JOURNAL_PRODUCTION_EXPORTS.includes("initializeDirectory"));
+  for (const defect of [null, "missing-initialize", "test-export"]) {
+    const addon = Object.fromEntries(JOURNAL_PRODUCTION_EXPORTS.map((key) => [key, "metadata"]));
+    addon.capabilities = () => ({ supported: true });
+    addon.syncDirectory = () => ({ supported: true, flushed: true });
+    if (defect === "missing-initialize") delete addon.initializeDirectory;
+    if (defect === "test-export") addon.inspect = () => {};
+    const run = () =>
+      runInNewContext(installedJournalExpression(), {
+        process: { resourcesPath: "/packaged" },
+        __installedProbe: {
+          require(name) {
+            if (name.endsWith("journal_win32.node")) return addon;
+            if (name === "node:fs") return { readFileSync: () => Buffer.from("unit addon") };
+            return require(name);
+          },
+          electron: { app: { getPath: () => "/profile" } },
+        },
+      });
+    if (defect) assert.throws(run);
+    else assert.equal(run().barrier.flushed, true);
+  }
 });

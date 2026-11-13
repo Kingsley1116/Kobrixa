@@ -33,6 +33,7 @@ import {
 } from "./builtin-installed-client.mjs";
 
 import { copyDesktopBundle, verifyMacBundle } from "../../tools/release/macos-test-bundle.mjs";
+import { JOURNAL_PRODUCTION_EXPORTS } from "../../tools/release/journal-win32.mjs";
 import { assertInstalledLinuxNetwork } from "./builtin-installed-linux.mjs";
 import {
   checkMacInstalledSandbox,
@@ -59,6 +60,46 @@ export function openInstalledArchive(
     stat: (member) => stat(archive, hostPath.normalize(member)),
     extract: (member) => extract(archive, hostPath.normalize(member)),
   };
+}
+
+// Read the same bound public settings snapshot used by the contributed form.
+// The digest comes from the copied product, never the development source tree.
+export function devicePreferencesExpression(resourceDigest) {
+  return `(async () => {
+    const settings = window.kobrixa.plugins.settings;
+    let opened;
+    try {
+      opened = await settings.open({ sourceKey: 'builtin:kobrixa.device-ev3',
+        resourceDigest: ${JSON.stringify(resourceDigest)} });
+    } catch (error) {
+      if (String(error).includes('Settings source is not admitted.')) return null;
+      throw error;
+    }
+    try {
+      // Admission can precede the renderer's legacy capture and pristine import.
+      // A null revision is the public default-only snapshot, not migrated data.
+      // Keep polling in the caller's existing deadline; any committed value is
+      // returned immediately so a wrong migration still fails its assertion.
+      if (opened.snapshot.revision === null) return null;
+      if (typeof opened.snapshot.revision !== 'string' || !opened.snapshot.revision)
+        throw new Error('Invalid device settings revision.');
+      return Object.fromEntries(opened.snapshot.values.map(({key, value}) => [key, value]));
+    } finally {
+      settings.dispose(opened.binding);
+    }
+  })()`;
+}
+
+export function installedJournalExpression() {
+  return `(() => {
+        const require = __installedProbe.require, path = require('node:path');
+        const filename = path.join(process.resourcesPath, 'app.asar.unpacked/native/journal-win32/journal_win32.node');
+        const addon = require(filename), profile = __installedProbe.electron.app.getPath('userData');
+        const root = path.join(profile, 'device-broker');
+        require('node:assert/strict').deepEqual(Object.keys(addon).sort(), ${JSON.stringify(JOURNAL_PRODUCTION_EXPORTS)}.sort());
+        return {filename, sha256: require('node:crypto').createHash('sha256').update(require('node:fs').readFileSync(filename)).digest('hex'),
+          capabilities: addon.capabilities(root), barrier: addon.syncDirectory(root)};
+      })()`;
 }
 
 export function installedLayout(platform, names) {
@@ -724,18 +765,19 @@ async function launchProduct(config, receipt, check) {
         nodeIntegration: false,
         contextIsolation: true,
       });
+    const settingsDigest = sha256(
+      await readFile(
+        path.join(
+          `${config.archive}.unpacked`,
+          ".vite/build/plugins/device-ev3/settings/preferences.json",
+        ),
+      ),
+    );
     receipt.pendingPreferenceReads = 0;
     receipt.preferences = await alive(async () => {
-      const result = await renderer.js(`window.kobrixa.device.getPreferences().then(
-        preferences => ({ preferences }), error => {
-          if (String(error).includes("Device settings are not admitted.")) return { pending: true };
-          throw error;
-        })`);
-      if (result.pending) {
-        receipt.pendingPreferenceReads++;
-        return null;
-      }
-      return result.preferences;
+      const preferences = await renderer.js(devicePreferencesExpression(settingsDigest));
+      if (!preferences) receipt.pendingPreferenceReads++;
+      return preferences;
     });
     assert.equal(receipt.preferences.usbAutoReconnect, false);
     if (process.platform === "win32") {
@@ -752,15 +794,7 @@ async function launchProduct(config, receipt, check) {
         } while (cursor);
         return pages;
       })()`);
-      receipt.nativeJournal = await main.js(`(() => {
-        const require = __installedProbe.require, path = require('node:path');
-        const filename = path.join(process.resourcesPath, 'app.asar.unpacked/native/journal-win32/journal_win32.node');
-        const addon = require(filename), profile = __installedProbe.electron.app.getPath('userData');
-        const root = path.join(profile, 'device-broker');
-        require('node:assert/strict').deepEqual(Object.keys(addon).sort(), ['apiVersion','arch','capabilities','durableReplace','napiVersion','syncDirectory'].sort());
-        return {filename, sha256: require('node:crypto').createHash('sha256').update(require('node:fs').readFileSync(filename)).digest('hex'),
-          capabilities: addon.capabilities(root), barrier: addon.syncDirectory(root)};
-      })()`);
+      receipt.nativeJournal = await main.js(installedJournalExpression());
       assertWindowsJournalReady(receipt.deviceRecovery, receipt.nativeJournal);
     }
     if (isolated) {
