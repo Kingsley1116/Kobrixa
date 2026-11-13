@@ -1,4 +1,13 @@
-import { copyNativeDependencies } from "./packaging.js";
+import { stageProductionJournal, withJournalUnpack } from "../../tools/release/journal-win32.mjs";
+import {
+  copyNativeDependencies,
+  BUILTIN_PAYLOAD_UNPACK,
+  builtinProcessBuilds,
+  validateBuiltinPayloads,
+  PERSISTENCE_WORKER_ENTRY,
+  withPersistenceWorkerUnpack,
+} from "./packaging.js";
+const fixtureBuild = process.env.KOBRIXA_PLUGIN_FIXTURE_BUILD === "1";
 import type { ForgeConfig } from "@electron-forge/shared-types";
 import { VitePlugin } from "@electron-forge/plugin-vite";
 import { readFileSync } from "node:fs";
@@ -33,7 +42,12 @@ const config: ForgeConfig = {
     },
     ...macSigningConfig(),
     icon: platformIcon,
-    asar: { unpack: "**/*.node" },
+    asar: {
+      unpack: withJournalUnpack(
+        withPersistenceWorkerUnpack(BUILTIN_PAYLOAD_UNPACK),
+        process.platform,
+      ),
+    },
     ignore: (file) =>
       Boolean(file) &&
       ![
@@ -47,13 +61,22 @@ const config: ForgeConfig = {
   rebuildConfig: {},
   makers: [],
   hooks: {
-    packageAfterCopy: async (_forgeConfig, buildPath, _electronVersion, platform, arch) =>
-      copyNativeDependencies(buildPath, platform, arch),
+    packageAfterCopy: async (_forgeConfig, buildPath, _electronVersion, platform, arch) => {
+      await validateBuiltinPayloads(buildPath, fixtureBuild);
+      await copyNativeDependencies(buildPath, platform, arch);
+      await stageProductionJournal(buildPath, platform, arch);
+    },
   },
   plugins: [
     new VitePlugin({
       build: [
+        ...builtinProcessBuilds(fixtureBuild).map(({ entry, config, target }) => ({
+          entry,
+          config,
+          target,
+        })),
         { entry: "src/main/index.ts", config: "vite.main.config.ts", target: "main" },
+        { entry: PERSISTENCE_WORKER_ENTRY, config: "vite.main.config.ts", target: "main" },
         {
           entry: "src/main/workspace/build-worker.ts",
           config: "vite.build-worker.config.ts",

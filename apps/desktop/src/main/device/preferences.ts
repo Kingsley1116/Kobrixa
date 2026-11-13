@@ -31,18 +31,31 @@ export const devicePreferencesPatchSchema = devicePreferencesSchema
       ) as Partial<DevicePreferences>,
   );
 
-/** Main-process ownership prevents renderer reloads from changing recovery policy. */
+/** Retained original-writer migration barrier and legacy fixtures. Product startup
+ * freezes admission before composing optional plugins; no device preference IPC
+ * reaches this store. Authoritative runtime policy comes from admitted settings. */
 export class DevicePreferencesStore {
   private writes: Promise<unknown> = Promise.resolve();
+  private frozen = false;
+  private migrationFailure: { error: unknown } | undefined;
   constructor(
     private value: DevicePreferences = { ...DEFAULT_DEVICE_PREFERENCES },
     private persist: (value: DevicePreferences) => Promise<void> = async () => {},
   ) {}
   get = (): DevicePreferences => ({ ...this.value });
+  freezeAdmission(): void {
+    this.frozen = true;
+  }
+  async settleMigration(): Promise<void> {
+    if (!this.frozen) throw new Error("Device preference writer is not frozen.");
+    await this.writes.catch(() => {});
+    if (this.migrationFailure) throw this.migrationFailure.error;
+  }
   set(
     patch: Partial<DevicePreferences>,
     applied: (value: DevicePreferences) => void,
   ): Promise<DevicePreferences> {
+    if (this.frozen) return Promise.reject(new Error("Device preference writer is frozen."));
     const validated = devicePreferencesPatchSchema.parse(patch);
     const write = this.writes
       .catch(() => undefined)
@@ -52,6 +65,12 @@ export class DevicePreferencesStore {
         this.value = next;
         applied(this.get());
         return this.get();
+      })
+      .catch((error: unknown) => {
+        // A later queued success cannot prove that a prior uncertain write is safe
+        // to import. Retain this barrier failure for the remaining process lifetime.
+        if (this.frozen) this.migrationFailure ??= { error };
+        throw error;
       });
     this.writes = write;
     return write;

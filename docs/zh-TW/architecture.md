@@ -151,7 +151,7 @@ Python 的 stderr 與 JS／TS 的 stdout／stderr 會保存在主程序記憶體
 
 這些是**可信任的本機插件**。獨立程序提供當機隔離；manifest 權限僅限制透過 Kobrixa 的呼叫，**不是作業系統沙箱**。插件程式仍可直接存取檔案與網路。
 
-插件 API **1.4.0** 支援靜態語言、編譯前端／後端與 `contributes.diagnosticHelp`；符合 host range 的 1.3.x manifests 仍接受。`kobrixa.basic-plus` 提供語言 `bp`，獨立的內建插件 `kobrixa.ev3` 提供目標 `ev3-native`；兩者都宣告 IR `{ min: 1, max: 1 }`，安全模式下仍保留，並沿用第一階段的內建停用限制。有效的 API 1.0、1.1、1.2 插件仍相容，但外部插件宣告 `frontends` 或 `backends` 時，整個插件無效（`PLUGIN_E_FRONTEND_REQUIRES_BUILTIN`／`PLUGIN_E_BACKEND_REQUIRES_BUILTIN`）。本版沒有外部編譯 RPC。
+Stage 3 分支的插件 API **1.8.0** 保留 API 1.4 的靜態語言、編譯前端／後端與 `contributes.diagnosticHelp`；符合 host range 的 1.3.x manifests 仍接受。`kobrixa.basic-plus` 提供語言 `bp`，獨立的內建插件 `kobrixa.ev3` 提供目標 `ev3-native`；兩者都宣告 IR `{ min: 1, max: 1 }`，安全模式下仍保留，並沿用第一階段的必要 compiler 內建停用限制；Stage 3 的三個設備功能可獨立停用。有效的 API 1.0、1.1、1.2 插件仍相容，但外部插件宣告 `frontends` 或 `backends` 時，整個插件無效（`PLUGIN_E_FRONTEND_REQUIRES_BUILTIN`／`PLUGIN_E_BACKEND_REQUIRES_BUILTIN`）。本版沒有外部編譯 RPC。
 
 宿主為每個語言／目標解析唯一、有效且已啟用的提供者。衝突的提供者全部以 `PLUGIN_E_PROVIDER_CONFLICT` 失效，不依載入順序取首筆；重新檢查提供者集合時排除停用者，清除已消失的衝突。IR 版本選前後端範圍交集的最大值。找不到提供者或發生衝突時，在開 worker 前回 `BUILD1001`；IR 不相容回 `BUILD1002`。
 
@@ -161,9 +161,9 @@ Python 的 stderr 與 JS／TS 的 stdout／stderr 會保存在主程序記憶體
 
 main 依通過驗證的專案語言選取啟用中的 frontend 擁有者，backend 缺席或 IR 不相容不影響編輯器分析。以 `pluginId:language` 選取編譯期內建 worker factory 與 browser companion；每工作區保留獨立的分析／Quick Fix 和補全 worker。所有訊息及已接受結果都帶宿主發放的 binding epoch；提供者 generation、路由設定或任一 worker 重啟都讓兩條通道失效並要求完整同步，一般輸入只改文件 revision。
 
-worker 保留原生語意狀態，只發布通用符號、緊湊 tokens／occurrences、補全可見性群組與編輯結果；診斷來源由宿主加註。Basic Plus 的即時補全過濾、結構性編輯偵測與格式化留在 browser companion，通用 renderer／shared 不匯入 Basic Plus。缺少服務顯示語言狀態列，設定衝突顯示列出插件的工作區橫幅，兩者皆可前往插件設定。內建插件仍不可停用；靜態語言使用 strict v1 tokenizer／configuration JSON 與共用 protocol validator。Runtime 原子發布 revisioned catalog，由單一 renderer store／registrar 管理所有文件與 review models；builtin raw JSON 封裝於 main，不從 repository 讀取。Catalog revision 與 service epoch 分離。第三方交付前同步保存 static risk marker，保持 sticky 到正常結束；寫入失敗阻止該交付。純靜態插件不啟動程序或 handshake。作者格式、衝突解析、有界資源計量與復原見[靜態語言插件](plugin-static-languages.md)。沒有第三方語言服務 RPC。
+worker 保留原生語意狀態，只發布通用符號、緊湊 tokens／occurrences、補全可見性群組與編輯結果；診斷來源由宿主加註。Basic Plus 的即時補全過濾、結構性編輯偵測與格式化留在 browser companion，通用 renderer／shared 不匯入 Basic Plus。缺少服務顯示語言狀態列，設定衝突顯示列出插件的工作區橫幅，兩者皆可前往插件設定。內建 compiler 插件仍不可停用；靜態語言使用 strict v1 tokenizer／configuration JSON 與共用 protocol validator。Runtime 原子發布 revisioned catalog，由單一 renderer store／registrar 管理所有文件與 review models；builtin raw JSON 封裝於 main，不從 repository 讀取。Catalog revision 與 service epoch 分離。第三方交付前同步保存 static risk marker，保持 sticky 到正常結束；寫入失敗阻止該交付。純靜態插件不啟動程序或 handshake。作者格式、衝突解析、有界資源計量與復原見[靜態語言插件](plugin-static-languages.md)。沒有第三方語言服務 RPC。
 
-宿主負責加註 `Diagnostic.source`，診斷說明只在同一來源內查詢。`devices` API 仍規劃於第三階段。詳見[插件設計](../superpowers/specs/2026-10-14-plugin-system-design.md)。
+宿主負責加註 `Diagnostic.source`，診斷說明只在同一來源內查詢。Stage 3 分支已實作公開 `devices` API，見[設備插件](plugin-devices.md)。詳見[插件設計](../superpowers/specs/2026-10-14-plugin-system-design.md)。
 
 ### 語言服務驗收
 
@@ -338,3 +338,21 @@ Electron Forge 將 renderer、main 與 preload 入口封裝至 `app.asar`，原�
 - Main process 在每個具特權的檔案系統、編譯器或設備操作前，必須驗證 IPC sender 與 payload。
 
 這些邊界遵循 Electron 的[安全建議](https://www.electronjs.org/docs/latest/tutorial/security)。
+
+## Stage 3 開發整合
+
+API 1.8 開發分支整合內建 process UI、host 的設備仲裁，以及 typed settings／record storage。馬達測試、Sensor Lab 與 EV3 裝置在插件工具中各有獨立 optional source；原生 EV3 I/O 留在 main。provider availability 與 UI process lifetime 分開。公開連線以唯讀投影接上保留的核心部署／檔案 adapter，不額外授予 session 或 authority。
+
+設備啟動先凍結原偏好 writer，再收集每個視窗不可變的擷取資料。main 受理原始共同匯入並提供已提交設定給 provider；原匯入未解決前，一般設定寫入仍受 gate 限制。開面板、重送 snapshot 或恢復 process 都不重播使用者指令。休眠必須接上原停止／保存 receipt，喚醒後才可受理新工作。
+
+實作與驗收分別記錄於[3E 計畫](../superpowers/plans/2026-10-24-plugin-system-3e-device-ui.md)。馬達與 Lab 的私有 service、功能 IPC 及 UI 路徑已移除；provider 引擎、原檔 importer 與獨立純模型 oracle 仍保留。設備連線／監測／設定 replacement 已整合。此分支已撤除舊設備監測與連線設定 renderer UI：renderer 現在導向插件工具，核心電池狀態保留一條由 host 支援的路徑。過時 main IPC、preload 與 shared contracts 的撤除仍在進行；最終撤除證據仍未完成。遠端檔案、simulator、協作 UI、editor、workspace、無關的舊設定頁與 updates 仍列於 [Stage 3 例外帳](../superpowers/specs/2026-10-17-plugin-system-stage-3-design.md#8-過渡例外帳)。
+
+三個 optional features 預設啟用，一般使用者不需開發者模式即可獨立切換。馬達隱藏／關閉／失焦要求停止；Lab 面板隱藏／關閉／最小化繼續錄製。單一可信 Disconnect 動作先等待 stop/readback、journal 及 save 才斷線；公開 API 跨 owner 斷線仍回 busy。suspend 結束錄製並要求 final save，但 OS 凍結可能只留下 committed checkpoint。wake、重連及重新啟用都不重播工作。第二次啟動聚焦／還原 primary，並在 optional 初始化前退出；安裝版仍須完整觀察 secondary 零副作用及 primary 錄製不中斷。
+
+僅 optional plugin crash 本身不設定全域 unclean-exit safe-mode lock；renderer 無回應或第三方／development 風險可觸發。cold suppression 在 optional process、provider、import 前生效，核心管理／復原仍可用。Windows 遵循 [R1 日誌政策](../superpowers/specs/2026-10-17-plugin-system-3a-device-broker-design.md#721-windows-durable-replacement-policyr12026-11-11)：2026-11-12 ruling 允許在可驗證的 local fixed NTFS 上支援，依據 Win32 文件語意，以及 `60a0bde` 在 windows-2022／Electron 44.7.0 的 19/19 process-kill/native candidate suite。斷電持久性依據這些證據；未做實體斷電測試，亦不要求此 gate。非 NTFS、removable、network、無法驗證的 volume，以及缺失／不相容 addon 仍 fail closed。private ACL 與 pinned directory handles 拒絕不安全路徑及 writable-handle conflict；production 使用持有 source handle 的 `NtSetInformationFile(FileRenameInformationEx)`，以 `FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS` 相對 pinned directory 發布。production 最低版本為 Windows 10 1709+（包含 windows-2022）；不支援 rename 語意時 fail closed。同 user／privileged code 改 target name／ACL 仍是 residual race，不是 atomic identity compare-and-swap。歷史 suite 使用 attribute-only pins 與 `MoveFileExW`，不驗證這些 production 變更。目前程式的 Windows native／installed acceptance 在新 CI 證據出現前仍為 **NOT RUN／尚未執行**。B2 record-store 持久性不能豁免此政策。仍須取得綁定最終來源的 native／平台證據，以及 S3-13–S3-15 人工結果；這三列均為 **NOT RUN／尚未執行**。Stage-2 V01–V04 不變。
+
+2026-11-14 owner ruling：正常 app close／update 在 safety journal 非 ready 時，只有逐項取得正面證據才允許：本 process 從未成功初始化 journal；不依賴 write barrier 的獨立 inventory read 已驗證目錄為空或不存在；沒有任何保留或可能存在的證據（包含先前寫入嘗試、不確定 publication、pending marker、舊 fault）；沒有 in-flight 或 late journal I/O；且本 process 從未受理或派送 motion、Run 或其他需要 marker 的風險工作。inventory 未知／不可讀、任何舊 journal 檔（包含 resolved history）、損壞資料、expired／late native I/O 與 resource-limit 仍阻擋關閉／更新。不能從空的顯示 fault list 或 journal health 推論上述事實。host receipt 為 `stopConfirmed:true`、`journalCommitted:false`、`faultIds:[]`，並帶 reason `journal-unavailable-no-evidence`；只有 close／update assertion 把此 reason 視為非 blocker，不能宣稱已提交 journal。所有非 ready 狀態仍拒絕 motion／Run，trusted Stop 行為不變。有無 idle session 均須完成其他 stop、save 與 process-exit 義務。
+
+產品建立 Windows journal directory 與 staging file 時即以明確 protected DACL 禁止繼承，只授予目前 token user、SYSTEM 與 BUILTIN\Administrators full control；即使 elevated token 的預設 owner 為 Administrators，建立時仍明確指定 token user 為 owner。既有 directory 只驗證，不修補 ACL。既有 owner 可為目前 user、SYSTEM 或 Administrators。有效 mutation grant（generic all/write、file write/append、extended-attribute/attribute write、delete-child、delete、DACL 或 owner 變更）只接受上述 principal，或代表已驗證 owner 的 OWNER RIGHTS；其他 principal 可有 read/execute。繼承自相同可信 principal 的 grant 可接受。inherit-only ACE（包含 CREATOR OWNER template）不授予物件本身存取權；有效且未替換的 CREATOR OWNER mutation grant 則拒絕。null／無法驗證的 DACL 仍拒絕。journal 與 existing/staged/published file 均保留這些檢查；pinned profile parent 驗證 path/volume 並必須 flush，但不要求整個 profile 具有 journal 的 private DACL。
+
+Windows journal loader 在 packaged build 只讀 `<process.resourcesPath>/app.asar.unpacked/native/journal-win32/journal_win32.node`，沒有 checkout fallback。unpackaged build 使用 `<app.getAppPath()>/native/journal-win32/build/Release/journal_win32.node`。Part B 須交付架構相符、停用 test hooks 的 production N-API v8 addon。每個 adapter 以一個 persistent worker 在 main thread 之外執行 native 工作，每次只允許一個 in-flight operation、等待上限五秒，late I/O 永久被 fence。idle worker 不阻止 process 結束，app quit 會 dispose。每次 native operation 仍重新驗 directory／volume／ACL；只快取前置 capability check。成功 native receipt 已包含 directory flush，journal 不重做。發布要求 temp 與 published-file `FlushFileBuffers` 加上 pinned directory flush；`FileRenameInfoEx` 沒有 write-through flag。這些逐次檢查的 barrier 是支援的 API 層持久性基礎，不代表已實測斷電行為。journal 整體預算、previous/current 順序、舊 fault 可見性、motion／Run／resolution fail-closed、best-effort trusted Stop 與 close/update blockers 均維持。

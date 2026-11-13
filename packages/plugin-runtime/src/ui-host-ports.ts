@@ -1,0 +1,234 @@
+import type {
+  Handle,
+  Counter,
+  ResourceOwner,
+  Id,
+  UiOwner,
+  UiCatalogPage,
+  UiBinding,
+  UiStateSnapshot,
+  CommandValue,
+  LocalId,
+  UiScalar as Scalar,
+  UiRevokeReason,
+  Result,
+  PanelResourceV1,
+  StatusResourceV1,
+  UiResourceV2,
+  UiValidationContext,
+  UiDataRequestMapV2,
+} from "@kobrixa/plugin-protocol";
+export type FoundationDiagnosticEvent = {
+  kind: "apply" | "revoke" | "stop-dispatch";
+  owner: ResourceOwner;
+  binding?: UiBinding;
+  time: number;
+  /** Host-only renderer diagnostics, present only with an attached observer.
+   * requestedRevision can differ from revision when a snapshot coalesces patches.
+   * These timestamps use the same renderer wall clock as time. */
+  applyTiming?: {
+    requestedRevision: number;
+    revision: number;
+    receivedAt: number;
+    snapshotRequestedAt: number;
+    snapshotReceivedAt: number;
+  };
+};
+export type FoundationCounters = Readonly<{
+  owners: number;
+  bindings: number;
+  subscriptions: number;
+  queuedEvents: number;
+  queuedBytes: number;
+  timers: number;
+  pendingInvocations: number;
+  actionTokens: number;
+  resourceReaders: number;
+  workerJobs: number;
+}>;
+export interface FoundationDiagnostics {
+  snapshot(): FoundationCounters;
+  onEvent(listener: (event: FoundationDiagnosticEvent) => void): () => void;
+}
+export type UiBridgeEvent =
+  | { type: "form"; binding: UiBinding; formRevision: Counter }
+  | { type: "data"; binding: UiBinding; dataset: string; revision: Counter; presentation: Counter }
+  | { type: "catalog"; hostEpoch: Handle; revision: Counter; owners: UiOwner[] }
+  | { type: "state"; binding: UiBinding; revision: Counter }
+  | { type: "pulse"; binding: UiBinding; challenge: Handle }
+  | { type: "revoked"; binding: UiBinding; reason: UiRevokeReason };
+/** Host-only discriminated resource reply; does not widen the published v1 parser. */
+export type UiCatalogResourceValue = {
+  owner: UiOwner;
+  id: Id;
+  validationContext: UiValidationContext;
+  rawBytes: number;
+} & (
+  | { version: 1; resource: PanelResourceV1 | StatusResourceV1 }
+  | { version: 2; resource: UiResourceV2 }
+);
+export type UiInteractionView = {
+  generation: Counter;
+  dialogId: LocalId | null;
+  inspectView: "full" | "recent60s" | null;
+};
+export type UiPanelInteraction = {
+  binding: UiBinding;
+  nodeId: LocalId;
+  presentation: Counter;
+  viewGeneration: Counter;
+  formRevision: Counter;
+  form: Record<LocalId, Scalar>;
+};
+export type UiInteractionRequest =
+  | { kind: "viewState"; binding: UiBinding }
+  | { kind: "core"; binding: UiBinding; actionId: LocalId }
+  | (UiPanelInteraction &
+      (
+        | { kind: "action" }
+        | { kind: "row"; dataset: LocalId; revision: Counter; key: string }
+        | { kind: "list"; actionId: LocalId; dataset: LocalId; revision: Counter; key: string }
+        | { kind: "dialogConfirm" }
+        | { kind: "dialogClose" }
+        | { kind: "chartView"; view: "full" | "recent60s" }
+        | { kind: "cursor"; dataset: LocalId; revision: Counter; time: number | null }
+        | { kind: "codeCopy"; dataset: LocalId; revision: Counter }
+      ));
+export type UiInteractionValue =
+  | { kind: "view"; view: UiInteractionView }
+  | { kind: "control"; accepted: true }
+  | {
+      kind: "command";
+      invocationId: Handle;
+      presentation: Counter;
+      viewGeneration: Counter;
+      value: CommandValue;
+    }
+  | {
+      kind: "cursor";
+      invocationId: Handle;
+      presentation: Counter;
+      viewGeneration: Counter;
+      time: number;
+      output: Record<LocalId, number | null>;
+    };
+
+export interface PluginUiBridge {
+  syncForm?(input: {
+    binding: UiBinding;
+    baseFormRevision: Counter;
+    editSequence: Counter;
+    form: Record<LocalId, Scalar>;
+  }): Promise<
+    Result<{ formRevision: Counter; editSequence: Counter; form: Record<LocalId, Scalar> }>
+  >;
+  interact?(input: UiInteractionRequest): Promise<Result<UiInteractionValue>>;
+  dataRead(
+    input: UiDataRequestMapV2["ui/dataRead"]["params"],
+  ): Promise<UiDataRequestMapV2["ui/dataRead"]["result"]>;
+  dataSnapshot(
+    input: UiDataRequestMapV2["ui/dataSnapshot"]["params"],
+  ): Promise<UiDataRequestMapV2["ui/dataSnapshot"]["result"]>;
+  catalog(input: { cursor?: Handle }): Promise<Result<UiCatalogPage>>;
+  resource(input: {
+    sourceKey: string;
+    id: Id;
+    uiResourceGeneration: Counter;
+    resourceDigest: string;
+  }): Promise<Result<UiCatalogResourceValue>>;
+  open(input: {
+    sourceKey: string;
+    id: Id;
+    uiResourceGeneration: Counter;
+  }): Promise<Result<UiStateSnapshot>>;
+  close(input: { binding: UiBinding }): Promise<Result<{ closed: true }>>;
+  visibility(input: {
+    binding: UiBinding;
+    visible: boolean;
+    reason: "tab" | "sidebar" | "collapse" | "document" | "window";
+  }): Promise<Result<{ accepted: true }>>;
+  invoke(input: {
+    binding: UiBinding;
+    nodeId: LocalId;
+    formRevision: Counter;
+    form: Record<LocalId, Scalar>;
+  }): Promise<Result<CommandValue>>;
+  hold(input: {
+    binding: UiBinding;
+    nodeId: LocalId;
+    phase: "begin" | "end" | "cancel";
+    inputToken: Handle;
+    formRevision: Counter;
+    form: Record<LocalId, Scalar>;
+  }): Promise<Result<{ gesture: Handle | null }>>;
+  pulse(input: {
+    binding: UiBinding;
+    challenge: Handle;
+    gesture: Handle | null;
+    inputToken: Handle | null;
+  }): Promise<Result<{ accepted: true }>>;
+  snapshot(input: { binding: UiBinding }): Promise<Result<UiStateSnapshot>>;
+  reportFailure(input: {
+    sourceKey: string;
+    id: Id;
+    uiResourceGeneration: Counter;
+    catalogRevision: Counter;
+    reason: "validation" | "renderer";
+    fieldPath?: string;
+  }): Promise<Result<{ accepted: boolean }>>;
+  onEvent(listener: (event: UiBridgeEvent) => void): () => void;
+}
+export interface UiCatalogPort {
+  catalog(input: { cursor?: Handle }): Promise<Result<UiCatalogPage>>;
+  resource(
+    input: Parameters<PluginUiBridge["resource"]>[0],
+  ): ReturnType<PluginUiBridge["resource"]>;
+  retire(owner: ResourceOwner): void;
+  onEvent(listener: (event: UiBridgeEvent) => void): () => void;
+}
+
+export function unavailableUiCatalog(): UiCatalogPort {
+  const unavailable = () => ({
+    ok: false as const,
+    error: {
+      code: "PLUGIN_E_PROTOCOL" as const,
+      message: "UI catalog is not attached.",
+    },
+  });
+  return {
+    catalog: async () => unavailable(),
+    resource: async () => unavailable(),
+    retire() {},
+    onEvent: () => () => {},
+  };
+}
+
+import type {
+  ContextCommandDeclaration,
+  PanelDeclaration,
+  StatusDeclaration,
+} from "@kobrixa/plugin-protocol";
+export type UiCatalogSource = {
+  owner: ResourceOwner;
+  eligible: boolean;
+  resources:
+    | { kind: "packaged"; root: string }
+    | { kind: "builtin"; files: Readonly<Record<string, string>> };
+  commands: readonly ContextCommandDeclaration[];
+  panels: readonly PanelDeclaration[];
+  status: readonly StatusDeclaration[];
+};
+export const sameUiBinding = (left: UiBinding, right: UiBinding): boolean =>
+  left.contributionId === right.contributionId &&
+  left.panelInstance === right.panelInstance &&
+  left.kind === right.kind &&
+  left.uiResourceGeneration === right.uiResourceGeneration &&
+  left.generation === right.generation &&
+  left.hostEpoch === right.hostEpoch &&
+  left.processEpoch === right.processEpoch;
+export const sameResourceOwner = (left: ResourceOwner, right: ResourceOwner): boolean =>
+  left.sourceKey === right.sourceKey &&
+  left.pluginId === right.pluginId &&
+  left.generation === right.generation &&
+  left.hostEpoch === right.hostEpoch &&
+  left.processEpoch === right.processEpoch;

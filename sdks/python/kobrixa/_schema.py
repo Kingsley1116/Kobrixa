@@ -5,9 +5,14 @@ String lengths count Unicode code points, as JSON Schema and Zod 4 do, and an
 anchored trailing "$" means end of string, as in ECMAScript.
 """
 import json
+import math
+import ipaddress
 import re
 from functools import lru_cache
 from importlib import resources
+from collections.abc import Mapping
+from threading import Lock
+from types import MappingProxyType
 
 SUPPORTED_KEYWORDS = frozenset({
     "$schema", "$id", "title", "$defs", "type", "properties", "required",
@@ -15,6 +20,8 @@ SUPPORTED_KEYWORDS = frozenset({
     "minimum", "maximum", "items", "minItems", "maxItems", "anyOf", "oneOf",
 })
 
+
+SUPPORTED_KEYWORDS = SUPPORTED_KEYWORDS | frozenset({"propertyNames", "minProperties", "maxProperties", "not", "prefixItems"})
 
 class SchemaError(ValueError):
     pass
@@ -28,7 +35,7 @@ def _regex(pattern: str) -> "re.Pattern[str]":
 
 
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and (isinstance(value, int) or math.isfinite(value))
 
 
 def _is_type(value, name: str) -> bool:
@@ -47,17 +54,55 @@ def _is_type(value, name: str) -> bool:
 def _equal(left, right) -> bool:
     if isinstance(left, bool) or isinstance(right, bool):
         return left is right
+    if isinstance(left, Mapping) or isinstance(right, Mapping):
+        return (isinstance(left, Mapping) and isinstance(right, Mapping)
+                and left.keys() == right.keys()
+                and all(_equal(left[key], right[key]) for key in left))
+    if isinstance(left, (list, tuple)) or isinstance(right, (list, tuple)):
+        return (isinstance(left, (list, tuple)) and isinstance(right, (list, tuple))
+                and len(left) == len(right)
+                and all(_equal(a, b) for a, b in zip(left, right)))
     return left == right
+
+
+def _freeze_schema(value):
+    # Read-only caller views can still have mutable backing storage. Copy every
+    # mapping; only the private bundled constructor may reuse frozen definitions.
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze_schema(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_schema(item) for item in value)
+    return value
+
+
+@lru_cache(maxsize=1)
+def _bundled_schema():
+    text = resources.files("kobrixa").joinpath("plugin-protocol.schema.json").read_text("utf-8")
+    return _freeze_schema(json.loads(text))
+
+
+_bundle_lock = Lock()
 
 
 class Validator:
     def __init__(self, document: dict) -> None:
-        self._definitions = document["$defs"]
+        self._definitions = _freeze_schema(document)["$defs"]
 
     @classmethod
     def bundled(cls) -> "Validator":
-        text = resources.files("kobrixa").joinpath("plugin-protocol.schema.json").read_text("utf-8")
-        return cls(json.loads(text))
+        # A process owns one immutable parsed bundle, shared by command contexts
+        # and event/settings/storage clients. Lock cache lookup too: concurrent
+        # first users must not each parse the multi-megabyte resource.
+        with _bundle_lock:
+            document = _bundled_schema()
+        return cls.__from_bundled(document)
+
+    @classmethod
+    def __from_bundled(cls, document) -> "Validator":
+        # Called only with our recursively frozen cache, never a caller document.
+        instance = cls.__new__(cls)
+        instance._definitions = document["$defs"]
+        return instance
 
     def has(self, name: str) -> bool:
         return name in self._definitions
@@ -66,11 +111,21 @@ class Validator:
         errors = self._check(self._definitions[name], value, "$")
         if errors:
             raise SchemaError(errors[0])
+        _device_semantics(name, value)
+        _persistence_semantics(name, value)
+        from ._connection_recovery import validate_snapshot
+        if name == "connection-recovery-snapshot": validate_snapshot(value)
+        if name == "devices/connectionRecovery/read.result" and value.get("ok"): validate_snapshot(value["value"])
+        if name == "events/deliver.params" and value.get("kind") == "devices.connectionRecovery": validate_snapshot(value["data"])
 
     def _check(self, schema: dict, value, path: str) -> list:
+        if schema is False: return [f"{path}: forbidden value"]
+        if schema is True: return []
         unknown = set(schema) - SUPPORTED_KEYWORDS
         if unknown:
             raise SchemaError(f"Unsupported schema keywords: {sorted(unknown)}")
+        if "not" in schema and not self._check(schema["not"], value, path):
+            return [f"{path}: forbidden alternative"]
         if "anyOf" in schema and not any(not self._check(item, value, path) for item in schema["anyOf"]):
             return [f"{path}: no alternative matched"]
         if "oneOf" in schema and sum(1 for item in schema["oneOf"] if not self._check(item, value, path)) != 1:
@@ -80,7 +135,7 @@ class Validator:
         if "enum" in schema and not any(_equal(value, item) for item in schema["enum"]):
             return [f"{path}: expected one of {schema['enum']!r}"]
         if "type" in schema:
-            types = schema["type"] if isinstance(schema["type"], list) else [schema["type"]]
+            types = schema["type"] if isinstance(schema["type"], (list, tuple)) else [schema["type"]]
             if not any(_is_type(value, item) for item in types):
                 return [f"{path}: expected {schema['type']}"]
         errors = []
@@ -96,10 +151,18 @@ class Validator:
         if isinstance(value, list):
             if len(value) < schema.get("minItems", 0) or len(value) > schema.get("maxItems", len(value)):
                 errors.append(f"{path}: wrong number of items")
-            if "items" in schema:
-                for index, item in enumerate(value):
+            prefix = schema.get("prefixItems", [])
+            for index, item in enumerate(value):
+                if index < len(prefix):
+                    errors += self._check(prefix[index], item, f"{path}[{index}]")
+                elif "items" in schema:
                     errors += self._check(schema["items"], item, f"{path}[{index}]")
         if isinstance(value, dict):
+            if len(value) < schema.get("minProperties", 0) or len(value) > schema.get("maxProperties", len(value)):
+                errors.append(f"{path}: wrong number of properties")
+            if "propertyNames" in schema:
+                for key in value:
+                    errors += self._check(schema["propertyNames"], key, f"{path}.key")
             properties = schema.get("properties", {})
             for key in schema.get("required", []):
                 if key not in value:
@@ -109,6 +172,135 @@ class Validator:
                     errors += self._check(properties[key], item, f"{path}.{key}")
                 elif schema.get("additionalProperties") is False:
                     errors.append(f"{path}.{key}: is not allowed")
-                elif isinstance(schema.get("additionalProperties"), dict):
+                elif isinstance(schema.get("additionalProperties"), Mapping):
                     errors += self._check(schema["additionalProperties"], item, f"{path}.{key}")
         return errors
+
+_DEVICE_REASONS={
+ 'PLUGIN_E_DEVICE_UNAVAILABLE':('provider-disabled','disconnected','quarantined','ui-scope-unavailable'),
+ 'PLUGIN_E_DEVICE_CAPABILITY':('unsupported-capability',),
+ 'PLUGIN_E_DEVICE_BUSY':('foreground','recording','connecting','source-changing'),
+ 'PLUGIN_E_DEVICE_AUTHORITY':('unbound','joining','unsynced','not-holder','viewer','authority-changed','scope-expired'),
+ 'PLUGIN_E_DEVICE_OPERATION':('preflight-program-running','preflight-output-unknown','preflight-output-moving','motor-unavailable','source-changed','mode-unavailable','provider-failure','provider-contract','journal-unwritable','journal-corrupt','identity-ambiguous'),
+ 'PLUGIN_E_DEVICE_STOP_UNCONFIRMED':('readback-failed','stop-deadline','connection-lost','provider-stalled'),
+ 'PLUGIN_E_TIMEOUT':('deadline',),'PLUGIN_E_CANCELLED':('cancelled',),'PLUGIN_E_DISABLED':('disabled',),
+ 'PLUGIN_E_SAFE_MODE':('safe-mode',),'PLUGIN_E_SHUTTING_DOWN':('shutting-down',),'PLUGIN_E_CRASHED':('process-lost',),
+ 'PLUGIN_E_PROTOCOL':('protocol',),'PLUGIN_E_PROVIDER_CONFLICT':('provider-conflict',),
+}
+def _device_semantics(name,value):
+    if not name.startswith(('devices/','events/')): return
+    def fail(): raise SchemaError('Invalid device wire value')
+    try: size=len(json.dumps(value,ensure_ascii=True,separators=(',',':'),allow_nan=False).encode('utf-8'))
+    except (ValueError,UnicodeError): fail()
+    if size>1048576: fail()
+    if name.endswith('.params') and name!='events/deliver.params' and size>16384: fail()
+    if name=='devices/recording/read.result' and size>65536: fail()
+    if name.endswith('.result') and (name.startswith('devices/motion/') or name=='devices/recording/query.result') and size>16384: fail()
+    def walk(node,key='',parent=None):
+        if isinstance(node,str):
+            if '\0' in node or any(0xD800<=ord(c)<=0xDFFF for c in node): fail()
+            maximum=None
+            if key=='name': maximum=80 if parent and any(k in parent for k in ('channelId','actuatorId','modeId')) else 200
+            if key=='modeName': maximum=80
+            if key=='unit': maximum=32
+            if key=='message': maximum=2000
+            if maximum is not None and len(node)>maximum: fail()
+            if key=='address':
+                try:
+                    if '%' in node or str(ipaddress.ip_address(node))!=node: fail()
+                except ValueError: fail()
+        elif isinstance(node,list):
+            if key in ('channelIds','capabilities','affected') and len(set(json.dumps(v,sort_keys=True) for v in node))!=len(node): fail()
+            unique={'channels':'channelId','actuators':'actuatorId','values':'channelId','candidates':'candidateId','providers':'providerId','sessions':'sessionId','modes':'modeId'}.get(key)
+            if unique and len({v[unique] for v in node})!=len(node): fail()
+            for child in node: walk(child,key)
+        elif isinstance(node,dict):
+            if 'fromSequence' in node and node['fromSequence']>node['toSequence']: fail()
+            if 'motionScopeRef' in node and (node['motion']['mode']=='jog')!=('gestureRef' in node): fail()
+            if 'code' in node and 'detail' in node:
+                detail=node['detail'];code=node['code'];kind=detail['kind']
+                if kind=='permission' and code!='PLUGIN_E_PERMISSION_DENIED': fail()
+                elif kind=='resource' and code!=('PLUGIN_E_STALE_RESOURCE' if detail['reason']=='stale' else 'PLUGIN_E_RESOURCE_LIMIT'): fail()
+                elif kind=='device' and detail['reason'] not in _DEVICE_REASONS.get(code,()): fail()
+                elif kind not in ('permission','resource','device'): fail()
+            if node.get('version')==1 and 'delivery' in node:
+                if size>(16384 if node['delivery']=='control' else 65536): fail()
+            for k,v in node.items(): walk(v,k,node)
+    walk(value)
+
+
+_PERSISTENCE_REASONS = {
+    'PLUGIN_E_SETTINGS_SCHEMA': ('invalid-resource', 'invalid-value', 'duplicate-key', 'unknown-key', 'size-limit', 'schema-changed-without-version', 'migration-required', 'downgrade', 'unsupported-format', 'corrupt'),
+    'PLUGIN_E_SETTINGS_CONFLICT': ('revision-mismatch',),
+    'PLUGIN_E_SETTINGS_SAVE': ('disk-full', 'permission', 'read-only', 'io', 'sync-failed', 'publish-uncertain', 'import-pending'),
+    'PLUGIN_E_STORAGE_QUOTA': ('record-count', 'source-bytes', 'host-bytes', 'temporary-bytes'),
+    'PLUGIN_E_STORAGE_CONFLICT': ('revision-mismatch', 'write-in-progress', 'offset-mismatch', 'sealed', 'incomplete', 'checksum-mismatch', 'flush-incomplete', 'export-not-ready'),
+    'PLUGIN_E_STORAGE_IO': ('not-found', 'disk-full', 'permission', 'read-only', 'io', 'sync-failed', 'publish-uncertain', 'corrupt', 'import-pending', 'input-changed', 'clipboard-unavailable', 'destination-changed', 'unsupported-filesystem'),
+    'PLUGIN_E_STORAGE_VERSION': ('unsupported-format', 'schema-mismatch'),
+}
+
+
+def _persistence_semantics(name, value):
+    settings_event = name == "events/deliver.params" and value.get("kind") == "settings.changed"
+    if not (settings_event or name.startswith(("settings/", "storage/")) or name in ("settings-resource-v1", "ui/copyText.params", "ui/copyText.result")):
+        return
+    from ._settings import validate_resource, wire_bytes, key, text, number
+    from ._storage import canonical_base64_length, validate_record_write
+    from ._persistence_actions import validate_copy, validate_export
+    try:
+        if settings_event:
+            for setting_key in value["data"]["changedKeys"]:
+                key(setting_key)
+            return
+        if name == "settings-resource-v1":
+            validate_resource(value, wire_bytes(value))
+            return
+        if name == "ui/copyText.params": validate_copy(value)
+        if name == "storage/exportBegin.params": validate_export(value)
+        if name == "storage/beginWrite.params": validate_record_write(value)
+        if name in ("storage/writeChunk.params", "storage/exportChunk.params"):
+            canonical_base64_length(value["data"])
+        if name == "storage/readChunk.result" and value["ok"]:
+            canonical_base64_length(value["value"]["data"], allow_empty=True)
+
+        if name == "settings/reset.params" and len(set(value["keys"])) != len(value["keys"]):
+            raise ValueError("duplicate-key")
+        if name == "storage/list.result" and wire_bytes(value) > 262144:
+            raise ValueError("size-limit")
+
+        def walk(node):
+            if isinstance(node, list):
+                for item in node: walk(item)
+            elif isinstance(node, dict):
+                if "label" in node and "mediaType" in node:
+                    text(node["label"], 0, 160, 640, True)
+                    if "createdAt" in node and wire_bytes(node) > 2048:
+                        raise ValueError("size-limit")
+                for field in ("keys", "changedKeys"):
+                    if field in node:
+                        for setting_key in node[field]: key(setting_key)
+                if "code" in node and "message" in node:
+                    text(node["message"], 0, 2000, 8000)
+                for field in ("changes", "values"):
+                    if field in node:
+                        entries = node[field]
+                        if wire_bytes(entries) > 65536 or len({key(e["key"]) for e in entries}) != len(entries):
+                            raise ValueError("invalid-values")
+                        for entry in entries:
+                            scalar = entry["value"]
+                            if isinstance(scalar, str): text(scalar, 0, 4000, 4096)
+                            elif not isinstance(scalar, bool): number(scalar)
+                if "code" in node and "detail" in node:
+                    code, detail = node["code"], node["detail"]
+                    kind, reason = detail["kind"], detail["reason"]
+                    valid = False
+                    if code in _PERSISTENCE_REASONS:
+                        valid = kind == "persistence" and reason in _PERSISTENCE_REASONS[code]
+                    elif code == "PLUGIN_E_PERMISSION_DENIED": valid = kind == "permission"
+                    elif code == "PLUGIN_E_STALE_RESOURCE": valid = kind == "resource" and reason == "stale"
+                    elif code == "PLUGIN_E_RESOURCE_LIMIT": valid = kind == "resource" and reason != "stale"
+                    if not valid or wire_bytes(detail) > 2048: raise ValueError("invalid-error-detail")
+                for item in node.values(): walk(item)
+        walk(value)
+    except (ValueError, UnicodeError, OverflowError) as error:
+        raise SchemaError("Invalid persistence wire value") from error

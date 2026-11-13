@@ -39,6 +39,27 @@ if (!python) throw new Error("The plugin smoke needs Python 3.10+. Set KOBRIXA_T
 let passed = false;
 try {
   await bundle(
+    path.join(root, "tests/desktop/plugins-quit-smoke-main.ts"),
+    path.join(temporary, "quit-main.cjs"),
+    ["electron"],
+  );
+  const immediateQuit = spawn(
+    electron,
+    [
+      path.join(temporary, "quit-main.cjs"),
+      `--user-data-dir=${path.join(temporary, "quit-profile")}`,
+      temporary,
+    ],
+    { stdio: "inherit" },
+  );
+  const immediateExit = await waitForSmokeExit(immediateQuit, "Immediate plugin cleanup");
+  if (immediateExit.code !== 0) throw new Error("Immediate cleanup failed to exit Electron");
+  const immediateReceipt = JSON.parse(
+    await readFile(path.join(temporary, "immediate-quit.json"), "utf8"),
+  );
+  if (immediateReceipt.cleanups !== 1) throw new Error("Immediate cleanup must run exactly once");
+  console.log("PASS immediate cleanup exits Electron after one disposition");
+  await bundle(
     path.join(root, "tests/desktop/plugins-smoke-main.ts"),
     path.join(temporary, "main.cjs"),
     ["electron"],

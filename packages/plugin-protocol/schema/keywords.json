@@ -18,5 +18,10 @@
   "minItems",
   "maxItems",
   "anyOf",
-  "oneOf"
+  "oneOf",
+  "propertyNames",
+  "minProperties",
+  "maxProperties",
+  "not",
+  "prefixItems"
 ]

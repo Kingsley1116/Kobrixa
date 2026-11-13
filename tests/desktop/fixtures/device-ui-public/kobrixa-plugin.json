@@ -1,0 +1,74 @@
+{
+  "id": "acceptance.device-stdio",
+  "version": "1.0.0",
+  "apiVersion": "^1.8.0",
+  "displayName": {
+    "en": "Synthetic Python device stdio acceptance"
+  },
+  "runtime": {
+    "kind": "python",
+    "entry": "consumer.py"
+  },
+  "permissions": [
+    "devices.read",
+    "devices.connect",
+    "devices.control",
+    "settings.read",
+    "settings.write",
+    "ui.panels"
+  ],
+  "requires": {
+    "devices": [
+      {
+        "capability": "connection.v1",
+        "required": true
+      },
+      {
+        "capability": "telemetry.v1",
+        "required": true
+      },
+      {
+        "capability": "inputModes.v1",
+        "required": true
+      }
+    ]
+  },
+  "activationEvents": [
+    "onCommand:acceptance.device-stdio.run",
+    "onCommand:acceptance.device-stdio.cancel",
+    "onPanel:acceptance.device-stdio.panel"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "id": "acceptance.device-stdio.run",
+        "title": {
+          "en": "Run synthetic checks"
+        }
+      },
+      {
+        "id": "acceptance.device-stdio.cancel",
+        "title": {
+          "en": "Cancel synthetic read"
+        }
+      }
+    ],
+    "panels": [
+      {
+        "id": "acceptance.device-stdio.panel",
+        "title": {
+          "en": "Synthetic device rows"
+        },
+        "location": "right",
+        "resource": {
+          "version": 2,
+          "path": "panel.json"
+        }
+      }
+    ],
+    "settings": {
+      "version": 1,
+      "path": "preferences.json"
+    }
+  }
+}

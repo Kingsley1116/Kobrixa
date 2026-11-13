@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { CoreRecoveryPort } from "@kobrixa/plugin-runtime";
 import type { Locale } from "../i18n/copy.js";
 import type {
   LocalizedText,
@@ -22,6 +23,27 @@ import { PluginLog } from "./plugin-log.js";
 export const localizedText = (text: LocalizedText, locale: Locale): string =>
   typeof text === "string" ? text : locale === "zh-TW" ? (text["zh-TW"] ?? text.en) : text.en;
 export const pluginRowId = (sourceKey: string): string => `plugin-${sourceKey.replace(":", "-")}`;
+
+/** Navigate only after main acknowledges the original opaque manage option. */
+export function pluginRecoveryPort(port: CoreRecoveryPort, onManage: () => void): CoreRecoveryPort {
+  return {
+    snapshot: (input) => port.snapshot(input),
+    onChanged: (listener) => port.onChanged(listener),
+    async act(input) {
+      const result = await port.act(input);
+      if (
+        result.ok &&
+        result.value.items.some(
+          (item) =>
+            item.id === input.itemId &&
+            item.actions.some((action) => action.id === input.actionId && action.kind === "manage"),
+        )
+      )
+        onManage();
+      return result;
+    },
+  };
+}
 
 const NOTICE_DISPLAY_LIMIT = 20;
 type PanelError =
@@ -196,11 +218,16 @@ export function PluginsPanel({ locale }: { locale: Locale }): React.JSX.Element 
             )}
           </div>
         )}
-        {plugin.source === "development" && (
+        {(plugin.canToggle || plugin.source === "development") && (
           <div className="plugins-actions">
-            {plugin.status !== "invalid" && (
+            {plugin.canToggle && !plugin.required && plugin.status !== "invalid" && (
               <button
-                disabled={rowBusy || (enabling && state.safeMode)}
+                disabled={
+                  rowBusy ||
+                  (enabling &&
+                    (state.safeMode ||
+                      (plugin.source === "development" && !state.developer.enabled)))
+                }
                 onClick={rowAction(() => window.kobrixa.plugins.setEnabled(key, enabling))}
               >
                 {enabling
@@ -210,21 +237,29 @@ export function PluginsPanel({ locale }: { locale: Locale }): React.JSX.Element 
                     : t.disable}
               </button>
             )}
-            <button
-              disabled={rowBusy || state.safeMode}
-              onClick={rowAction(() => window.kobrixa.plugins.reload(key))}
-            >
-              {t.reload}
-            </button>
-            {origin === "linked" && plugin.status === "invalid" && (
+            {plugin.canToggle && !plugin.required && (
               <button
-                disabled={rowBusy || state.safeMode}
-                onClick={rowAction(() => window.kobrixa.plugins.relinkFolder(key))}
+                disabled={
+                  rowBusy ||
+                  state.safeMode ||
+                  (plugin.source === "development" && !state.developer.enabled)
+                }
+                onClick={rowAction(() => window.kobrixa.plugins.reload(key))}
               >
-                {t.relink}
+                {t.reload}
               </button>
             )}
-            {origin === "linked" && (
+            {plugin.source === "development" &&
+              origin === "linked" &&
+              plugin.status === "invalid" && (
+                <button
+                  disabled={rowBusy || state.safeMode}
+                  onClick={rowAction(() => window.kobrixa.plugins.relinkFolder(key))}
+                >
+                  {t.relink}
+                </button>
+              )}
+            {plugin.source === "development" && origin === "linked" && (
               <button
                 disabled={rowBusy}
                 onClick={rowAction(() => window.kobrixa.plugins.unlink(key))}

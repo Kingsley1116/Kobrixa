@@ -1,0 +1,135 @@
+[
+  {
+    "source": "/private/tmp/kobrixa-b2-preferences-native-f26c75c/kobrixa-persistence-ZqfKuA/import-before-raw-pending.json",
+    "archive": "import-before-raw-pending.json.gz",
+    "rawBytes": 1314,
+    "rawSha256": "7a6023474f5568c2a3698543fbdfcd59575a015e6c966ce779ee4f00e537ec5c",
+    "archiveSha256": "0a05ac4055324af5da1459fa3d4af3ef8a229e4ed0dbe253aa66ba6aa69f1574"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-preferences-native-f26c75c/kobrixa-persistence-ZqfKuA/import-before-raw-pending.wire.jsonl",
+    "archive": "import-before-raw-pending.wire.jsonl.gz",
+    "rawBytes": 2940146,
+    "rawSha256": "6e8ca148bf9dcaa172bad36fd8e7666aec003433d96ace7eb5600c1bc326f26d",
+    "archiveSha256": "5b6c7f1f07bd3c29da316fce6a75e8820dab779d6d3b4df19ed61848ae566d58"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-preferences-native-f26c75c/kobrixa-persistence-ZqfKuA/import-before-raw-kill.candidate.json",
+    "archive": "import-before-raw-kill.candidate.json.gz",
+    "rawBytes": 188107,
+    "rawSha256": "6a03bb3cbadb2a254ba55a0032191c52879f29f6ae1abf44dd892fa70cc77760",
+    "archiveSha256": "a3798a31ad0194c6c5e97b9f1cfa70a6f53464050bc6cbb1bb9150645da2d4eb"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-preferences-native-f26c75c/kobrixa-persistence-ZqfKuA/import-before-raw-kill.json",
+    "archive": "import-before-raw-kill.json.gz",
+    "rawBytes": 1305,
+    "rawSha256": "cdc9c8841767ec34e870e568072c198479bdf7ac448c52e65775218178e1a316",
+    "archiveSha256": "7d9b28dae3a72c64d3481619085f6bbb647f7d446b009fe2591c807a32cc458f"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-preferences-native-f26c75c/kobrixa-persistence-ZqfKuA/import-before-raw-pending.candidate.json",
+    "archive": "import-before-raw-pending.candidate.json.gz",
+    "rawBytes": 3313124,
+    "rawSha256": "7a524a493bc9db3d383495ef769627c77f427ddadb996cf8dc42f0065d33bf28",
+    "archiveSha256": "8ef3674a05cdf68d1bd3a1e37574fe18a0452c62570155495e2c4ab0588fe4dc"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-preferences-native-f26c75c/kobrixa-persistence-ZqfKuA/entry.ts",
+    "archive": "entry.ts.gz",
+    "rawBytes": 864,
+    "rawSha256": "967372aa530a9b09d8597a655d46eb8c72ce9a33603fb22b9b02c6282c3dcabe",
+    "archiveSha256": "6f50769a34a2f13a3573ffe4d78103a8e4812a2c9208f6cfbbaf296d9aa7cd05"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-preferences-native-f26c75c/kobrixa-persistence-ZqfKuA/import-before-raw-capture.candidate.json.entry-failure.json",
+    "archive": "import-before-raw-capture.candidate.json.entry-failure.json.gz",
+    "rawBytes": 484,
+    "rawSha256": "c7244026678e0236524008907bc65ca03cc14d2a10aa5a993b81d82b7375e01c",
+    "archiveSha256": "9d4a8976b3779a478bfb21a7c94dfbea345ea9ac4eef1708f3114e75e5e95791"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-preferences-native-f26c75c/kobrixa-persistence-ZqfKuA/import-before-raw-capture.candidate.json.controller-failure.json",
+    "archive": "import-before-raw-capture.candidate.json.controller-failure.json.gz",
+    "rawBytes": 2605,
+    "rawSha256": "69090eaff58dcf1a501e0f1f5c778ae88283ee513495116bae1a4409a6b5bf7f",
+    "archiveSha256": "a5469d8d8901befca89f58e38727daffa99e5ec2a224f646ac0a1011b67cd608"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-preferences-native-f26c75c/kobrixa-persistence-ZqfKuA/import-before-raw-capture.json",
+    "archive": "import-before-raw-capture.json.gz",
+    "rawBytes": 1314,
+    "rawSha256": "77053717ea8ef7e8935ebc74dd4984741afb401910606d62dd1b799a0c55e45f",
+    "archiveSha256": "477fc57d5c3f2dfd96c80ea5e11ccb5dc08afab4d9db7e7da1723e0e8e592a04"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-preferences-native-f26c75c/kobrixa-persistence-ZqfKuA/import-before-raw-kill.receipt.json",
+    "archive": "import-before-raw-kill.receipt.json.gz",
+    "rawBytes": 188708,
+    "rawSha256": "9a5d024ac354a17d69122ddcb6837783e7de77ad09cdd3a5c8cbce720758c9d1",
+    "archiveSha256": "d07f0a5223cf52d73958f6a513cd45f06fe5a40faa02aef79f850ae7b58a9fcb"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-preferences-native-f26c75c/kobrixa-persistence-ZqfKuA/import-before-raw-pending.receipt.json",
+    "archive": "import-before-raw-pending.receipt.json.gz",
+    "rawBytes": 3313733,
+    "rawSha256": "c059f4e630cec856f0583bdb49d433ce7b575243f389eb97a1672c3f79e357e3",
+    "archiveSha256": "4153981f7a89316f2431d1e0f2eeb73e0e7aac9613a8abf0a3a239d2c3dc7c92"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-preferences-native-f26c75c/kobrixa-persistence-ZqfKuA/import-before-raw-capture.candidate.json.entry-failure-pending.json",
+    "archive": "import-before-raw-capture.candidate.json.entry-failure-pending.json.gz",
+    "rawBytes": 484,
+    "rawSha256": "a30c8aa9ffe2701399a627c88896bc87892a57d124ea4e73efbd2a5bb8e9fe3e",
+    "archiveSha256": "3c5b382c11544aff6a63631869a232545bfaa7ebd7bb0b5aa155a8956fe7cd8e"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-preferences-native-f26c75c/kobrixa-persistence-ZqfKuA/worker.ts",
+    "archive": "worker.ts.gz",
+    "rawBytes": 234,
+    "rawSha256": "ab76850350d0c2f1032474f5324d6c29ebff9eba6e81b337908a3ac38d9eb558",
+    "archiveSha256": "a0a7a7985e778ea19449b8ee717849f6e9b80c8405f8ec8921c6b4ba5e13f67b"
+  },
+  {
+    "source": "/private/tmp/b2-preferences-controller.mjs",
+    "archive": "b2-preferences-controller.mjs.gz",
+    "rawBytes": 1544,
+    "rawSha256": "a158584b3878a59a25e19378feac14ff5ac82faaeb04effa578431311f524269",
+    "archiveSha256": "8d08425fff8540fa103526f5bdb06ede5f51a5e26b46ee1a8b173719eec08ab1"
+  },
+  {
+    "source": "/private/tmp/b2-preferences-native1.log",
+    "archive": "b2-preferences-native1.log.gz",
+    "rawBytes": 22303,
+    "rawSha256": "1261f273789c5c43ddb2a8fbb4f3c420a70fbae17b099dc63cdeda2b486be940",
+    "archiveSha256": "d5e9030e56550c3040c66b497800084c997353d6794589f29302d5fe85bed1ca"
+  },
+  {
+    "source": "/private/tmp/b2-preferences-controller-tests.log",
+    "archive": "b2-preferences-controller-tests.log.gz",
+    "rawBytes": 6769,
+    "rawSha256": "02da65626d35acf5a16264bf5d5bc185ece0fc0c84ebf8d63329dfffcfe61f3a",
+    "archiveSha256": "8b8a220c1c187a48751bf1c9f9c6c6fcfd8a516731e293d53088d5d5b40047b7"
+  },
+  {
+    "source": "/private/tmp/b2-root-oracles-controller.log",
+    "archive": "b2-root-oracles-controller.log.gz",
+    "rawBytes": 46797,
+    "rawSha256": "aff53b1a734e99ff207eaf8801b5e1ab265cff57f7f7f2d84869e71d22a9b159",
+    "archiveSha256": "ad63f3a729c4f809156a9a880a1d0680f6ab0bf5a77a5dcbe8ec714c6b946509"
+  },
+  {
+    "source": "/private/tmp/b2-source-bootstrap-handoff.md",
+    "archive": "b2-source-bootstrap-handoff.md.gz",
+    "rawBytes": 5196,
+    "rawSha256": "96aa750f06a69f653ee625f2fc57db4600fc38f91d3a224b5a0a717ad68cb3d6",
+    "archiveSha256": "b57477db96fb0c77da5c82d572b9d6abc8606dfd7aad02f32d58effbd92a2185"
+  },
+  {
+    "source": "/private/tmp/b2-raw-independent-review.md",
+    "archive": "b2-raw-independent-review.md.gz",
+    "rawBytes": 4815,
+    "rawSha256": "dc504b3f48b93b214b7c955940357e19eae7b95ed31d0eb2a875438a94db8e97",
+    "archiveSha256": "e8ec9106fa1bd62b1cfd511952514cc6e063f3d9ae9116b3d17eca2c1290ffcf"
+  }
+]

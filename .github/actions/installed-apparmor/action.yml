@@ -1,0 +1,33 @@
+name: Installed Chromium AppArmor sandbox
+description: Permit user namespaces only for installed test copies, then retain kernel logs and unload.
+inputs:
+  operation:
+    description: load or unload
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        PROFILE_OPERATION: ${{ inputs.operation }}
+      run: |
+        case "$PROFILE_OPERATION" in
+          load)
+            if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)" = 1 ]; then
+              # Match Node's actual temp root, including Desktop's default /tmp.
+              installed_temp="$(node -p 'require("node:os").tmpdir()')"
+              node tests/desktop/builtin-installed-linux.mjs --apparmor-profile "$installed_temp" > "$RUNNER_TEMP/kobrixa-installed-apparmor.profile"
+              sudo apparmor_parser -r "$RUNNER_TEMP/kobrixa-installed-apparmor.profile"
+              echo "KOBRIXA_INSTALLED_APPARMOR_LOADED=1" >> "$GITHUB_ENV"
+            fi
+            ;;
+          unload)
+            installed_audit_status=0
+            sudo journalctl -k --no-pager -n 2000 > "$RUNNER_TEMP/kobrixa-installed-kernel.log" || installed_audit_status=$?
+            if [ "${KOBRIXA_INSTALLED_APPARMOR_LOADED:-}" = 1 ]; then
+              sudo apparmor_parser -R "$RUNNER_TEMP/kobrixa-installed-apparmor.profile"
+            fi
+            exit "$installed_audit_status"
+            ;;
+          *) echo "Unknown profile operation: $PROFILE_OPERATION" >&2; exit 1 ;;
+        esac

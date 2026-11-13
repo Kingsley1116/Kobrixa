@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { devicePreferencesExpression } from "./builtin-process-installed.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
@@ -11,6 +13,9 @@ import { checkPackagedStaticLanguages } from "./static-languages-packaged.mjs";
 
 // Exercise the shipped main/preload/renderer and dependency closure with an isolated profile.
 // No test update feed or test version is exposed in the production application.
+const devicePreferences = (js, until, digest) =>
+  until(() => js(devicePreferencesExpression(digest)));
+
 const profile = await mkdtemp(path.join(tmpdir(), "kobrixa-packaged-smoke-"));
 try {
   const version = await readVersion();
@@ -30,6 +35,20 @@ try {
         ? "kobrixa.exe"
         : "kobrixa",
   );
+  const resources = path.join(
+    installedDirectory,
+    process.platform === "darwin" ? "Kobrixa.app/Contents/Resources" : "resources",
+  );
+  const settingsDigest = createHash("sha256")
+    .update(
+      await readFile(
+        path.join(
+          resources,
+          "app.asar.unpacked/.vite/build/plugins/device-ev3/settings/preferences.json",
+        ),
+      ),
+    )
+    .digest("hex");
   await writeFile(
     path.join(profile, "updates.json"),
     JSON.stringify({ enabled: false, channel: "stable" }),
@@ -171,6 +190,7 @@ try {
     }
   }
 
+  let initialPreferences;
   await launch(async (js, send, until) => {
     await checkPackagedStaticLanguages({ js, send, until, profile, sourceKey: staticSourceKey });
     const restored = await js("window.kobrixa.workspace.restoreSession()");
@@ -194,16 +214,10 @@ try {
     assert.equal(state.phase, "idle");
     assert.deepEqual(state.preferences, { enabled: false, channel: "stable" });
     await js('window.kobrixa.updates.setPreferences({enabled:false,channel:"preview"})');
-    assert.equal((await js("window.kobrixa.device.getPreferences()")).usbAutoReconnect, true);
-    await js(
-      "window.kobrixa.device.setPreferences({usbRetryInterval:2000,usbRetryLimit:3,wifiConnectTimeout:10000})",
-    );
-    assert.equal(
-      await js(
-        "window.kobrixa.device.setPreferences({wifiConnectTimeout:0}).then(()=>false,()=>true)",
-      ),
-      true,
-    );
+    initialPreferences = await devicePreferences(js, until, settingsDigest);
+    assert.equal(initialPreferences.usbAutoReconnect, true);
+    // The retired write bridge cannot bypass the contributed settings form.
+    assert.equal(await js("typeof window.kobrixa.device.setPreferences"), "undefined");
     await js('localStorage.setItem("kobrixa-packaged-smoke", "retained")');
     await js('document.querySelector(".settings-trigger").click()');
     await pause(250);
@@ -235,16 +249,14 @@ try {
   );
   assert.equal(await readFile(path.join(inputPaths[1], "main.bp"), "utf8"), "LCD.Clear()\n");
   assert.equal(await readFile(path.join(inputPaths[1], "sample.toy"), "utf8"), "value 1\n");
-  await launch(async (js) => {
+  await launch(async (js, _send, until) => {
     assert.deepEqual((await js("window.kobrixa.updates.getState()")).preferences, {
       enabled: false,
       channel: "preview",
     });
     assert.equal(await js('localStorage.getItem("kobrixa-packaged-smoke")'), "retained");
-    const devicePreferences = await js("window.kobrixa.device.getPreferences()");
-    assert.equal(devicePreferences.usbRetryInterval, 2000);
-    assert.equal(devicePreferences.usbRetryLimit, 3);
-    assert.equal(devicePreferences.wifiConnectTimeout, 10000);
+    // The absent legacy write bridge changed nothing, and the settings survive a restart.
+    assert.deepEqual(await devicePreferences(js, until, settingsDigest), initialPreferences);
     await pause(250);
     assert.match(
       await js('document.querySelector(".view-lines").textContent'),

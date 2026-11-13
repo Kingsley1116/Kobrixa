@@ -195,7 +195,9 @@ export class UpdateService {
     this.patch({ phase: "preparing", error: undefined });
   }
   cancelInstall(): void {
-    if (this.preparing) this.patch({ phase: "ready" });
+    if (!this.preparing) return;
+    this.patch({ phase: "ready" });
+    this.#notifyInstallFailed();
   }
   install(): void {
     try {
@@ -225,6 +227,9 @@ export class UpdateService {
 export class UpdateOperationGate {
   private active = 0;
   constructor(private service: () => UpdateService | undefined) {}
+  assertDevice(operation: OperationClass): void {
+    assertDeviceUpdateAdmission(this.service(), operation);
+  }
   get busy(): boolean {
     return this.active > 0;
   }
@@ -233,13 +238,7 @@ export class UpdateOperationGate {
     if (
       service?.installing ||
       (service?.preparing &&
-        ![
-          "workspace:write",
-          "workspace:save-draft",
-          "workspace:save-session",
-          "device:motor-test-stop",
-          "device:motor-test-state",
-        ].includes(channel))
+        !["workspace:write", "workspace:save-draft", "workspace:save-session"].includes(channel))
     )
       throw new Error("busy");
     this.active++;
@@ -249,4 +248,14 @@ export class UpdateOperationGate {
       this.active--;
     }
   }
+}
+
+import type { OperationClass } from "@kobrixa/plugin-runtime";
+export function assertDeviceUpdateAdmission(
+  state: { preparing: boolean; installing: boolean } | undefined,
+  operation: OperationClass,
+): void {
+  if (!state || (!state.preparing && !state.installing)) return;
+  if (operation === "safety-stop" || operation === "reconciliation") return;
+  throw new Error("The application is busy preparing an update.");
 }

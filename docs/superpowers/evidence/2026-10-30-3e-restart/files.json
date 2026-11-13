@@ -1,0 +1,56 @@
+[
+  {
+    "file": "restart-receipt.json.gz",
+    "bytes": 60467,
+    "sha256": "0950f9b3763a8217eedee4ccf807e09f88a8e96e859d2aef404cae8aa419596f",
+    "gzipSha256": "72f1027b0aaecb8eeb2914913a693d2239e7bb72d3d50aabf338e3a15c7cbbfb"
+  },
+  {
+    "file": "restart-evidence.json.gz",
+    "bytes": 155674,
+    "sha256": "0a6a84264c78e0da28195f8b962cd6392b8741f9dd49861c9c26d5a598a76e76",
+    "gzipSha256": "216cdad29d184bae4b7d9926e479f43c8fe28596c03b2721686b58cfbabe4ae3"
+  },
+  {
+    "file": "artifact-identity.json.gz",
+    "bytes": 59088,
+    "sha256": "f94a829be549ff330fcd82f792a13fd26bba5dde6d53fe114189c1d90ded0bbf",
+    "gzipSha256": "ade962e433863891907b535ac9e42ac534cf95627ac8654777fb54549d00f372"
+  },
+  {
+    "file": "producer-restart-1.json.gz",
+    "bytes": 68148,
+    "sha256": "61d39fa3576773d2b8766b4880973242acf612b964bd02a792345073f01fde74",
+    "gzipSha256": "f5f84e9f261e5682f6748cc6a708bf2ce3169fed8483e7290d81f3799f3177f4"
+  },
+  {
+    "file": "producer-restart-2.json.gz",
+    "bytes": 48684,
+    "sha256": "1e05b6c46b86ada0b9b8670962acc8b051cf9f126447ecb9713d2c3313ddf3cf",
+    "gzipSha256": "5944dd83cafeed53cd7bae54a38be3556210dd58cab6876d7648b71b02703404"
+  },
+  {
+    "file": "process-restart-1.json.gz",
+    "bytes": 109,
+    "sha256": "059a8f6fe7e16f18be9b0a81eedafcf9ec9faf5a7ad4f4b0b5d3973dbc1901f8",
+    "gzipSha256": "2c1ef6865c8becdbb092fbfda03fef88228cb6832ef4b61788b454ab2d51bd6d"
+  },
+  {
+    "file": "process-restart-2.json.gz",
+    "bytes": 110,
+    "sha256": "7eed8e504aec1dc27c78d3645956359770c3b7707c75b73bcaf5ab0d51857b0f",
+    "gzipSha256": "e2fbeb1caedea605c746e866467fabe413018a0620421b7c72b45dd781df3275"
+  },
+  {
+    "file": "native-restart-1.log.gz",
+    "bytes": 1594,
+    "sha256": "42cf95f84c35aa19d741e795139b4464881f2c9620ad303e53c5cdfa2a3b7667",
+    "gzipSha256": "5a70c6d42a888703127cdb5b004b59009a654c80671ff90a8474a8b321a680de"
+  },
+  {
+    "file": "native-restart-2.log.gz",
+    "bytes": 1904,
+    "sha256": "55db6c2cf9ff8478e25a50efbf88e24537667836be0641414f4a08c2e1575eb8",
+    "gzipSha256": "0325fa7a4e4d89bcb9048627cc322cd621da8ddb18dcc4cb18280910adea58a6"
+  }
+]

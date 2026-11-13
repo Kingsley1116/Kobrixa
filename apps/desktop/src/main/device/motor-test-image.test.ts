@@ -229,3 +229,16 @@ describe("finite angle motor-test image", () => {
     );
   });
 });
+
+import {
+  ARM_TIMEOUT_MS,
+  MOVEMENT_TIMEOUT_MS,
+  RESULT_GRACE_MS,
+  POLL_MS,
+} from "./motor-test-image.js";
+import { it as stage3ClockTest, expect as stage3ClockExpect } from "vitest";
+stage3ClockTest("F06 freezes firmware arm/watchdog/grace/poll clocks", () => {
+  stage3ClockExpect([ARM_TIMEOUT_MS, MOVEMENT_TIMEOUT_MS, RESULT_GRACE_MS, POLL_MS]).toEqual([
+    2000, 10000, 2000, 10,
+  ]);
+});

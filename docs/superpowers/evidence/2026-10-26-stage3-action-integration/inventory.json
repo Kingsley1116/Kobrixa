@@ -1,0 +1,58 @@
+[
+  {
+    "file": "native-receipt.json.gz",
+    "source": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/integrated-action-replay-native.json",
+    "uncompressedBytes": 161702,
+    "uncompressedSha256": "7fdef338f9f2eb39b956d659f55e7cfe752fc74c71a8aa6d834a4a0dbe5e2194",
+    "sha256": "f9c7f46785d9191bfbc6d9f4d56842da459a83a4d03ee041475e3648ce5481e3"
+  },
+  {
+    "file": "candidate.json.gz",
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-KwkHZA/action-replay.candidate.json",
+    "uncompressedBytes": 70796,
+    "uncompressedSha256": "64a1e4c609481133ce7cd7c8f92e07f340ce8e066cc975940c6f7c3d917b39b9",
+    "sha256": "91a78b27d59fba9badceae57abe1f2d74bd2207caad98fbe2c0fc98fc4643d67"
+  },
+  {
+    "file": "native-config.json.gz",
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-KwkHZA/action-replay.json",
+    "uncompressedBytes": 1171,
+    "uncompressedSha256": "bb7e48a00d5f1811568ca86c6332bce496a0df1a5f6ec2f7514a5713d3ea20c3",
+    "sha256": "dcad14d03369d22de4f12aa72865b4feca4e6536f4a2a8c2eaf58049907c2378"
+  },
+  {
+    "file": "observation.json.gz",
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-KwkHZA/action-replay-xVkN2u/action-replay-observation.json",
+    "uncompressedBytes": 107397,
+    "uncompressedSha256": "6fdefaa57d5aeed8d3958accd4fb23a986894cd072416e482e3b4ad58d3588e0",
+    "sha256": "af2d9cc28126faab96b10717c038c085fc4ecc31c6d1b3df06a643a53f4bc1bb"
+  },
+  {
+    "file": "native.log.gz",
+    "source": "/private/tmp/stage3-integrated-action-native.log",
+    "uncompressedBytes": 13496,
+    "uncompressedSha256": "86d69d86fa0adae103be6d0ca86bf9f18b92f3985ce35ec6ab41d81427f946af",
+    "sha256": "ad2713f63cb839531f7d6203b98ed5bf4ab919eb05597326a87d2bafad1d2f27"
+  },
+  {
+    "file": "static-native.log.gz",
+    "source": "/private/tmp/stage3-static-fixed-native.log",
+    "uncompressedBytes": 6766,
+    "uncompressedSha256": "59e1dc27b7d37f0bfa134cf2cbcebd686b2fc0da67cfe2b080e8c7190edc84a0",
+    "sha256": "d28b0274b44dcf087a34d7725d287da2de485b2fc55acccb7337d8c9d1a5201f"
+  },
+  {
+    "file": "controller-tests.log.gz",
+    "source": "/private/tmp/stage3-action-integration-tests.log",
+    "uncompressedBytes": 232,
+    "uncompressedSha256": "bbefa70674287687e860ee47d8c53a6112a3ea478e32cc070c5417250cb8eedb",
+    "sha256": "3d1e4425496041439b0b3cc7f6f36cb08824445d52c943aeca9685b2c6d5883b"
+  },
+  {
+    "file": "desktop-types.log.gz",
+    "source": "/private/tmp/stage3-action-integration-types.log",
+    "uncompressedBytes": 32,
+    "uncompressedSha256": "38ac890c60e7f38d59ddfb410325cdfb5fca83c9411765c5481754e01c021630",
+    "sha256": "a60eba922b5bc3d00aca42d68c9f9630d5d251d066c3ebf5595ed53ef4fbbd29"
+  }
+]

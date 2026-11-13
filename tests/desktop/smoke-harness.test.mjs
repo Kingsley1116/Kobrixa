@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
-import ts from "typescript";
+import { buildSync } from "esbuild";
+import { createMonitorFixture } from "./monitor-smoke.mjs";
+import { fileURLToPath } from "node:url";
 import {
   basicPlusSmokeCatalog,
   createStaticLanguagesHarness,
@@ -26,6 +29,8 @@ function loadPreload(source = preload, platform = "win32") {
   };
   runInNewContext(source, {
     exports: {},
+    TextEncoder,
+    TextDecoder,
     process: { platform },
     require: () => ({
       contextBridge: {
@@ -99,18 +104,200 @@ function assertApiKeys(actual, expected, prefix = "kobrixa") {
   }
 }
 
+test("smoke persistence facets preserve bindings, watch identities and one recovery subscription", async () => {
+  const { api, calls, ipcRenderer } = loadPreload();
+  const binding = {
+    owner: {
+      sourceKey: "builtin:test.settings",
+      pluginId: "test.settings",
+      uiResourceGeneration: 1,
+    },
+    scope: {
+      hostEpoch: "00000000-0000-4000-8000-000000000001",
+      workbenchInstance: "00000000-0000-4000-8000-000000000002",
+    },
+    resourceDigest: "a".repeat(64),
+  };
+  const change = {
+    schemaVersion: 1,
+    expectedRevision: null,
+    changes: [{ key: "test.enabled", value: true }],
+  };
+  await api.plugins.settings.open({
+    sourceKey: binding.owner.sourceKey,
+    resourceDigest: binding.resourceDigest,
+  });
+  await api.plugins.settings.read(binding);
+  await api.plugins.settings.update(binding, change);
+  assert.deepEqual(structuredClone(calls.at(-1)), ["plugins:settings:update", binding, change]);
+  await api.plugins.settings.reset(binding, {
+    schemaVersion: 1,
+    expectedRevision: null,
+    keys: ["test.enabled"],
+  });
+  let changes = 0;
+  const off = api.plugins.settings.watch(binding, () => changes++);
+  await Promise.resolve();
+  assert.equal(changes, 1);
+  ipcRenderer.emit("plugins:settings:changed", {}, { binding, watch: 2 });
+  assert.equal(changes, 1);
+  ipcRenderer.emit("plugins:settings:changed", {}, { binding, watch: 1 });
+  assert.equal(changes, 2);
+  off();
+  off();
+  ipcRenderer.emit("plugins:settings:changed", {}, { binding, watch: 1 });
+  assert.equal(changes, 2);
+  assert.equal(calls.filter((row) => row[0] === "plugins:settings:unwatch").length, 1);
+  api.plugins.settings.dispose(binding);
+  await api.plugins.legacyPreferences.challenge("test.preferences");
+  const snapshot = {
+    nonce: binding.scope.hostEpoch,
+    scope: binding.scope,
+    entries: [{ key: "test.layout", raw: "001" }],
+  };
+  await api.plugins.legacyPreferences.submit(snapshot);
+  assert.deepEqual(structuredClone(calls.at(-1)), [
+    "persistence:legacy-preferences-submit",
+    snapshot,
+  ]);
+  const seen = [];
+  const offOpen = api.plugins.persistenceRecovery.onOpen((value) => seen.push(value));
+  const offChanged = api.plugins.persistenceRecovery.onChanged(() => seen.push("changed"));
+  assert.equal(
+    calls.filter((row) => row[0] === "plugins:persistence-recovery:subscribe").length,
+    1,
+  );
+  const selected = { itemId: binding.scope.hostEpoch };
+  ipcRenderer.emit("plugins:persistence-recovery:open", {}, selected);
+  await api.plugins.persistenceRecovery.snapshot(selected);
+  await api.plugins.persistenceRecovery.act({
+    ...selected,
+    optionId: binding.scope.workbenchInstance,
+  });
+  offOpen();
+  offOpen();
+  assert.equal(
+    calls.filter((row) => row[0] === "plugins:persistence-recovery:unsubscribe").length,
+    0,
+  );
+  ipcRenderer.emit("plugins:persistence-recovery:changed", {});
+  offChanged();
+  ipcRenderer.emit("plugins:persistence-recovery:changed", {});
+  assert.deepEqual(seen, [selected, "changed"]);
+  assert.equal(
+    calls.filter((row) => row[0] === "plugins:persistence-recovery:unsubscribe").length,
+    1,
+  );
+  assert.equal(ipcRenderer.listenerCount("plugins:settings:changed"), 0);
+});
+
+test("a disposed smoke settings watcher ignores a late registration reply", async () => {
+  const { api, ipcRenderer } = loadPreload();
+  let resolve;
+  ipcRenderer.invoke = (channel) =>
+    channel === "plugins:settings:watch"
+      ? new Promise((done) => {
+          resolve = done;
+        })
+      : Promise.resolve();
+  let changes = 0;
+  const off = api.plugins.settings.watch(
+    { scope: {}, owner: {}, resourceDigest: "a".repeat(64) },
+    () => changes++,
+  );
+  off();
+  resolve();
+  await Promise.resolve();
+  assert.equal(changes, 0);
+  assert.equal(ipcRenderer.listenerCount("plugins:settings:changed"), 0);
+});
+
+test("smoke UI observers use separate targeted channels and dispose once", async () => {
+  const { api, calls, ipcRenderer } = loadPreload();
+  const seen = [[], []];
+  const first = api.plugins.ui.onEvent((value) => seen[0].push(value));
+  const second = api.plugins.ui.onEvent((value) => seen[1].push(value));
+  ipcRenderer.emit("plugins:ui:event:2", {}, { type: "catalog", revision: 4 });
+  assert.deepEqual(seen, [[], [{ type: "catalog", revision: 4 }]]);
+  first();
+  first();
+  second();
+  assert.equal(ipcRenderer.listenerCount("plugins:ui:event:1"), 0);
+  assert.equal(ipcRenderer.listenerCount("plugins:ui:event:2"), 0);
+  assert.deepEqual(
+    calls.filter((row) => row[0] === "plugins:ui:unsubscribe"),
+    [
+      ["plugins:ui:unsubscribe", 1],
+      ["plugins:ui:unsubscribe", 2],
+    ],
+  );
+  await api.plugins.ui.snapshot({ binding: "opaque" });
+  assert.deepEqual(calls.at(-1), ["plugins:ui:snapshot", { binding: "opaque" }]);
+});
+
+for (const [method, channel] of [
+  ["interact", "interact"],
+  ["syncForm", "form-sync"],
+  ["dataRead", "data-read"],
+  ["dataSnapshot", "data-snapshot"],
+]) {
+  test(`smoke UI ${method} forwards opaque input, replies and failures across disposal`, async () => {
+    const { api, calls, ipcRenderer } = loadPreload();
+    const input = { binding: { generation: 7 }, revision: 3, requestId: "request" };
+    const seen = [];
+    const off = api.plugins.ui.onEvent((event) => seen.push(event));
+    let resolve;
+    ipcRenderer.invoke = (...args) => {
+      calls.push(args);
+      return new Promise((done) => {
+        resolve = done;
+      });
+    };
+    const pending = api.plugins.ui[method](input);
+    assert.deepEqual(calls.at(-1), [`plugins:ui:${channel}`, input]);
+    assert.equal(calls.at(-1)[1], input);
+    const finish = resolve;
+    const event = { type: "data", revision: 4 };
+    ipcRenderer.emit("plugins:ui:event:1", {}, event);
+    off();
+    off();
+    ipcRenderer.emit("plugins:ui:event:1", {}, event);
+    assert.deepEqual(seen, [event]);
+    assert.equal(ipcRenderer.listenerCount("plugins:ui:event:1"), 0);
+    assert.equal(calls.filter(([name]) => name === "plugins:ui:unsubscribe").length, 1);
+    const reply = { ok: true, value: { revision: 4 } };
+    finish(reply);
+    assert.equal(await pending, reply);
+    const failure = new Error("UI request failed");
+    ipcRenderer.invoke = async () => {
+      throw failure;
+    };
+    await assert.rejects(api.plugins.ui[method](input), (error) => error === failure);
+  });
+}
+
 test("smoke preload contains the real preload's complete API key tree", async () => {
   const source = await readFile(
     new URL("../../apps/desktop/src/preload/index.ts", import.meta.url),
     "utf8",
   );
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
-  }).outputText;
+  const compiled = buildSync({
+    stdin: {
+      contents: source,
+      loader: "ts",
+      resolveDir: fileURLToPath(new URL("../../apps/desktop/src/preload/", import.meta.url)),
+    },
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+    external: ["electron"],
+    write: false,
+  }).outputFiles[0].text;
   for (const platform of ["win32", "darwin", "linux"]) {
     const real = loadPreload(compiled, platform).api;
     const smoke = loadPreload(preload, platform).api;
     assertApiKeys(smoke, real);
+    assert.deepEqual(Object.keys(smoke.device).sort(), Object.keys(real.device).sort());
     assert.equal(Object.hasOwn(smoke, "windowChrome"), Object.hasOwn(real, "windowChrome"));
   }
   const real = loadPreload(compiled).api;
@@ -166,4 +353,93 @@ test("smoke preload forwards the frozen static-language IPC and disposes event l
   ipcRenderer.emit("plugins:event", {}, event);
   assert.deepEqual(received, [event]);
   assert.equal(ipcRenderer.listenerCount("plugins:event"), 0);
+});
+
+test("smoke battery fixture drives the retained MonitorService watch port and releases demand", async () => {
+  const source = buildSync({
+    entryPoints: ["apps/desktop/src/main/device/monitor-service.ts"],
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+    packages: "external",
+    write: false,
+  }).outputFiles[0].text;
+  const module = { exports: {} };
+  runInNewContext(source, {
+    module,
+    exports: module.exports,
+    require: createRequire(import.meta.url),
+    TextEncoder,
+    TextDecoder,
+  });
+  const { MonitorService } = module.exports;
+  const fixture = createMonitorFixture();
+  const updates = [];
+  const service = new MonitorService(fixture, (update) => updates.push(update));
+  try {
+    await service.watch("core-session", true);
+    await service.watch("core-session", true);
+    assert.deepEqual(fixture.stats(), { calls: 1, active: 1, releases: 0 });
+    assert.equal(updates.length, 1);
+    assert.deepEqual(structuredClone(updates[0].snapshot.battery), { percent: 76, voltage: 7.42 });
+    await service.disconnect("core-session");
+    assert.deepEqual(fixture.stats(), { calls: 1, active: 0, releases: 1 });
+    await service.watch("replacement", true);
+    await service.pause();
+    assert.deepEqual(fixture.stats(), { calls: 2, active: 0, releases: 2 });
+    for (const name of [
+      "deviceMonitor",
+      "deviceInputModes",
+      "deviceSetInputMode",
+      "deviceDiscover",
+      "deviceConnect",
+      "deviceConnectWifi",
+    ])
+      assert.equal(fixture.handles(name), false);
+    await assert.rejects(fixture.handle("deviceConnect", []), /Unknown core device fixture call/);
+  } finally {
+    await service.dispose();
+  }
+  assert.deepEqual(fixture.stats(), { calls: 2, active: 0, releases: 2 });
+});
+
+test("retired device oracles are unreachable from desktop and delivered builtin production entries", () => {
+  // Include workers spawned by URL as well as Forge's main/preload/renderer and
+  // delivered builtin process entries. In-memory only: no shared build outputs.
+  const entries = [
+    "apps/desktop/src/main/index.ts",
+    "apps/desktop/src/preload/index.ts",
+    "apps/desktop/src/renderer/index.tsx",
+    "apps/desktop/src/main/workspace/build-worker.ts",
+    "apps/desktop/src/main/language/language-worker.ts",
+    "apps/desktop/src/main/plugins/persistence/worker.ts",
+    "apps/desktop/src/simulation/worker.ts",
+    "plugins/motor-test/src/main.ts",
+    "plugins/sensor-lab/src/main.ts",
+    "plugins/device-ev3/src/main.ts",
+  ];
+  const result = buildSync({
+    entryPoints: entries,
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    packages: "external",
+    loader: { ".css": "empty", ".svg": "dataurl" },
+    write: false,
+    outdir: "/tmp/w07c-in-memory-only",
+    metafile: true,
+    logLevel: "silent",
+  });
+  const inputs = Object.keys(result.metafile.inputs);
+  for (const entry of entries)
+    assert.ok(inputs.includes(entry), `Missing production entry ${entry}`);
+  assert.ok(inputs.includes("apps/desktop/src/renderer/device/monitor-controller.ts"));
+  for (const input of inputs)
+    assert.doesNotMatch(
+      input,
+      /(?:legacy-(?:execution|monitor)\.fixture|monitor-panel|parity-fixtures|\.test\.)/,
+    );
+  const output = result.outputFiles.map((file) => file.text).join("\n");
+  assert.match(output, /CoreBatteryMonitor/);
+  assert.doesNotMatch(output, /class MonitorController|class MonitorPanel|device:set-input-mode/);
 });

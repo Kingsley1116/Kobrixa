@@ -174,3 +174,14 @@ export function formatSize(bytes: number): string {
       ? `${(bytes / 1024).toFixed(1)} KB`
       : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+export const confirmationCopy = {
+  en: {
+    renew: "Continue waiting",
+    hint: "Confirmation expires after 120 seconds. Continue waiting explicitly to renew it, up to 10 minutes total.",
+  },
+  "zh-TW": {
+    renew: "繼續等待",
+    hint: "確認閒置 120 秒後到期；請明確選擇繼續等待以續租，總時間最多 10 分鐘。",
+  },
+} as const;

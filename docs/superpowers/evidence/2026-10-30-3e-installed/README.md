@@ -1,0 +1,7 @@
+# Device installed payload acceptance
+
+Actual Linux arm64 run at harness commit `674323d`: **4/4 scenarios passed**, healthy, absent entry, missing settings resource and tampered UI resource. Each has a fresh profile. The original production device leaf from `253ca20` is unchanged (resource index SHA-256 `e2c56274ca65a21ef76c130eed6b1854e33838d806b6c1c1edb5a37d148cb368`). Healthy launches the real shipped JS process, public transport, broker fake provider, persistence worker and generic renderer. It imports six original file values plus three original renderer values, then checks trusted actions, settings CAS/reset and cleanup. Negative scenarios remain unavailable without feature activation.
+
+The copied Electron runtime runs with sandbox/context isolation, empty executable PATH, no network and enforced checkout/dependency denial. The claim is an installed production plugin in an acceptance host, **not the unchanged full application** or physical hardware. Full packaged application startup is tracked separately and remains blocked. No Stage3 aggregate completion claim.
+
+The original three failed attempts are preserved outside this receipt. Attempt 3 correctly failed because the fixture file was absent; `392105e` adds only a hash-verified immutable fixture copied to new scenario profiles. No oracle was relaxed. Controller exit was zero; original producer hashes match the outside receipt. `files.json` preserves raw and compressed SHA-256 values. Runtime binaries and private profiles are not committed.

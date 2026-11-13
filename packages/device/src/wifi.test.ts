@@ -1,7 +1,11 @@
+import type * as Net from "node:net";
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const mock = vi.hoisted(() => ({ createConnection: vi.fn() }));
-vi.mock("node:net", () => ({ default: { createConnection: mock.createConnection } }));
+vi.mock("node:net", async (importOriginal) => {
+  const actual = await importOriginal<typeof Net>();
+  return { ...actual, default: { ...actual, createConnection: mock.createConnection } };
+});
 import { WiFiTransport } from "./wifi.js";
 class Socket extends EventEmitter {
   destroyed = false;
@@ -82,3 +86,44 @@ it("retains the accepted socket and removes handshake timers/listeners", async (
   expect(socket.listenerCount("data")).toBe(1); // Framed connection owns its new listener.
   expect(vi.getTimerCount()).toBe(0);
 });
+
+import { bindDeviceConnection as bindStage3 } from "./io-boundary.js";
+import { it as stage3It, expect as stage3Expect } from "vitest";
+stage3It(
+  "F21 bound connection never forwards an ordinary cancellation to the transport",
+  async () => {
+    const work = new AbortController(),
+      transport = new AbortController();
+    let received: AbortSignal | undefined;
+    const bound = bindStage3(
+      {
+        exchange: async (_bytes, signal) => {
+          received = signal;
+          return Uint8Array.of(2);
+        },
+        transmit: async () => {},
+        close: async () => {},
+      },
+      {
+        step: "ordinary",
+        signal: transport.signal,
+        boundary: { beforeExchange() {}, afterExchange() {}, timeoutMs: () => 5000 },
+        exchange: (_payload, invoke) => invoke(transport.signal, 5000),
+      },
+    );
+    work.abort();
+    await bound.exchange(Uint8Array.of(0), work.signal);
+    stage3Expect(received).toBe(transport.signal);
+    stage3Expect(received?.aborted).toBe(false);
+  },
+);
+
+it.each(["brick.local", "fe80::1%en0", "999.1.1.1"])(
+  "F02 rejects unbound endpoint %s before socket creation",
+  async (address) => {
+    await expect(
+      new WiFiTransport().connect({ ...target, address }, new AbortController().signal),
+    ).rejects.toThrow("literal");
+    expect(mock.createConnection).not.toHaveBeenCalled();
+  },
+);

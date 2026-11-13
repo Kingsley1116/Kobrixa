@@ -6,3 +6,5 @@
 /pnpm-lock.yaml
 packages/plugin-protocol/schema/plugin-protocol.schema.json
 sdks/python/kobrixa/plugin-protocol.schema.json
+# Retained experiment outputs are byte-addressed evidence, not formatter inputs.
+docs/superpowers/evidence/**

@@ -71,7 +71,7 @@ export interface Settings extends EditorPreferences {
   filesWidth: number;
   deviceWidth: number;
   problemsHeight: number;
-  rightPanel: "ev3" | "collab" | null;
+  rightPanel: "ev3" | "collab" | "plugins" | null;
   ev3Tab: "connection" | "monitor" | "files";
   bottomTab: "problems" | "activity";
   toolTab: "connection" | "monitor" | "files" | "activity" | "collab";
@@ -87,7 +87,7 @@ export const SETTINGS_CHOICES = {
   codeSize: CODE_SIZES,
   motion: ["system", "reduce"],
   indentSize: [2, 4],
-  rightPanel: ["ev3", "collab", null],
+  rightPanel: ["ev3", "collab", "plugins", null],
   ev3Tab: ["connection", "monitor", "files"],
   bottomTab: ["problems", "activity"],
   toolTab: ["connection", "monitor", "files", "activity", "collab"],
@@ -205,8 +205,16 @@ export function readSettings(storage: Pick<Storage, "getItem">, language: string
 export class SettingsStore {
   private state: SettingsSnapshot;
   private wifiAddress = "";
+  private devicePreferencesFrozen = false;
   readonly defaults: Settings;
   private listeners = new Set<() => void>();
+  private transitions = new Set<(next: Settings) => void>();
+  beforeChange = (listener: (next: Settings) => void): (() => void) => {
+    this.transitions.add(listener);
+    return () => {
+      this.transitions.delete(listener);
+    };
+  };
   constructor(
     private storage: StorageAccess,
     language: string,
@@ -221,7 +229,13 @@ export class SettingsStore {
     }
   }
   getWifiAddress = (): string => this.wifiAddress;
+  /** Called before requesting the host's legacy snapshot challenge. Other editor
+   * and appearance settings remain writable; the three original keys stay intact. */
+  freezeDevicePreferences(): void {
+    this.devicePreferencesFrozen = true;
+  }
   rememberAddress(address: string): void {
+    if (this.devicePreferencesFrozen) throw new Error("Device preferences writer is frozen.");
     if (!this.state.values.rememberWifiAddress) return;
     this.wifiAddress = address.trim();
     this.save();
@@ -238,36 +252,46 @@ export class SettingsStore {
     key: K,
     value: Settings[K] | ((previous: Settings[K]) => Settings[K]),
   ): void {
+    if (this.devicePreferencesFrozen && (key === "connectionMode" || key === "rememberWifiAddress"))
+      throw new Error("Device preferences writer is frozen.");
     const next = typeof value === "function" ? value(this.state.values[key]) : value;
     if (next === this.state.values[key]) return;
-    this.state = { ...this.state, values: { ...this.state.values, [key]: next } };
+    const values = { ...this.state.values, [key]: next };
+    this.transitions.forEach((listener) => listener(values));
+    this.state = { ...this.state, values };
     if (key === "rememberWifiAddress" && !next) this.wifiAddress = "";
     this.save();
   }
   resetLayout = (): void => {
-    this.state = {
-      ...this.state,
-      values: {
-        ...this.state.values,
-        ...LAYOUT_DEFAULTS,
-        toolTab: "connection",
-        rightPanel: null,
-        ev3Tab: "connection",
-        bottomTab: "problems",
-      },
+    const values: Settings = {
+      ...this.state.values,
+      ...LAYOUT_DEFAULTS,
+      toolTab: "connection",
+      rightPanel: null,
+      ev3Tab: "connection",
+      bottomTab: "problems",
     };
+    this.transitions.forEach((listener) => listener(values));
+    this.state = { ...this.state, values };
     this.save();
   };
   save = (): void => {
     let saveError = false;
     try {
       const storage = this.storage();
-      storage.setItem(
-        WIFI_ADDRESS_KEY,
-        this.state.values.rememberWifiAddress ? this.wifiAddress : "",
-      );
-      for (const key of Object.keys(SETTINGS_KEYS) as (keyof Settings)[])
+      if (!this.devicePreferencesFrozen)
+        storage.setItem(
+          WIFI_ADDRESS_KEY,
+          this.state.values.rememberWifiAddress ? this.wifiAddress : "",
+        );
+      for (const key of Object.keys(SETTINGS_KEYS) as (keyof Settings)[]) {
+        if (
+          this.devicePreferencesFrozen &&
+          (key === "connectionMode" || key === "rememberWifiAddress")
+        )
+          continue;
         storage.setItem(SETTINGS_KEYS[key], String(this.state.values[key]));
+      }
     } catch {
       saveError = true;
     }

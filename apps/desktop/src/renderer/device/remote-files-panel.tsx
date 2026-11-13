@@ -11,7 +11,7 @@ import {
   type RemoteFilesController,
   type RemoteFilesState,
 } from "./remote-files.js";
-import { remoteCopy, formatSize, type RemoteCopy } from "./remote-files-copy.js";
+import { remoteCopy, confirmationCopy, formatSize, type RemoteCopy } from "./remote-files-copy.js";
 import { visibleRemoteEntries } from "./remote-selection.js";
 import { Picker } from "../components/picker.js";
 import { selectVisible } from "../components/selection.js";
@@ -300,16 +300,20 @@ function BatchStatus({
   );
 }
 function DeleteConfirmation({
+  locale,
   batch,
   path,
   t,
   onClose,
+  onRenew,
   onExecute,
 }: {
   batch: FileBatchSnapshot;
   path: string;
+  locale: Locale;
   t: RemoteCopy;
   onClose(): void;
+  onRenew(): void;
   onExecute(): void;
 }): React.JSX.Element {
   const submitted = useRef(false);
@@ -343,6 +347,10 @@ function DeleteConfirmation({
           </li>
         ))}
       </ul>
+      <p>{confirmationCopy[locale].hint}</p>
+      <button type="button" onClick={onRenew}>
+        {confirmationCopy[locale].renew}
+      </button>
       <DialogActions>
         <button type="button" data-modal-initial onClick={onClose}>
           {t.cancel}
@@ -368,6 +376,7 @@ function BatchConfirmation({
   locale,
   t,
   onClose,
+  onRenew,
   onExecute,
 }: {
   batch: FileBatchSnapshot;
@@ -375,6 +384,7 @@ function BatchConfirmation({
   locale: Locale;
   t: RemoteCopy;
   onClose(): void;
+  onRenew(): void;
   onExecute(policy: "skip" | "replace"): void;
 }): React.JSX.Element {
   const [policy, setPolicy] = useState<"skip" | "replace">("skip");
@@ -384,6 +394,8 @@ function BatchConfirmation({
   if (batch.action === "delete")
     return (
       <DeleteConfirmation
+        locale={locale}
+        onRenew={onRenew}
         batch={batch}
         path={path}
         t={t}
@@ -431,6 +443,10 @@ function BatchConfirmation({
           />
         </label>
       )}
+      <p>{confirmationCopy[locale].hint}</p>
+      <button type="button" onClick={onRenew}>
+        {confirmationCopy[locale].renew}
+      </button>
       <DialogActions>
         <button type="button" data-modal-initial onClick={onClose}>
           {t.cancel}
@@ -759,6 +775,7 @@ export function RemoteFilesPanel({
       {confirm && active && state.batch?.phase === "ready" && (
         <BatchConfirmation
           key={state.batch.planId}
+          onRenew={() => void controller.renewConfirmation()}
           batch={state.batch}
           path={state.path}
           locale={locale}

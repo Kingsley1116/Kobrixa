@@ -141,8 +141,8 @@ export class WiFiTransport implements DeviceTransport {
     signal: AbortSignal,
     options: WiFiConnectOptions = {},
   ): Promise<EV3DeviceSession> {
-    if (!target.address)
-      throw new DeviceOperationError("connection", "A Wi-Fi address is required.");
+    if (!target.address || !net.isIP(target.address) || target.address.includes("%"))
+      throw new DeviceOperationError("connection", "A literal Wi-Fi address is required.");
     const socket = await withTimeout(
       (bounded) =>
         new Promise<net.Socket>((resolve, reject) => {

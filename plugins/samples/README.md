@@ -45,7 +45,7 @@ A crash never replays a command; three process failures within five minutes requ
 
 ## Recovery
 
-If Kobrixa did not shut down normally while a third-party plugin was running, or its window stopped responding, the next start pauses all third-party plugins and shows a banner. Built-in Basic Plus and EV3 remain enabled. Use **Open plugin settings** to disable or unlink the problem plugin, then **Restore plugins**.
+If Kobrixa did not shut down normally while a third-party plugin was running, or its window stopped responding, the next start pauses all third-party plugins and shows a banner. Required Basic Plus and EV3 compiler builtins remain enabled; optional Stage 3 features/providers/imports are suppressed before activation. Use **Open plugin settings** to disable or unlink the problem plugin, then **Restore plugins**.
 
 ## Advanced: launch options
 
@@ -74,7 +74,7 @@ open -a Kobrixa --args \
 
 Python must be installed locally with the SDK; Kobrixa does not download or manage the interpreter. Python stdout carries only protocol messages; write logs to stderr. See the [Python SDK](../../sdks/python/README.md) and [plugin architecture](../../docs/en/architecture.md#plugins-development-preview).
 
-These samples remain API 1.0-compatible command plugins. Kobrixa's current plugin API is 1.4.0; compiler declarations are reserved for built-ins. Adding `frontends` or `backends` to an external manifest makes the entire plugin invalid. Build outputs stay in the project's configured outputDir; changing or deleting them before deployment requires a new build. See [compiler and artifact contracts](../../docs/en/architecture.md#compiler-contracts).
+These samples remain API 1.0-compatible command plugins. Kobrixa's current development-branch plugin API is 1.8.0; compiler declarations are reserved for built-ins. Adding `frontends` or `backends` to an external manifest makes the entire plugin invalid. Build outputs stay in the project's configured outputDir; changing or deleting them before deployment requires a new build. See [compiler and artifact contracts](../../docs/en/architecture.md#compiler-contracts).
 
 ## Language services / 語言服務
 
@@ -199,7 +199,7 @@ pnpm dev
 
 ### 復原
 
-如果 Kobrixa 在第三方插件執行時沒有正常結束，或視窗停止回應，下次啟動會暫停所有第三方插件並顯示提示橫幅。內建 Basic Plus 與 EV3 保持啟用。按「前往插件設定」停用或解除連結有問題的插件，再按「恢復插件」。
+如果 Kobrixa 在第三方插件執行時沒有正常結束，或視窗停止回應，下次啟動會暫停所有第三方插件並顯示提示橫幅。必要的 Basic Plus 與 EV3 compiler builtin 保持啟用；optional Stage 3 功能／provider／import 在啟動前受到抑制。按「前往插件設定」停用或解除連結有問題的插件，再按「恢復插件」。
 
 ### 進階：啟動參數
 
@@ -228,7 +228,7 @@ open -a Kobrixa --args \
 
 必須在本機安裝 Python 與 SDK；Kobrixa 不下載或管理直譯器。Python stdout 只傳送協定訊息，日誌請寫入 stderr。詳見 [Python SDK](../../sdks/python/README.md) 與[插件架構](../../docs/zh-TW/architecture.md#插件開發預覽)。
 
-這些範例仍是相容 API 1.0 的命令插件。Kobrixa 目前的插件 API 為 1.4.0，編譯器宣告只限內建插件；在外部 manifest 加入 `frontends` 或 `backends` 會讓整個插件無效。建置成品仍在專案設定的 outputDir；部署前修改或刪除成品後，必須重新建置。詳見[編譯器與成品契約](../../docs/zh-TW/architecture.md#編譯器契約)。
+這些範例仍是相容 API 1.0 的命令插件。Kobrixa 目前開發分支的插件 API 為 1.8.0，編譯器宣告只限內建插件；在外部 manifest 加入 `frontends` 或 `backends` 會讓整個插件無效。建置成品仍在專案設定的 outputDir；部署前修改或刪除成品後，必須重新建置。詳見[編譯器與成品契約](../../docs/zh-TW/architecture.md#編譯器契約)。
 
 ### 撰寫診斷說明
 
@@ -251,3 +251,15 @@ open -a Kobrixa --args \
 | 全部插件已載入的說明合計      | 8 MiB（8,388,608 bytes） |
 
 說明只在插件啟用時發布，並且只顯示於來源 ID 為該插件的診斷；即使代碼相同，也不會使用其他插件的說明。本預覽版尚未開放外部診斷提供者。說明資源無法讀取、驗證失敗或超出上限時，會加上 `PLUGIN_E_DIAGNOSTIC_HELP`，插件仍保持啟用，但不提供該資源的說明。插件使用保留 ID `kobrixa.core` 時，會以 `PLUGIN_E_RESERVED_ID` 拒絕。
+
+## Stage 3 public consumers / 公開 consumer
+
+The shipped [Motor test](../motor-test/kobrixa-plugin.json), [Sensor Lab](../sensor-lab/kobrixa-plugin.json) and [EV3 device UI](../device-ev3/kobrixa-plugin.json) use public SDK calls and declarative resources. They are optional builtins in **Plugin tools**, enabled by default and switchable without developer mode; do not link their builtin manifests as external greeting samples. Motor declares `^1.6.0`, while Lab/device declare `^1.8.0`; those compatibility ranges do not require equal package distribution versions. Required Basic Plus/EV3 compiler builtins remain separate from the optional device provider.
+
+For actual transport fixtures see [JS persistence](../../tests/desktop/fixtures/plugin-persistence/consumer.ts), [Python persistence](../../tests/desktop/fixtures/plugin-persistence/consumer.py), [Lab Python](../../tests/desktop/fixtures/sensor-lab-public/consumer.py) and [device Python](../../tests/desktop/fixtures/device-ui-public/consumer.py). Python fixtures are synthetic consumers, not native EV3 providers. Stage 3 developer consumers still require explicit development enablement; third-party providers remain forbidden. Run `node tests/desktop/stage-3-closeout-run.mjs all --inventory` to list the actual native gates and required inputs. Inventory, build-only output and a handoff marker are not native smoke results. General desktop smoke delegates feature coverage; the dedicated motor/Lab/device gates must execute separately. See [devices](../../docs/en/plugin-devices.md), [settings/storage](../../docs/en/plugin-settings-storage.md) and the [pending criterion ledger](../../docs/superpowers/specs/2026-10-17-plugin-system-stage-3-design.md#s3-current-ledger).
+
+隨附馬達測試、感測器工具及 EV3 裝置 UI 使用公開 SDK 與宣告式資源，在「插件工具」預設啟用，一般使用者可獨立開關；不可把 builtin manifest 當外部問候範例連結。Motor 的 `^1.6.0` 與 Lab／device 的 `^1.8.0` 是相容範圍，不要求套件發行版相等；必要 compiler builtin 與 optional device provider 分開。以上 Python fixtures 是 synthetic consumers，不是原生 EV3 provider。開發 consumer 仍須明確啟用 development mode，第三方 provider 不開放。inventory、build-only 與 handoff 標記不代表 native smoke；一般桌面 smoke 的交接仍須另外執行 motor／Lab／device 專用關卡。
+
+Motor hide/close requests stop; Lab view close continues background recording. Trusted Disconnect stops/saves before disconnecting; suspend ends recording with no wake replay. A second launch must focus the primary without another writer or recorder. Optional-only crash does not itself lock global safe mode; renderer unresponsiveness/third-party risk can suppress optional processes, providers and imports while core recovery stays available. Windows journal acceptance and final platform/human evidence remain open; S3-13–S3-15 are NOT RUN. These are development contracts, not a release certification.
+
+馬達隱藏／關閉要求停止，Lab 關閉 view 仍背景錄製；可信 Disconnect 先停止／儲存再斷線，suspend 結束錄製且 wake 不重播。第二次啟動只能聚焦 primary，不新增 writer／recorder。僅 optional crash 不鎖全域 safe mode；renderer 無回應／第三方風險可抑制 optional process、provider、import，核心復原仍可用。Windows journal 與最終平台／人工證據仍待完成，S3-13–S3-15 為 NOT RUN；這些是開發契約，不是發行認證。

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "title": { "en": "Persistence fixture", "zh-TW": "持久化測試" },
+  "fields": [
+    {
+      "key": "fixture.enabled",
+      "label": { "en": "Enabled", "zh-TW": "啟用" },
+      "type": "boolean",
+      "default": false
+    },
+    {
+      "key": "fixture.note",
+      "label": { "en": "Draft note", "zh-TW": "草稿備註" },
+      "type": "string",
+      "default": "",
+      "minLength": 0,
+      "maxLength": 64,
+      "maxBytes": 256
+    }
+  ]
+}

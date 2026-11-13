@@ -53,7 +53,7 @@ Coverage includes native Mod+P and Mod+Shift+F shortcuts, keyboard filtering/sel
 
 `KOBRIXA_SMOKE_COLLAB_ONLY=1 KOBRIXA_SMOKE_COLLAB_LINKED=1 node tests/desktop/run-smoke.mjs` checks the welcome-screen join entry, independent toolbar panes, retained drafts and sessions, server-acknowledged chat, control-request badges and keyboard menus. It captures people and chat views across 48 combinations of 980×650/1420×900 windows, 320/360/520 px panes, English/Traditional Chinese, dark/light themes and 100%/125% scale. Assertions cover horizontal overflow, visible room actions/composer and usable chat height. Real HTTP/WebSocket transport, identity recovery, revocation, room closure and Worker restart are covered separately by `node tests/collab/run-live.mjs`.
 
-`KOBRIXA_SMOKE_MOTORS_ONLY=1 node tests/desktop/run-smoke.mjs` exercises motor testing inside the existing output cards, using the production `MotorTestService` with simulated motor hardware. The full smoke suite also runs these cases. It checks that no tool or monitor tabs are added, only one card expands across the output grid, parameter controls lock during movement, timed and angle actions complete, changing or collapsing the right pane retains a running timed action, a native held Space key renews finite jog pulses, the reverse jog button runs backwards, release prevents later pulses, and collapsing the card waits for a stop. English dark and Traditional Chinese light layouts must fit a 320 px sidebar at 125% scale. Set `KOBRIXA_SMOKE_KEEP_ARTIFACTS=1` to retain the screenshots. This fixture never connects to an EV3; protocol tests and physical USB/Wi-Fi acceptance remain separate.
+`node tests/desktop/motor-test-public-run.mjs --all` runs the public motor plugin through its actual process, generic renderer, host router and broker with fake hardware. It covers original motion identity, pending-command cancellation, hide/close/blur/authority and process loss, held-key pulses, core stop, retained drafts and layout. The old `KOBRIXA_SMOKE_MOTORS_ONLY` private-service fixture has been retired and now rejects that flag. The general desktop smoke prints the dedicated acceptance command; it does not claim motor acceptance. `pnpm test:feature-oracles` runs pure protocol/oracle regressions separately. Neither suite establishes physical EV3 stop behavior; USB/Wi-Fi hardware acceptance remains separate.
 
 `KOBRIXA_SMOKE_MONITOR_ONLY=1 pnpm test:desktop:smoke` runs the actual monitor UI against an isolated device fixture. The full smoke suite also includes these cases. Coverage includes three-tab keyboard navigation, battery/program state, empty/initializing/unknown/error ports, negative motor angles, one/three/eight-channel readings with unavailable values, stopped-only mode changes, busy/error retention, EV3 subtab/hidden-window sampling pauses, monitoring retained when the tool pane is collapsed or switched to collaboration, delayed old replies during USB session replacement, and at most one outstanding sample. It checks that sample updates neither rerender the App nor add activity entries, retain the Monaco model and focus, and permit typing and undo.
 
@@ -104,6 +104,85 @@ Release checks verify final hashes, metadata, packaged runtime modules and platf
 Hardware acceptance for these preferences requires Windows, macOS and Linux with an EV3: verify fixed/backoff USB recovery, a three-attempt limit (including the immediate first scan), cancellation during recovery, a new recovery adopting changed parameters, successful manually entered Wi-Fi address persistence, and both Wi-Fi connection/handshake timeout presets. Confirm that recovery never starts the program. Mocked transport tests and renderer smoke tests do not establish physical-device acceptance; record each platform's actual results separately.
 
 For the faster headless version of the 1,700 ms regression, run `KOBRIXA_MAIN_SIMPLE_PROJECT=/path/to/project node node_modules/vitest/vitest.mjs run apps/desktop/src/simulation/main-simple-project.test.ts`. The private project is optional, so this test is skipped in ordinary CI.
+
+## Persistence outcome checks
+
+Persistence source-only Node tests use the committed
+`tests/desktop/persistence-source-loader.mjs` bootstrap; no `/tmp` loader or shared
+package build is required. The persistence oracle/disconnect scripts and declarative
+UI oracle script supply it automatically. To run a single source test directly:
+
+```sh
+node --experimental-transform-types --import ./tests/desktop/persistence-source-loader.mjs --test tests/desktop/import-preferences.test.mjs
+```
+
+Run the controller-owned native producer with `pnpm test:persistence:run --preflight`
+or `pnpm test:persistence:run --case=import-restart --import-trial=preferences-four`
+after supplying its existing handoff/evidence prerequisites. The latter runs native
+processes; pure oracle tests do not. This package command replaces bare
+`node tests/desktop/plugin-persistence-run.mjs` in source-only checkouts.
+
+The loader derives the source root from its own repository location. Normal installed
+checkouts need no environment overrides. Split worktrees may set `RF5_SOURCE_ROOT`
+and `RF5_DEPS_ROOT` to absolute source/dependency roots (for example E sources and D's
+already installed dependencies). Only known repository package aliases and missing
+relative `.js` imports with an existing in-repository `.ts` counterpart are redirected;
+existing JavaScript and dependency internals remain untouched. The explicit dependency
+fallback is limited to `zod`, `typescript`, `esbuild`, `@eslint-community/regexpp` and `semver`. Exact missing `dist/index.js`
+entrypoints for the three known package aliases use their source entrypoints; arbitrary
+`dist` paths do not. The existing inline-esbuild unit tests use the loader’s explicit
+`persistenceTestNodePaths()` helper for their independent resolver, honoring the same
+dependency-root override without a shared build. This is a Node test/CLI bootstrap;
+Electron production entries continue through the existing bundler.
+
+`pnpm test:persistence:oracles` checks the shared outcome rules for all fifteen
+foundation cases. It also runs in `test`, `test:desktop` and `test:ci`. The Electron
+producer applies these rules before serialization; the outside controller applies
+them again before accepting a receipt. Retirement additionally checks original grant
+object identity inside Electron, and grant contents after serialization.
+
+These are pure unit tests of the verifier. Their synthetic values are never written
+as acceptance evidence. Missing observations, failed safety outcomes, renewed expiry,
+insufficient samples and exceeded load budgets must fail. Passing these tests does
+not implement a missing producer or close P170, X-T1, native, installed or hardware
+acceptance. The full persistence runner remains blocked until every required live
+producer and evidence set is available.
+
+The scoped `--case=contention` producer uses the admitted recording and settings
+consumers, the actual broker and persistence host, and native input into the
+production contributed-settings controls. It probes both owners against a live
+conflicting reservation while the original checkpoint registration publication is
+paused in the actual worker. The admitted recovery ticket and its staged registration
+bytes identify the original record, owner, reservation, session and provider generation
+before probing. Registration is unresolved during this phase; it is resumed and
+awaited for durability afterwards. Recording-against-motion probes follow the drain. It waits for the actual SDK final drain before motion, then submits
+two native settings forms with distinct authority scopes and the same CAS revision. A real worker publication pause remains held until
+the original motion reports confirmed stop. The report retains both CAS replies,
+the losing draft and field map, trusted input observations, original resource IDs
+and worker fault trace. Host-side device admission probes do not establish public
+SDK transport or generic UI intent provenance; those retain separate gates.
+
+Build a fresh persistence renderer artifact after changing the settings resource.
+The production settings service retains independent bindings and watches for admitted
+native window scopes on one backend and one CAS lane. The pure production-service
+regression checks one publish/one conflict at the same revision and that closing
+one binding leaves the other usable. The producer checks both original bindings
+at the same revision before motion/CAS. Native acceptance still requires a fresh controller-reviewed run; the
+pure regression is not a native acceptance receipt.
+
+Checkpoint evidence includes the original record, bytes/hash, commit receipt,
+worker ticket and independent worker reconciliation, staged and durable registration
+documents, and publication acknowledgement plus independent recovery reconciliation.
+The original reservation-end event and grant bound the drain offer, SDK request and
+deadline. The SDK final begin-write token/checkpoint/target and returned write handle
+are correlated to the final worker ticket, reconciled receipt and drain report. The outside verifier rejects missing or
+mismatched identities. The paused settings publication must match the original
+new settings ticket, and stop must be confirmed before release. Every unexpectedly
+admitted recording reservation is retained before assertions and released even if
+scope revocation, motion stop or another reservation release fails. A probe failure
+while registration is paused releases the worker and settles the registration before
+restoring observers and releasing the original reservation. Do not
+promote pure oracle tests or a successful build to a completed contention case.
 
 ## README screenshots
 

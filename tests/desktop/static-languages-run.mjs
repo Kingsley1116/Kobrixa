@@ -29,6 +29,8 @@ const directory = await mkdtemp(path.join(tmpdir(), "kobrixa-static-acceptance-"
 const server = await createServer({
   root: path.join(root, "apps/desktop"),
   configFile: path.join(root, "apps/desktop/vite.renderer.config.ts"),
+  // Resolve the out-of-workspace browser fixture through the desktop owner.
+  resolve: { dedupe: ["monaco-editor"] },
   // Prebundle both entries together so the late private import shares the
   // registrar's TokenizationRegistry instead of creating a second singleton.
   optimizeDeps: {

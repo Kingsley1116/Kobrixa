@@ -1,0 +1,214 @@
+name: Stage 3 acceptance
+
+on:
+  workflow_call:
+  workflow_dispatch:
+    inputs:
+      b2_run_id:
+        description: Run containing actual complete B2 reports (required for dispatched B2 validation)
+        type: string
+        required: true
+      b2_artifact:
+        description: Artifact containing persistence.json and single-instance.json plus referenced receipts
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  native:
+    name: Stage 3 ${{ matrix.gate }} (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-26]
+        gate: [motor, lab, device, installed]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    env:
+      KOBRIXA_TEST_PYTHON: ${{ matrix.os == 'windows-2022' && 'python' || 'python3' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # The runner context is not available in job-level env.
+      - name: Use the runner temp directory
+        shell: bash
+        run: |
+          echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+          echo "TMP=$RUNNER_TEMP" >> "$GITHUB_ENV"
+          echo "TEMP=$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/setup
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Inventory exact commands and prerequisites
+        run: node tests/desktop/stage-3-closeout-run.mjs ${{ matrix.gate }} --inventory
+      - run: pnpm build:core
+      - name: Build production Windows journal for native harnesses
+        if: runner.os == 'Windows'
+        run: node tools/release/journal-win32.mjs
+      - run: pnpm build:desktop
+      - name: Configure Electron sandbox
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          electron="$(node -e "console.log(require('electron'))" | tail -n 1)"
+          sandbox="$(dirname "$electron")/chrome-sandbox"
+          test -f "$sandbox"
+          sudo chown root:root "$sandbox"
+          sudo chmod 4755 "$sandbox"
+      - name: Allow installed Chromium user namespaces on AppArmor hosts
+        if: runner.os == 'Linux' && matrix.gate == 'installed'
+        uses: ./.github/actions/installed-apparmor
+        with:
+          operation: load
+      - name: Execute required native gate
+        shell: bash
+        run: |
+          set -o pipefail
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            if [ '${{ matrix.gate }}' = installed ]; then
+              # A new netns starts with lo DOWN. Keep Xvfb's Unix display socket
+              # and auth, bring up only lo, then drop root. sudo's secure_path
+              # must not replace the setup-node binary (the old run used Node 22).
+              installed_node="$(node -p 'process.execPath')"
+              xvfb-run -a sudo --preserve-env=DISPLAY,XAUTHORITY,TMPDIR,TMP,TEMP unshare --net -- /bin/sh -ec '
+                /usr/sbin/ip link set lo up
+                exec sudo --preserve-env=DISPLAY,XAUTHORITY,TMPDIR,TMP,TEMP -u "$1" -- "$2" tests/desktop/stage-3-closeout-run.mjs installed --run
+              ' sh "#$(id -u)" "$installed_node" 2>&1 | tee stage-3-native.log
+            else
+              xvfb-run -a node tests/desktop/stage-3-closeout-run.mjs '${{ matrix.gate }}' --run 2>&1 | tee stage-3-native.log
+            fi
+          else
+            node tests/desktop/stage-3-closeout-run.mjs '${{ matrix.gate }}' --run 2>&1 | tee stage-3-native.log
+          fi
+      - name: Retain installed Linux kernel denials and remove test AppArmor profile
+        if: always() && runner.os == 'Linux' && matrix.gate == 'installed'
+        uses: ./.github/actions/installed-apparmor
+        with:
+          operation: unload
+      - name: Stage regular installed evidence files
+        if: always() && matrix.gate == 'installed'
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { readdir, lstat, mkdir, copyFile, writeFile } from 'node:fs/promises';
+          import path from 'node:path';
+          const destination = path.join(process.env.RUNNER_TEMP, 'installed-upload');
+          await mkdir(destination, {recursive: true});
+          const excluded = [];
+          async function copy(source, target) {
+            const stat = await lstat(source);
+            if (stat.isDirectory()) {
+              await mkdir(target, {recursive: true});
+              for (const name of await readdir(source)) await copy(path.join(source, name), path.join(target, name));
+            } else if (stat.isFile()) {
+              await copyFile(source, target);
+            } else {
+              excluded.push({path: source, type: stat.isSymbolicLink() ? 'symlink' : stat.isSocket() ? 'socket' : stat.isFIFO() ? 'fifo' : 'special'});
+            }
+          }
+          for (const name of await readdir(process.env.RUNNER_TEMP)) {
+            if (name.startsWith('kobrixa-')) await copy(path.join(process.env.RUNNER_TEMP, name), path.join(destination, name));
+          }
+          await writeFile(path.join(destination, 'excluded-special-entries.json'), JSON.stringify(excluded, null, 2));
+          NODE
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: stage-3-${{ matrix.gate }}-${{ matrix.os }}
+          path: |
+            stage-3-native.log
+            ${{ runner.temp }}/${{ matrix.gate == 'installed' && 'installed-upload' || 'kobrixa-*' }}/**
+          include-hidden-files: ${{ matrix.gate == 'installed' }}
+          if-no-files-found: error
+          retention-days: 7
+      - name: State remaining evidence scope
+        if: always()
+        shell: bash
+        run: echo 'This job does not sign B2 reports, maximum-load, hardware or human acceptance. Run dispatched B2 validation with actual complete reports.' >> "$GITHUB_STEP_SUMMARY"
+
+  journal-win32:
+    name: Windows safety-journal native acceptance (34 cases)
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build production and test-hook addons against pinned Electron headers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $buildRoot = Join-Path $env:RUNNER_TEMP ('kobrixa-journal-suite-' + [guid]::NewGuid())
+          New-Item -ItemType Directory -Path $buildRoot | Out-Null
+          "JOURNAL_BUILD_ROOT=$buildRoot" >> $env:GITHUB_ENV
+          $production = Join-Path $buildRoot 'production'
+          $hooks = Join-Path $buildRoot 'hooks'
+          foreach ($directory in @($production, $hooks)) {
+            New-Item -ItemType Directory -Path $directory | Out-Null
+            Copy-Item apps/desktop/native/journal-win32/binding.gyp $directory
+            Copy-Item apps/desktop/native/journal-win32/journal.cc $directory
+          }
+          $electronVersion = (& node -p "require('node:module').createRequire(require('node:path').resolve('apps/desktop/package.json'))('electron/package.json').version").Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve pinned Electron version' }
+          & node node_modules/node-gyp/bin/node-gyp.js rebuild "--directory=$production" "--target=$electronVersion" --arch=x64 --dist-url=https://electronjs.org/headers "--devdir=$production/headers" --journal_test_hooks=0 2>&1 | Tee-Object (Join-Path $buildRoot 'production-build.log')
+          if ($LASTEXITCODE -ne 0) { throw 'Production native Electron-header build failed' }
+          & node node_modules/node-gyp/bin/node-gyp.js rebuild "--directory=$hooks" "--target=$electronVersion" --arch=x64 --dist-url=https://electronjs.org/headers "--devdir=$hooks/headers" --journal_test_hooks=1 2>&1 | Tee-Object (Join-Path $buildRoot 'hooks-build.log')
+          if ($LASTEXITCODE -ne 0) { throw 'Test-hook native Electron-header build failed' }
+          "KOBRIXA_JOURNAL_WIN32_ADDON=$(Join-Path $production 'build/Release/journal_win32.node')" >> $env:GITHUB_ENV
+          "KOBRIXA_JOURNAL_WIN32_TEST_ADDON=$(Join-Path $hooks 'build/Release/journal_win32.node')" >> $env:GITHUB_ENV
+          Get-FileHash -Algorithm SHA256 (Join-Path $production 'journal.cc'), (Join-Path $production 'binding.gyp'), (Join-Path $production 'build/Release/journal_win32.node'), (Join-Path $hooks 'build/Release/journal_win32.node') | Format-List | Out-File (Join-Path $buildRoot 'hashes.txt')
+          "Electron=$electronVersion arch=x64" | Out-File (Join-Path $buildRoot 'runtime.txt')
+      - name: Require all 34 native cases with no skips
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $electron = (& node -p "require('node:module').createRequire(require('node:path').resolve('apps/desktop/package.json'))('electron')" | Select-Object -Last 1).Trim()
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned Electron binary is not installed' }
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          try {
+            & $electron --test --test-reporter=tap tests/desktop/journal-win32-native.test.mjs 2>&1 | Tee-Object (Join-Path $env:JOURNAL_BUILD_ROOT 'electron-test.tap')
+            if ($LASTEXITCODE -ne 0) { throw 'Windows Electron native suite failed' }
+            $tap = Get-Content -Raw (Join-Path $env:JOURNAL_BUILD_ROOT 'electron-test.tap')
+            foreach ($required in @('tests 34', 'pass 34', 'fail 0', 'skipped 0')) {
+              if ($tap -notmatch "(?m)^# $required\r?$") { throw "Native suite incomplete: $required" }
+            }
+          } finally { Remove-Item Env:ELECTRON_RUN_AS_NODE -ErrorAction SilentlyContinue }
+      - name: Retain both build logs, source/addon hashes and TAP
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: journal-win32-native
+          path: ${{ env.JOURNAL_BUILD_ROOT }}/**
+          if-no-files-found: error
+          retention-days: 7
+
+  b2-reports:
+    name: Full B2 supplied report validation
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.b2_artifact }}
+          run-id: ${{ inputs.b2_run_id }}
+          github-token: ${{ github.token }}
+          path: stage-3-reports
+      - name: Validate complete reports (missing or partial is a failure)
+        env:
+          PERSISTENCE_EVIDENCE: ${{ github.workspace }}/stage-3-reports/persistence.json
+          KOBRIXA_SINGLE_INSTANCE_REPORT: ${{ github.workspace }}/stage-3-reports/single-instance.json
+        run: node tests/desktop/stage-3-closeout-run.mjs b2 --run

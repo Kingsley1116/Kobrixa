@@ -1,33 +1,35 @@
 # Motor testing
 
-Connect an EV3, open **EV3 tools → Monitor → Readings**, and select **Test** on an A–D motor card. One card expands at a time. No project or source program is required.
+Stage 3 development branch: the public Motor test plugin is integrated and the private Monitor-card motor controls, service and IPC are removed. The EV3 provider’s motion engine and core stop/recovery remain. Final package/platform acceptance is still open; this is not a released-installation claim.
 
-USB and Wi-Fi support local EV3 large and medium motors. The user program must be stopped and every motor idle. Stop Sensor Lab recording first. Each test checks fresh device state; unknown or invalid readings do not authorize motion.
+Connect an EV3 through the device tools, then open **Plugin tools → Motor test**. Press **Use current connection** to select the connected session, and choose output **A–D**. Opening the panel, refreshing availability or enabling the plugin never connects a device or starts motion. No source program is required.
+
+Only recognized local EV3 large and medium motors are supported. A running program, moving output, Sensor Lab recording, unavailable provider, stale reading or missing control authority blocks starting. A collaboration viewer cannot start motion. **Refresh availability** checks current availability; it does not retry a previous motion.
 
 ## Controls
 
-Choose **Jog**, **Timed** or **Angle** at the top of the card. Power uses a slider with a numeric field; direction and finish mode are two-way switches. Out-of-range values are flagged beside the field and keep the test from starting. When a test cannot start, the card states why (for example, a running EV3 program or an active recording).
+Each output has its own draft parameters. Choose Jog, Timed or Relative angle. Invalid or incomplete values are shown beside their fields and prevent starting. Power is unregulated output power, not a fixed speed.
 
-- Power starts at 20% and accepts 1–100%. This is unregulated power, not a fixed speed.
-- **Jog:** hold **Hold reverse** or **Hold forward** with the pointer, touch, or Space/Enter on the focused button. The button you hold sets the direction; the direction switch applies only to timed and angle tests. Release requests a stop. Each hold lasts at most 10 seconds.
-- **Timed:** defaults to one second, adjustable from 0.1 to five seconds, in the selected direction.
-- **Angle:** relative to the current position; defaults to 90°, adjustable from 1 to 3,600°. A movement that has not finished after ten seconds ends with a timeout.
-- Normal completion defaults to braking; coast is optional. While a timed or angle test runs, **Start test** becomes **Stop**, which always requests braking. Coasting can continue to rotate, and firmware braking is not a mechanical lock.
+- Power defaults to 20% and accepts 1–100%.
+- **Jog:** hold **Hold forward** or **Hold reverse** with the pointer or Space/Enter on the focused button. Releasing or cancelling the hold requests stopping. The held button determines direction; a jog lasts at most ten seconds.
+- **Timed:** defaults to one second, accepts 0.1–5 seconds and uses the selected direction.
+- **Relative angle:** defaults to 90°, accepts whole degrees from 1–3,600 and uses the selected direction. An unfinished movement times out after ten seconds.
+- Normal completion can brake or coast. **Stop (brake)** requests braking even when another field contains an invalid draft. Coast can continue rotating; braking is not a mechanical lock.
 
-The status panel shows the result, a progress bar (elapsed time for timed tests, displacement toward the target for angle tests, and the 10-second limit for jogging), encoder angle and displacement from the start. Tests never reset the hardware encoder count. Encoder readings do not compensate for gearing, wheel slip, or backlash.
+The panel shows phase, movement, dispatch and stop confirmation, with elapsed/angle progress when known. Unknown readings remain unknown rather than becoming zero. Encoder values do not account for gearing, slip or backlash, and the test does not reset the hardware count.
 
-Parameters and other motor test entries are disabled during motion. Ordinary monitoring pauses while the test updates its own readings, then resumes. Concurrent Sensor Lab recording is outside this version's scope.
+Changing ports retains each port's drafts. Hiding or voluntarily closing/reopening the panel in the same workbench retains bounded draft values and unfinished numeric input, but never restores motion, authority or an old operation. Process/resource replacement and workbench retirement clear retained drafts. These drafts are not durable preferences and do not survive restarting the app.
 
 ## Stopping and recovery
 
-Collapsing the card first stops the test; a failed stop leaves its controls and result visible. Switching monitor views or tool pages, closing the sidebar, losing window focus, sleep, quitting, and update preparation also request a stop. An exchange already in progress must finish first, so the stop button does not guarantee zero-latency physical stopping.
+Release, hide, panel/window close, focus loss, authority loss, sleep, disable and plugin failure request stopping. Reopening the panel, waking, reconnecting or re-enabling never resumes a test. Stop requests and host readback are distinct from physical stopping: an exchange already in flight and firmware scheduling can delay the result.
 
-Each jog command has a 400 ms firmware deadline and is renewed only while valid hold intent continues. Timed motion ends in firmware. Relative angle motion uses a small temporary EV3 program with an on-brick ten-second watchdog. It cannot drive a motor without the current invocation's handshake, and retains its result for two seconds before exiting.
+When a start reply is lost, the plugin queries the original operation. It does not issue a second start. If stopping cannot be confirmed, the UI keeps an explicit uncertain result; use **Open core recovery** to inspect the host's retained evidence. A normal disconnect or quit can remain blocked while stopping/saving is unresolved. Do not interpret a process exit or a forced quit as confirmed motor stopping.
 
-EV3 program startup and shutdown affect the firmware state of all motor outputs. The entire test therefore owns the device: running another program, deployment, remote file changes, sensor mode changes, and starting recording are blocked. Local source editing remains available.
+The device remains exclusively reserved for the test; competing program/deployment/file changes, mode changes and recording cannot interleave. Local editing remains available. Existing finite EV3 motion deadlines, helper cleanup and core recovery remain responsible for device safety; the plugin does not replace them. Cleanup removes only its own temporary program, never user projects.
 
-Disconnects show **Stop unconfirmed**, rather than claiming an acknowledged stop. Reconnection never resumes motion. When the USB serial number or Wi-Fi address identifies the same EV3, a read-only check can confirm current idleness; the previous test result remains unavailable. Firmware/VM scheduling implements the limits; these are not hard real-time guarantees and do not guarantee sustained braking after disconnect. Cleanup removes only the temporary program created for this invocation. A cleanup error is reported without deleting user projects.
+## Availability and acceptance
 
-## Acceptance status
+Motor test is an optional builtin, enabled by default on this branch. Its toggle is independent of the device provider. Disabling it stops its work; re-enabling only makes it available. If safe mode suppresses its process, the panel is unavailable while core recovery remains accessible. Follow the plugin settings' explanation before explicitly restoring it.
 
-Automated coverage includes protocol, main-process, UI, and test-VM behavior. Physical USB/Wi-Fi checks on all three platforms and both motor types remain subject to the [motor test hardware checklist](../../tests/hardware/motor-test.md). Passing simulated tests does not establish physical-device acceptance.
+The [hardware checklist](../../tests/hardware/motor-test.md) records USB/Wi-Fi, operating systems, motor types, clean installation and manual accessibility separately. Software fixtures, bundle audits and native fake-provider runs do not establish physical-device acceptance. S3-13 physical motor and S3-15 installation/accessibility acceptance are **NOT RUN**. Windows device execution/recovery acceptance remains blocked by the [journal durability limitation](device-support.md#windows-stage-3-journal-policy).

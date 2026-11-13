@@ -4960,13 +4960,13 @@ Python 的 stderr 與 JS／TS 的 stdout／stderr 會保存在主程序記憶體
 
 - [ ] **Step 4: 根目錄 README 加上範例連結**
 
-`README.md` 的 `**Using Kobrixa**` 清單，在 `- [Cloud collaboration](docs/en/collaboration.md)` 之後加一行：
+`README.md` 的 `**Using Kobrixa**` 清單，在 `- [Cloud collaboration](../../en/collaboration.md)` 之後加一行：
 
 ```markdown
 - [Plugin samples (development preview)](plugins/samples/README.md)
 ```
 
-`README.zh-TW.md` 的 `**使用 Kobrixa**` 清單，在 `- [雲端協作](docs/zh-TW/collaboration.md)` 之後加一行：
+`README.zh-TW.md` 的 `**使用 Kobrixa**` 清單，在 `- [雲端協作](../../zh-TW/collaboration.md)` 之後加一行：
 
 ```markdown
 - [插件範例（開發預覽）](plugins/samples/README.md#繁體中文)

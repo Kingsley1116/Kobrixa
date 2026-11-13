@@ -1,0 +1,11 @@
+# Pressure fixture failures, retained without PASS
+
+Two separate fresh-profile offline Linux Electron runs failed. Candidate8183187 failed fixture setup: unrelated reference UI roles and a device-preferences capture adapter were present without its required migration capability. Candidate43adff4 corrected the fixture role/capability pairing and progressed through50 actual8MiB public SDK records and readbacks, then failed at the first sampled flush. Both owners had just staged another sealed replacement; product `PLUGIN_E_STORAGE_CONFLICT / flush-incomplete` correctly refused to report all data saved. No product guard or limit was changed.
+
+The second run's original exception was obscured by an outer rejected-versus-fulfilled assertion. Its entry receipt reports failed persistence disposition; the controller records no surviving owned child. No-survivor evidence is not clean persistence shutdown. These runs establish no completed30-sample/600-second pressure result, RSS budget, or aggregate load PASS. The generated payload files are preserved in the original fresh profiles; this archive contains exact logs, worker/main/RPC traces, failure/config receipts and entry wrappers, not a disk payload snapshot or successful-run certification.
+
+The inventory records raw and compressed SHA-256 values. Subsequent successful runs, if any, must have their own immutable candidate and new profile. No user originals or external hardware were involved.
+
+## Third run, e7db6cd
+
+The corrected settled-write flush succeeded, but this fresh run failed around110seconds of plugin lifetime after25 initial creates and39 replacements per source. The next beginWrite hit the unchanged64/source terminal-outcome bound before its120second retention elapsed. This is correct bounded product admission, not proof of a product quota leak. The fixture must pace new writes within that bound while retaining all data, public read bursts and original RPC/lease deadlines. Public cleanup commands ran, while their observer correctly retained prior quota failures; the entry records settled host cleanup and no cleanup errors. The workload failed and supplies no complete600second/1000cycle/load PASS. Exact raw failures and trace are retained.

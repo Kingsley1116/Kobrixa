@@ -37,8 +37,8 @@ void app.whenReady().then(async () => {
     dialogs,
     locale: "en",
   });
-  // The same quit path as apps/desktop/src/main/index.ts.
-  installPluginQuitCleanup(app, plugins);
+  // This fixture has plugin processes but no device/persistence participants.
+  installPluginQuitCleanup(app, () => plugins.shutdown(), fail);
   app.on("quit", () => plugins.finishSession());
 
   if (phase === "first") {

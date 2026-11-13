@@ -1,0 +1,187 @@
+import type {
+  Handle,
+  Counter,
+  ResourceOwner,
+  ReadSnapshot,
+  SourceCatalog,
+  BusinessResult,
+  DeviceRequestMapV180 as DeviceRequestMap,
+  ConnectionRecoveryRef,
+  ConnectionRecoverySnapshot,
+  Permission,
+} from "@kobrixa/plugin-protocol";
+import type {
+  Principal,
+  DeviceIntentPort,
+  ReservationBindingPort,
+  DeviceSessionControlPort,
+  DeviceResourceParticipant,
+  DeviceRecoveryPort,
+  DeviceRecoverySnapshot,
+  DeviceFailureDetail,
+  DeviceDisposition,
+  DeviceRequirement,
+  CommonEventLedgerPort,
+  Stage3EventEnvelope,
+  DeviceChannelAttachment,
+  OperationClass,
+  CoreActionReference,
+  ProfileWriterLock,
+  CoreActionValidationPort,
+} from "@kobrixa/plugin-runtime";
+export type {
+  DeviceRecoveryPort,
+  DeviceRecoverySnapshot,
+  DeviceFailureDetail,
+} from "@kobrixa/plugin-runtime";
+import type {
+  BuiltinDeviceProvider,
+  LegacyProviderRequest,
+  LegacyProviderValue,
+  ProviderOutcome,
+  ProviderCatalogPort,
+  DeviceConnectionPolicy,
+} from "./provider.js";
+import type { AuthorityPort } from "./authority-port.js";
+import type { JournalPort } from "./journal-port.js";
+export type {
+  DeviceRequirement,
+  CommonEventLedgerPort,
+  Stage3Event,
+  Stage3EventEnvelope,
+  DeviceChannelAttachment,
+} from "@kobrixa/plugin-runtime";
+export type CorePrincipal = Extract<Principal, { kind: "core" }>;
+export type DeviceOperationGate = (input: {
+  principal: Principal;
+  operationClass: OperationClass;
+  sessionId: Handle | null;
+  phase: "admission" | "continuation";
+}) => BusinessResult<null, DeviceFailureDetail>;
+export interface CoreTelemetrySubscription {
+  readonly initial: { snapshot: ReadSnapshot; sources: SourceCatalog };
+  activate(): void;
+  ack(sequence: Counter): void;
+  dispose(): Promise<void>;
+}
+export type DeviceMethod = keyof DeviceRequestMap;
+export type DeviceParams<M extends DeviceMethod> = DeviceRequestMap[M]["params"];
+export type DeviceResult<M extends DeviceMethod> = DeviceRequestMap[M]["result"];
+/** Host-only extension. Legacy synchronous unregister callers remain valid; hosts
+ * that replace providers must require and await this retirement capability. */
+export interface ProviderRetirement {
+  /** Reversible admission fence while the manager owns its cleanup hold. */
+  admission(allowed: boolean): void;
+  /** Shares pending/completed work; a call after failure retries retained cleanup. */
+  retire(): Promise<void>;
+}
+export type ProviderRegistration = (() => void) & { retirement?: ProviderRetirement };
+export class ProviderRetirementBlocked extends Error {
+  constructor(readonly disposition: DeviceDisposition) {
+    super("Provider retirement disposition is incomplete.");
+  }
+}
+export interface DeviceBrokerPort {
+  readonly intent: DeviceIntentPort;
+  readonly reservations: ReservationBindingPort;
+  readonly sessions: DeviceSessionControlPort;
+  readonly resources: DeviceResourceParticipant;
+  readonly recovery: DeviceRecoveryPort;
+  readonly connectionRecovery: {
+    snapshot(): ConnectionRecoverySnapshot;
+    cancel(input: {
+      target: ConnectionRecoveryRef;
+      action: CoreActionReference;
+    }): Promise<BusinessResult<ConnectionRecoverySnapshot, DeviceFailureDetail>>;
+  };
+  request<M extends DeviceMethod>(
+    principal: Principal,
+    method: M,
+    params: DeviceParams<M>,
+    signal: AbortSignal,
+  ): Promise<DeviceResult<M>>;
+  legacy(
+    principal: Principal,
+    sessionId: Handle,
+    request: LegacyProviderRequest,
+    signal: AbortSignal,
+  ): Promise<ProviderOutcome<LegacyProviderValue>>;
+  registerProvider(provider: BuiltinDeviceProvider): ProviderRegistration;
+  readonly events: CommonEventLedgerPort;
+  providerCatalog(providerId: string): ProviderCatalogPort;
+  attachChannel(input: {
+    owner: ResourceOwner;
+    principal: () => Principal;
+    send: (event: Stage3EventEnvelope) => void;
+  }): DeviceChannelAttachment;
+  subscribeCoreTelemetry(input: {
+    principal: CorePrincipal;
+    sessionId: Handle;
+    channelIds: readonly Handle[];
+    intervalMs: 500 | 30000;
+    receive: (value: { sequence: Counter; snapshot: ReadSnapshot; sources: SourceCatalog }) => void;
+  }): Promise<CoreTelemetrySubscription>;
+  reconnectForRecovery(input: {
+    previousSessionId: Handle;
+    signal: AbortSignal;
+  }): Promise<BusinessResult<{ sessionId: Handle }, DeviceFailureDetail>>;
+  stopCurrentDevice(input: {
+    sessionId: Handle;
+    action: CoreActionReference;
+  }): Promise<BusinessResult<DeviceRecoverySnapshot, DeviceFailureDetail>>;
+}
+// A-T2 broker-port.ts; A-T5 consumes; never exported to a plugin.
+export interface LegacyOperation {
+  readonly operationId: Handle;
+  execute(request: LegacyProviderRequest): Promise<ProviderOutcome<LegacyProviderValue>>;
+  renewConfirmation(): void;
+  finish(): Promise<void>;
+  cancel(): Promise<void>;
+}
+export interface LegacyOperationPort {
+  begin(input: {
+    principal: Principal;
+    sessionId: Handle;
+    operationClass: "file-read" | "file-write" | "deployment" | "program-launch";
+    signal: AbortSignal;
+  }): Promise<LegacyOperation>;
+}
+// A-T2, main/device-broker/broker-port.ts. The callback checks current grants, not cached booleans.
+export type DeviceBrokerOptions = {
+  authority: AuthorityPort;
+  journal: JournalPort;
+  profile: ProfileWriterLock;
+  coreActions: CoreActionValidationPort;
+  now: () => number;
+  hasPermission: (principal: Principal, permission: Permission) => boolean;
+  requirements: (owner: ResourceOwner) => readonly DeviceRequirement[] | null;
+  operationGate: DeviceOperationGate;
+  connectionPolicy: () => DeviceConnectionPolicy;
+  /** Host committed-policy notification; observation itself performs no reads. */
+  subscribeConnectionPolicy?: (changed: () => void) => () => void;
+};
+import { createBroker } from "./broker.js";
+import { createDeviceRecovery } from "./recovery-port.js";
+import { createDeviceResourceParticipant } from "./resource-participant.js";
+export function createDeviceBroker(
+  input: DeviceBrokerOptions,
+): DeviceBrokerPort & LegacyOperationPort {
+  return createBroker(input, {
+    recovery: createDeviceRecovery,
+    participant: createDeviceResourceParticipant,
+  });
+}
+
+import type { UiEventLedgerPort } from "@kobrixa/plugin-runtime";
+export function uiEventLedgerPort(events: CommonEventLedgerPort): UiEventLedgerPort {
+  return {
+    create: (owner) => events.create(owner),
+    owns: (owner, id) => events.owns(owner, id),
+    publish: (owner, id, event, delivery) => events.publish(owner, id, event, delivery),
+    resync: (owner, id) => events.resync(owner, id),
+    snapshot: (owner, id, read) => events.snapshot(owner, id, read),
+    unsubscribe: (owner, id) => events.unsubscribe(owner, id),
+    closeAfterControl: (owner, id) => events.closeAfterControl(owner, id),
+    onRemoved: (listener) => events.onRemoved(listener),
+  };
+}
