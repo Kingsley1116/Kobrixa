@@ -304,7 +304,12 @@ export function registerSettingsIpc170(input: {
     off();
     off = () => {};
     binding = undefined;
-    const opened = await bridge.open(request);
+    const opened = await bridge.open(request).catch((error: unknown) => {
+      // Electron transports only Error.message for rejected invoke handlers.
+      // Preserve public structured failures rather than sending [object Object].
+      if (error instanceof Error) throw error;
+      throw new Error(JSON.stringify(error));
+    });
     if (closed) {
       bridge.dispose(opened.binding);
       throw new Error("Settings window retired");
