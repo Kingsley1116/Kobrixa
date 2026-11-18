@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { PluginContext, ContextCommandContext } from "@kobrixa/plugin-sdk";
 import {
   contextCommandDeclarationSchema,
+  resourceFailure,
   panelResourceV2Schema,
   statusResourceV2Schema,
   validateUiData,
@@ -25,6 +26,7 @@ import {
   LabController,
   createLabPlugin,
 } from "../../../../../plugins/sensor-lab/src/controller.js";
+import { UiStateStore } from "../../renderer/plugin-ui/state-store.js";
 import { LabExport } from "../../../../../plugins/sensor-lab/src/export-actions.js";
 import { LabLibrary } from "../../../../../plugins/sensor-lab/src/library.js";
 import panelJson from "../../../../../plugins/sensor-lab/ui/panel.json" with { type: "json" };
@@ -55,7 +57,7 @@ async function fixture(configure?: (context: PluginContext) => void) {
     hostEpoch: id(10),
     processEpoch: id(11),
   };
-  const binding: UiBinding & { kind: "panel" } = {
+  let binding: UiBinding & { kind: "panel" } = {
     kind: "panel",
     contributionId: "kobrixa.sensor-lab.panel",
     panelInstance: id(12),
@@ -82,13 +84,14 @@ async function fixture(configure?: (context: PluginContext) => void) {
     visible: true,
     locale: "en",
   };
+  const initialPanel = structuredClone(state);
   const status: UiStateSnapshot = {
     ...state,
     binding: statusBinding,
     form: {},
     data: Object.fromEntries(Object.entries(resources.status.data).map(([k, v]) => [k, v.initial])),
   };
-  let bindings = [binding, statusBinding],
+  let bindings: UiBinding[] = [binding, statusBinding],
     subscription = 1000;
   const callbacks = new Map<
     string,
@@ -137,6 +140,7 @@ async function fixture(configure?: (context: PluginContext) => void) {
     now: () => performance.now(),
     resolve: () => ({
       ...authority,
+      binding,
       visible: state.visible,
       presentation: Number(state.data.presentation),
     }),
@@ -335,8 +339,18 @@ async function fixture(configure?: (context: PluginContext) => void) {
           signal: new AbortController().signal,
         }),
       ),
-    core: async () => {
-      await recorder.recording.release({ reservationId: id(1) });
+    core: async ({ state }, actionId) => {
+      const reservationId = state.data.reservation;
+      if (actionId !== "stop" || typeof reservationId !== "string")
+        return resourceFailure<CommandValue>("stale");
+      const owned = await recorder.recording.query({ reservationId });
+      if (
+        !owned.ok ||
+        owned.value.reservation.reservationId !== reservationId ||
+        owned.value.reservation.state !== "active"
+      )
+        return resourceFailure<CommandValue>("stale");
+      await recorder.recording.release({ reservationId });
       return ok({ output: {}, fieldErrors: [] });
     },
   });
@@ -395,6 +409,18 @@ async function fixture(configure?: (context: PluginContext) => void) {
     });
     await paint();
   };
+  const changeInstances = (next: UiBinding[]) => {
+    bindings = next;
+    event({
+      kind: "ui.instances",
+      data: { instances: bindings },
+      version: 1,
+      delivery: "control",
+      subscriptionId: id(1000),
+      sequence: ++subscription,
+      owner,
+    });
+  };
   return {
     controller,
     context,
@@ -406,7 +432,9 @@ async function fixture(configure?: (context: PluginContext) => void) {
     host,
     state,
     status,
-    binding,
+    get binding() {
+      return binding;
+    },
     statusBinding,
     handlers,
     devices,
@@ -421,17 +449,11 @@ async function fixture(configure?: (context: PluginContext) => void) {
     emit,
     event,
     deviceCallbacks,
-    close: () => {
-      bindings = [statusBinding];
-      event({
-        kind: "ui.instances",
-        data: { instances: bindings },
-        version: 1,
-        delivery: "control",
-        subscriptionId: id(1000),
-        sequence: 1,
-        owner,
-      });
+    close: () => changeInstances([statusBinding]),
+    open: () => {
+      binding = { ...binding, panelInstance: id(++subscription) };
+      Object.assign(state, structuredClone(initialPanel), { binding });
+      changeInstances([statusBinding, binding]);
     },
     resync: async (affected: string[] = []) =>
       resync({
@@ -449,6 +471,166 @@ async function fixture(configure?: (context: PluginContext) => void) {
       }),
   };
 }
+
+function expectLibraryControls(state: UiStateSnapshot, published: boolean) {
+  expect(state.data["presentation-published"]).toBe(published);
+  const renderer = new UiStateStore(
+    { snapshot: vi.fn(), invoke: vi.fn(), syncForm: vi.fn() },
+    resources.panel,
+    structuredClone(state),
+  );
+  try {
+    for (const id of ["refresh", "history-next", "profiles-next"])
+      expect(renderer.actionEnabled(id), id).toBe(published);
+    for (const id of ["history", "profiles"]) expect(renderer.nodeEnabled(id), id).toBe(published);
+    expect(renderer.actionEnabled("stop")).toBe(true);
+    expect(renderer.actionEnabled("recovery")).toBe(true);
+    expect(renderer.nodeEnabled("recording-name")).toBe(true);
+  } finally {
+    renderer.retire();
+  }
+}
+
+it("enables library actions on the first publication even while the empty profile list is pending", async () => {
+  const profiles = deferred<Awaited<ReturnType<PluginContext["storage"]["list"]>>>();
+  const f = await fixture((context) => {
+    vi.mocked(context.storage.list)
+      .mockResolvedValueOnce(ok({ entries: [] }))
+      .mockReturnValueOnce(profiles.promise);
+  });
+  expect(f.state.data.presentation).toBe(0);
+  expectLibraryControls(f.state, false);
+  const view = await f.host.interact({ kind: "viewState", binding: f.binding });
+  if (!view.ok || view.value.kind !== "view") throw new Error(JSON.stringify(view));
+  const early = await f.host.interact({
+    kind: "action",
+    binding: f.binding,
+    nodeId: "refresh",
+    presentation: 0,
+    viewGeneration: view.value.view.generation,
+    formRevision: f.state.formRevision + 1,
+    form: structuredClone(f.state.form),
+  });
+  expect(early.ok).toBe(false);
+  expect(f.state.formRevision).toBe(0);
+  await f.paint();
+  expect(f.state.data.presentation).toBeGreaterThan(0);
+  const firstPublication = f.ui.patch.mock.calls.find(([, , set]) => "presentation" in set);
+  expect(firstPublication?.[2]).toMatchObject({
+    presentation: f.state.data.presentation,
+    "presentation-published": true,
+  });
+  expectLibraryControls(f.state, true);
+  profiles.resolve(ok({ entries: [] }));
+  await f.paint();
+  expect(f.state.data.presentation).toBeGreaterThan(0);
+  for (const name of ["history", "profiles"]) {
+    expect(f.metadata(name).presentation).toBe(f.state.data.presentation);
+    expect(f.read(name).chunk.entries).toEqual([]);
+  }
+  expectLibraryControls(f.state, true);
+});
+
+it("publishes the original library error and enables Refresh to retry", async () => {
+  const f = await fixture((context) => {
+    vi.mocked(context.storage.list).mockRejectedValueOnce(new Error("library unavailable"));
+  });
+  await f.paint();
+  expect(f.state.data.presentation).toBeGreaterThan(0);
+  expect(f.state.data.error).toBe("library unavailable");
+  expect(f.state.data["has-error"]).toBe(true);
+  expectLibraryControls(f.state, true);
+  await f.invoke("refresh");
+  await f.paint();
+  expect(f.context.storage.list).toHaveBeenCalledTimes(3);
+  expectLibraryControls(f.state, true);
+});
+
+function rejectNextPresentation(context: PluginContext) {
+  const patch = context.ui.patch;
+  context.ui.patch = (binding, revision, set, signal) => {
+    if ("presentation" in set) {
+      context.ui.patch = patch;
+      return Promise.resolve(resourceFailure<{ revision: number }>("stale"));
+    }
+    return patch(binding, revision, set, signal);
+  };
+}
+
+it("publishes on a later paint after the first scalar CAS fails on the same binding", async () => {
+  const f = await fixture(rejectNextPresentation);
+  await f.paint();
+  expect(f.metadata("profiles").presentation).toBeGreaterThan(0);
+  expect(f.state.data.presentation).toBe(0);
+  expect(f.state.data["has-error"]).toBe(true);
+  expectLibraryControls(f.state, false);
+  await f.edit({ "recording-name": "Another paint" });
+  await f.paint();
+  expect(f.state.data.presentation).toBeGreaterThan(0);
+  expectLibraryControls(f.state, true);
+});
+
+it("keeps the published flag across Refresh and a later rejected presentation", async () => {
+  const f = await fixture();
+  await f.paint();
+  const first = Number(f.state.data.presentation);
+  const pending = deferred<Awaited<ReturnType<PluginContext["storage"]["list"]>>>();
+  vi.mocked(f.context.storage.list).mockReturnValueOnce(pending.promise);
+  const refresh = f.invoke("refresh");
+  await settle();
+  expectLibraryControls(f.state, true);
+  pending.resolve(ok({ entries: [] }));
+  await refresh;
+  await f.paint();
+  const refreshed = Number(f.state.data.presentation);
+  expect(refreshed).toBeGreaterThan(first);
+  expectLibraryControls(f.state, true);
+  rejectNextPresentation(f.context);
+  await f.edit({ "recording-name": "Later failure" });
+  await f.paint();
+  expect(f.metadata("profiles").presentation).toBeGreaterThan(refreshed);
+  expect(f.state.data.presentation).toBe(refreshed);
+  expect(f.state.data["has-error"]).toBe(true);
+  expectLibraryControls(f.state, true);
+});
+
+it.each(["status", "panel"] as const)(
+  "stops the active reservation via %s across a reopened panel's first publication failure",
+  async (surface) => {
+    const f = await fixture();
+    await f.choose();
+    await f.edit({ "recording-name": "Reopen during recording" });
+    await f.invoke("start");
+    await f.paint();
+    const reservationId = f.state.data.reservation;
+    expect(reservationId).toBe(id(1));
+    expect(f.status.data.reservation).toBe(reservationId);
+    f.close();
+    await settle();
+    rejectNextPresentation(f.context);
+    f.open();
+    await settle();
+    // Observe the first failure before the next scheduled recording paint.
+    await vi.advanceTimersByTimeAsync(1);
+    expect(f.state.data.presentation).toBe(0);
+    expect(f.state.data["has-error"]).toBe(true);
+    expectLibraryControls(f.state, false);
+    expect(f.status.data.reservation).toBe(reservationId);
+    if (surface === "panel") {
+      await f.edit({ "recording-name": "Paint again" });
+      await f.paint();
+      expectLibraryControls(f.state, true);
+      expect(f.state.data.reservation).toBe(reservationId);
+    }
+    const binding = surface === "status" ? f.statusBinding : f.binding;
+    expect((await f.host.interact({ kind: "core", binding, actionId: "stop" })).ok).toBe(true);
+    expect(f.recorder.recording.release).toHaveBeenCalledWith({ reservationId });
+    expect(await f.controller.drain(f.recorder.drain())).toMatchObject({
+      ok: true,
+      value: { status: "submitted" },
+    });
+  },
+);
 
 it("registers exactly the shipped context commands and publishes all eight bounded datasets tagged with the original form revision", async () => {
   const f = await fixture();

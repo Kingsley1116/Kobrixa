@@ -184,6 +184,13 @@
         "nullable": false
       },
       "initial": 0
+    },
+    "presentation-published": {
+      "schema": {
+        "type": "boolean",
+        "nullable": false
+      },
+      "initial": false
     }
   },
   "datasets": {
@@ -1346,7 +1353,15 @@
             "dialogId": "delete-history-confirm"
           }
         }
-      ]
+      ],
+      "enabledWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "data",
+          "key": "presentation-published"
+        },
+        "right": true
+      }
     },
     {
       "id": "delete-history-message",
@@ -1420,7 +1435,15 @@
             "dialogId": "delete-profiles-confirm"
           }
         }
-      ]
+      ],
+      "enabledWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "data",
+          "key": "presentation-published"
+        },
+        "right": true
+      }
     },
     {
       "id": "delete-profiles-message",
@@ -1499,6 +1522,14 @@
         "kind": "command",
         "command": "kobrixa.sensor-lab.profiles-next",
         "arguments": {}
+      },
+      "enabledWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "data",
+          "key": "presentation-published"
+        },
+        "right": true
       }
     },
     {
@@ -1523,6 +1554,14 @@
         "kind": "command",
         "command": "kobrixa.sensor-lab.history-next",
         "arguments": {}
+      },
+      "enabledWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "data",
+          "key": "presentation-published"
+        },
+        "right": true
       }
     },
     {
@@ -1685,6 +1724,14 @@
         "kind": "command",
         "command": "kobrixa.sensor-lab.refresh",
         "arguments": {}
+      },
+      "enabledWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "data",
+          "key": "presentation-published"
+        },
+        "right": true
       }
     },
     {

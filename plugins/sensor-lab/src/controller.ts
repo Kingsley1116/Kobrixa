@@ -869,6 +869,7 @@ export class LabController {
       !(await publisher.publish(datasets, {
         ...fields,
         summary: fields.summary!,
+        "presentation-published": true,
         error: this.error,
         "has-error": !!this.error,
         editable: this.editable(),
