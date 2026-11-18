@@ -9,6 +9,7 @@ import {
   assertLoadCatalog,
   waitForLoad,
   waitLoadInterval,
+  waitForLoadWarmup,
 } from "./declarative-ui-load-fixture.ts";
 import { readFile } from "node:fs/promises";
 import { gunzipSync } from "node:zlib";
@@ -190,6 +191,27 @@ test("evaluation settles promises and serializes diagnostic errors before IPC", 
       assert.throws(() => loadResult(wire), { name: "Error", message: result.error.message });
     }
   }
+});
+
+test("warmup covers an early wake and negative renderer-to-main clock correction", async () => {
+  const warmupStart = 100;
+  const uncertainty = 0.5;
+  const offset = -0.375;
+  let main = warmupStart + 2;
+  const requests = [];
+  const elapsed = await waitForLoadWarmup(
+    warmupStart,
+    uncertainty,
+    () => main,
+    async (ms) => {
+      requests.push(ms);
+      main += requests.length === 1 ? 4998.125 : ms;
+    },
+  );
+  assert.deepEqual(requests, [4999, 1]);
+  assert.equal(elapsed, main - warmupStart);
+  const rendererStart = main;
+  assert.ok(rendererStart + offset - warmupStart >= 5000);
 });
 
 test("orphan observation waits at least five measured seconds even when a timer wakes early", async () => {

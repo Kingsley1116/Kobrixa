@@ -18,6 +18,7 @@ import {
   loadReadiness,
   loadResult,
   waitForLoad,
+  waitForLoadWarmup,
 } from "./declarative-ui-load-fixture.js";
 
 import { diagnoseMain } from "./declarative-ui-load-diagnose-main.js";
@@ -256,7 +257,7 @@ export async function runUiLoad(input: {
     const best = [...calibration].sort((a, b) => a.uncertainty - b.uncertainty)[0]!;
     await input.workload?.prepare();
     const warmupAt = wall();
-    await pause(5000);
+    await waitForLoadWarmup(warmupAt, best.uncertainty, wall, pause);
     await foreground();
     if (diagnostic) await diagnostic.start();
     recording = true;
@@ -265,9 +266,10 @@ export async function runUiLoad(input: {
     const start = await js<number>("window.uiLoad.start()");
     const rendererStartReplyMain = wall();
     const native: Array<{ kind: string; at: number }> = [];
-    const deadline = performance.now() + input.durationMs;
+    // Keep driving input for the full interval after both observed start boundaries.
+    const activeStartMain = Math.max(rendererStartReplyMain, start + best.offset);
     let n = 0;
-    while (performance.now() < deadline) {
+    while (wall() - activeStartMain < input.durationMs) {
       const inputBounds = await bounds("input");
       await pause(20);
       window.webContents.sendInputEvent({

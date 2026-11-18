@@ -8,21 +8,30 @@ export function loadComposition(diagnostic: boolean) {
     : { composition: "composeDesktopMain/createDesktopFoundation" };
 }
 
-/** Timers can wake early; the orphan observation requires elapsed time, not a
- * requested timeout. Return the measured interval without rounding it up. */
+/** Recheck elapsed time after every wake and return the measured interval. */
 export async function waitLoadInterval(
   milliseconds: number,
-  options: { now?: () => number; pause?: (ms: number) => Promise<void> } = {},
+  options: { start?: number; now?: () => number; pause?: (ms: number) => Promise<void> } = {},
 ): Promise<number> {
   const now = options.now ?? (() => performance.now());
   const pause = options.pause ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  const start = now();
+  const start = options.start ?? now();
   let elapsed = now() - start;
   while (elapsed < milliseconds) {
     await pause(Math.ceil(milliseconds - elapsed));
     elapsed = now() - start;
   }
   return elapsed;
+}
+
+/** Allow for the renderer start converting to an earlier main-clock timestamp. */
+export function waitForLoadWarmup(
+  start: number,
+  uncertainty: number,
+  now: () => number,
+  pause: (ms: number) => Promise<void>,
+) {
+  return waitLoadInterval(5000 + uncertainty, { start, now, pause });
 }
 
 /** The native load shell uses the static builtin base, with no shipped feature UI.
