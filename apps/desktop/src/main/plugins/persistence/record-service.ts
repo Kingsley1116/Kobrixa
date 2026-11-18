@@ -308,9 +308,16 @@ export function createRecordService(
     } catch (error) {
       const write = writes.get(writeId);
       if (write && write.state === "publishing") throw error;
-      if (write) await deps.engine.abort(write.ticket);
+      if (write && !(error instanceof ReserveNotAdmittedError))
+        await deps.engine.abort(write.ticket);
       targets.delete(key);
       writes.delete(writeId);
+      if (error instanceof ReserveNotAdmittedError) {
+        if (error.rejection instanceof Error && error.rejection.message === "stale") stale();
+        if (error.rejection instanceof Error && error.rejection.message === "gate-slot-limit")
+          limit();
+        throw error.rejection;
+      }
       throw error;
     } finally {
       if (admitted) admitting.set(owner.sourceKey, admitting.get(owner.sourceKey)! - 1);

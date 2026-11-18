@@ -242,14 +242,12 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
         ),
       };
     },
-    async discard(_owner, report) {
+    async discard(_owner, report, ticket) {
       const stored = report.recovery ? await backend.evidence.loadRecovery(report.recovery) : null;
-      if (stored?.ticket) {
-        const disposition = await backend.engine
-          .abort(stored.ticket)
-          .catch(() => "unknown" as const);
+      if (ticket) {
+        const disposition = await backend.engine.abort(ticket).catch(() => "unknown" as const);
         if (disposition === "unknown") return { ...report, state: "uncertain", blocker: true };
-        if (stored.sealedPin) await backend.reads.close(stored.owner, stored.sealedPin);
+        if (stored?.sealedPin) await backend.reads.close(stored.owner, stored.sealedPin);
       }
       return {
         ...report,
@@ -466,7 +464,7 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
         ? { kind: "complete-staging", expiresMonotonicMs: write.retained.expiresMonotonicMs }
         : { kind: "checkpoint-only" };
     },
-    async recover(owner, report, current) {
+    async recover(owner, report, current, unresolved) {
       // StoredRecovery owns one immutable ticket/pin. Multi-target drains retain one row per target.
       const admissions = records
         .admittedWrites(owner)
@@ -493,9 +491,46 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
             })),
           ],
         };
-      const items = report.records.length ? report.records : [null];
+      const items = report.records;
       let first: string | undefined;
-      for (const item of items) {
+      // A terminal service status may have expired before its cleanup reply
+      // reached main. Bind each unresolved flush member to its own action.
+      for (const id of unresolved) {
+        const ticket = captured.get(id);
+        if (
+          !ticket ||
+          ticket.target.kind !== "record" ||
+          ownerKey(ticket.owner) !== ownerKey(owner) ||
+          admissions.some(
+            (w) => w.ticket.id === id && ["sealed", "receiving", "publishing"].includes(w.state),
+          )
+        )
+          continue;
+        if (!current()) return report;
+        const recordId = ticket.target.id;
+        const record = items.find((item) => item.id === recordId) ?? {
+          id: recordId,
+          committedRevision: null,
+          final: false,
+          payload: "none" as const,
+        };
+        const retained = await recovery.retain(
+          owner,
+          { ...report, state: "uncertain", blocker: true, records: [record], recovery: id },
+          { ticket, sealedPin: null },
+          current,
+        );
+        first ??= retained.recovery;
+        report = {
+          ...report,
+          state: "uncertain",
+          blocker: true,
+          records: report.records.some((r) => r.id === recordId)
+            ? report.records
+            : [...report.records, record],
+        };
+      }
+      for (const item of items.length || first ? items : [null]) {
         if (!current()) return report;
         const write = item
           ? admissions.find(
@@ -504,7 +539,8 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
             )
           : undefined;
         const identity = item
-          ? registrations.get(JSON.stringify([ownerKey(owner), item.id]))?.recovery
+          ? (registrations.get(JSON.stringify([ownerKey(owner), item.id]))?.recovery ??
+            write?.ticket.id)
           : undefined;
         // Retry belongs to this target's retained write, not every record in
         // the drain. Owner-wide uncertainty/settings/errors still fail closed.

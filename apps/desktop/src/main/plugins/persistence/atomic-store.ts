@@ -109,6 +109,7 @@ type Pin = {
   ticket?: string;
   expires?: number;
   closing?: Promise<void>;
+  closeFailed?: true;
 };
 type Page = {
   owner: string;
@@ -147,6 +148,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
   private readonly uncertain = new Map<string, string>();
   private readonly publication = new Map<string, Promise<unknown>>();
   private readonly pins = new Map<string, Pin>();
+  private readonly quarantinedSources = new Set<string>();
   private readonly closed = new Map<string, { owner: string; until: number }>();
   private readonly pages = new Set<Page>();
   private readonly cursors = new Map<string, { page: Page; offset: number }>();
@@ -297,6 +299,8 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
             this.terminalDeletes.get(t.id) !== JSON.stringify(t))))
     )
       throw new Error("stale");
+    if (!this.recoveryDocuments.has(t.id) && this.quarantinedSources.has(t.owner.sourceKey))
+      throw new Error("recovery-blocked");
     if (this.blockedSources.has(t.owner.sourceKey))
       throw this.blockedSources.get(t.owner.sourceKey);
     if (this.uncertain.has(t.owner.sourceKey)) throw new Error("publish-uncertain");
@@ -354,8 +358,13 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       )
         this.forgetEntry(id, e);
     for (const [id, pin] of this.pins)
-      if (now >= Math.min(pin.created + 120000, pin.used + 30000, pin.expires ?? Infinity))
-        await this.closePin(id, pin);
+      if (
+        !pin.closeFailed &&
+        now >= Math.min(pin.created + 120000, pin.used + 30000, pin.expires ?? Infinity)
+      )
+        await this.closePin(id, pin).catch((error) => {
+          if (!pin.closeFailed) throw error;
+        });
     for (const [id, c] of this.closed) if (c.until <= now) this.closed.delete(id);
     for (const page of this.pages)
       if (now >= Math.min(page.created + 120000, page.used + 30000)) {
@@ -366,10 +375,13 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       if (
         (e.state === "receiving" || e.state === "sealed") &&
         !e.busy &&
+        !(e.retained && this.pins.get(e.retained.pin)?.closeFailed) &&
         now >=
           Math.min(e.created + 120000, e.progress + 30000, e.retained ? Infinity : e.gate.deadline)
       )
-        await this.abort(e.ticket);
+        await this.abort(e.ticket).catch((error) => {
+          if (!(e.retained && this.pins.get(e.retained.pin)?.closeFailed)) throw error;
+        });
   }
   private async checkImportAdmission(ticket: PublicationTicket): Promise<void> {
     if (ticket.target.kind !== "record" && ticket.target.kind !== "settings") return;
@@ -1304,18 +1316,18 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     p.busy = work;
     return work;
   }
-  private async closePin(id: string, p: Pin): Promise<void> {
-    if (p.closing) return p.closing;
-    p.closing = this.finishClosePin(id, p);
-    try {
-      await p.closing;
-    } finally {
-      delete p.closing;
-    }
+  private closePin(id: string, p: Pin): Promise<void> {
+    return (p.closing ??= this.finishClosePin(id, p));
   }
   private async finishClosePin(id: string, p: Pin): Promise<void> {
     await p.busy.catch(() => {});
-    await this.fs.close(p.fd);
+    await this.fs.close(p.fd).catch((cause) => {
+      // Keep the descriptor, candidate and quota until worker teardown. Only
+      // this source needs recovery; global pruning can continue past this pin.
+      p.closeFailed = true;
+      this.quarantinedSources.add(p.source);
+      throw new Error("recovery-blocked", { cause });
+    });
     this.pins.delete(id);
     const key = this.fs.name(p.path);
     this.quota.releaseTemporary(p.source, key);
@@ -2076,6 +2088,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
         if (
           value.sealedPin &&
           (!retained ||
+            retained.closeFailed ||
             !entry ||
             retained.ticket !== value.ticket?.id ||
             retained.owner !== ownerKey(value.owner) ||
@@ -2218,6 +2231,18 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
         if ((await this.reconcile(t)).disposition !== "committed") unknown.push(t.id);
       } else if (e.state !== "committed") incomplete.push(t.id);
     }
+    // A failed descriptor close remains an independent cleanup obligation even
+    // when main has already received a publication receipt for the record.
+    for (const [id, pin] of this.pins) {
+      if (!pin.closeFailed || pin.owner !== ownerKey(barrier.scope.owner)) continue;
+      const entry = pin.ticket ? this.entries.get(pin.ticket) : undefined;
+      if (
+        barrier.scope.kind === "namespace" ||
+        (entry?.ticket.target.kind === "record" &&
+          entry.ticket.target.id === barrier.scope.recordId)
+      )
+        unknown.push(id);
+    }
     const ns = await this.ns(barrier.scope.owner.sourceKey);
     for (const loc of await ns.locations()) {
       const record = liveRecord(await ns.head(loc));
@@ -2246,11 +2271,20 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       e.recoveryGate?.shorten(this.fs.now(), this.fs.now());
     }
   }
-  settledDisposition(id: string): "committed" | "aborted" | null {
+  settledDisposition(id: string, signature?: string): "committed" | "aborted" | null {
     const e = this.entries.get(id);
-    if (e) return !e.busy && (e.state === "committed" || e.state === "aborted") ? e.state : null;
+    if (e)
+      return (!signature || e.signature === signature) &&
+        !e.busy &&
+        (e.state === "committed" || e.state === "aborted")
+        ? e.state
+        : null;
     const tombstone = this.tombstones.get(id);
-    return tombstone && tombstone.until > this.fs.now() ? tombstone.disposition : null;
+    return tombstone &&
+      (!signature || tombstone.signature === signature) &&
+      tombstone.until > this.fs.now()
+      ? tombstone.disposition
+      : null;
   }
   taggedImport(ticket: PublicationTicket, tag: ImportTag): boolean {
     const e = this.entries.get(ticket.id);

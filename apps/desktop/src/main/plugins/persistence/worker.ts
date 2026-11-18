@@ -422,6 +422,8 @@ export async function startPersistenceWorker(input: {
   function releaseSlot(id: string) {
     const e = ledger.get(id);
     if (!e) return;
+    if (e.settledAt !== null)
+      worker.postMessage({ version: 1, kind: "release-slot", slot: e.slot, sequence: e.sequence });
     ledger.delete(id);
     Atomics.store(inUse, e.slot, 0);
     freeSlots.push(e.slot);
@@ -1036,7 +1038,15 @@ export function runPersistenceWorker(input: {
       );
     }
     const queue = new WorkQueue(() => performance.now()),
-      accepted = new Map<number, { ticket: PublicationTicket; until: number | null }>(),
+      accepted = new Map<
+        number,
+        {
+          ticket: PublicationTicket;
+          sequence: number;
+          signature: string;
+          terminal?: "aborted" | "committed";
+        }
+      >(),
       destinations = new Map<string, ExportDestination>();
     let closed = false;
     const requests = new Map<number, z.infer<typeof PersistenceWorkerRequest>>();
@@ -1045,11 +1055,13 @@ export function runPersistenceWorker(input: {
       // Admission and historical reconciliation may settle a different, actual attempt.
       // Include attempts settled indirectly by the store's pruning.
       for (const e of accepted.values()) {
-        const terminal = store.settledDisposition(e.ticket.id);
+        const terminal = store.settledDisposition(e.ticket.id, e.signature);
         if (terminal) {
-          e.until ??= performance.now() + 120000;
+          e.terminal = terminal;
           settled.push({ id: e.ticket.id, disposition: terminal });
-        } else if (store.unresolvedTicket(e.ticket.id)) e.until = null;
+        } else if (store.unresolvedTicket(e.ticket.id)) {
+          delete e.terminal;
+        }
       }
       return settled;
     }
@@ -1085,7 +1097,18 @@ export function runPersistenceWorker(input: {
       "engine.seal": store.seal.bind(store),
       "engine.publish": store.publish.bind(store),
       "engine.reconcile": store.reconcile.bind(store),
-      "engine.abort": store.abort.bind(store),
+      "engine.abort": async (ticket: PublicationTicket) => {
+        // Main explicitly acknowledges the slot on retirement. An exact abort can still obtain
+        // the terminal result after both store retention windows have elapsed.
+        for (const admission of accepted.values())
+          if (
+            admission.terminal &&
+            admission.ticket.id === ticket.id &&
+            sameImportValue(admission.ticket, ticket)
+          )
+            return admission.terminal;
+        return store.abort(ticket);
+      },
       "reads.settings": store.settings.bind(store),
       "reads.stat": store.stat.bind(store),
       "reads.list": store.list.bind(store),
@@ -1153,6 +1176,22 @@ export function runPersistenceWorker(input: {
       "sources.read": sources.read.bind(sources),
     };
     port.on("message", (raw) => {
+      if (raw?.kind === "release-slot") {
+        const release = z
+          .strictObject({
+            version: z.literal(1),
+            kind: z.literal("release-slot"),
+            slot: count.max(1023),
+            sequence: count.min(1),
+          })
+          .safeParse(raw);
+        if (release.success) {
+          const { slot, sequence } = release.data;
+          const admission = accepted.get(slot);
+          if (admission?.terminal && admission.sequence === sequence) accepted.delete(slot);
+        }
+        return;
+      }
       const cancel = z
         .strictObject({ version: z.literal(1), kind: z.literal("cancel"), id: count.min(1) })
         .safeParse(raw);
@@ -1209,12 +1248,12 @@ export function runPersistenceWorker(input: {
       if (r.operation === "engine.reserve" || r.operation === "engine.reserveFinal") {
         try {
           reserveGateOffset(boot.held, r.gate);
-          for (const [slot, e] of accepted)
-            if (e.until !== null && e.until <= performance.now()) accepted.delete(slot);
           if (accepted.has(r.gate!.slot)) throw new Error("invalid-gate");
+          const ticket = publicationTicketSchema.parse(r.args[0]);
           accepted.set(r.gate!.slot, {
-            ticket: publicationTicketSchema.parse(r.args[0]),
-            until: null,
+            ticket,
+            signature: JSON.stringify(r.args[0]),
+            sequence: r.gate!.sequence,
           });
         } catch (error) {
           requests.delete(r.id);

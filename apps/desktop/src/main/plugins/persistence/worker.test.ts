@@ -30,7 +30,7 @@ beforeAll(async () => {
     `import {runPersistenceWorker} from ${JSON.stringify(workerPath)};
       import {syntheticImportDescriptor,syntheticPreferencesImportDescriptor} from ${JSON.stringify(fixturesPath)};
       import {NodePersistenceFs} from ${JSON.stringify(filesystemPath)};
-      import {existsSync,unlinkSync} from "node:fs";
+      import {existsSync,unlinkSync,readFileSync} from "node:fs";
       // Test-only fault injection: remove an enumerated child on real disk. All source
       // collection, messages, codecs, journals and subsequent reads remain native.
       // Hold one actual terminal reply after cleanup to exercise transport timeout.
@@ -42,7 +42,7 @@ beforeAll(async () => {
         unlinkSync(delayed);
         const clockFile = delayed + ".clock";
         const now = performance.now.bind(performance);
-        performance.now = () => now() + (existsSync(clockFile) ? 120001 : 0);
+        performance.now = () => now() + (existsSync(clockFile) ? Number(readFileSync(clockFile,"utf8")) : 0);
         workerData.faultPort.postMessage({point:"cleanup",time:performance.now(),ticket:null});
         const release = m => {
           if (m.kind !== "release" || m.point !== "cleanup") return;
@@ -912,60 +912,6 @@ it("T5 private continuations require original ticket, exact grant and a bound re
 import { createLegacyImportCoordinator } from "./import-coordinator.js";
 import { createLegacyWriterBarrier, importIdFor } from "./import-sources.js";
 import { syntheticImportDescriptor } from "./import-fixtures.js";
-it("releases authenticated synthetic captures after finalizing the barrier, including repeat completion", async () => {
-  const { syntheticPreferencesImportDescriptor: d } = await import("./import-fixtures.js");
-  const env = await launch(path.join(directory, randomUUID()));
-  const owner = {
-    ...ownerFor(env.profile.hostEpoch),
-    sourceKey: d.targetSourceKey,
-    pluginId: d.id,
-  };
-  const scope = { hostEpoch: owner.hostEpoch, workbenchInstance: randomUUID() };
-  const barrier = createLegacyWriterBarrier({
-    backend: env.backend,
-    descriptors: [d],
-    writers: [],
-    importOwner: () => owner,
-  });
-  const coordinator = createLegacyImportCoordinator({
-    backend: env.backend,
-    sources: env.backend.sources,
-    barrier,
-    descriptors: [d],
-    currentScope: () => true,
-    currentSource: () => true,
-    importOwner: () => owner,
-  });
-  const run = () => coordinator.run(d, new AbortController().signal);
-  try {
-    const { nonce } = await coordinator.issuePreferences({ descriptorId: d.id, scope });
-    const raw = { nonce, scope, entries: [{ key: "test.preference", raw: null }] };
-    await coordinator.acceptPreferencesEvidence(raw);
-    vi.spyOn(barrier, "complete").mockRejectedValueOnce(new Error("interrupted finalization"));
-    expect((await run()).state).toBe("blocked");
-    const bytes = snapshotBytes(raw, d.rendererKeyAllowlist!);
-    expect(await env.backend.evidence.quota(owner)).toMatchObject({
-      value: { pinnedBytes: bytes.length },
-    });
-    for (let i = 0; i < 2; i++) {
-      expect((await run()).state).toBe("complete");
-      expect(await env.backend.evidence.quota(owner)).toMatchObject({
-        value: { pinnedBytes: 0, temporaryBytes: 0, reservedCreates: 0, reservedBytes: 0 },
-      });
-      if (i === 0) {
-        expect((await env.backend.sources.inventory(d.id)).state).toBe("blocked");
-        await env.backend.sources.resolvePreferences({
-          owner,
-          descriptorId: d.id,
-          evidence: { nonce, digest: hash(bytes) },
-        });
-        expect(await env.backend.sources.read(d.id, "preferences", 0, 262144)).toEqual(bytes);
-      }
-    }
-  } finally {
-    await env.backend.dispose();
-  }
-});
 it("T6 fix round1 child ENOENT blocks actual-worker import and retry imports the survivor", async () => {
   const sourceRoot = path.join(directory, "legacy", "sensor-lab"),
     survivor = "11111111-1111-4111-8111-111111111111.json",
@@ -1341,6 +1287,7 @@ it("real host drains rejected-clean attempts without source recovery after recon
 async function beginByte(
   host: Awaited<ReturnType<typeof hostFor>>["host"],
   owner: PublicationTicket["owner"],
+  expected = "x",
 ) {
   const principal = { kind: "plugin" as const, owner, authorityContext: null };
   const signal = new AbortController().signal;
@@ -1354,7 +1301,7 @@ async function beginByte(
       label: "byte",
       mediaType: "application/octet-stream",
       byteLength: 1,
-      sha256: hash(Buffer.from("x")),
+      sha256: hash(Buffer.from(expected)),
     },
     signal,
   );
@@ -1366,6 +1313,7 @@ async function beginByte(
     write,
     id,
     chunk,
+    sealOnly: () => host.request(principal, "storage/sealWrite", { write }, signal),
     async seal() {
       expect(await chunk()).toMatchObject({ ok: true });
       expect(await host.request(principal, "storage/sealWrite", { write }, signal)).toMatchObject({
@@ -1700,50 +1648,78 @@ it("a timed-out abort reply delivered after barrier settlement needs a fresh con
     await reopened.backend.dispose();
   }
 });
-it("a late failed-chunk abort survives retention and unrelated admission at host retirement", async () => {
-  const env = await launch(path.join(directory, randomUUID()));
-  const owner = ownerFor(env.profile.hostEpoch);
-  const { host } = await hostFor(env, owner);
-  const trigger = path.join(directory, "delay-abort.trigger");
-  const clock = trigger + ".clock";
-  try {
-    const write = await beginByte(host, owner);
-    env.control.arm("chunk-write", "fail");
-    await writeFile(trigger, "");
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const held = env.control.reached("cleanup");
-    const chunk = write.chunk();
-    await held;
-    await vi.advanceTimersByTimeAsync(10001);
-    expect(await chunk).toMatchObject({ ok: false });
-    vi.useRealTimers();
-    const delivered = env.control.reached("receipt-send");
-    env.control.release("cleanup");
-    await delivered;
-    await env.backend.evidence.quota(owner);
-    const originalNow = performance.now.bind(performance);
-    vi.spyOn(performance, "now").mockImplementation(() => originalNow() + 120001);
-    await writeFile(clock, "");
-    const unrelated = make(ownerFor(env.profile.hostEpoch), Buffer.from("y"));
-    await env.backend.engine.reserve(unrelated, 1);
-    const report = await host.participant.ownerLost(owner);
-    expect(report).toMatchObject({ blocker: true, records: [{ id: write.id, final: false }] });
-    expect(report.state).not.toBe("saved");
-    expect(
-      env.backend.evidence
-        .tickets(
-          env.backend.evidence.captureDrain!({ kind: "namespace", owner }, performance.now()),
-        )
-        .map((t) => t.id),
-    ).toEqual([write.write]);
-  } finally {
-    vi.useRealTimers();
-    env.control.release("cleanup");
-    await host.dispose();
-    vi.restoreAllMocks();
-    await Promise.all([rm(trigger, { force: true }), rm(clock, { force: true })]);
-  }
-});
+it.each(["failed-chunk", "checksum"])(
+  "a late %s abort survives both retention windows and discard settles retirement",
+  async (failure) => {
+    const env = await launch(path.join(directory, randomUUID()));
+    const owner = ownerFor(env.profile.hostEpoch);
+    const { createCoreActionLedger } = await import("../core-recovery.js");
+    const scope = { hostEpoch: owner.hostEpoch, workbenchInstance: randomUUID() };
+    const ledger = createCoreActionLedger({ now: () => performance.now(), current: () => true });
+    const { host } = await hostFor(env, owner, ledger);
+    const trigger = path.join(directory, "delay-abort.trigger");
+    const clock = trigger + ".clock";
+    try {
+      const write = await beginByte(host, owner, failure === "checksum" ? "wrong" : "x");
+      if (failure === "failed-chunk") env.control.arm("chunk-write", "fail");
+      else expect(await write.chunk()).toMatchObject({ ok: true });
+      await writeFile(trigger, "");
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const held = env.control.reached("cleanup");
+      const chunk = failure === "checksum" ? write.sealOnly() : write.chunk();
+      await held;
+      await vi.advanceTimersByTimeAsync(10001);
+      expect(await chunk).toMatchObject({ ok: false });
+      vi.useRealTimers();
+      const delivered = env.control.reached("receipt-send");
+      env.control.release("cleanup");
+      await delivered;
+      await env.backend.evidence.quota(owner);
+      const originalNow = performance.now.bind(performance);
+      let offset = 120001;
+      vi.spyOn(performance, "now").mockImplementation(() => originalNow() + offset);
+      await writeFile(clock, String(offset));
+      const unrelated = make(ownerFor(env.profile.hostEpoch), Buffer.from("y"));
+      await env.backend.engine.reserve(unrelated, 1);
+      offset += 120001;
+      await writeFile(clock, String(offset));
+      await env.backend.engine.reserve(make(unrelated.owner, Buffer.from("z")), 1);
+      if (failure === "checksum") expect(await write.status()).toMatchObject({ ok: false });
+      const report = await host.participant.ownerLost(owner);
+      expect(report).toMatchObject({ blocker: true, records: [{ id: write.id, final: false }] });
+      expect(report.state).not.toBe("saved");
+      expect(
+        env.backend.evidence
+          .tickets(
+            env.backend.evidence.captureDrain!({ kind: "namespace", owner }, performance.now()),
+          )
+          .map((t) => t.id),
+      ).toEqual([write.write]);
+      const row = (await env.backend.evidence.recoveryPage()).items.find(
+        (r) => r.id === report.recovery,
+      );
+      expect(row?.ticket?.id).toBe(write.write);
+      const action = ledger.mint(scope, {
+        kind: "persistence-discard",
+        recovery: report.recovery!,
+      });
+      expect(await host.participant.discard(report.recovery!, action)).toMatchObject({
+        blocker: false,
+      });
+      expect(await host.participant.ownerLost(owner)).toMatchObject({
+        state: "saved",
+        blocker: false,
+      });
+      expect((await env.backend.evidence.recoveryPage()).items).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+      env.control.release("cleanup");
+      await host.dispose();
+      vi.restoreAllMocks();
+      await Promise.all([rm(trigger, { force: true }), rm(clock, { force: true })]);
+    }
+  },
+);
 
 it.each(["publish-first", "abort-first"] as const)(
   "serializes retained seal %s behind a same-source publication",

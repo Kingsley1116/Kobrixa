@@ -54,7 +54,12 @@ export type LifecycleDependencies = {
     owner: ResourceOwner,
     id: string,
   ): { kind: "complete-staging" | "checkpoint-only" | "none"; expiresMonotonicMs?: number };
-  recover(owner: ResourceOwner, report: DrainReport, current: () => boolean): Promise<DrainReport>;
+  recover(
+    owner: ResourceOwner,
+    report: DrainReport,
+    current: () => boolean,
+    unresolved: ReadonlySet<string>,
+  ): Promise<DrainReport>;
   checkpointOpen(owner: ResourceOwner, id: string): boolean;
   recovery: Pick<PersistenceParticipant, "recoverySnapshot" | "retry" | "discard">;
 };
@@ -499,7 +504,14 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
           : "checkpoint-only";
     const result: DrainReport = { state, blocker: !saved, pendingSettings, records, errors: [] };
     if (!current()) return unavailable();
-    const retained = saved ? result : await deps.recover(value.owner, result, current);
+    const retained = saved
+      ? result
+      : await deps.recover(
+          value.owner,
+          result,
+          current,
+          new Set(outcomes.flatMap((o) => [...o.unknown, ...o.incomplete])),
+        );
     return current() ? retained : unavailable();
   }
   async function run(value: Group, dispatch?: DrainDispatcher) {

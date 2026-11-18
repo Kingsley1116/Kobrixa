@@ -84,6 +84,7 @@ export async function writeAll(
 export class NodePersistenceFs implements PersistenceFsPort {
   readonly durability: Durability;
   private readonly descriptors = new WeakMap<StoreFd, FileHandle>();
+  private readonly closing = new WeakMap<StoreFd, Promise<void>>();
   constructor(
     readonly root: string,
     readonly profile: ProfileWriterLock,
@@ -158,7 +159,7 @@ export class NodePersistenceFs implements PersistenceFsPort {
   }
   private fd(token: StoreFd): FileHandle {
     const fd = this.descriptors.get(token);
-    if (!fd) throw new Error("stale");
+    if (!fd || this.closing.has(token)) throw new Error("stale");
     return fd;
   }
   async read(fd: StoreFd, offset: number, maxBytes: number): Promise<Uint8Array> {
@@ -189,9 +190,18 @@ export class NodePersistenceFs implements PersistenceFsPort {
     await this.fd(fd).sync();
   }
   async close(token: StoreFd): Promise<void> {
-    const fd = this.fd(token);
-    this.descriptors.delete(token);
-    await fd.close();
+    const pending = this.closing.get(token);
+    if (pending) return pending;
+    // A native close rejection is definitive for this handle. Retrying a raw
+    // descriptor can race descriptor reuse or appear successful after an I/O error.
+    const close = this.fd(token)
+      .close()
+      .then(() => {
+        this.descriptors.delete(token);
+        this.closing.delete(token);
+      });
+    this.closing.set(token, close);
+    return close;
   }
   async directorySync(name: string): Promise<void> {
     this.profile.assertHeld();

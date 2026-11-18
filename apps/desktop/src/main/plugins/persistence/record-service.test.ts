@@ -2,6 +2,7 @@ import { storageRequestSchemas } from "@kobrixa/plugin-protocol";
 import { createHash } from "node:crypto";
 import { expect, it, vi } from "vitest";
 import type { RecordMeta, RecordWrite, ResourceOwner } from "@kobrixa/plugin-protocol";
+import { ReserveNotAdmittedError } from "./engine-port.js";
 import { createRecordService } from "./record-service.js";
 import { PersistenceFault, type RecordDependencies } from "./record-port.js";
 const owner: ResourceOwner = {
@@ -163,6 +164,23 @@ function fixture() {
     },
   };
 }
+it("admits after two proven gate-slot-limit rejections when ledger capacity returns", async () => {
+  const f = fixture(),
+    bytes = Buffer.from("new");
+  const full = new ReserveNotAdmittedError(new Error("gate-slot-limit"));
+  f.reserve.mockRejectedValueOnce(full).mockRejectedValueOnce(full);
+  const abort = vi.spyOn(f.deps.engine, "abort").mockRejectedValue(new Error("stale"));
+  for (let i = 0; i < 2; i++)
+    expect(await f.service.request(p, "storage/beginWrite", input(bytes), signal())).toMatchObject({
+      ok: false,
+      error: {
+        code: "PLUGIN_E_RESOURCE_LIMIT",
+        detail: { reason: "quota", resource: "storage-write" },
+      },
+    });
+  await expect(f.begin(bytes)).resolves.toHaveProperty("write");
+  expect(abort).not.toHaveBeenCalled();
+});
 it("B2-12.1-2/3: reserves all bytes first; duplicate last chunk does not append or renew", async () => {
   const f = fixture(),
     bytes = Buffer.from("hello");

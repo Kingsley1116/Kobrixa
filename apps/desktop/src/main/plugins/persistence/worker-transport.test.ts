@@ -1,9 +1,12 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import type { EventEmitter } from "node:events";
 import type * as WorkerThreads from "node:worker_threads";
+import { createLegacyImportCoordinator } from "./import-coordinator.js";
+import { createLegacyWriterBarrier, snapshotBytes } from "./import-sources.js";
+import { syntheticPreferencesImportDescriptor as preferences } from "./import-fixtures.js";
 import { WorkQueue } from "./quota.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { PublicationGate, type PublicationTicket } from "./engine-port.js";
@@ -62,7 +65,7 @@ vi.mock("node:worker_threads", async (importOriginal) => {
         queueMicrotask(() => this.emit("exit", 0));
         return;
       }
-      if (frame.kind === "cancel") return;
+      if (frame.kind === "cancel" || frame.kind === "release-slot") return;
       this.frames.push(frame);
       if (harness.hold) return;
       let value: unknown;
@@ -501,4 +504,56 @@ it("T5 final admission keeps earliest main-side fence and permits one checkpoint
     env.backend.engine.reserveFinal!({ ...t, id: randomUUID() }, 0, grant),
   ).rejects.toThrow("stale");
   await env.backend.dispose();
+});
+it("releases authenticated synthetic captures after finalizing the barrier, including repeat completion", async () => {
+  vi.spyOn(performance, "now").mockReturnValue(0);
+  const d = preferences;
+  harness.runner = () => runPersistenceWorker({ mappers: new Map([[d.id, d]]) });
+  const env = await setup();
+  const owner = { ...env.owner, sourceKey: d.targetSourceKey, pluginId: d.id };
+  const scope = { hostEpoch: owner.hostEpoch, workbenchInstance: randomUUID() };
+  const barrier = createLegacyWriterBarrier({
+    backend: env.backend,
+    descriptors: [d],
+    writers: [],
+    importOwner: () => owner,
+  });
+  const coordinator = createLegacyImportCoordinator({
+    backend: env.backend,
+    sources: env.backend.sources,
+    barrier,
+    descriptors: [d],
+    currentScope: () => true,
+    currentSource: () => true,
+    importOwner: () => owner,
+  });
+  const run = () => coordinator.run(d, new AbortController().signal);
+  try {
+    const { nonce } = await coordinator.issuePreferences({ descriptorId: d.id, scope });
+    const raw = { nonce, scope, entries: [{ key: "test.preference", raw: null }] };
+    await coordinator.acceptPreferencesEvidence(raw);
+    vi.spyOn(barrier, "complete").mockRejectedValueOnce(new Error("interrupted finalization"));
+    expect((await run()).state).toBe("blocked");
+    const bytes = snapshotBytes(raw, d.rendererKeyAllowlist!);
+    expect(await env.backend.evidence.quota(owner)).toMatchObject({
+      value: { pinnedBytes: bytes.length },
+    });
+    for (let i = 0; i < 2; i++) {
+      expect((await run()).state).toBe("complete");
+      expect(await env.backend.evidence.quota(owner)).toMatchObject({
+        value: { pinnedBytes: 0, temporaryBytes: 0, reservedCreates: 0, reservedBytes: 0 },
+      });
+      if (i === 0) {
+        expect((await env.backend.sources.inventory(d.id)).state).toBe("blocked");
+        await env.backend.sources.resolvePreferences({
+          owner,
+          descriptorId: d.id,
+          evidence: { nonce, digest: createHash("sha256").update(bytes).digest("hex") },
+        });
+        expect(await env.backend.sources.read(d.id, "preferences", 0, 262144)).toEqual(bytes);
+      }
+    }
+  } finally {
+    await env.backend.dispose();
+  }
 });

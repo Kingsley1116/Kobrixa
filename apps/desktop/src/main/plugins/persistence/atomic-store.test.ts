@@ -85,6 +85,61 @@ async function stage(s: AtomicStore, t: PublicationTicket, bytes: Uint8Array) {
     await s.append(t, offset, bytes.subarray(offset, offset + 262144));
   await s.seal(t, bytes.length, hash(bytes));
 }
+it("quarantines a sealed descriptor whose native close fails while another source admits and reads", async () => {
+  const env = await setup();
+  const bytes = Buffer.from("payload");
+  const t = ticket(bytes);
+  await stage(env.store, t, bytes);
+  const opened = vi.spyOn(env.fs, "open");
+  const pin = await env.store.retainSealed(t);
+  const token = await opened.mock.results.at(-1)!.value;
+  const native = env.fs["fd"](token);
+  const nativeClose = vi.spyOn(native, "close").mockRejectedValue(new Error("native-close"));
+  try {
+    await expect(env.store.abort(t)).rejects.toThrow();
+    await expect(env.fs.close(token)).rejects.toThrow("native-close");
+    env.advance(30001);
+    const other = { ...owner, sourceKey: "builtin:kobrixa.other", pluginId: "kobrixa.other" };
+    const next = { ...ticket(bytes), owner: other };
+    await stage(env.store, next, bytes);
+    expect((await env.store.publish(next)).disposition).toBe("committed");
+    if (next.metadata.kind !== "record") throw Error("record required");
+    const read = await env.store.open(
+      other,
+      next.metadata.record.id,
+      next.metadata.record.revision,
+    );
+    expect(await env.store.read(other, read, 0, bytes.length)).toEqual(bytes);
+    await env.store.close(other, read);
+    expect(env.store.quota.snapshot(owner.sourceKey)).toMatchObject({
+      pinnedBytes: bytes.length,
+      reservedBytes: bytes.length,
+    });
+    await expect(env.store.read(owner, pin.pin, 0, 1)).rejects.toThrow();
+    await expect(env.store.reserve(ticket(bytes), bytes.length)).rejects.toThrow(
+      "recovery-blocked",
+    );
+    await expect(env.store.abort(t)).rejects.toThrow();
+    const flush = (sourceOwner: PersistenceOwner) =>
+      env.store.flushEvidence(
+        {
+          id: randomUUID(),
+          scope: { kind: "namespace", owner: sourceOwner },
+          through: 1,
+          deadlineMonotonicMs: 40000,
+        },
+        [],
+      );
+    expect(await flush(owner)).toMatchObject({ state: "unknown", unknown: [pin.pin] });
+    expect(await flush(other)).toMatchObject({ state: "saved", unknown: [] });
+    expect(nativeClose).toHaveBeenCalledTimes(1);
+    await expect(env.store.dispose()).rejects.toThrow("recovery-blocked");
+  } finally {
+    nativeClose.mockRestore();
+    await native.close();
+    await rm(env.root, { recursive: true, force: true });
+  }
+});
 it.each([
   ["import", "import-marker"],
   ["import", "after-publish"],

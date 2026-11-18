@@ -17,7 +17,11 @@ type Dependencies = {
   wall(): number;
   actions: CoreActionValidationPort;
   retry(owner: ResourceOwner, report: DrainReport, deadline: number): Promise<DrainReport>;
-  discard(owner: ResourceOwner, report: DrainReport): Promise<DrainReport>;
+  discard(
+    owner: ResourceOwner,
+    report: DrainReport,
+    ticket: PublicationTicket | null,
+  ): Promise<DrainReport>;
   backend: PersistenceBackend;
   adapter: PersistenceActionAdapter;
   coreOwner(input: { sourceKey: string; scope: CoreWindowScope }): ResourceOwner | null;
@@ -335,7 +339,7 @@ export function createPersistenceRecovery(deps: Dependencies) {
               entry.evidence?.ticket ??
               (await deps.backend.evidence.loadRecovery(id))?.ticket ??
               null;
-            const report = await deps.discard(entry.owner, entry.report);
+            const report = await deps.discard(entry.owner, entry.report, ticket);
             report.recovery = id;
             // Unknown dispatch remains a blocker even after a user's discard request.
             entry.report = report;
