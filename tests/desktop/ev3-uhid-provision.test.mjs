@@ -8,7 +8,8 @@ import test from "node:test";
 import { frameMessage, parseFrame } from "../../packages/device/dist/framing.js";
 import { readMonitor } from "../../packages/device/dist/monitor.js";
 import { trimHidReply } from "../../packages/device/dist/usb.js";
-import { observedExchange, recordGate } from "./ev3-uhid-spike.mjs";
+import { parseTrace } from "./ev3-uhid-continuity.mjs";
+import { recordGate } from "./ev3-uhid-provision.mjs";
 
 function packet(frame) {
   const size = Buffer.alloc(2);
@@ -45,10 +46,10 @@ test("C peer round trips the product snapshot and rejects other programs", async
           const rawReply = reply.stdout.subarray(-512);
           const rawRequest = Buffer.from(frames.at(-1));
           const trace = () =>
-            `1.000000000 OPEN\n1.000000001 REQUEST ${rawRequest.toString("hex")}\n1.000000002 REPLY ${rawReply.toString("hex")}\n`;
-          assert.ok(observedExchange(trace()));
+            `1.000000000 OPEN\n1.000000001 REQUEST ${rawRequest.toString("hex")}\n1.000000002 REPLY ${rawReply.toString("hex")}\n1.000000003 CLOSE\n`;
+          assert.equal(parseTrace(trace()).length, 1);
           rawReply[2] ^= 1;
-          assert.equal(observedExchange(trace()), false);
+          assert.throws(() => parseTrace(trace()), /reply counter/);
           rawReply[2] ^= 1;
           const parsed = parseFrame(trimHidReply(reply.stdout.subarray(-512), counter));
           assert.equal(parsed.counter, counter);
@@ -115,25 +116,24 @@ test("failed and untouched gates retain distinct outcomes", async () => {
 });
 
 test("an enumeration open/close or rejected request cannot establish app traffic", () => {
-  const ts = "1.000000001 ";
   for (const events of [
     ["OPEN", "CLOSE"],
     ["OPEN", "REQUEST 00"],
     ["REQUEST 00", "REPLY ff"],
     ["OPEN", "REQUEST 00", "REPLY ff", "REJECT"],
   ])
-    assert.equal(observedExchange(events.map((e) => ts + e + "\n").join("")), false);
+    assert.throws(() => parseTrace(events.map((e, i) => `1.00000000${i} ${e}\n`).join("")));
 });
 
 test("result exits nonzero for a fresh report with every gate NOT RUN", async (t) => {
   const dir = await mkdtemp(path.join(tmpdir(), "uhid-gates-test-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  const driver = fileURLToPath(new URL("ev3-uhid-spike.mjs", import.meta.url));
+  const driver = fileURLToPath(new URL("ev3-uhid-provision.mjs", import.meta.url));
   const invoke = (action) =>
     spawnSync(process.execPath, [driver, action, dir], { encoding: "utf8" });
   assert.equal(invoke("init").status, 0);
   const result = invoke("result");
   assert.equal(result.status, 1);
   assert.match(result.stderr, /G1 NOT RUN/);
-  assert.doesNotMatch(result.stdout, /YES:/);
+  assert.doesNotMatch(result.stdout, /UHID peer provisioned/);
 });

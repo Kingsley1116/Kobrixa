@@ -13,7 +13,7 @@ function only(rows, label) {
   assert.equal(rows.length, 1, label);
   return rows[0];
 }
-function pairs(rows, method, direction = "plugin-host") {
+function pairs(rows, method, direction = "plugin-host", superseded) {
   return rows.flatMap((q, i) => {
     if (q.direction !== direction || q.message.method !== method) return [];
     const reply = only(
@@ -32,17 +32,39 @@ function pairs(rows, method, direction = "plugin-host") {
       "missing successful port send timing",
     );
     assert.deepEqual(reply.owner, q.owner);
+    if (superseded?.(q, reply)) return [];
     assert.equal(reply.message.result?.ok, true, method + " succeeded");
     return [
       { params: q.message.params, value: reply.message.result.value, at: q.at, end: reply.at },
     ];
   });
 }
-function command(rows, name) {
+// Refresh can advance the reopened form while its automatic follow-latest
+// cursor is in flight. Keep the failed reply on the wire; it supplies no evidence.
+function supersededHistoryCursor(rows, q, reply) {
+  const { command, context } = q.message.params;
+  return (
+    command === "kobrixa.sensor-lab.cursor" &&
+    context.origin === "panel" &&
+    context.binding?.contributionId === "kobrixa.sensor-lab.panel" &&
+    Number.isSafeInteger(context.form?.revision) &&
+    reply.message.result?.ok === false &&
+    reply.message.result.error?.code === "PLUGIN_E_COMMAND_FAILED" &&
+    rows.some(
+      ({ at, direction, message }) =>
+        at > q.at &&
+        at < reply.at &&
+        direction === "host-plugin" &&
+        message.method === "events/deliver" &&
+        message.params.kind === "ui.form" &&
+        isDeepStrictEqual(message.params.data.binding, context.binding) &&
+        message.params.data.revision > context.form.revision,
+    )
+  );
+}
+function command(calls, name) {
   const call = only(
-    pairs(rows, "command/invoke", "host-plugin").filter(
-      (r) => r.params.command === "kobrixa.sensor-lab." + name,
-    ),
+    calls.filter((r) => r.params.command === "kobrixa.sensor-lab." + name),
     name,
   );
   assert.equal(call.params.context.origin, "panel");
@@ -73,8 +95,7 @@ function joinedChunks(chunks, meta, read) {
   return bytes;
 }
 
-function historyBytes(rows) {
-  const view = command(rows, "view-record");
+function historyBytes(rows, view) {
   const read = only(
     pairs(rows, "storage/openRead").filter((r) => r.at >= view.at && r.end <= view.end),
     "history read",
@@ -542,7 +563,8 @@ export async function verifyContinuity(file) {
     assert.equal(lab.pid, wire[0].utility);
     assert.deepEqual(lab.owner, owner);
   }
-  const start = command(wire, "start"),
+  const primaryCommands = pairs(wire, "command/invoke", "host-plugin");
+  const start = command(primaryCommands, "start"),
     binding = start.params.context.binding;
   for (const key of ["generation", "hostEpoch", "processEpoch"])
     assert.equal(binding[key], owner[key]);
@@ -563,7 +585,7 @@ export async function verifyContinuity(file) {
   assert.equal(reservation.reason, "active");
   assert.ok(start.at <= reserve.at && reserve.end <= start.end);
   const channel = only(reservation.channels, "single pinned channel");
-  const select = command(wire, "select-channel");
+  const select = command(primaryCommands, "select-channel");
   assert.equal(select.params.arguments.key, channel.channelId);
   assert.ok(select.end <= start.at);
   assert.deepEqual(select.params.context.binding, binding);
@@ -706,6 +728,7 @@ export async function verifyContinuity(file) {
     ),
     "original drain",
   );
+  assert.equal(drain.params.reason, "reservation-ended", "final drain reason");
   assert.equal(drain.value.status, "submitted");
   assert.deepEqual(drain.value.writes, [final.value.write]);
   const offer = only(
@@ -764,8 +787,11 @@ export async function verifyContinuity(file) {
   assert.equal(first.value.record.id, meta.id);
   assert.equal(final.params.target.expectedRevision, offer.record.revision);
   assert.ok(meta.revision !== offer.record.revision);
-  const view = command(history, "view-record");
-  const restartedBinding = command(history, "refresh").params.context.binding;
+  const historyCommands = pairs(history, "command/invoke", "host-plugin", (q, reply) =>
+    supersededHistoryCursor(history, q, reply),
+  );
+  const view = command(historyCommands, "view-record");
+  const restartedBinding = command(historyCommands, "refresh").params.context.binding;
   assert.deepEqual(view.params.context.binding, restartedBinding, "restarted panel binding");
   for (const key of ["generation", "hostEpoch", "processEpoch"])
     assert.equal(restartedBinding[key], history[0].owner[key], "restarted Lab owner");
@@ -810,7 +836,7 @@ export async function verifyContinuity(file) {
   );
   assert.deepEqual(opened.value.record, meta);
   const bytes = await readFile(path.join(dir, "recording-history.json"));
-  assert.deepEqual(bytes, historyBytes(history), "retained readback");
+  assert.deepEqual(bytes, historyBytes(history, view), "retained readback");
   const finalChunks = pairs(wire, "storage/writeChunk").filter(
     (c) => c.params.write === final.value.write,
   );

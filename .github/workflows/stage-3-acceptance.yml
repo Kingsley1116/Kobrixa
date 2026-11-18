@@ -75,11 +75,13 @@ jobs:
           fi
           sudo service auditd start
           sudo auditctl -s
-          driver=tests/desktop/ev3-uhid-spike.mjs
+          node --test tests/desktop/ev3-uhid-provision.test.mjs
+          driver=tests/desktop/ev3-uhid-provision.mjs
           results="$RUNNER_TEMP/kobrixa-recording-peer"
           node "$driver" init "$results"
           node "$driver" G1 "$results"
           node "$driver" G2 "$results"
+          node "$driver" result "$results"
       - name: Execute required native gate
         shell: bash
         run: |

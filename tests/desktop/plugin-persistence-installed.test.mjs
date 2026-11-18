@@ -470,6 +470,7 @@ test("independent recording validator reopens raw files and rejects corrupt join
     "storage/drain",
     {
       token: "drain",
+      reason: "reservation-ended",
       checkpoints: [
         {
           checkpoint: "grant",
@@ -539,6 +540,22 @@ test("independent recording validator reopens raw files and rejects corrupt join
     14990,
     14991,
   );
+  // On panel open, the renderer follows the latest chart sample automatically.
+  cmd(restart, "cursor", 14995, 15001, { time: 1000, presentation: 1 });
+  const [cursor, cursorReply] = restart.recordingMessages.slice(-2);
+  cursor.message.params.context.form.revision = 0;
+  cursorReply.message.result = { ok: false, error: { code: "PLUGIN_E_COMMAND_FAILED" } };
+  restart.recordingMessages.push({
+    ...cursor,
+    at: 14998,
+    message: {
+      method: "events/deliver",
+      params: {
+        kind: "ui.form",
+        data: { binding: restartedBinding, revision: 1 },
+      },
+    },
+  });
   cmd(restart, "refresh", 14999, 15002);
   rpc(
     restart,
@@ -836,6 +853,54 @@ test("independent recording validator reopens raw files and rejects corrupt join
     );
   }
   const cases = [
+    ...[
+      [
+        "current cursor",
+        (event) => {
+          event.message.params.data.revision = 0;
+        },
+      ],
+      [
+        "form change on another panel",
+        (event) => {
+          event.message.params.data.binding = binding;
+        },
+      ],
+      [
+        "form change after the failed reply",
+        (event) => {
+          event.at = 15003;
+        },
+      ],
+    ].map(([label, change]) => [
+      label,
+      (r) => change(r.runs[1].recordingMessages.find((m) => m.message.params?.kind === "ui.form")),
+      /command\/invoke succeeded/,
+    ]),
+    [
+      "failed history Refresh",
+      (r) => {
+        const rows = r.runs[1].recordingMessages;
+        const refresh = rows.find(
+          (m) => m.message.params?.command === "kobrixa.sensor-lab.refresh",
+        );
+        rows.find((m) => !m.message.method && m.message.id === refresh.message.id).message.result =
+          {
+            ok: false,
+            error: { code: "PLUGIN_E_COMMAND_FAILED" },
+          };
+      },
+      /command\/invoke succeeded/,
+    ],
+    [
+      "final save from a shutdown drain",
+      (r) => {
+        r.runs[0].recordingMessages.find(
+          (m) => m.message.method === "storage/drain",
+        ).message.params.reason = "shutdown";
+      },
+      /final drain reason/,
+    ],
     [
       "old criterion",
       (r) => {
