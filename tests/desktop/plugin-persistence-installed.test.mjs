@@ -648,6 +648,7 @@ test("independent recording validator reopens raw files and rejects corrupt join
       b32: { installed: true },
       x32: { installed: false, error: "unknown architecture" },
     },
+    protectedFrom: 100750,
     rulesBefore: rules,
     profile: run.profile,
     key,
@@ -688,7 +689,7 @@ test("independent recording validator reopens raw files and rejects corrupt join
               "KOBRIXA_SECONDARY " + JSON.stringify({ pid: s.pid, sequence, ...e }) + "\n",
           )
           .join("");
-        files["single-instance-secondary.log"] = log;
+        files["single-instance-secondary-observer.log"] = log;
         s.logSha256 = digest(log);
       }
       row.recordingArtifactHashes = {};
@@ -712,6 +713,19 @@ test("independent recording validator reopens raw files and rejects corrupt join
     files["installed.json"] = JSON.stringify(summary);
     return files;
   }
+  // Hand-authored excerpts of the two rule installations. Only the second
+  // event has a SOCKADDR. The kernel and auditd fields are separated by GS.
+  const install = (id, pid, abi) => [
+    `type=CONFIG_CHANGE msg=audit(${id}): op=add_rule key="${key}" list=4 res=1\x1dAUID="unset"`,
+    `type=SYSCALL msg=audit(${id}): arch=c000003e syscall=44 success=yes items=0 ppid=50 pid=${pid} uid=0 euid=0 comm="auditctl" exe="/usr/sbin/auditctl" key=(null)\x1dARCH=x86_64 SYSCALL=sendto`,
+    `type=PROCTITLE msg=audit(${id}): proctitle=${Buffer.from(["/usr/sbin/auditctl", "-a", "always,exit", "-F", "arch", abi, "-S", "all"].join("\0")).toString("hex")}`,
+  ];
+  const firstInstall = install("100.711:202", 51, "b64");
+  const secondInstall = [
+    ...install("100.721:209", 52, "b32"),
+    "type=SOCKADDR msg=audit(100.721:209): saddr=100000000000000000000000\x1dSADDR={ saddr_fam=netlink nlnk-pid=0 }",
+  ];
+  const [config, send, title, socket] = secondInstall;
   const files = {
     ...rawArtifacts(r),
     "profile-audit.json": JSON.stringify(audit),
@@ -730,6 +744,8 @@ test("independent recording validator reopens raw files and rejects corrupt join
     "recording-history.json": bytes,
     "peer-trace.log": trace,
   };
+  const writesOnly = files["profile-audit.log"];
+  files["profile-audit.log"] = [...firstInstall, ...secondInstall, writesOnly].join("\n");
   audit.sha256 = digest(files["profile-audit.log"]);
   files["profile-audit.json"] = JSON.stringify(audit);
   const persist = async (files) => {
@@ -753,12 +769,13 @@ test("independent recording validator reopens raw files and rejects corrupt join
     before: [10, 11, 12, 13],
     heldEntry: [],
     resumed: [14],
+    ambiguous: [],
     after: frames.slice(5).map((f) => f.sequence),
   });
   assert.equal(result.primaryRecordingInterrupted, false);
   assert.deepEqual(result.unrun, []);
   assert.deepEqual(result.profileWriteAudit.coveredAbis, ["b64", "b32"]);
-  assert.equal(result.resumeWindow.durationMs, 600);
+  assert.deepEqual(result.resumeWindow.durationRangeMs, { min: 550, max: 600 });
   assert.equal(result.resumeWindow.completeExchanges, 1);
   assert.equal(result.resumeWindow.readBefore.value, 404);
   assert.equal(result.resumeWindow.readAfter.value, 406);
@@ -767,7 +784,7 @@ test("independent recording validator reopens raw files and rejects corrupt join
     const primary = JSON.parse(files["installed.json"]).runs[0];
     await rm(path.join(dir, primary.name + "-port.json"));
     const window = await measureResumeWindow(dir, primary, r.recording);
-    assert.equal(window.durationMs, 600);
+    assert.deepEqual(window.durationRangeMs, { min: 550, max: 600 });
     assert.deepEqual(window.readBefore, result.resumeWindow.readBefore);
     assert.deepEqual(window.readAfter, result.resumeWindow.readAfter);
     assert.equal(window.wireGapMs, 999);
@@ -786,7 +803,7 @@ test("independent recording validator reopens raw files and rejects corrupt join
     const verified = await verify();
     assert.equal(verified.primaryRecordingInterrupted, false);
     assert.equal(verified.resumeWindow.completeExchanges, 0);
-    assert.equal(verified.resumeWindow.durationMs, 100);
+    assert.deepEqual(verified.resumeWindow.durationRangeMs, { min: 99, max: 100 });
     assert.equal(verified.resumeWindow.bracket.before.sequence, 13);
     assert.equal(verified.resumeWindow.bracket.after.sequence, 14);
     assert.ok(Math.abs(verified.resumeWindow.bracket.gapMs - 496) < 1);
@@ -796,10 +813,21 @@ test("independent recording validator reopens raw files and rejects corrupt join
     copy.runs[0].singleInstance.secondary.observation.preExitMonotonic = 2750;
     await persist(rawArtifacts(copy));
     const verified = await verify();
-    assert.equal(verified.resumeWindow.completeExchanges, 0);
+    assert.equal(verified.resumeWindow.completeExchanges, null);
+    assert.equal(verified.resumeWindow.provenLiveUntil, 2750);
+    assert.equal(verified.resumeWindow.exitedBy, 3250);
+    assert.equal(verified.resumeWindow.ambiguousCompleteExchanges, 1);
+    assert.equal(verified.resumeWindow.provenCompleteExchanges, 0);
+    assert.deepEqual(verified.phases.ambiguous, [14]);
     assert.deepEqual(verified.phases.resumed, []);
     assert.equal(verified.resumeWindow.bracket.after.sequence, 15);
-    assert.equal(verified.resumeWindow.durationMs, 600);
+    assert.deepEqual(verified.resumeWindow.durationRangeMs, { min: 100, max: 600 });
+    const primary = JSON.parse(rawArtifacts(copy)["installed.json"]).runs[0];
+    await rm(path.join(dir, primary.name + "-port.json"));
+    const incomplete = await measureResumeWindow(dir, primary, copy.recording);
+    assert.match(incomplete.observationError, /ENOENT/);
+    assert.equal(incomplete.completeExchanges, null);
+    await persist(files);
   });
   await t.test(
     "unrelated slow port observation does not discredit a bracketed sample",
@@ -836,7 +864,7 @@ test("independent recording validator reopens raw files and rejects corrupt join
       assert.deepEqual(verified.phases.heldEntry, [14, 15, 16, 17, 18]);
       const w = verified.resumeWindow;
       assert.equal(w.holdDurationMs, 2680);
-      assert.equal(w.durationMs, 150);
+      assert.deepEqual(w.durationRangeMs, { min: 100, max: 150 });
       assert.equal(w.holdCompleteExchanges, 5);
       assert.equal(w.completeExchanges, 0);
       assert.equal(w.bracket.before.sequence, 18);
@@ -1176,6 +1204,63 @@ test("independent recording validator reopens raw files and rejects corrupt join
     await persist({ ...files, [name]: bytes, "installed.json": JSON.stringify(summary) });
     await assert.rejects(verify, /recorded debugger events/);
   });
+  await t.test(
+    "fresh replay requires controller exit even with a consistent legacy receipt",
+    async () => {
+      const summary = JSON.parse(files["installed.json"]);
+      const primary = summary.runs[0];
+      const name = primary.name + "-debugger.json";
+      const events = JSON.parse(files[name]);
+      assert.equal(events.pop().event, "secondary-exited");
+      const bytes = JSON.stringify(events);
+      primary.recordingArtifactHashes["-debugger.json"] = digest(bytes);
+      await persist({ ...files, [name]: bytes, "installed.json": JSON.stringify(summary) });
+      await assert.rejects(verify, /recorded debugger events/);
+
+      const secondary = primary.singleInstance.secondary;
+      delete secondary.exit.pid;
+      delete secondary.observation.preExitMonotonic;
+      const hook = secondary.observation;
+      hook.exitMonotonic = 3200;
+      const entry = {
+        phase: "installed",
+        pid: hook.pid,
+        beforeReady: true,
+        installedMonotonic: hook.installedMonotonic,
+      };
+      const legacy = [entry, hook]
+        .map((row) => "KOBRIXA_SECONDARY " + JSON.stringify(row) + "\n")
+        .join("");
+      secondary.logSha256 = digest(legacy);
+      await persist({
+        "single-instance-secondary.log": legacy,
+        "single-instance-secondary-observer.log": legacy,
+        "installed.json": JSON.stringify(summary),
+      });
+      await assert.rejects(verify, /recorded debugger events/);
+      const archive = await verifyContinuity(path.join(dir, "installed.json"), {
+        archiveReplay: true,
+      });
+      assert.equal(archive.status, "archive-replayed");
+      assert.deepEqual(archive.unrun, ["primaryRecordingInterrupted"]);
+      assert.equal(archive.primaryRecordingInterrupted, undefined);
+      await persist(files);
+    },
+  );
+  await t.test("stdout cannot supply the missing observer installation", async () => {
+    const summary = JSON.parse(files["installed.json"]);
+    const observer = "single-instance-secondary-observer.log";
+    const [first, ...rest] = files[observer].split("\n");
+    const incomplete = rest.join("\n");
+    summary.runs[0].singleInstance.secondary.logSha256 = digest(incomplete);
+    await persist({
+      ...files,
+      [observer]: incomplete,
+      "single-instance-secondary-stdout.log": first + "\n",
+      "installed.json": JSON.stringify(summary),
+    });
+    await assert.rejects(verify, /missing installation/);
+  });
   await t.test("resume confirmation must match the inspector event", async () => {
     const summary = JSON.parse(files["installed.json"]);
     summary.runs[0].singleInstance.secondary.resumeConfirmed++;
@@ -1238,7 +1323,7 @@ test("independent recording validator reopens raw files and rejects corrupt join
   ]) {
     await t.test("secondary stream rejects " + name, async () => {
       const summary = JSON.parse(files["installed.json"]);
-      const rows = files["single-instance-secondary.log"]
+      const rows = files["single-instance-secondary-observer.log"]
         .trimEnd()
         .split("\n")
         .map((line) => JSON.parse(line.slice("KOBRIXA_SECONDARY ".length)));
@@ -1247,7 +1332,7 @@ test("independent recording validator reopens raw files and rejects corrupt join
       summary.runs[0].singleInstance.secondary.logSha256 = digest(log);
       await persist({
         ...files,
-        "single-instance-secondary.log": log,
+        "single-instance-secondary-observer.log": log,
         "installed.json": JSON.stringify(summary),
       });
       await assert.rejects(verify, error);
@@ -1255,11 +1340,13 @@ test("independent recording validator reopens raw files and rejects corrupt join
   }
   await t.test("secondary raw exit arrives before installation", async () => {
     const summary = JSON.parse(files["installed.json"]);
-    const reordered = files["single-instance-secondary.log"].split("\n").reverse().join("\n");
+    const reordered =
+      files["single-instance-secondary-observer.log"].trimEnd().split("\n").reverse().join("\n") +
+      "\n";
     summary.runs[0].singleInstance.secondary.logSha256 = digest(reordered);
     await persist({
       ...files,
-      "single-instance-secondary.log": reordered,
+      "single-instance-secondary-observer.log": reordered,
       "installed.json": JSON.stringify(summary),
     });
     await assert.rejects(verify, /secondary log order/);
@@ -1278,6 +1365,7 @@ test("independent recording validator reopens raw files and rejects corrupt join
     await assert.rejects(verify, /arrival order/);
   });
   for (const [label, change, error] of [
+    ["missing audit observation start", (a) => delete a.protectedFrom, /audit observation start/],
     [
       "missing compat rule before launch",
       (a) => {
@@ -1320,63 +1408,84 @@ test("independent recording validator reopens raw files and rejects corrupt join
       await persist({ ...files, "profile-audit.json": JSON.stringify(copy) });
       await assert.rejects(verify, error);
     });
-  // Hand-authored excerpts of the two rule installations. Only the second
-  // event has a SOCKADDR. The kernel and auditd fields are separated by GS.
-  const install = (id, pid) => [
-    `type=CONFIG_CHANGE msg=audit(${id}): op=add_rule key="${key}" list=4 res=1\x1dAUID="unset"`,
-    `type=SYSCALL msg=audit(${id}): arch=c000003e syscall=44 success=yes items=0 ppid=50 pid=${pid} uid=0 euid=0 comm="auditctl" exe="/usr/sbin/auditctl" key=(null)\x1dARCH=x86_64 SYSCALL=sendto`,
-  ];
-  const firstInstall = install("100.911:202", 51);
-  const secondInstall = [
-    ...install("100.921:209", 52),
-    "type=SOCKADDR msg=audit(100.921:209): saddr=100000000000000000000000\x1dSADDR={ saddr_fam=netlink nlnk-pid=0 }",
-  ];
-  const [config, send, socket] = secondInstall;
   for (const [label, records, accepted] of [
     ["both audit rule installations", [...firstInstall, ...secondInstall], true],
-    ["audit rule removal", [config.replace("add_rule", "remove_rule"), send, socket], true],
     [
-      "keyless send from another executable",
-      [config, send.replace("/usr/sbin/auditctl", "/bin/other")],
+      "pre-observation removal",
+      [...firstInstall, config.replace("add_rule", "remove_rule"), send, title, socket],
     ],
+    ["duplicate setup ABI", [...firstInstall, ...install("100.720:208", 52, "b64")]],
+    ["missing setup ABI", firstInstall],
     [
-      "keyless profile write",
-      [send.replace("syscall=44", "syscall=257").replace("/usr/sbin/auditctl", "/copy/kobrixa")],
-    ],
-    ["keyless auditctl without a rule change", [send, socket]],
-    ["audit rule change in another event", [config.replace(":209", ":208"), send]],
-    ["audit rule change at another time", [config.replace("100.921", "100.922"), send]],
-    ["audit rule change for another key", [config.replace(key, key + "-other"), send]],
-    ["two changes for one send", [config, config, send]],
-    ["two sends for one change", [config, send, send]],
-    ["two destinations for one send", [config, send, socket, socket]],
-    [
-      "send declaring a path item without its PATH record",
-      [config, send.replace("items=0", "items=1")],
-    ],
-    ["missing syscall key field", [config, send.replace(" key=(null)", "")]],
-    ["key only in auditd enrichment", [send + ' key="' + key + '"']],
-    ["unsuccessful audit rule change", [config.replace("res=1", "res=0"), send]],
-    ["auditctl without real root uid", [config, send.replace(" uid=0", " uid=1")]],
-    ["auditctl without effective root uid", [config, send.replace(" euid=0", " euid=1")]],
-    ["auditctl using another syscall", [config, send.replace("syscall=44", "syscall=2")]],
-    ["auditctl using another ABI", [config, send.replace("c000003e", "40000003")]],
-    [
-      "auditctl using another socket family",
-      [config, send, socket.replace("saddr=1000", "saddr=0200")],
-    ],
-    [
-      "rule change accompanied by a profile path",
+      "remove and restore during observation",
       [
-        config,
-        send,
-        socket,
-        `type=PATH msg=audit(100.921:209): item=0 name="${run.profile}/cache.db" nametype=NORMAL`,
+        ...firstInstall,
+        ...secondInstall,
+        ...install("102.700:220", 53, "b64").map((line) => line.replace("add_rule", "remove_rule")),
+        ...install("102.800:221", 54, "b64"),
       ],
     ],
+    ["installation at protected boundary", [...firstInstall, ...install("100.750:209", 52, "b32")]],
+    [
+      "late standalone change after recording",
+      [...firstInstall, ...secondInstall, config.replace("100.721:209", "106.700:222")],
+    ],
+    [
+      "standalone removal during launch",
+      [
+        ...firstInstall,
+        ...secondInstall,
+        config.replace("100.721:209", "102.700:222").replace("add_rule", "remove_rule"),
+      ],
+    ],
+    ...[
+      [
+        "keyless send from another executable",
+        [config, send.replace("/usr/sbin/auditctl", "/bin/other")],
+      ],
+      [
+        "keyless profile write",
+        [send.replace("syscall=44", "syscall=257").replace("/usr/sbin/auditctl", "/copy/kobrixa")],
+      ],
+      ["keyless auditctl without a rule change", [send, socket]],
+      ["audit rule change in another event", [config.replace(":209", ":208"), send]],
+      ["audit rule change at another time", [config.replace("100.721", "100.722"), send]],
+      ["audit rule change for another key", [config.replace(key, key + "-other"), send]],
+      ["two changes for one send", [config, config, send]],
+      ["two sends for one change", [config, send, send]],
+      ["two destinations for one send", [config, send, socket, socket]],
+      [
+        "send declaring a path item without its PATH record",
+        [config, send.replace("items=0", "items=1")],
+      ],
+      ["missing syscall key field", [config, send.replace(" key=(null)", "")]],
+      ["key only in auditd enrichment", [send + ' key="' + key + '"']],
+      ["unsuccessful audit rule change", [config.replace("res=1", "res=0"), send]],
+      ["auditctl without real root uid", [config, send.replace(" uid=0", " uid=1")]],
+      ["auditctl without effective root uid", [config, send.replace(" euid=0", " euid=1")]],
+      ["auditctl using another syscall", [config, send.replace("syscall=44", "syscall=2")]],
+      ["auditctl using another ABI", [config, send.replace("c000003e", "40000003")]],
+      [
+        "auditctl using another socket family",
+        [config, send, socket.replace("saddr=1000", "saddr=0200")],
+      ],
+      [
+        "rule change accompanied by a profile path",
+        [
+          config,
+          send,
+          socket,
+          `type=PATH msg=audit(100.721:209): item=0 name="${run.profile}/cache.db" nametype=NORMAL`,
+        ],
+      ],
+    ].map(([label, records]) => [label, [...firstInstall, title, ...records]]),
   ]) {
     await t.test(label, async () => {
-      const raw = [...records, files["profile-audit.log"]].join("\n");
+      const stamp = (line) => Number(/msg=audit\(([\d.]+):/.exec(line)[1]);
+      const raw =
+        [...records, ...writesOnly.trimEnd().split("\n")]
+          .sort((a, b) => stamp(a) - stamp(b))
+          .join("\n") + "\n";
       await persist({
         ...files,
         "profile-audit.log": raw,

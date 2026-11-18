@@ -392,7 +392,7 @@ export function installSecondaryObservation(require, process, emit) {
       record("lock-result", { request, acquired });
       return acquired;
     });
-    // process.exit delegates to process.reallyExit. Record the outer call once.
+    // Electron delegates process.exit to app.exit. Node can delegate to reallyExit.
     let inProcessExit = false;
     for (const [target, key, api] of [
       [electron.app, "exit", "app.exit"],
@@ -402,7 +402,7 @@ export function installSecondaryObservation(require, process, emit) {
       const original = target[key];
       if (typeof original !== "function") throw Error("Missing exit API: " + api);
       replace(target, key, function (...args) {
-        if (inProcessExit && api === "process.reallyExit")
+        if (inProcessExit && (api === "app.exit" || api === "process.reallyExit"))
           return Reflect.apply(original, this, args);
         record("pre-exit", {
           api,
@@ -428,6 +428,22 @@ export function installSecondaryObservation(require, process, emit) {
   return true;
 }
 
+// Evaluated in the paused packaged main process before installing the fs probes.
+export function secondaryRecordWriter(fs, file) {
+  const { writeSync, fsyncSync, constants } = fs;
+  const fd = fs.openSync(file, constants.O_WRONLY | constants.O_APPEND | constants.O_SYNC);
+  return (row) => {
+    const bytes = Buffer.from("KOBRIXA_SECONDARY " + JSON.stringify(row) + "\n");
+    let offset = 0;
+    while (offset < bytes.length) {
+      const count = writeSync(fd, bytes, offset, bytes.length - offset);
+      if (!count) throw Error("Incomplete secondary observation write");
+      offset += count;
+    }
+    fsyncSync(fd);
+  };
+}
+
 export async function observeSecondaryStartup(
   client,
   pid,
@@ -436,6 +452,7 @@ export async function observeSecondaryStartup(
   table = processTable,
   bounds,
   confirmExit,
+  observerFile,
 ) {
   let startup,
     resumePending = false;
@@ -449,16 +466,8 @@ export async function observeSecondaryStartup(
       assert.equal(startup.ready, false);
       assert.equal(
         await evaluate(`(() => {
-      const write = require('node:fs').writeSync;
-      return (${installSecondaryObservation.toString()})(require, process, row => {
-        const bytes = Buffer.from('\\nKOBRIXA_SECONDARY ' + JSON.stringify(row) + '\\n');
-        let offset = 0;
-        while (offset < bytes.length) {
-          const count = write(2, bytes, offset, bytes.length - offset);
-          if (!count) throw Error("Incomplete secondary observation write");
-          offset += count;
-        }
-      });
+      const emit = (${secondaryRecordWriter.toString()})(require('node:fs'), ${JSON.stringify(observerFile)});
+      return (${installSecondaryObservation.toString()})(require, process, emit);
     })()`),
         true,
       );
@@ -1306,6 +1315,17 @@ async function observeSingleInstance(client, config, run, binding) {
       `--user-data-dir=${config.profile}`,
       secondary.marker,
     ];
+    secondary.log = path.join(config.directory, "single-instance-secondary-observer.log");
+    const observerFile = await open(
+      secondary.log,
+      constants.O_WRONLY |
+        constants.O_CREAT |
+        constants.O_EXCL |
+        constants.O_APPEND |
+        constants.O_SYNC,
+      0o600,
+    );
+    await observerFile.close();
     const launch = installedLaunchCommand(config, secondary.argv);
     if (config.recording) {
       secondary.beforeSpawn = monotonic();
@@ -1385,6 +1405,7 @@ async function observeSingleInstance(client, config, run, binding) {
         processTable,
         config.recording && secondary,
         waitForExit,
+        secondary.log,
       );
       offResumed?.();
       secondaryInspector.close();
@@ -1473,11 +1494,11 @@ async function observeSingleInstance(client, config, run, binding) {
     }
     secondary.observedPids = [...known.keys()];
     secondary.observedIdentities = [...known].map(([pid, created]) => ({ pid, created }));
-    secondary.log = path.join(config.directory, "single-instance-secondary.log");
-    const output = stdout ? stdout + "\n" + stderr : stderr;
-    await writeFile(secondary.log, output);
-    secondary.logSha256 = sha256(output);
+    await writeFile(path.join(config.directory, "single-instance-secondary-stdout.log"), stdout);
+    await writeFile(path.join(config.directory, "single-instance-secondary-stderr.log"), stderr);
     try {
+      const output = await readFile(secondary.log);
+      secondary.logSha256 = sha256(output);
       secondary.observation = collectSecondaryObservation(output, secondary);
       assertSecondaryObservation(secondary);
     } catch (error) {
@@ -1674,12 +1695,13 @@ async function freshProfile(directory, name) {
 }
 
 export async function main() {
-  const verifyOnly = process.argv[2] === "--verify-recording";
+  const archiveReplay = process.argv[2] === "--replay-archived-recording";
+  const verifyOnly = archiveReplay || process.argv[2] === "--verify-recording";
   const singleInstance = process.argv.includes("--single-instance");
   const continuity =
     singleInstance || verifyOnly ? await import("./ev3-uhid-continuity.mjs") : undefined;
   if (verifyOnly) {
-    const result = await continuity.verifyContinuity(process.argv[3]);
+    const result = await continuity.verifyContinuity(process.argv[3], { archiveReplay });
     console.log(JSON.stringify(result));
     return;
   }

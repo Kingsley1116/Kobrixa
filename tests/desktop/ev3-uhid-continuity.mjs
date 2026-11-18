@@ -202,11 +202,23 @@ function exchangeInterval(clock, wire, frame, delivery) {
   };
 }
 
-function secondaryExit(log, secondary) {
+function secondaryLog(dir, archiveReplay) {
+  return readFile(
+    path.join(
+      dir,
+      archiveReplay ? "single-instance-secondary.log" : "single-instance-secondary-observer.log",
+    ),
+  );
+}
+
+function secondaryExit(log, secondary, archiveReplay) {
   assert.equal(digest(log), secondary.logSha256);
-  const exit = collectSecondaryObservation(log, secondary);
+  const exit = collectSecondaryObservation(log, secondary, { archiveReplay });
   assert.deepEqual(exit, secondary.observation);
-  return exit.exitMonotonic;
+  return {
+    provenLiveUntil: exit.preExitMonotonic ?? exit.exitMonotonic,
+    exitedBy: secondary.exit.monotonic,
+  };
 }
 
 // Sampler.snapshot() accepts a sample through 2500 ms of age.
@@ -222,13 +234,24 @@ function recordingBracket(exchanges, secondary, exit) {
   };
 }
 
+// Classify complete exchanges only. One crossing resume or OS exit cannot
+// fit inside the resumed lifetime for any exit time within these bounds.
+function lifetimeClass({ start, end }, resume, { provenLiveUntil, exitedBy }) {
+  if (start <= resume || end > exitedBy) return "outside";
+  return end < provenLiveUntil ? "proven" : "ambiguous";
+}
+
 // Kept even if audit, history or the continuity gate cannot be verified.
 // Null means unavailable. Zero is reserved for a measured empty window.
-export async function measureResumeWindow(dir, run, recording) {
+export async function measureResumeWindow(dir, run, recording, { archiveReplay = false } = {}) {
   const result = {
     holdDurationMs: null,
     holdCompleteExchanges: null,
-    durationMs: null,
+    provenLiveUntil: null,
+    exitedBy: null,
+    durationRangeMs: null,
+    provenCompleteExchanges: null,
+    ambiguousCompleteExchanges: null,
     bracket: { before: null, after: null, gapMs: null },
     readBefore: null,
     readAfter: null,
@@ -245,14 +268,14 @@ export async function measureResumeWindow(dir, run, recording) {
       "unmeasured entry hold",
     );
     result.holdDurationMs = resume - secondary.beforeSpawn;
-    const exit = secondaryExit(
-      await readFile(path.join(dir, "single-instance-secondary.log")),
-      secondary,
+    const bounds = secondaryExit(await secondaryLog(dir, archiveReplay), secondary, archiveReplay);
+    const { provenLiveUntil, exitedBy: exit } = bounds;
+    assert.ok(
+      Number.isFinite(exit) && resume < provenLiveUntil && provenLiveUntil <= exit,
+      "secondary exit clock",
     );
-    assert.ok(Number.isFinite(resume) && Number.isFinite(exit), "unmeasured resume or exit");
-    const aliveUntil = secondary.observation.preExitMonotonic ?? exit;
-    assert.ok(resume < aliveUntil, "secondary exit clock");
-    result.durationMs = exit - resume;
+    Object.assign(result, bounds);
+    result.durationRangeMs = { min: provenLiveUntil - resume, max: exit - resume };
     const trace = await readFile(path.join(dir, "peer-trace.log"));
     assert.equal(digest(trace), recording.traceSha256, "selected peer trace digest");
     assert.ok(Number.isSafeInteger(recording.device.offset) && recording.device.offset >= 0);
@@ -270,7 +293,7 @@ export async function measureResumeWindow(dir, run, recording) {
       "peer trace does not bracket the observed window",
     );
     assert.ok(exit >= resume, "raw exit preceded observed resume");
-    const candidates = reads.filter((w) => w.at > resume && w.end < aliveUntil);
+    const candidates = reads.filter((w) => w.at > resume && w.end <= exit);
     if (!candidates.length) result.completeExchanges = 0;
     const bytes = await readFile(path.join(dir, run.name + "-port.json"));
     assert.equal(digest(bytes), run.recordingArtifactHashes["-port.json"], "primary port digest");
@@ -281,12 +304,15 @@ export async function measureResumeWindow(dir, run, recording) {
       assert.equal(read.params.reservationId, reserve.value.reservation.reservationId);
       deliveries.push(...read.value.frames.map((frame) => ({ frame, at: read.end })));
     }
-    const counted = new Set();
+    let proven = 0,
+      ambiguous = 0;
     const exchanges = [];
     const byValue = new Map();
+    const sequences = new Set();
     for (const item of deliveries) {
       const value = item.frame.values[0]?.value;
-      assert.ok(!byValue.has(value), "unique wire delivery");
+      assert.ok(!byValue.has(value) && !sequences.has(item.frame.sequence), "unique wire delivery");
+      sequences.add(item.frame.sequence);
       byValue.set(value, item);
     }
     for (const wire of reads) {
@@ -294,13 +320,17 @@ export async function measureResumeWindow(dir, run, recording) {
       const { frame, at } = byValue.get(wire.value);
       const interval = exchangeInterval(clock, wire, frame, at);
       exchanges.push({ sequence: frame.sequence, start: interval.start, end: interval.end });
-      if (interval.start > resume && interval.end < aliveUntil) counted.add(frame.sequence);
+      const classification = lifetimeClass(interval, resume, bounds);
+      if (classification === "proven") proven++;
+      if (classification === "ambiguous") ambiguous++;
     }
     result.bracket = recordingBracket(exchanges, secondary, exit);
     result.holdCompleteExchanges = exchanges.filter(
       (x) => x.end >= secondary.beforeSpawn && x.end < resume,
     ).length;
-    result.completeExchanges = counted.size;
+    result.provenCompleteExchanges = proven;
+    result.ambiguousCompleteExchanges = ambiguous;
+    result.completeExchanges = ambiguous ? null : proven;
   } catch (error) {
     result.observationError = error.message;
   }
@@ -329,12 +359,12 @@ function joinFrames({
     "secondary monotonic intervals",
   );
   assert.ok(
-    resumeConfirmed < bounds.aliveUntil && bounds.aliveUntil <= exit.monotonic,
+    resumeConfirmed < bounds.provenLiveUntil && bounds.provenLiveUntil <= exit.monotonic,
     "secondary exit clock",
   );
   assert.equal(saved.frames.length, frames.length, "complete history through release");
   assert.equal(saved.frameCount, frames.length);
-  const phases = { before: [], heldEntry: [], resumed: [], after: [] };
+  const phases = { before: [], heldEntry: [], resumed: [], ambiguous: [], after: [] };
   const exchanges = [];
   const origin = frames[0].elapsedMs;
   const matches = new Map(reads.map((r, i) => [r.value, i]));
@@ -386,15 +416,17 @@ function joinFrames({
       sessionElapsedMs: f.elapsedMs,
       elapsedMs: f.elapsedMs - origin,
     });
+    const classification = lifetimeClass({ start, end }, resumeConfirmed, bounds);
     if (end < beforeSpawn) phases.before.push(f.sequence);
     else if (end < resumeConfirmed) phases.heldEntry.push(f.sequence);
-    else if (start > resumeConfirmed && end < bounds.aliveUntil) phases.resumed.push(f.sequence);
+    else if (classification === "proven") phases.resumed.push(f.sequence);
+    else if (classification === "ambiguous") phases.ambiguous.push(f.sequence);
     else if (start > exit.monotonic && end < stopAt) phases.after.push(f.sequence);
     // Never credit transition windows or the delay after exit as during.
   }
   assert.ok(phases.before.length >= 3, "fresh pre-launch frames");
   assert.ok(phases.after.length >= 1, "fresh post-exit frame");
-  const bracket = recordingBracket(exchanges, bounds, bounds.observation.exitMonotonic);
+  const bracket = recordingBracket(exchanges, bounds, bounds.exitedBy);
   assert.ok(bracket.before && bracket.after, "complete bracketing endpoints");
   // All entries in exchanges have passed the consecutive broker, wire and
   // history joins above, including entries that cross a lifetime boundary.
@@ -413,7 +445,7 @@ function joinFrames({
   return { phases, bracket };
 }
 
-export async function verifyContinuity(file) {
+export async function verifyContinuity(file, { archiveReplay = false } = {}) {
   const dir = path.dirname(file);
   const r = JSON.parse(await readFile(file, "utf8"));
   assert.equal(r.kind, "installed-single-instance-recording");
@@ -459,9 +491,9 @@ export async function verifyContinuity(file) {
         ? [
             { event: "before-spawn", at: secondary.beforeSpawn },
             { event: "secondary-resumed", pid: secondary.pid, at: secondary.resumeConfirmed },
-            ...(secondary.exit.pid === undefined
+            ...(archiveReplay && secondary.exit.pid === undefined
               ? []
-              : [{ event: "secondary-exited", ...secondary.exit }]),
+              : [{ ...secondary.exit, event: "secondary-exited" }]),
           ]
         : [],
       "recorded debugger events",
@@ -496,8 +528,7 @@ export async function verifyContinuity(file) {
   }
   const wire = transcripts[0].messages,
     history = transcripts[1].messages;
-  const log = await readFile(path.join(dir, "single-instance-secondary.log"));
-  secondaryExit(log, secondary);
+  const lifetime = secondaryExit(await secondaryLog(dir, archiveReplay), secondary, archiveReplay);
   assert.deepEqual(transcripts[1].releases, [], "unexpected restarted broker release");
   assert.notEqual(restart.pid, run.pid);
   assert.equal(restart.profile, run.profile);
@@ -889,7 +920,7 @@ export async function verifyContinuity(file) {
     reads,
     bounds: {
       ...secondary,
-      aliveUntil: secondary.observation.preExitMonotonic ?? secondary.observation.exitMonotonic,
+      ...lifetime,
     },
     clock: wire,
     stopAt: recording.stopAt,
@@ -908,11 +939,21 @@ export async function verifyContinuity(file) {
       end: bracket.after.end,
       clock: clockBounds(wire, bracket.before.start, bracket.after.end),
     },
+    { archiveReplay },
   );
-  const resumeWindow = await measureResumeWindow(dir, run, recording);
+  const resumeWindow = await measureResumeWindow(dir, run, recording, { archiveReplay });
   assert.deepEqual(resumeWindow.bracket, bracket, "measured recording bracket");
   assert.equal(resumeWindow.holdCompleteExchanges, phases.heldEntry.length, "measured hold count");
-  assert.equal(resumeWindow.completeExchanges, phases.resumed.length, "measured overlap count");
+  assert.equal(
+    resumeWindow.ambiguousCompleteExchanges,
+    phases.ambiguous.length,
+    "ambiguous overlap count",
+  );
+  assert.equal(
+    resumeWindow.provenCompleteExchanges,
+    phases.resumed.length,
+    "measured overlap count",
+  );
   // Replay the raw checks before enforcing the receipt's original unrun list.
   assert.deepEqual(r.unrun, r.status === "partial" ? ["primaryRecordingInterrupted"] : []);
   const derived = {
@@ -926,5 +967,14 @@ export async function verifyContinuity(file) {
   if (r.status === "passed")
     for (const [key, value] of Object.entries(derived))
       assert.deepEqual(r[key], value, "receipt differs from raw evidence: " + key);
+  if (archiveReplay)
+    return {
+      status: "archive-replayed",
+      originalStatus: r.status,
+      unrun: r.unrun,
+      profileWriteAudit,
+      resumeWindow,
+      phases,
+    };
   return derived;
 }

@@ -76,6 +76,7 @@ print(json.dumps(dict(pid=os.getpid(), native=native, result=result,
     } catch (error) {
       missing("profile write attribution unresolved — " + error.message);
     }
+    const protectedFrom = Date.now();
     try {
       await observe();
     } finally {
@@ -94,6 +95,7 @@ print(json.dumps(dict(pid=os.getpid(), native=native, result=result,
             sha256: createHash("sha256").update(raw).digest("hex"),
             kernel,
             attempts,
+            protectedFrom,
             rulesBefore: rulesBefore
               ?.split("\n")
               .filter((s) => s.includes(key))
@@ -180,7 +182,7 @@ function checkAbiCoverage({ kernel, attempts, rules }, profile, key) {
 function auditEvents(raw) {
   const events = new Map();
   for (const line of raw.split("\n")) {
-    if (!/^type=(SYSCALL|CONFIG_CHANGE|SOCKADDR|PATH)\b/.test(line)) continue;
+    if (!/^type=(SYSCALL|CONFIG_CHANGE|SOCKADDR|PATH|PROCTITLE)\b/.test(line)) continue;
     const kernelRecord = line.split("\x1d", 1)[0];
     const header = /^type=(\w+) msg=audit\(((\d+\.\d+):\d+)\):? /.exec(kernelRecord);
     assert.ok(header, "timestamped kernel audit event");
@@ -200,7 +202,7 @@ function hasAuditKey(fields, key) {
   return fields.get("key") === '"' + key + '"' || fields.get("key") === key;
 }
 
-function isRuleManagement(records, syscall, key) {
+function isRuleInstallation(records, syscall, key) {
   const changes = records.filter((r) => r.type === "CONFIG_CHANGE");
   if (changes.length !== 1) return false;
   const change = changes[0].fields;
@@ -210,7 +212,7 @@ function isRuleManagement(records, syscall, key) {
   // also identifies the socket when the first rule has no SOCKADDR record.
   return (
     hasAuditKey(change, key) &&
-    ["add_rule", "remove_rule"].includes(change.get("op")) &&
+    change.get("op") === "add_rule" &&
     change.get("list") === "4" &&
     change.get("res") === "1" &&
     records.filter((r) => r.type === "SYSCALL").length === 1 &&
@@ -237,6 +239,7 @@ export function verifyProfileWrites(
   secondary,
   { low, high },
   bracket,
+  { archiveReplay = false } = {},
 ) {
   assert.equal(state.key, key);
   assert.equal(state.profile, profile);
@@ -263,7 +266,26 @@ export function verifyProfileWrites(
   const observationStart = Math.min(start, bracket.start + bracket.clock.low - 1);
   const observationEnd = Math.max(end, bracket.end + bracket.clock.high + 1);
   const primaryTimes = [];
-  for (const { id, at, records } of auditEvents(raw)) {
+  const events = [...auditEvents(raw)];
+  // Older captures have no controller setup boundary. Their earliest keyed
+  // syscall provides a cutoff for historical replay only.
+  const firstAccess = events.reduce(
+    (first, { at, records }) =>
+      records.some((r) => r.type === "SYSCALL" && hasAuditKey(r.fields, key))
+        ? Math.min(first, at)
+        : first,
+    Infinity,
+  );
+  const protectedFrom = state.protectedFrom ?? (archiveReplay ? firstAccess : undefined);
+  assert.ok(
+    Number.isFinite(protectedFrom) && protectedFrom <= observationStart,
+    "audit observation start",
+  );
+  const pendingInstalls = new Set(coveredAbis);
+  for (const { id, at, records } of events) {
+    // ausearch selected this entire event for the run key. Every config
+    // record needs an explanation, even when it has no companion syscall.
+    const change = records.some((r) => r.type === "CONFIG_CHANGE");
     for (const { type, fields } of records) {
       if (type !== "SYSCALL") continue;
       assert.equal(fields.get("success"), "yes");
@@ -277,7 +299,7 @@ export function verifyProfileWrites(
         `secondary profile write in audit(${id}) pid=${pid} ppid=${parent}`,
       );
       if (!hasAuditKey(fields, key)) {
-        assert.ok(isRuleManagement(records, fields, key), "audit rule attribution");
+        assert.ok(change, "audit rule attribution");
         continue;
       }
       if (at >= observationStart && at <= observationEnd)
@@ -287,7 +309,38 @@ export function verifyProfileWrites(
         );
       if (pid === primary) primaryTimes.push(at);
     }
+    if (change) {
+      const syscall = records.find((r) => r.type === "SYSCALL");
+      assert.ok(
+        at < Math.min(protectedFrom, firstAccess) &&
+          syscall &&
+          isRuleInstallation(records, syscall.fields, key),
+        "audit rule attribution: unexpected rule change",
+      );
+      // The kernel can truncate PROCTITLE after the ABI argument and
+      // auditctl splits its arch= value in place before sending the rule.
+      const titles = records.filter((r) => r.type === "PROCTITLE");
+      const hex = titles[0]?.fields.get("proctitle");
+      assert.ok(
+        titles.length === 1 && /^(?:[a-fA-F0-9]{2})+$/.test(hex),
+        "audit rule attribution: installer arguments",
+      );
+      const args = Buffer.from(hex, "hex").toString().split("\0");
+      const abi = args[5];
+      assert.ok(
+        isDeepStrictEqual(args.slice(0, 5), [
+          "/usr/sbin/auditctl",
+          "-a",
+          "always,exit",
+          "-F",
+          "arch",
+        ]) && pendingInstalls.has(abi),
+        "audit rule attribution: unexpected ABI installation",
+      );
+      pendingInstalls.delete(abi);
+    }
   }
+  assert.equal(pendingInstalls.size, 0, "audit rule attribution: missing installation");
   assert.equal(
     createHash("sha256").update(raw).digest("hex"),
     state.sha256,

@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 
 // Replay only the identified child's observations. The controller owns exit status and time.
-export function collectSecondaryObservation(output, secondary) {
+export function collectSecondaryObservation(output, secondary, { archiveReplay = false } = {}) {
   const prefix = "KOBRIXA_SECONDARY ";
   const lines = output.toString().split(/\r?\n/);
+  assert.equal(lines.pop(), "", "truncated secondary record");
   const rows = [];
   for (const line of lines) {
-    if (!line.startsWith(prefix.trimEnd())) continue;
+    if (archiveReplay && !line.startsWith(prefix.trimEnd())) continue;
     assert.ok(line.startsWith(prefix), "truncated secondary record");
     rows.push(JSON.parse(line.slice(prefix.length)));
   }
@@ -22,7 +23,7 @@ export function collectSecondaryObservation(output, secondary) {
   assert.ok(Number.isFinite(exit.at));
 
   // Archived producers emitted an unnumbered installation and a full exit-hook snapshot.
-  if (entry.sequence === undefined && exit.pid === undefined) {
+  if (archiveReplay && entry.sequence === undefined && exit.pid === undefined) {
     assert.equal(rest.length, 1);
     const [hook] = rest;
     assert.equal(hook.phase, "exit");
@@ -36,11 +37,6 @@ export function collectSecondaryObservation(output, secondary) {
 
   assert.equal(exit.pid, pid);
   assert.equal(entry.sequence, 0);
-  const tail = lines.at(-1);
-  assert.ok(
-    !tail || !(prefix.startsWith(tail) || tail.startsWith(prefix)),
-    "truncated secondary record",
-  );
   const summary = {
     phase: "exit",
     pid,

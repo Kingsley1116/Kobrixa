@@ -820,26 +820,39 @@ test("Windows ancestry retains a late-sampled child of an already exited observe
   assert.equal(known.get(13), "grandchild");
 });
 
-test("secondary entry observer records original mutations and requires a terminal receipt", async () => {
+test("secondary entry observer records original mutations and requires a terminal receipt", async (t) => {
   const { spawnSync } = await import("node:child_process");
   const { collectSecondaryObservation } = await import("./builtin-process-installed.mjs");
-  for (const [exitCall, mutate] of [
+  const fs = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const path = await import("node:path");
+  const dir = await fs.mkdtemp(path.join(tmpdir(), "secondary-test-"));
+  t.after(() => fs.rm(dir, { force: true, recursive: true }));
+  const observer = path.join(dir, "observer.log");
+  for (const [exitCall, mutate, electronDelegation = false] of [
     ["electron.app.exit", false],
     ["electron.app.exit", true],
     ["process.reallyExit", false],
     ["process.exit", false],
+    ["process.exit", false, true],
   ]) {
+    await fs.writeFile(observer, "");
     const child = spawnSync(process.execPath, [
       "--input-type=module",
       "-e",
       `
       import { createRequire } from 'node:module';
-      import { installSecondaryObservation } from ${JSON.stringify(new URL("./builtin-process-installed.mjs", import.meta.url).href)};
+      import { installSecondaryObservation, secondaryRecordWriter } from ${JSON.stringify(new URL("./builtin-process-installed.mjs", import.meta.url).href)};
       const realRequire = createRequire(import.meta.url);
       const fs = realRequire('node:fs'), write = fs.writeSync;
       const electron = {app:{exit:process.reallyExit.bind(process),isReady:()=>false, requestSingleInstanceLock:()=>false}, utilityProcess:{fork:()=>({original:true})}};
       const require = name => name === 'electron' ? electron : realRequire(name);
-      installSecondaryObservation(require, process, row => write(2, '\\nKOBRIXA_SECONDARY '+JSON.stringify(row)+'\\n'));
+      if (${electronDelegation}) process.exit = code => electron.app.exit(code);
+      const emit = secondaryRecordWriter(fs, ${JSON.stringify(observer)});
+      installSecondaryObservation(require, process, row => {
+        if (row.phase === 'installed') write(1, 'KOBRIXA_SECONDARY '+JSON.stringify(row)+'\\n');
+        emit(row);
+      });
       if (electron.app.requestSingleInstanceLock() !== false) throw Error('Lock changed');
       if (${mutate}) {
         if (!electron.utilityProcess.fork('provider.cjs').original) throw Error('Fork changed');
@@ -854,8 +867,12 @@ test("secondary entry observer records original mutations and requires a termina
     assert.ifError(child.error);
     const stderr = child.stderr.toString();
     assert.equal(child.status, 0, stderr);
-    assert.equal(stderr.includes("Node exit hook ran"), exitCall === "process.exit");
-    assert.ok(stderr.includes('"api":' + JSON.stringify(exitCall.replace("electron.", ""))));
+    assert.equal(
+      stderr.includes("Node exit hook ran"),
+      exitCall === "process.exit" && !electronDelegation,
+    );
+    const log = await fs.readFile(observer, "utf8");
+    assert.ok(log.includes('"api":' + JSON.stringify(exitCall.replace("electron.", ""))));
     const secondary = {
       pid: child.pid,
       exit: {
@@ -866,21 +883,20 @@ test("secondary entry observer records original mutations and requires a termina
         monotonic: Number(process.hrtime.bigint()) / 1e6,
       },
     };
-    const observed = collectSecondaryObservation(stderr, secondary);
+    const observed = collectSecondaryObservation(log, secondary);
     assert.throws(
       () =>
-        collectSecondaryObservation(stderr, { ...secondary, exit: { ...secondary.exit, code: 7 } }),
+        collectSecondaryObservation(log, { ...secondary, exit: { ...secondary.exit, code: 7 } }),
       /controller exit code/,
     );
     assert.throws(
-      () =>
-        collectSecondaryObservation(stderr.replace("Node exit hook ran", "").trimEnd(), secondary),
+      () => collectSecondaryObservation(log.trimEnd(), secondary),
       /truncated secondary record/,
     );
     const { preExitMonotonic, ...hook } = observed;
     hook.exitMonotonic = preExitMonotonic;
     const hookLine = "KOBRIXA_SECONDARY " + JSON.stringify(hook) + "\n";
-    assert.deepEqual(collectSecondaryObservation(stderr + hookLine, secondary), observed);
+    assert.deepEqual(collectSecondaryObservation(log + hookLine, secondary), observed);
     const historicalEntry = {
       phase: "installed",
       pid: hook.pid,
@@ -892,17 +908,28 @@ test("secondary entry observer records original mutations and requires a termina
       pid: secondary.pid,
       exit: { code: child.status, signal: child.signal, at: secondary.exit.at },
     };
-    assert.deepEqual(collectSecondaryObservation(legacy, archived), hook);
+    assert.throws(() => collectSecondaryObservation(legacy, archived));
+    assert.deepEqual(collectSecondaryObservation(legacy, archived, { archiveReplay: true }), hook);
     assert.throws(() => collectSecondaryObservation(legacy, secondary));
+    const stdoutRow = child.stdout.toString();
+    assert.ok(log.startsWith(stdoutRow));
+    assert.throws(
+      () => collectSecondaryObservation(log.slice(stdoutRow.length), secondary),
+      /missing installation/,
+    );
+    assert.throws(
+      () => collectSecondaryObservation(log + "KOBR\n", secondary),
+      /truncated secondary record/,
+    );
     assert.deepEqual(observed.locks, [{ acquired: false }]);
     assert.deepEqual(observed.workers, []);
     assert.deepEqual(observed.children, []);
     assert.equal(observed.utilities.length, mutate ? 1 : 0);
     assert.equal(observed.writes.length > 0, mutate);
     assert.throws(() =>
-      collectSecondaryObservation(stderr.split("\n").slice(0, 2).join("\n"), secondary),
+      collectSecondaryObservation(log.split("\n").slice(0, 2).join("\n"), secondary),
     );
-    assert.throws(() => collectSecondaryObservation(stderr + stderr, secondary));
+    assert.throws(() => collectSecondaryObservation(log + log, secondary));
   }
 });
 
