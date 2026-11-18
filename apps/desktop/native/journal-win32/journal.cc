@@ -791,7 +791,13 @@ napi_value DurableReplaceImpl(napi_env env, napi_callback_info info, bool testHo
     if (testHook) Hook(env, args[4], "after-move");
 #endif
     phase = "flush-published";
-    Match(RelativeIdentity(parent, target), identity);
+    const auto publishedId = RelativeIdentity(parent, target);
+#ifdef JOURNAL_TEST_HOOKS
+    if (diagnostic && publishedId != identity)
+      throw Failure{"ESTALE", "journal identity changed", 0, 0, "unavailable",
+                    renameContext + " stagingId=" + identity + " observedId=" + publishedId};
+#endif
+    Match(publishedId, identity);
     PrivateAcl(staging.value);
     // FileRenameInfoEx has no WRITE_THROUGH flag. Require explicit file and
     // directory flush receipts; never equate rename success with durable commit.

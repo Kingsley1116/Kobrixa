@@ -320,6 +320,7 @@ if (process.env.KOBRIXA_JOURNAL_WIN32_CHILD === "interrupt") {
         variants.map((variant, index) => {
           const { dir, current } = privateFixture(t);
           if (existing) writeFileSync(current, oldBytes);
+          const oldId = existing && index === 8 ? native.inspect(dir, "faults.json") : undefined;
           const temporary = `faults.next-${randomUUID()}.json`;
           try {
             const receipt = native.probeRenameForTest(
@@ -332,6 +333,11 @@ if (process.env.KOBRIXA_JOURNAL_WIN32_CHILD === "interrupt") {
             t.diagnostic(JSON.stringify({ variant, existing, outcome: "success", receipt }));
             return { dir, current, temporary, receipt, existing, index };
           } catch (error) {
+            const entriesAfterReturn = readdirSync(dir);
+            const targetAfterReturn =
+              existing && index === 8 && error.code === "ESTALE"
+                ? { identity: native.inspect(dir, "faults.json"), bytes: readFileSync(current) }
+                : undefined;
             t.diagnostic(
               JSON.stringify({
                 variant,
@@ -345,9 +351,21 @@ if (process.env.KOBRIXA_JOURNAL_WIN32_CHILD === "interrupt") {
                 phase: error.phase,
                 publicationState: error.publicationState,
                 context: error.nativeContext,
+                oldId,
+                entriesAfterReturn,
               }),
             );
-            return { dir, current, temporary, error, existing, index };
+            return {
+              dir,
+              current,
+              temporary,
+              error,
+              existing,
+              index,
+              oldId,
+              entriesAfterReturn,
+              targetAfterReturn,
+            };
           }
         }),
       );
@@ -365,6 +383,30 @@ if (process.env.KOBRIXA_JOURNAL_WIN32_CHILD === "interrupt") {
           assert.equal(receipt.fileFlushed, true);
           assert.deepEqual(readFileSync(current), newBytes);
           assert.equal(existsSync(path.join(dir, temporary)), false);
+        } else if (outcome.index === 8 && outcome.existing && error.code === "ESTALE") {
+          // Only the absolute Win32 probe: the rename returned but the pinned
+          // lookup failed to confirm it. No durability receipt was issued.
+          fault("ESTALE", 0)(error);
+          assert.equal(error.operation, "journal identity changed");
+          assert.equal(error.phase, "flush-published");
+          assert.equal(error.publicationState, "uncertain");
+          assert.equal(error.ntStatus, null);
+          assert.equal(error.ntStatusSource, "unavailable");
+          const ids = / stagingId=([0-9a-f]+:[0-9a-f]{32}) observedId=(\S+)$/.exec(
+            error.nativeContext,
+          );
+          assert.ok(ids, error.nativeContext);
+          assert.match(outcome.oldId, /^[0-9a-f]+:[0-9a-f]{32}$/);
+          assert.notEqual(ids[1], outcome.oldId);
+          assert.ok([outcome.oldId, "missing"].includes(ids[2]), error.nativeContext);
+          assert.deepEqual(outcome.entriesAfterReturn, ["faults.json"]);
+          assert.equal(outcome.targetAfterReturn.identity, ids[1]);
+          assert.deepEqual(outcome.targetAfterReturn.bytes, newBytes);
+          // Reopen after both native handles unwound. A missing target, stray
+          // staging name, unrelated file ID or partial payload must still fail.
+          assert.deepEqual(readdirSync(dir), ["faults.json"]);
+          assert.equal(native.inspect(dir, "faults.json"), ids[1]);
+          assert.deepEqual(readFileSync(current), newBytes);
         } else {
           assert.ok(error.win32Code > 0);
           fault(error.code, error.win32Code)(error);

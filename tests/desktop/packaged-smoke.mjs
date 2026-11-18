@@ -1,10 +1,12 @@
+import { connect, descendants, processTable } from "./builtin-installed-client.mjs";
 import { createHash } from "node:crypto";
 import { devicePreferencesExpression } from "./builtin-process-installed.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { setTimeout as pause } from "node:timers/promises";
 import { readVersion, repositoryRoot } from "../../tools/release/common.mjs";
 import { developmentSourceKey } from "../../packages/plugin-runtime/dist/index.js";
@@ -16,8 +18,102 @@ import { checkPackagedStaticLanguages } from "./static-languages-packaged.mjs";
 const devicePreferences = (js, until, digest) =>
   until(() => js(devicePreferencesExpression(digest)));
 
-const profile = await mkdtemp(path.join(tmpdir(), "kobrixa-packaged-smoke-"));
-try {
+// Fix the verdict before collecting diagnostics. An exit during the OS process
+// query or a disconnected debugger must never retroactively satisfy the deadline.
+export async function waitForQuit(exit, evidence, delay = pause) {
+  const expired = Symbol();
+  const result = await Promise.race([exit, delay(5000, expired, { ref: false })]);
+  if (result === expired)
+    throw new Error(`Application did not quit within 5000 ms: ${JSON.stringify(await evidence())}`);
+  assert.deepEqual(result, { code: 0, signal: null }, "Unexpected packaged application exit");
+}
+
+// The browser may close its debugger before it acknowledges the quit request.
+export async function closePackagedBrowser(socket, exit, evidence, lifecycle) {
+  try {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("Debug attach deadline")), 5000);
+      const finish = (callback) => {
+        clearTimeout(timer);
+        callback();
+      };
+      socket.addEventListener("open", () => finish(resolve), { once: true });
+      const failed = () => finish(() => reject(new Error("Debug attach failed")));
+      socket.addEventListener("error", failed, { once: true });
+      socket.addEventListener("close", failed, { once: true });
+    });
+    socket.addEventListener("message", ({ data }) => {
+      const reply = JSON.parse(data);
+      if (reply.id === 1)
+        lifecycle.browserClose = reply.error ? JSON.stringify(reply.error) : "acknowledged";
+    });
+    socket.addEventListener("close", () => {
+      lifecycle.browserTransport = "closed";
+    });
+    if (socket.readyState !== WebSocket.OPEN)
+      throw new Error("Browser.close transport unavailable");
+    socket.send(JSON.stringify({ id: 1, method: "Browser.close" }));
+    lifecycle.browserClose = "sent";
+    await waitForQuit(exit, evidence);
+  } finally {
+    socket.close();
+  }
+}
+
+async function observe(read) {
+  try {
+    return await read();
+  } catch (error) {
+    return { unavailable: String(error) };
+  }
+}
+
+export async function collectQuitEvidence(js, profile, pid, table = processTable) {
+  const [workbench, plugins, recovery, processes, sessionMarker, journalEntries] =
+    await Promise.all([
+      observe(() =>
+        js(`({
+            dirtyTabs: document.querySelectorAll(".project-tab .dirty").length,
+            sessionIssues: document.querySelector(".session-issues")?.textContent ?? null,
+            openDialogs: [...document.querySelectorAll('dialog[open], [role="alertdialog"]')]
+              .map(element => element.textContent.slice(0, 512))
+          })`),
+      ),
+      observe(() =>
+        js(`window.kobrixa.plugins.state().then(({ safeMode, stateProblem, plugins }) =>
+            ({ safeMode, stateProblem, plugins: plugins.map(({ sourceKey, running, status, problems }) =>
+              ({ sourceKey, running, status, problems })) }))`),
+      ),
+      observe(() =>
+        js(`(async () => {
+            const pages = [], seen = new Set();
+            let cursor;
+            do {
+              const page = await window.kobrixa.plugins.recovery.snapshot(cursor ? {cursor} : {});
+              pages.push(page);
+              if (!page.ok) break;
+              cursor = page.value.nextCursor;
+              if (cursor && seen.has(cursor)) throw Error("Repeated recovery cursor");
+              seen.add(cursor);
+            } while (cursor);
+            return pages;
+          })()`),
+      ),
+      observe(async () => {
+        const rows = await table();
+        if (!rows.some((row) => row.pid === pid))
+          throw new Error("Parent absent at OS process sample");
+        return descendants(rows, pid, new Map());
+      }),
+      observe(async () =>
+        JSON.parse(await readFile(path.join(profile, "plugins/session.json"), "utf8")),
+      ),
+      observe(() => readdir(path.join(profile, "device-broker"))),
+    ]);
+  return { workbench, plugins, recovery, processes, sessionMarker, journalEntries };
+}
+
+async function checkPackage(profile, cp) {
   const version = await readVersion();
   const appDirectory = path.join(
     repositoryRoot,
@@ -79,7 +175,7 @@ try {
     }),
   );
 
-  async function launch(check) {
+  async function launch(phase, check) {
     const child = spawn(
       executable,
       [
@@ -103,10 +199,10 @@ try {
       child.once("exit", (code, signal) => {
         output += `\nApplication exited: code=${code}, signal=${signal}`;
         exited = true;
-        resolve();
+        resolve({ code, signal });
       });
     });
-    const sockets = [];
+    const clients = [];
     const deadline = Date.now() + 45_000;
     async function until(read) {
       while (Date.now() < deadline && !exited) {
@@ -116,38 +212,6 @@ try {
       }
       throw new Error(`Packaged application did not become ready:\n${output}`);
     }
-    async function connect(url) {
-      const socket = new WebSocket(url);
-      sockets.push(socket);
-      await new Promise((resolve, reject) => {
-        socket.addEventListener("open", resolve, { once: true });
-        socket.addEventListener("error", reject, { once: true });
-      });
-      let id = 0;
-      return (method, params = {}, waitForReply = true) =>
-        new Promise((resolve, reject) => {
-          const requestId = ++id;
-          if (!waitForReply) {
-            socket.send(JSON.stringify({ id: requestId, method, params }));
-            resolve();
-            return;
-          }
-          const timeout = setTimeout(() => {
-            socket.removeEventListener("message", receive);
-            reject(new Error(`CDP timeout: ${method}`));
-          }, 10_000);
-          function receive(event) {
-            const reply = JSON.parse(event.data);
-            if (reply.id !== requestId) return;
-            clearTimeout(timeout);
-            socket.removeEventListener("message", receive);
-            if (reply.error) reject(new Error(JSON.stringify(reply.error)));
-            else resolve(reply.result);
-          }
-          socket.addEventListener("message", receive);
-          socket.send(JSON.stringify({ id: requestId, method, params }));
-        });
-    }
     try {
       const endpoint = await until(() => output.match(/DevTools listening on (ws:\/\/\S+)/)?.[1]);
       const origin = `http://${new URL(endpoint).host}`;
@@ -155,16 +219,9 @@ try {
         const pages = await (await fetch(`${origin}/json/list`)).json();
         return pages.find((page) => page.type === "page" && page.url.startsWith("file:"));
       });
-      const send = await connect(target.webSocketDebuggerUrl);
-      const js = async (expression) => {
-        const result = await send("Runtime.evaluate", {
-          expression,
-          awaitPromise: true,
-          returnByValue: true,
-        });
-        if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
-        return result.result.value;
-      };
+      const renderer = await connect(target.webSocketDebuggerUrl);
+      clients.push(renderer);
+      const { js, send } = renderer;
       await until(() =>
         js('Boolean(window.kobrixa?.updates && document.querySelector(".settings-trigger"))'),
       );
@@ -174,24 +231,35 @@ try {
         ),
       );
       await check(js, send, until);
-      const browser = await connect(endpoint);
-      // The browser can exit before delivering a response to this command.
-      await browser("Browser.close", {}, false);
-      await Promise.race([
+      const lifecycle = { phase, browserTransport: "open", rendererTransport: "open" };
+      renderer.onClose((error) => {
+        lifecycle.rendererTransport = error.message;
+      });
+      await closePackagedBrowser(
+        new WebSocket(endpoint),
         exit,
-        pause(5000).then(() => {
-          if (!exited) throw new Error("Application did not quit");
-        }),
-      ]);
+        async () => {
+          const atDeadline = { ...lifecycle };
+          const details = await collectQuitEvidence(js, profile, child.pid);
+          return {
+            pid: child.pid,
+            atDeadline,
+            ...details,
+            exitCodeAfterDiagnostics: child.exitCode,
+            outputTail: output.slice(-16384),
+          };
+        },
+        lifecycle,
+      );
     } finally {
-      for (const socket of sockets) socket.close();
+      for (const client of clients) client.close();
       if (!exited) child.kill();
       await exit;
     }
   }
 
   let initialPreferences;
-  await launch(async (js, send, until) => {
+  await launch("initial edit", async (js, send, until) => {
     await checkPackagedStaticLanguages({ js, send, until, profile, sourceKey: staticSourceKey });
     const restored = await js("window.kobrixa.workspace.restoreSession()");
     const workspaceId = restored.activeWorkspaceId;
@@ -249,7 +317,7 @@ try {
   );
   assert.equal(await readFile(path.join(inputPaths[1], "main.bp"), "utf8"), "LCD.Clear()\n");
   assert.equal(await readFile(path.join(inputPaths[1], "sample.toy"), "utf8"), "value 1\n");
-  await launch(async (js, _send, until) => {
+  await launch("restored dirty draft", async (js, _send, until) => {
     assert.deepEqual((await js("window.kobrixa.updates.getState()")).preferences, {
       enabled: false,
       channel: "preview",
@@ -272,6 +340,16 @@ try {
   console.log(
     "Packaged application: shipped build worker, runtime, device preference validation/persistence, update IPC, three-project restore and immediate-quit draft recovery pass.",
   );
-} finally {
-  await rm(profile, { recursive: true, force: true });
 }
+
+export async function runPackagedSmoke({ copy = cp, cleanup = rm } = {}) {
+  const profile = await mkdtemp(path.join(tmpdir(), "kobrixa-packaged-smoke-"));
+  try {
+    await checkPackage(profile, copy);
+  } finally {
+    await cleanup(profile, { recursive: true, force: true });
+  }
+}
+
+if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url)
+  await runPackagedSmoke();
