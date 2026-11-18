@@ -425,3 +425,27 @@ for (const [name, mutate] of [
     mutate(r);
     assert.throws(() => verifyStdio(r));
   });
+
+test("child failure reports the first producer error and preserves exit assertion", async () => {
+  const { assertStdioExit } = await import("./sensor-lab-stdio-run.mjs");
+  const { mkdtemp, rm, writeFile } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = await mkdtemp(join(tmpdir(), "stdio-exit-"));
+  try {
+    const logs = [];
+    const check = () =>
+      assertStdioExit(dir, { code: 1, signal: null }, false, (s) => logs.push(s), "native failure");
+    await assert.rejects(check, { code: "ERR_ASSERTION" });
+    assert.match(logs.pop(), /Cannot read stdio producer/);
+    assert.equal(logs.pop(), "native.log tail: native failure");
+    await writeFile(
+      join(dir, "producer.json"),
+      JSON.stringify({ stage: "startup", failures: ["open failed", "cleanup failed"] }),
+    );
+    await assert.rejects(check, { code: "ERR_ASSERTION" });
+    assert.deepEqual(JSON.parse(logs.pop()), { stage: "startup", firstException: "open failed" });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

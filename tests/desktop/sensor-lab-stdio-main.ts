@@ -268,12 +268,13 @@ export function runStdio(): void {
           (e) => e.pluginId === "acceptance.lab-stdio" && e.kind === "panel",
         );
         assert.ok(entry);
+        stage = "open-owner-panel";
         const opened = await ui.bridge.open({
           sourceKey: entry.sourceKey,
           id: entry.id,
           uiResourceGeneration: entry.uiResourceGeneration,
         });
-        assert.ok(opened.ok);
+        assert.ok(opened.ok, JSON.stringify(opened));
         const binding = opened.value.binding;
         assert.equal(binding.kind, "panel");
         assert.ok((await ui.bridge.visibility({ binding, visible: true, reason: "tab" })).ok);

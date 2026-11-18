@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -38,6 +39,40 @@ export function describeRevokes(hides, main, offset, uncertainty) {
       ),
     };
   });
+}
+
+// The runner calls this after failed load trials, outside measured intervals.
+export function retainLoadFailure(directory, destination, repeats) {
+  function copy(relative) {
+    const source = path.join(directory, relative);
+    if (!existsSync(source)) return;
+    const target = path.join(destination, relative);
+    mkdirSync(path.dirname(target), { recursive: true });
+    copyFileSync(source, target);
+  }
+  for (const name of ["matrix.json", "load-analysis.json", "artifact-identity.json"]) copy(name);
+  for (const repeat of repeats)
+    for (const name of [
+      "input.json",
+      "report.json",
+      "main-events.jsonl",
+      "renderer-events.json",
+      "electron.log",
+    ])
+      copy(path.join("load-" + repeat, name));
+}
+
+export function winningApply(matched, intervals, accepted, key) {
+  if (!matched.length) return null;
+  const index = intervals.reduce((best, interval, i) => (interval > intervals[best] ? i : best), 0);
+  const row = matched[index];
+  const main = accepted.get(key(row));
+  return {
+    binding: main.binding,
+    revision: row.revision,
+    mainTime: main.time,
+    rendererTime: row.time,
+  };
 }
 
 export async function analyzeLoad(matrixFile) {
@@ -170,6 +205,7 @@ export async function analyzeLoad(matrixFile) {
       checks,
       pass: Object.values(checks).every(Boolean),
       apply: applySummary,
+      winningApply: winningApply(matched, apply, accepted, key),
       input: inputSummary,
       revoke: revokeSummary,
       missingRevokes: revoke.filter((value) => value === null).length,

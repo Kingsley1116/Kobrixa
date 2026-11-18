@@ -555,3 +555,46 @@ test("the full U03/U05/U09/U13 measurement envelope is mandatory", () => {
     assert.throws(() => assertMeasurements(report));
   }
 });
+
+test("winning apply identifies the original main and renderer timestamps", async () => {
+  const { winningApply } = await import("./declarative-ui-load-report.mjs");
+  const binding = { panelInstance: "panel" };
+  const main = new Map([
+    [1, { time: 100, binding }],
+    [2, { time: 130, binding }],
+  ]);
+  const key = (row) => row.revision;
+  assert.equal(winningApply([], [], main, key), null);
+  assert.deepEqual(
+    winningApply(
+      [
+        { revision: 1, time: 150 },
+        { revision: 2, time: 155 },
+      ],
+      [50, 25],
+      main,
+      key,
+    ),
+    { binding, revision: 1, mainTime: 100, rendererTime: 150 },
+  );
+});
+
+test("retains raw sidecars from complete and partial failed repeats byte-for-byte", async () => {
+  const { retainLoadFailure } = await import("./declarative-ui-load-report.mjs");
+  const { mkdtemp, mkdir, writeFile, rm } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const dir = await mkdtemp(join(tmpdir(), "load-retain-"));
+  try {
+    await mkdir(join(dir, "load-0"));
+    const bytes = Buffer.from('{"time":123.456}\r\n');
+    await writeFile(join(dir, "load-0", "main-events.jsonl"), bytes);
+    retainLoadFailure(dir, join(dir, "copy"), [0, 1]);
+    assert.deepEqual(await readFile(join(dir, "copy", "load-0", "main-events.jsonl")), bytes);
+    await assert.rejects(readFile(join(dir, "copy", "load-0", "renderer-events.json")), {
+      code: "ENOENT",
+    });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

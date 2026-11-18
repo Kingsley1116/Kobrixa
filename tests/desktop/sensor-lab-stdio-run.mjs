@@ -479,6 +479,38 @@ export async function resolvePython(explicit, env = process.env, platform = proc
     }).trim(),
   );
 }
+export async function assertStdioExit(
+  directory,
+  result,
+  timedOut,
+  log = console.error,
+  nativeOutput = "",
+) {
+  try {
+    assert.equal(timedOut, false);
+    assert.deepEqual(result, { code: 0, signal: null });
+  } catch (error) {
+    if (nativeOutput.trim()) log("native.log tail: " + nativeOutput.slice(-2048));
+    try {
+      const report = JSON.parse(await readFile(path.join(directory, "producer.json"), "utf8"));
+      log(
+        JSON.stringify({
+          stage: report.stage,
+          firstException: report.failures?.[0],
+          lastRequest: report.wire?.findLast((r) => r.message?.method && r.message.id !== undefined)
+            ?.message.method,
+          lastMessage: report.wire?.at(-1)?.message,
+          drains: report.drains,
+          exits: report.exits,
+          outputTail: report.logs?.slice(-5),
+        }),
+      );
+    } catch (readError) {
+      log(`Cannot read stdio producer failure in ${directory}: ${readError}`);
+    }
+    throw error;
+  }
+}
 async function main(args) {
   assert.ok(["--build-only", "--run-built", "--run"].includes(args[0]));
   if (args[0] !== "--run-built") {
@@ -551,8 +583,7 @@ async function main(args) {
     } catch {
       /* already exited */
     }
-  assert.equal(timedOut, false);
-  assert.deepEqual(result, { code: 0, signal: null });
+  await assertStdioExit(directory, result, timedOut, console.error, output);
   assert.deepEqual(survivors, []);
   assert.deepEqual(monitorErrors, []);
   const raw = await readFile(path.join(directory, "producer.json"));

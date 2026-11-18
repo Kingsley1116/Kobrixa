@@ -732,14 +732,14 @@ export const installProbe = `((require) => {
     row => process.stderr.write('\\nKOBRIXA_INSTALLED_WORKER ' + JSON.stringify(row) + '\\n'),
     () => ({ at: Date.now(), monotonicMs: performance.now(), execArgv: [...process.execArgv], resourcesPath: process.resourcesPath }), globalThis.__recordingCapture === true);
   const original = electron.utilityProcess.fork;
-  const records = [], wire=[], releases=[], cleanups=[];
+  const records = [], wire=[], deviceWire=[], releases=[], cleanups=[];
   const emit = record => process.stderr.write('\\nKOBRIXA_INSTALLED_PROBE ' + JSON.stringify(record) + '\\n');
   function observed(...args) {
     const child = Reflect.apply(original, this, args);
     const record = { ordinal: records.length, entry: args[0], cwd: args[2]?.cwd, serviceName: args[2]?.serviceName, pid: child.pid ?? null, exited: false };
-    if(globalThis.__recordingCapture && record.serviceName==="Kobrixa plugin kobrixa.sensor-lab") {
+    if(globalThis.__recordingCapture && ["Kobrixa plugin kobrixa.sensor-lab","Kobrixa plugin kobrixa.device-ev3"].includes(record.serviceName)) {
       record.owner=JSON.parse(args[2].env.KOBRIXA_RESOURCE_OWNER);
-      cleanups.push((${observeLabFork.toString()})(child,args[2].env.KOBRIXA_RESOURCE_OWNER,wire));
+      cleanups.push((${observeLabFork.toString()})(child,args[2].env.KOBRIXA_RESOURCE_OWNER,record.owner.pluginId==="kobrixa.device-ev3" ? deviceWire : wire));
     }
     records.push(record);
     const onSpawn = () => { record.pid = child.pid; emit(record); };
@@ -768,7 +768,7 @@ export const installProbe = `((require) => {
     }
     return electron.utilityProcess.fork === original;
   }
-  globalThis.__installedProbe = { electron, require, records, workers, wire, releases, restore, observeExit() {
+  globalThis.__installedProbe = { electron, require, records, workers, wire, deviceWire, releases, restore, observeExit() {
     const write = require('node:fs').writeSync;
     exitListener = () => {
       if (restore()) write(2, '\\nKOBRIXA_INSTALLED_RESTORED\\n');
@@ -1043,6 +1043,7 @@ async function launchProduct(config, receipt, check) {
         receipt.recordingArtifactHashes = {};
         for (const [suffix, expression] of [
           ["-port.json", "__installedProbe.wire"],
+          ["-device-port.json", "__installedProbe.deviceWire"],
           ["-release.json", "__installedProbe.releases"],
           ["-workers.json", "__installedProbe.workers.timeline"],
         ]) {
@@ -2062,11 +2063,12 @@ export async function main() {
                 recording,
                 "device, Lab binding and pre-launch frames",
                 async () => {
-                  const { connection, offset } = await connectUhidPanel(
+                  const { connection, offset, discovery } = await connectUhidPanel(
                     client.renderer,
                     recording.trace,
+                    () => client.main.js("__installedProbe.deviceWire"),
                   );
-                  recording.device = { connection, offset };
+                  recording.device = { connection, offset, discovery };
                   recording.binding = await startLab(client, recording.name);
                 },
               );

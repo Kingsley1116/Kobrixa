@@ -15,7 +15,7 @@ import {
   buildDesktopEntry,
   PERSISTENCE_WORKER_ENTRY,
 } from "../../tools/release/desktop-packaging.mjs";
-import { analyzeLoad } from "./declarative-ui-load-report.mjs";
+import { analyzeLoad, retainLoadFailure } from "./declarative-ui-load-report.mjs";
 import { waitLoadInterval } from "./declarative-ui-load-fixture.ts";
 
 const faults = [
@@ -73,6 +73,31 @@ const selected = load
 assert.ok(selected.length > 0, "Unknown motion scenario");
 const directory = await realpath(await mkdtemp(path.join(tmpdir(), "kobrixa-ui-motion-")));
 console.log(`Motion acceptance workspace: ${directory}`);
+if (args[0] === "--load") {
+  process.once("exit", (code) => {
+    if (code === 0) return;
+    const destination = path.join(
+      root,
+      "apps/desktop/out/ui-load-failures",
+      path.basename(directory),
+    );
+    try {
+      retainLoadFailure(
+        directory,
+        destination,
+        selected.map((item) => item.repeat),
+      );
+      console.error("Load failure sidecars:", destination);
+    } catch (error) {
+      console.error(
+        "Could not copy load failure sidecars:",
+        error,
+        "Original workspace:",
+        directory,
+      );
+    }
+  });
+}
 const require = createRequire(path.join(root, "apps/desktop/package.json"));
 const alias = Object.fromEntries(
   [
@@ -358,7 +383,10 @@ for (const scenario of selected) {
     }),
   );
   assert.deepEqual(report.remainingPids, []);
-  reports.push({ scenario, path: output });
+  reports.push({
+    scenario,
+    path: args[0] === "--load" ? path.posix.join(name, "report.json") : output,
+  });
   console.log(`${load ? "RECORDED native UI load" : "PASS native motion"} ${name}: ${output}`);
 }
 await writeFile(
@@ -393,6 +421,7 @@ if (args[0] === "--load") {
         reportPath: run.reportPath,
         checks: run.checks,
         apply: run.apply,
+        winningApply: run.winningApply,
         input: run.input,
         revoke: run.revoke,
         uncertainty: run.uncertainty,
