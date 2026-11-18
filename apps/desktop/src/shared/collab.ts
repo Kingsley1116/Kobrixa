@@ -83,6 +83,18 @@ export type CollabPrepareResult =
   | { status: "cancelled" }
   | { status: "error"; error: CollabErrorCode };
 
+/** Trusted renderer report; main creates document, context, room binding and all epochs. */
+export type DeviceAuthorityReport = {
+  document: string;
+  sequence: number;
+  state: "local" | "joining" | "room" | "unsynced" | "invalid";
+  roomId: string | null;
+  connected: boolean;
+  synced: boolean;
+  role: "host" | "editor" | "viewer" | null;
+  isHolder: boolean;
+};
+
 export interface CollabApi {
   previewProject(workspaceId: string): Promise<CollabSharePreview>;
   /** Resolved service origin (`KOBRIXA_COLLAB_URL` or the default). */
@@ -115,12 +127,10 @@ export interface CollabApi {
   setRole(roomId: string, request: SetRoleRequest): Promise<CollabResult<null>>;
   /** Forgets the stored token for a room. */
   leave(roomId: string): Promise<void>;
-  /**
-   * Tells the main process whether this window currently holds EV3 control in an
-   * active room. `null` means no collaboration session (no restriction).
-   * While `false`, device write operations are rejected by the main process.
-   */
-  setDeviceControl(holder: boolean | null): Promise<void>;
+  /** Gets the host-issued token for this workbench document. */
+  deviceControlContext(): Promise<{ document: string }>;
+  /** Reports explicit authority state for the current workbench document. */
+  setDeviceControl(report: DeviceAuthorityReport): Promise<void>;
   /**
    * Guest flow: creates (or reuses) `userData/collab/<roomId>/` and opens it as a
    * workspace so builds, the simulator and uploads work on mirrored files.

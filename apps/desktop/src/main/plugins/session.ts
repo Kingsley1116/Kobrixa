@@ -9,6 +9,7 @@ const markerSchema = z.strictObject({
   startedAt: z.iso.datetime(),
   thirdPartyRunning: z.boolean(),
   thirdPartyStaticContributions: z.boolean().default(false),
+  thirdPartyUiContributions: z.boolean().default(false),
   rendererUnresponsive: z.boolean(),
 });
 export type SessionMarker = z.infer<typeof markerSchema>;
@@ -23,6 +24,10 @@ export class SessionMarkerFile {
   #marker: SessionMarker | undefined;
   #finished = false;
   #previousThirdPartyStaticContributions = false;
+  #previousThirdPartyUiContributions = false;
+  get previousThirdPartyUiContributions(): boolean {
+    return this.#previousThirdPartyUiContributions;
+  }
 
   constructor(
     userData: string,
@@ -37,21 +42,46 @@ export class SessionMarkerFile {
 
   begin(): SafeModeLock["reason"] | undefined {
     const previous = this.#read();
+    this.#previousThirdPartyUiContributions = previous?.thirdPartyUiContributions ?? false;
     this.#previousThirdPartyStaticContributions = previous?.thirdPartyStaticContributions ?? false;
     this.#finished = false;
     this.#marker = {
       startedAt: this.now().toISOString(),
       thirdPartyRunning: false,
       thirdPartyStaticContributions: false,
+      thirdPartyUiContributions: false,
       rendererUnresponsive: false,
     };
     this.#write();
     if (previous?.rendererUnresponsive) return "renderer-unresponsive";
-    if (previous?.thirdPartyRunning || previous?.thirdPartyStaticContributions)
+    if (
+      previous?.thirdPartyRunning ||
+      previous?.thirdPartyStaticContributions ||
+      previous?.thirdPartyUiContributions
+    )
       return "unclean-exit";
     return undefined;
   }
 
+  markThirdPartyUiContributions(): void {
+    const marker = this.#marker;
+    if (!marker || this.#finished)
+      throw new PluginError(
+        "PLUGIN_E_STATE_SAVE",
+        "PLUGIN_E_STATE_SAVE: No live plugin recovery session.",
+      );
+    if (marker.thirdPartyUiContributions) return;
+    const next = { ...marker, thirdPartyUiContributions: true };
+    try {
+      this.#persist(next);
+    } catch {
+      throw new PluginError(
+        "PLUGIN_E_STATE_SAVE",
+        "PLUGIN_E_STATE_SAVE: Could not save the UI recovery marker.",
+      );
+    }
+    this.#marker = next;
+  }
   markThirdPartyStaticContributions(): void {
     const marker = this.#marker;
     if (!marker || this.#finished)
@@ -97,6 +127,9 @@ export class SessionMarkerFile {
     this.#marker = {
       ...marker,
       thirdPartyRunning: false,
+      thirdPartyUiContributions: marker.rendererUnresponsive
+        ? marker.thirdPartyUiContributions
+        : false,
       thirdPartyStaticContributions: marker.rendererUnresponsive
         ? marker.thirdPartyStaticContributions
         : false,
@@ -164,9 +197,13 @@ export interface RendererHealthSource {
   };
 }
 
-export function watchRendererHealth(window: RendererHealthSource, onHang: () => void): void {
+export function watchRendererHealth(
+  window: RendererHealthSource,
+  onHang: () => void,
+  onGone: () => void = () => {},
+): void {
   window.on("unresponsive", onHang);
   window.webContents.on("render-process-gone", (_event, details) => {
-    if (details.reason !== "clean-exit") onHang();
+    if (details.reason !== "clean-exit") onGone();
   });
 }

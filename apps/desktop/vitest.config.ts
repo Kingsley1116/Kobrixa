@@ -4,6 +4,12 @@ export default defineConfig({
   resolve: {
     alias: [
       {
+        find: /^@kobrixa\/plugin-sdk$/,
+        replacement: fileURLToPath(
+          new URL("../../packages/plugin-sdk-js/src/index.ts", import.meta.url),
+        ),
+      },
+      {
         find: /^@kobrixa\/compiler$/,
         replacement: fileURLToPath(
           new URL("../../packages/compiler/src/index.ts", import.meta.url),

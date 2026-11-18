@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript with `strict`, `noUncheckedIndexedAccess`, and `exactOptionalPropertyTypes`; Node.js 24; Electron 44; Zod 4 with draft-2020-12 JSON Schema; React 19; `monaco-editor@0.57.0`; Vitest; pnpm; Python SDK conformance tests.
 
-**Spec:** [`docs/superpowers/specs/2026-10-17-plugin-system-2c-static-languages-design.md`](../../../../docs/superpowers/specs/2026-10-17-plugin-system-2c-static-languages-design.md), all sections, especially §11. This approved spec is the binding authority; each executor reads it together with this plan. Format: [`.superpowers/sdd/2c-design/plan-format.md`](../plan-format.md).
+**Spec:** [`docs/superpowers/specs/2026-10-17-plugin-system-2c-static-languages-design.md`](../specs/2026-10-17-plugin-system-2c-static-languages-design.md), all sections, especially §11. This approved spec is the binding authority; each executor reads it together with this plan. Format: historical plan-format guidance (not available in tracked files).
 
 ## Global Constraints
 

@@ -6427,7 +6427,7 @@ git commit -m "test(desktop): add Electron plugin smoke and run it in CI"
 
 - [ ] **Step 2: roadmap**
 
-在英文 `## v1.x — hardening` 加入：`- Plugin system phase 1 (development preview): protocol, JS/TS and Python SDKs, command and notification API, settings panel, and the Basic Plus frontend registered as a built-in plugin. Third-party plugins load only in development mode. See the [plugin design](../superpowers/specs/2026-10-14-plugin-system-design.md).`
+在英文 `## v1.x — hardening` 加入：`- Plugin system phase 1 (development preview): protocol, JS/TS and Python SDKs, command and notification API, settings panel, and the Basic Plus frontend registered as a built-in plugin. Third-party plugins load only in development mode. See the [plugin design](../specs/2026-10-14-plugin-system-design.md).`
 
 在繁中 `## v1.x — 強化` 加入對應的一條。
 

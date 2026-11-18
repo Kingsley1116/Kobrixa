@@ -95,6 +95,9 @@ jobs:
           python-version: "3.12"
       - run: pnpm check:desktop
       - run: pnpm build:core
+      - name: Build production Windows journal for native harnesses
+        if: runner.os == 'Windows'
+        run: node tools/release/journal-win32.mjs
       - name: Verify static language schemas and generated core ids
         shell: bash
         run: |
@@ -133,7 +136,30 @@ jobs:
           else
             pnpm test:plugins:smoke
           fi
+      - name: Device public transport smoke
+        shell: bash
+        run: |
+          export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a pnpm test:device-broker:smoke
+          else
+            pnpm test:device-broker:smoke
+          fi
       - run: pnpm build:desktop
+      - name: Declarative UI bridge and SDK acceptance
+        shell: bash
+        run: |
+          export pnpm_config_pm_on_fail=ignore pnpm_config_verify_deps_before_run=false
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a pnpm test:declarative-ui:smoke
+          else
+            pnpm test:declarative-ui:smoke
+          fi
+      - name: Allow installed Chromium user namespaces on AppArmor hosts
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/installed-apparmor
+        with:
+          operation: load
       - name: Smoke test the packaged application
         shell: bash
         run: |
@@ -142,12 +168,25 @@ jobs:
           else
             pnpm test:desktop:packaged
           fi
+      - name: Retain installed Linux kernel denials and remove test AppArmor profile
+        if: always() && runner.os == 'Linux'
+        uses: ./.github/actions/installed-apparmor
+        with:
+          operation: unload
       - run: pnpm package:installers
       - run: pnpm package:archive
         env:
           TARGET_PLATFORM: ${{ matrix.platform }}
           TARGET_ARCH: ${{ matrix.arch }}
       - run: pnpm package:updates
+      - name: Retain Windows journal build logs and hashes
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-journal-win32-${{ matrix.arch }}
+          path: ${{ runner.temp }}/kobrixa-journal-production-*/**
+          if-no-files-found: error
+          retention-days: 7
       - uses: actions/upload-artifact@v7
         if: github.event_name == 'workflow_dispatch' && inputs.upload_artifacts
         with:
@@ -157,10 +196,19 @@ jobs:
           compression-level: 0
           retention-days: 7
 
+  stage3:
+    name: Stage 3 native acceptance
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
+    uses: ./.github/workflows/stage-3-acceptance.yml
+    permissions:
+      contents: read
+      actions: read
+
   result:
     name: CI result
     if: always()
-    needs: [changes, quality, web, platform]
+    needs: [changes, quality, web, platform, stage3]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -173,4 +221,6 @@ jobs:
       - name: Require every affected product to succeed
         env:
           CI_RESULTS: ${{ toJSON(needs) }}
-        run: node tools/ci/changes.mjs result
+        run: |
+          node tools/ci/changes.mjs result
+          node --input-type=module -e 'const n = JSON.parse(process.env.CI_RESULTS); const expected = n.changes.outputs.desktop === "true" ? "success" : "skipped"; if (n.stage3.result !== expected) throw new Error("Required Stage 3 native acceptance did not succeed");'

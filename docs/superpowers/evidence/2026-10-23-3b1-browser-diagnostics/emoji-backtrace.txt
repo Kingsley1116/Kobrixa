@@ -1,0 +1,49 @@
+(lldb) target create --core "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/crashes/pending/bb28c2fe-8a87-41cf-ab22-db4d310a27a4.dmp"
+warning: (arm64e) /usr/lib/system/libsystem_platform.dylib address 0x0000000183566000 maps to more than one section: libsystem_platform.dylib.__DATA_CONST and libsystem_info.dylib.__TEXT
+warning: (arm64e) /usr/lib/system/libsystem_kernel.dylib address 0x0000000183521000 maps to more than one section: libsystem_kernel.dylib.__DATA_CONST and libsystem_pthread.dylib.__TEXT
+warning: (arm64e) /usr/lib/dyld address 0x000000018321c000 maps to more than one section: dyld.__DATA_CONST and libsystem_blocks.dylib.__TEXT
+Core file '/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-OAxC3M/crashes/pending/bb28c2fe-8a87-41cf-ab22-db4d310a27a4.dmp' (aarch64) was loaded.
+(lldb) thread list
+Process 89441 stopped
+  thread #1: tid = 0x22b1631, 0x00000001834e5c34 libsystem_kernel.dylib`mach_msg2_trap + 8
+  thread #2: tid = 0x22b1650, 0x00000001834e78b0 libsystem_kernel.dylib`__workq_kernreturn + 8
+  thread #3: tid = 0x22b1651, 0x00000001834e78b0 libsystem_kernel.dylib`__workq_kernreturn + 8
+  thread #4: tid = 0x22b1654, 0x00000001834f195c libsystem_kernel.dylib`kevent64 + 8
+  thread #5: tid = 0x22b1655, 0x00000001834f195c libsystem_kernel.dylib`kevent64 + 8
+* thread #6: tid = 0x22b1656, 0x000000000bad4007 Electron Helper (Renderer)`___lldb_unnamed_symbol95 + 122509531, stop reason = EXC_BAD_ACCESS (code=257, address=0xbad4007)
+  thread #7: tid = 0x22b1657, 0x00000001834e5c34 libsystem_kernel.dylib`mach_msg2_trap + 8
+  thread #8: tid = 0x22b1658, 0x00000001834f195c libsystem_kernel.dylib`kevent64 + 8
+  thread #9: tid = 0x22b1659, 0x00000001834e5c34 libsystem_kernel.dylib`mach_msg2_trap + 8
+  thread #10: tid = 0x22b1664, 0x00000001834f195c libsystem_kernel.dylib`kevent64 + 8
+  thread #11: tid = 0x22b1666, 0x00000001834e5c34 libsystem_kernel.dylib`mach_msg2_trap + 8
+  thread #12: tid = 0x22b1677, 0x00000001834e5c34 libsystem_kernel.dylib`mach_msg2_trap + 8
+  thread #13: tid = 0x22b1679, 0x00000001834e5c34 libsystem_kernel.dylib`mach_msg2_trap + 8
+  thread #14: tid = 0x22b167b, 0x00000001834e5c34 libsystem_kernel.dylib`mach_msg2_trap + 8
+  thread #15: tid = 0x22b167d, 0x00000001834e5c34 libsystem_kernel.dylib`mach_msg2_trap + 8
+  thread #16: tid = 0x22b167e, 0x00000001834e5c34 libsystem_kernel.dylib`mach_msg2_trap + 8
+  thread #17: tid = 0x22b167f, 0x00000001834e5c34 libsystem_kernel.dylib`mach_msg2_trap + 8
+  thread #18: tid = 0x22b1686, 0x00000001834e5c34 libsystem_kernel.dylib`mach_msg2_trap + 8
+(lldb) bt 24
+* thread #6, stop reason = EXC_BAD_ACCESS (code=257, address=0xbad4007)
+  * frame #0: 0x000000000bad4007 Electron Helper (Renderer)`___lldb_unnamed_symbol95 + 122509531
+    frame #1: 0x000000018f35a378 ImageIO`IIOReadPlugin::callInitialize() + 412
+    frame #2: 0x000000018f35a110 ImageIO`IIO_Reader::initImageAtOffset(CGImagePlugin*, unsigned long, unsigned long, unsigned long) + 164
+    frame #3: 0x000000018f3576a4 ImageIO`IIOImageSource::makeImagePlus(unsigned long, IIODictionary*) + 536
+    frame #4: 0x000000018f3ceb14 ImageIO`IIOImageSource::createImageAtIndex(unsigned long, IIODictionary*, int*) + 104
+    frame #5: 0x000000018f364170 ImageIO`CGImageSourceCreateImageAtIndex + 460
+    frame #6: 0x00000001860aa64c CoreText`CreateImageWithDataProvider(CGDataProvider*, unsigned int) + 208
+    frame #7: 0x00000001860aa30c CoreText`CopyEmojiImage(unsigned int, void const*, unsigned long, double, double, __CFData const*, CGSize*) + 560
+    frame #8: 0x00000001860a4f64 CoreText`(anonymous namespace)::TCGImageData::TCGImageData(TFont const*, unsigned short, TsbixContext const&, double, CGPoint) + 1368
+    frame #9: 0x00000001860ab384 CoreText`DrawGlyphsAtPositions(TFont const*, unsigned short const*, CGPoint const*, unsigned long, CGContext*, (anonymous namespace)::DrawGlyphsConfiguration const&)::$_1::operator()(CGAffineTransform, CGAffineTransform) const + 168
+    frame #10: 0x00000001860a632c CoreText`DrawGlyphsAtPositions(TFont const*, unsigned short const*, CGPoint const*, unsigned long, CGContext*, (anonymous namespace)::DrawGlyphsConfiguration const&) + 2496
+    frame #11: 0x000000018604f3f4 CoreText`CTFontDrawGlyphs + 248
+    frame #12: 0x0000000112337c04 Electron Framework`___lldb_unnamed_symbol13964 + 1541464
+    frame #13: 0x0000000111612b6c Electron Framework`___lldb_unnamed_symbol13946 + 2154012
+    frame #14: 0x0000000111611884 Electron Framework`___lldb_unnamed_symbol13946 + 2149172
+    frame #15: 0x0000000111085454 Electron Framework`___lldb_unnamed_symbol13940 + 288712
+    frame #16: 0x0000000111084a90 Electron Framework`___lldb_unnamed_symbol13940 + 286212
+    frame #17: 0x00000001110825ec Electron Framework`___lldb_unnamed_symbol13940 + 276832
+    frame #18: 0x0000000111556eb4 Electron Framework`___lldb_unnamed_symbol13946 + 1384804
+    frame #19: 0x0000000111556a38 Electron Framework`___lldb_unnamed_symbol13946 + 1383656
+    frame #20: 0x00000001111b0bdc Electron Framework`___lldb_unnamed_symbol13942 + 486556
+    frame #21: 0x00000001111b0bdc Electron Framework`___lldb_unnamed_symbol13942 + 486556

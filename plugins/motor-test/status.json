@@ -1,0 +1,20 @@
+{
+  "kind": "status",
+  "tone": "neutral",
+  "text": {
+    "ref": {
+      "scope": "data",
+      "key": "summary"
+    }
+  },
+  "data": {
+    "summary": {
+      "schema": {
+        "type": "string",
+        "maxLength": 256,
+        "nullable": false
+      },
+      "initial": "Unavailable / 無法使用"
+    }
+  }
+}

@@ -1,0 +1,11 @@
+# Integrated foundation + Motor Test — 2026-10-24
+
+Three focused actual Electron cases passed against the local integration of B1, B2 and the shipped Motor Test feature: source loss, provider disable, and disconnect/reconnect. Exact producer revisions are in `inventory.json`. These runs use real public SDK/MessagePort transport, desktop composition, persistence worker, generic renderer and the fake device provider. They do not claim physical hardware or a newly packaged installed product.
+
+The controller reran `validateNative` against every raw report and matrix, checked all emitted artifact hashes, and matched all recorded harness/feature source hashes to each listed Git commit. Each report has zero remaining child PIDs after the five-second orphan observation and zero final foundation counters. Gzip files preserve original bytes; inventory binds compressed and uncompressed hashes.
+
+Integration exposed missing persistence-worker packaging in the former P160 motor harness. It now builds and starts the real worker with the production bootstrap, records its artifact hash, and has a Node test that boots the emitted worker, observes readiness, requests close and requires normal exit. The old trace oracle also assumed teardown never disconnected providers. It now admits exactly one fresh disconnect pair bound to the observed awaited cleanup or explicit provider-disable interval, after the original stop/readback. It still rejects reconnect, motion replay, foreign IDs, unmatched, late or duplicate operations. Added mutation tests cover those exclusions. The explicit disconnect scenario continues to prove a separate reconnect under its existing authorization rules.
+
+Earlier runs jtuoEj, 6UHZeh, VKOQ94, nsKDIF and 3n6iVC failed and remain failures. These three successful reruns do not overwrite them or complete the whole 77-case native matrix. The prior 3C installed/Linux proof applies only to its recorded original artifacts; a final integrated package must be tested separately. New explicit fault recovery and action-replay work are not included here.
+
+The local feature branch has not been merged into shared stage/main or pushed. Full Stage 3 acceptance, Sensor Lab, Device UI and manual hardware/platform checks remain open.

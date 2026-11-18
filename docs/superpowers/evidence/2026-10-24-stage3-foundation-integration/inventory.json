@@ -1,0 +1,79 @@
+[
+  {
+    "file": "reference-receipt.json.gz",
+    "source": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/integrated-b1-b2-reference-native.json",
+    "uncompressedBytes": 29835,
+    "uncompressedSha256": "aca0389b425eaf8f859ec1a5b0b965ead8a338e03b3f63e494cf49a61f0bde45",
+    "sha256": "d21dfc361671155c4f1983b093cfc53150294463b78543aff3a08bae89cd339c"
+  },
+  {
+    "file": "disconnect-receipt.json.gz",
+    "source": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/integrated-b1-b2-disconnect-native.json",
+    "uncompressedBytes": 218878,
+    "uncompressedSha256": "a1d18cade0a523aaa0efe9c179d3176a43ac4d5d1824a8394e78600f0f58154d",
+    "sha256": "67395b661dcfc8ac116fa6f63e5781666b59f4219a0687cc63230bd1a6dbddd3"
+  },
+  {
+    "file": "reference-native.log.gz",
+    "source": "/private/tmp/stage3-integration-reference-native2.log",
+    "uncompressedBytes": 1462,
+    "uncompressedSha256": "f22a6aed015eb70ea86f593aadff5bcfb3951105eede82b2f7e2da939fcabcb4",
+    "sha256": "b39a08f203cdcf6ca078596afb65e61d521842bcf39a09993a8ff2dad55fc3f5"
+  },
+  {
+    "file": "disconnect-native.log.gz",
+    "source": "/private/tmp/stage3-integration-disconnect-native.log",
+    "uncompressedBytes": 1462,
+    "uncompressedSha256": "e65961095f02e8c7e7e77e7fc4ab077314b83c7ec4746c2111ec6ff6d76edf88",
+    "sha256": "7d0e8dc8fc3eceb8dde9162c8aef210b935b5df60a6d52dba8e33c5d097927f9"
+  },
+  {
+    "file": "renderer-artifact.json.gz",
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-renderer-sI7bH2/renderer-artifact.json",
+    "uncompressedBytes": 21983,
+    "uncompressedSha256": "a40b7f4378c6157ee8e6a53ac8234c2ce2704e3954eb9df7dbc36969600c82ea",
+    "sha256": "f31a185d83fba19b4d1f1699cfabff0151396ac2e23236e5d9de907db66122bf"
+  },
+  {
+    "file": "retirement.json.gz",
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-aU9Eti/retirement.json",
+    "uncompressedBytes": 1162,
+    "uncompressedSha256": "914f664e1bbab56ba9a6556673e9784dda74da3c966ac455391a3ec45a0f1fef",
+    "sha256": "f2e45af67bd19a415b84cf7e5e0a09fbe7d1c165af795d2d9cf8b24890b65770"
+  },
+  {
+    "file": "retirement.candidate.json.gz",
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-aU9Eti/retirement.candidate.json",
+    "uncompressedBytes": 2063,
+    "uncompressedSha256": "2e1278bde7c0cc4a5d718329a69ea8507dc0988538ec8c13dfde28ab302a0746",
+    "sha256": "791aa35b1b54f88d062614f77011a60405221f5a182621ade707ff76f1961904"
+  },
+  {
+    "file": "healthy-release.json.gz",
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-aU9Eti/healthy-release.json",
+    "uncompressedBytes": 1177,
+    "uncompressedSha256": "a86b935e757c05e194ebf219ecf24b1ccabf8c89412524341d90afdfa06be975",
+    "sha256": "90e5829ac88abbbb204bffae77d561c6ecbe79cc691c5d39c1d271fff475e105"
+  },
+  {
+    "file": "healthy-release.candidate.json.gz",
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-aU9Eti/healthy-release.candidate.json",
+    "uncompressedBytes": 1269,
+    "uncompressedSha256": "6830fd6a550a4e2e16f70a086e3be297bab51760ea3483967a0da03b2495958d",
+    "sha256": "f06b73d5cf569e04f9b45691828603135c6debe4b0fc8032283603b6c83583c4"
+  },
+  {
+    "file": "disconnect-retry.json.gz",
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-uiB7uY/disconnect-retry.json",
+    "uncompressedBytes": 1180,
+    "uncompressedSha256": "c7931eaa5b36635d3549e18ed1e9b28b49050df5430e6133e4d0221e3eb08caf",
+    "sha256": "8ab27c0993a9a4688bd32a47ab4b435b8c9269a7364cc8cb5b57f48cd5ad5133"
+  },
+  {
+    "file": "disconnect-retry.candidate.json.gz",
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-uiB7uY/disconnect-retry.candidate.json",
+    "uncompressedBytes": 104519,
+    "uncompressedSha256": "cdc81ecce5a9362491d9fd7e475136124327b63aa20ccfa8594198dab5effbe7",
+    "sha256": "d11e73e8b275219f66bafd11e72462c38e2ce75b5558e8c5c5c01e1ceccb85de"
+  }
+]

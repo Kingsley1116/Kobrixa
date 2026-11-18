@@ -1,0 +1,3151 @@
+[
+  {
+    "name": "chart new-run time reset",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "s",
+            "label": {
+              "en": "Series"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "chart",
+        "timeDomain": [0, 1000],
+        "view": "full",
+        "series": [
+          {
+            "id": "s",
+            "unit": "deg",
+            "range": [-100, 100],
+            "extrema": [
+              [0, -100],
+              [500, 100]
+            ],
+            "fullPointCount": 3,
+            "omittedPoints": 0,
+            "omittedRuns": 0
+          }
+        ]
+      },
+      [
+        [0, 0, 0, -100],
+        [0, 0, 500, 100],
+        [0, 1, 0, 0]
+      ]
+    ],
+    "valid": true
+  },
+  {
+    "name": "wrong series",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "s",
+            "label": {
+              "en": "Series"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "chart",
+        "timeDomain": [0, 1000],
+        "view": "full",
+        "series": [
+          {
+            "id": "s",
+            "unit": "deg",
+            "range": [-100, 100],
+            "extrema": [
+              [0, -100],
+              [500, 100]
+            ],
+            "fullPointCount": 3,
+            "omittedPoints": 0,
+            "omittedRuns": 0
+          }
+        ]
+      },
+      [
+        [0, 0, 0, -100],
+        [0, 0, 500, 100],
+        [1, 1, 0, 0]
+      ]
+    ],
+    "valid": false
+  },
+  {
+    "name": "negative run",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "s",
+            "label": {
+              "en": "Series"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "chart",
+        "timeDomain": [0, 1000],
+        "view": "full",
+        "series": [
+          {
+            "id": "s",
+            "unit": "deg",
+            "range": [-100, 100],
+            "extrema": [
+              [0, -100],
+              [500, 100]
+            ],
+            "fullPointCount": 3,
+            "omittedPoints": 0,
+            "omittedRuns": 0
+          }
+        ]
+      },
+      [
+        [0, 0, 0, -100],
+        [0, 0, 500, 100],
+        [0, -1, 0, 0]
+      ]
+    ],
+    "valid": false
+  },
+  {
+    "name": "fractional run",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "s",
+            "label": {
+              "en": "Series"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "chart",
+        "timeDomain": [0, 1000],
+        "view": "full",
+        "series": [
+          {
+            "id": "s",
+            "unit": "deg",
+            "range": [-100, 100],
+            "extrema": [
+              [0, -100],
+              [500, 100]
+            ],
+            "fullPointCount": 3,
+            "omittedPoints": 0,
+            "omittedRuns": 0
+          }
+        ]
+      },
+      [
+        [0, 0, 0, -100],
+        [0, 0, 500, 100],
+        [0, 0.1, 0, 0]
+      ]
+    ],
+    "valid": false
+  },
+  {
+    "name": "unsafe run",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "s",
+            "label": {
+              "en": "Series"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "chart",
+        "timeDomain": [0, 1000],
+        "view": "full",
+        "series": [
+          {
+            "id": "s",
+            "unit": "deg",
+            "range": [-100, 100],
+            "extrema": [
+              [0, -100],
+              [500, 100]
+            ],
+            "fullPointCount": 3,
+            "omittedPoints": 0,
+            "omittedRuns": 0
+          }
+        ]
+      },
+      [
+        [0, 0, 0, -100],
+        [0, 0, 500, 100],
+        [0, 9007199254740992, 0, 0]
+      ]
+    ],
+    "valid": false
+  },
+  {
+    "name": "boolean run",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "s",
+            "label": {
+              "en": "Series"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "chart",
+        "timeDomain": [0, 1000],
+        "view": "full",
+        "series": [
+          {
+            "id": "s",
+            "unit": "deg",
+            "range": [-100, 100],
+            "extrema": [
+              [0, -100],
+              [500, 100]
+            ],
+            "fullPointCount": 3,
+            "omittedPoints": 0,
+            "omittedRuns": 0
+          }
+        ]
+      },
+      [
+        [0, 0, 0, -100],
+        [0, 0, 500, 100],
+        [0, false, 0, 0]
+      ]
+    ],
+    "valid": false
+  },
+  {
+    "name": "wrong range",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "s",
+            "label": {
+              "en": "Series"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "chart",
+        "timeDomain": [0, 1000],
+        "view": "full",
+        "series": [
+          {
+            "id": "s",
+            "unit": "deg",
+            "range": [-100, 100],
+            "extrema": [
+              [0, -100],
+              [500, 100]
+            ],
+            "fullPointCount": 3,
+            "omittedPoints": 0,
+            "omittedRuns": 0
+          }
+        ]
+      },
+      [
+        [0, 0, 0, -100],
+        [0, 0, 500, 100],
+        [0, 1, 0, 101]
+      ]
+    ],
+    "valid": false
+  },
+  {
+    "name": "outside domain",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "s",
+            "label": {
+              "en": "Series"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "chart",
+        "timeDomain": [0, 1000],
+        "view": "full",
+        "series": [
+          {
+            "id": "s",
+            "unit": "deg",
+            "range": [-100, 100],
+            "extrema": [
+              [0, -100],
+              [500, 100]
+            ],
+            "fullPointCount": 3,
+            "omittedPoints": 0,
+            "omittedRuns": 0
+          }
+        ]
+      },
+      [
+        [0, 0, 0, -100],
+        [0, 0, 500, 100],
+        [0, 1, 1001, 0]
+      ]
+    ],
+    "valid": false
+  },
+  {
+    "name": "missing extrema",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "s",
+            "label": {
+              "en": "Series"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "chart",
+        "timeDomain": [0, 1000],
+        "view": "full",
+        "series": [
+          {
+            "id": "s",
+            "unit": "deg",
+            "range": [-100, 100],
+            "extrema": null,
+            "fullPointCount": 3,
+            "omittedPoints": 0,
+            "omittedRuns": 0
+          }
+        ]
+      },
+      [
+        [0, 0, 0, -100],
+        [0, 0, 500, 100],
+        [0, 1, 0, 0]
+      ]
+    ],
+    "valid": false
+  },
+  {
+    "name": "wrong count",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "s",
+            "label": {
+              "en": "Series"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "chart",
+        "timeDomain": [0, 1000],
+        "view": "full",
+        "series": [
+          {
+            "id": "s",
+            "unit": "deg",
+            "range": [-100, 100],
+            "extrema": [
+              [0, -100],
+              [500, 100]
+            ],
+            "fullPointCount": 3,
+            "omittedPoints": 1,
+            "omittedRuns": 0
+          }
+        ]
+      },
+      [
+        [0, 0, 0, -100],
+        [0, 0, 500, 100],
+        [0, 1, 0, 0]
+      ]
+    ],
+    "valid": false
+  },
+  {
+    "name": "reversed range",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "s",
+            "label": {
+              "en": "Series"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "chart",
+        "timeDomain": [0, 1000],
+        "view": "full",
+        "series": [
+          {
+            "id": "s",
+            "unit": "deg",
+            "range": [100, -100],
+            "extrema": [
+              [0, -100],
+              [500, 100]
+            ],
+            "fullPointCount": 3,
+            "omittedPoints": 0,
+            "omittedRuns": 0
+          }
+        ]
+      },
+      [
+        [0, 0, 0, -100],
+        [0, 0, 500, 100],
+        [0, 1, 0, 0]
+      ]
+    ],
+    "valid": false
+  },
+  {
+    "name": "wrong omitted runs",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "s",
+            "label": {
+              "en": "Series"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "chart",
+        "timeDomain": [0, 1000],
+        "view": "full",
+        "series": [
+          {
+            "id": "s",
+            "unit": "deg",
+            "range": [-100, 100],
+            "extrema": [
+              [0, -100],
+              [500, 100]
+            ],
+            "fullPointCount": 3,
+            "omittedPoints": 0,
+            "omittedRuns": 1
+          }
+        ]
+      },
+      [
+        [0, 0, 0, -100],
+        [0, 0, 500, 100],
+        [0, 1, 0, 0]
+      ]
+    ],
+    "valid": false
+  },
+  {
+    "name": "unretained extrema",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "s",
+            "label": {
+              "en": "Series"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "chart",
+        "timeDomain": [0, 1000],
+        "view": "full",
+        "series": [
+          {
+            "id": "s",
+            "unit": "deg",
+            "range": [-100, 100],
+            "extrema": [
+              [0, -100],
+              [501, 100]
+            ],
+            "fullPointCount": 3,
+            "omittedPoints": 0,
+            "omittedRuns": 0
+          }
+        ]
+      },
+      [
+        [0, 0, 0, -100],
+        [0, 0, 500, 100],
+        [0, 1, 0, 0]
+      ]
+    ],
+    "valid": false
+  },
+  {
+    "name": "empty chart long blank",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "s",
+            "label": {
+              "en": "Series"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "chart",
+        "timeDomain": [0, 1800000],
+        "view": "full",
+        "series": [
+          {
+            "id": "s",
+            "unit": "deg",
+            "range": [-100, 100],
+            "extrema": null,
+            "fullPointCount": 0,
+            "omittedPoints": 0,
+            "omittedRuns": 0
+          }
+        ]
+      },
+      []
+    ],
+    "valid": true
+  },
+  {
+    "name": "empty chart short domain",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "s",
+            "label": {
+              "en": "Series"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "chart",
+        "timeDomain": [0, 999],
+        "view": "full",
+        "series": [
+          {
+            "id": "s",
+            "unit": "deg",
+            "range": [-100, 100],
+            "extrema": null,
+            "fullPointCount": 0,
+            "omittedPoints": 0,
+            "omittedRuns": 0
+          }
+        ]
+      },
+      []
+    ],
+    "valid": false
+  },
+  {
+    "name": "empty chart nonzero start",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "s",
+            "label": {
+              "en": "Series"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "chart",
+        "timeDomain": [1, 1000],
+        "view": "full",
+        "series": [
+          {
+            "id": "s",
+            "unit": "deg",
+            "range": [-100, 100],
+            "extrema": null,
+            "fullPointCount": 0,
+            "omittedPoints": 0,
+            "omittedRuns": 0
+          }
+        ]
+      },
+      []
+    ],
+    "valid": false
+  },
+  {
+    "name": "boolean domain start",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "s",
+            "label": {
+              "en": "Series"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "chart",
+        "timeDomain": [false, 1000],
+        "view": "full",
+        "series": [
+          {
+            "id": "s",
+            "unit": "deg",
+            "range": [-100, 100],
+            "extrema": null,
+            "fullPointCount": 0,
+            "omittedPoints": 0,
+            "omittedRuns": 0
+          }
+        ]
+      },
+      []
+    ],
+    "valid": false
+  },
+  {
+    "name": "scalar label boundary",
+    "op": "declaration",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "s",
+            "label": {
+              "en": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00"
+            }
+          }
+        ]
+      }
+    ],
+    "valid": true
+  },
+  {
+    "name": "scalar label over",
+    "op": "declaration",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "s",
+            "label": {
+              "en": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00"
+            }
+          }
+        ]
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "NEL label",
+    "op": "declaration",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "s",
+            "label": {
+              "en": "\u0085"
+            }
+          }
+        ]
+      }
+    ],
+    "valid": true
+  },
+  {
+    "name": "BOM blank label",
+    "op": "declaration",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "s",
+            "label": {
+              "en": "\ufeff"
+            }
+          }
+        ]
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "multiline label",
+    "op": "declaration",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "s",
+            "label": {
+              "en": "x\n"
+            }
+          }
+        ]
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "zero width label",
+    "op": "declaration",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "s",
+            "label": {
+              "en": "\u200b"
+            }
+          }
+        ]
+      }
+    ],
+    "valid": true
+  },
+  {
+    "name": "safe id",
+    "op": "declaration",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "s",
+            "label": {
+              "en": "S"
+            }
+          }
+        ]
+      }
+    ],
+    "valid": true
+  },
+  {
+    "name": "prototype id",
+    "op": "declaration",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "prototype",
+            "label": {
+              "en": "S"
+            }
+          }
+        ]
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "constructor id",
+    "op": "declaration",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "constructor",
+            "label": {
+              "en": "S"
+            }
+          }
+        ]
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "newline id",
+    "op": "declaration",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "s\n",
+            "label": {
+              "en": "S"
+            }
+          }
+        ]
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "uppercase id",
+    "op": "declaration",
+    "args": [
+      {
+        "kind": "chart",
+        "series": [
+          {
+            "id": "S",
+            "label": {
+              "en": "S"
+            }
+          }
+        ]
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "table columns 0",
+    "op": "declaration",
+    "args": [
+      {
+        "kind": "table",
+        "columns": []
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "table columns 1",
+    "op": "declaration",
+    "args": [
+      {
+        "kind": "table",
+        "columns": [
+          {
+            "id": "c0",
+            "label": {
+              "en": "Col"
+            },
+            "value": "number"
+          }
+        ]
+      }
+    ],
+    "valid": true
+  },
+  {
+    "name": "table columns 8",
+    "op": "declaration",
+    "args": [
+      {
+        "kind": "table",
+        "columns": [
+          {
+            "id": "c0",
+            "label": {
+              "en": "Col"
+            },
+            "value": "number"
+          },
+          {
+            "id": "c1",
+            "label": {
+              "en": "Col"
+            },
+            "value": "number"
+          },
+          {
+            "id": "c2",
+            "label": {
+              "en": "Col"
+            },
+            "value": "number"
+          },
+          {
+            "id": "c3",
+            "label": {
+              "en": "Col"
+            },
+            "value": "number"
+          },
+          {
+            "id": "c4",
+            "label": {
+              "en": "Col"
+            },
+            "value": "number"
+          },
+          {
+            "id": "c5",
+            "label": {
+              "en": "Col"
+            },
+            "value": "number"
+          },
+          {
+            "id": "c6",
+            "label": {
+              "en": "Col"
+            },
+            "value": "number"
+          },
+          {
+            "id": "c7",
+            "label": {
+              "en": "Col"
+            },
+            "value": "number"
+          }
+        ]
+      }
+    ],
+    "valid": true
+  },
+  {
+    "name": "table columns 9",
+    "op": "declaration",
+    "args": [
+      {
+        "kind": "table",
+        "columns": [
+          {
+            "id": "c0",
+            "label": {
+              "en": "Col"
+            },
+            "value": "number"
+          },
+          {
+            "id": "c1",
+            "label": {
+              "en": "Col"
+            },
+            "value": "number"
+          },
+          {
+            "id": "c2",
+            "label": {
+              "en": "Col"
+            },
+            "value": "number"
+          },
+          {
+            "id": "c3",
+            "label": {
+              "en": "Col"
+            },
+            "value": "number"
+          },
+          {
+            "id": "c4",
+            "label": {
+              "en": "Col"
+            },
+            "value": "number"
+          },
+          {
+            "id": "c5",
+            "label": {
+              "en": "Col"
+            },
+            "value": "number"
+          },
+          {
+            "id": "c6",
+            "label": {
+              "en": "Col"
+            },
+            "value": "number"
+          },
+          {
+            "id": "c7",
+            "label": {
+              "en": "Col"
+            },
+            "value": "number"
+          },
+          {
+            "id": "c8",
+            "label": {
+              "en": "Col"
+            },
+            "value": "number"
+          }
+        ]
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "table number column null",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "table",
+        "columns": [
+          {
+            "id": "c",
+            "label": {
+              "en": "C"
+            },
+            "value": "number"
+          }
+        ]
+      },
+      {
+        "kind": "table"
+      },
+      [
+        {
+          "key": "r",
+          "version": null,
+          "cells": [null]
+        }
+      ]
+    ],
+    "valid": true
+  },
+  {
+    "name": "table number column bool",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "table",
+        "columns": [
+          {
+            "id": "c",
+            "label": {
+              "en": "C"
+            },
+            "value": "number"
+          }
+        ]
+      },
+      {
+        "kind": "table"
+      },
+      [
+        {
+          "key": "r",
+          "version": null,
+          "cells": [true]
+        }
+      ]
+    ],
+    "valid": false
+  },
+  {
+    "name": "table number column text",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "table",
+        "columns": [
+          {
+            "id": "c",
+            "label": {
+              "en": "C"
+            },
+            "value": "number"
+          }
+        ]
+      },
+      {
+        "kind": "table"
+      },
+      [
+        {
+          "key": "r",
+          "version": null,
+          "cells": ["1"]
+        }
+      ]
+    ],
+    "valid": false
+  },
+  {
+    "name": "table number column number",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "table",
+        "columns": [
+          {
+            "id": "c",
+            "label": {
+              "en": "C"
+            },
+            "value": "number"
+          }
+        ]
+      },
+      {
+        "kind": "table"
+      },
+      [
+        {
+          "key": "r",
+          "version": null,
+          "cells": [1]
+        }
+      ]
+    ],
+    "valid": true
+  },
+  {
+    "name": "list columns 0",
+    "op": "declaration",
+    "args": [
+      {
+        "kind": "list",
+        "columns": []
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "list columns 1",
+    "op": "declaration",
+    "args": [
+      {
+        "kind": "list",
+        "columns": [
+          {
+            "id": "c0",
+            "label": {
+              "en": "Col"
+            },
+            "value": "number"
+          }
+        ]
+      }
+    ],
+    "valid": true
+  },
+  {
+    "name": "list columns 3",
+    "op": "declaration",
+    "args": [
+      {
+        "kind": "list",
+        "columns": [
+          {
+            "id": "c0",
+            "label": {
+              "en": "Col"
+            },
+            "value": "number"
+          },
+          {
+            "id": "c1",
+            "label": {
+              "en": "Col"
+            },
+            "value": "number"
+          },
+          {
+            "id": "c2",
+            "label": {
+              "en": "Col"
+            },
+            "value": "number"
+          }
+        ]
+      }
+    ],
+    "valid": true
+  },
+  {
+    "name": "list columns 4",
+    "op": "declaration",
+    "args": [
+      {
+        "kind": "list",
+        "columns": [
+          {
+            "id": "c0",
+            "label": {
+              "en": "Col"
+            },
+            "value": "number"
+          },
+          {
+            "id": "c1",
+            "label": {
+              "en": "Col"
+            },
+            "value": "number"
+          },
+          {
+            "id": "c2",
+            "label": {
+              "en": "Col"
+            },
+            "value": "number"
+          },
+          {
+            "id": "c3",
+            "label": {
+              "en": "Col"
+            },
+            "value": "number"
+          }
+        ]
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "list number column null",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "list",
+        "columns": [
+          {
+            "id": "c",
+            "label": {
+              "en": "C"
+            },
+            "value": "number"
+          }
+        ]
+      },
+      {
+        "kind": "list"
+      },
+      [
+        {
+          "key": "r",
+          "version": null,
+          "cells": [null]
+        }
+      ]
+    ],
+    "valid": true
+  },
+  {
+    "name": "list number column bool",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "list",
+        "columns": [
+          {
+            "id": "c",
+            "label": {
+              "en": "C"
+            },
+            "value": "number"
+          }
+        ]
+      },
+      {
+        "kind": "list"
+      },
+      [
+        {
+          "key": "r",
+          "version": null,
+          "cells": [true]
+        }
+      ]
+    ],
+    "valid": false
+  },
+  {
+    "name": "list number column text",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "list",
+        "columns": [
+          {
+            "id": "c",
+            "label": {
+              "en": "C"
+            },
+            "value": "number"
+          }
+        ]
+      },
+      {
+        "kind": "list"
+      },
+      [
+        {
+          "key": "r",
+          "version": null,
+          "cells": ["1"]
+        }
+      ]
+    ],
+    "valid": false
+  },
+  {
+    "name": "list number column number",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "list",
+        "columns": [
+          {
+            "id": "c",
+            "label": {
+              "en": "C"
+            },
+            "value": "number"
+          }
+        ]
+      },
+      {
+        "kind": "list"
+      },
+      [
+        {
+          "key": "r",
+          "version": null,
+          "cells": [1]
+        }
+      ]
+    ],
+    "valid": true
+  },
+  {
+    "name": "code empty",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "code"
+      },
+      {
+        "kind": "code"
+      },
+      []
+    ],
+    "valid": true
+  },
+  {
+    "name": "code unicode",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "code"
+      },
+      {
+        "kind": "code"
+      },
+      ["\u81fa\ud83d\ude00e\u0301\u00e9\n\u0001"]
+    ],
+    "valid": true
+  },
+  {
+    "name": "code empty entry",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "code"
+      },
+      {
+        "kind": "code"
+      },
+      [""]
+    ],
+    "valid": false
+  },
+  {
+    "name": "code entry max",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "code"
+      },
+      {
+        "kind": "code"
+      },
+      [
+        "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00"
+      ]
+    ],
+    "valid": true
+  },
+  {
+    "name": "code entry over",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "code"
+      },
+      {
+        "kind": "code"
+      },
+      [
+        "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00"
+      ]
+    ],
+    "valid": false
+  },
+  {
+    "name": "code NUL",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "code"
+      },
+      {
+        "kind": "code"
+      },
+      ["\u0000"]
+    ],
+    "valid": false
+  },
+  {
+    "name": "code surrogate",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "code"
+      },
+      {
+        "kind": "code"
+      },
+      ["\ud800"]
+    ],
+    "valid": false
+  },
+  {
+    "name": "code bool",
+    "op": "dataset",
+    "args": [
+      {
+        "kind": "code"
+      },
+      {
+        "kind": "code"
+      },
+      [false]
+    ],
+    "valid": false
+  },
+  {
+    "name": "chunk entry count 255",
+    "op": "chunk",
+    "args": [
+      {
+        "kind": "code",
+        "entries": [
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x"
+        ]
+      }
+    ],
+    "valid": true
+  },
+  {
+    "name": "chunk entry count 256",
+    "op": "chunk",
+    "args": [
+      {
+        "kind": "code",
+        "entries": [
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x"
+        ]
+      }
+    ],
+    "valid": true
+  },
+  {
+    "name": "chunk entry count 257",
+    "op": "chunk",
+    "args": [
+      {
+        "kind": "code",
+        "entries": [
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x",
+          "x"
+        ]
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "table row count 49",
+    "op": "chunk",
+    "args": [
+      {
+        "kind": "table",
+        "entries": [
+          {
+            "key": "0",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "1",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "2",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "3",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "4",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "5",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "6",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "7",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "8",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "9",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "10",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "11",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "12",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "13",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "14",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "15",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "16",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "17",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "18",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "19",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "20",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "21",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "22",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "23",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "24",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "25",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "26",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "27",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "28",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "29",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "30",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "31",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "32",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "33",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "34",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "35",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "36",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "37",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "38",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "39",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "40",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "41",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "42",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "43",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "44",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "45",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "46",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "47",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "48",
+            "version": null,
+            "cells": []
+          }
+        ]
+      }
+    ],
+    "valid": true
+  },
+  {
+    "name": "table row count 50",
+    "op": "chunk",
+    "args": [
+      {
+        "kind": "table",
+        "entries": [
+          {
+            "key": "0",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "1",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "2",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "3",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "4",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "5",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "6",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "7",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "8",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "9",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "10",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "11",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "12",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "13",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "14",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "15",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "16",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "17",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "18",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "19",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "20",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "21",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "22",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "23",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "24",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "25",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "26",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "27",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "28",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "29",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "30",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "31",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "32",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "33",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "34",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "35",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "36",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "37",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "38",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "39",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "40",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "41",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "42",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "43",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "44",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "45",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "46",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "47",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "48",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "49",
+            "version": null,
+            "cells": []
+          }
+        ]
+      }
+    ],
+    "valid": true
+  },
+  {
+    "name": "table row count 51",
+    "op": "chunk",
+    "args": [
+      {
+        "kind": "table",
+        "entries": [
+          {
+            "key": "0",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "1",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "2",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "3",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "4",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "5",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "6",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "7",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "8",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "9",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "10",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "11",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "12",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "13",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "14",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "15",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "16",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "17",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "18",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "19",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "20",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "21",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "22",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "23",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "24",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "25",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "26",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "27",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "28",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "29",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "30",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "31",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "32",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "33",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "34",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "35",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "36",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "37",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "38",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "39",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "40",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "41",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "42",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "43",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "44",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "45",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "46",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "47",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "48",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "49",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "50",
+            "version": null,
+            "cells": []
+          }
+        ]
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "duplicate row keys",
+    "op": "chunk",
+    "args": [
+      {
+        "kind": "table",
+        "entries": [
+          {
+            "key": "r",
+            "version": null,
+            "cells": []
+          },
+          {
+            "key": "r",
+            "version": null,
+            "cells": []
+          }
+        ]
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "code extra field",
+    "op": "header",
+    "args": [
+      {
+        "kind": "code",
+        "extra": 1
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "header dangerous field",
+    "op": "header",
+    "args": [
+      {
+        "kind": "code",
+        "__proto__": {}
+      }
+    ],
+    "valid": false
+  },
+  {
+    "name": "wrong header kind",
+    "op": "header",
+    "args": [
+      {
+        "kind": "other"
+      }
+    ],
+    "valid": false
+  }
+]

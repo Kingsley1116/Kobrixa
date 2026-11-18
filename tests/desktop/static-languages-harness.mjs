@@ -7,6 +7,7 @@ export async function basicPlusSmokeCatalog() {
     sources: [
       {
         kind: "builtin",
+        policy: "required",
         manifest: JSON.parse(await readFile(new URL("kobrixa-plugin.json", base), "utf8")),
         resources: {
           "language/tokenizer.json": await readFile(

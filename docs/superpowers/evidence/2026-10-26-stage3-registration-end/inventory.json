@@ -1,0 +1,30 @@
+[
+  {
+    "file": "native-receipt.json.gz",
+    "source": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/integrated-registration-end-native.json",
+    "uncompressedBytes": 45850,
+    "uncompressedSha256": "25f23e2f8b4031c97805b2a4d4bf89c6e24136dd1729dae11bbc3d9a910b2bb1",
+    "sha256": "b4afcb63ab27111e43c0ed0ea3eb1d85a767e58b3b30fdca15252b0bbe4f1514"
+  },
+  {
+    "file": "candidate.json.gz",
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-bC7cuQ/registration-end.candidate.json",
+    "uncompressedBytes": 12384,
+    "uncompressedSha256": "b0f95251ea5cfdd840e1ef02fca7f997711f7c5e4866afd46f83cee74bf325ae",
+    "sha256": "86a830239fc20b9bf3929d7cb671152eb4f0692cbe28e70c11262c4ded2e551b"
+  },
+  {
+    "file": "native-config.json.gz",
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-bC7cuQ/registration-end.json",
+    "uncompressedBytes": 1180,
+    "uncompressedSha256": "70d8e2a3dae7941d96c513055f6f4f9c715d8c83cdca522364ad2821a228ceb1",
+    "sha256": "22558b1d385f6688ea385372f237157e211e8e50a04f1d187feb282ae5cca52f"
+  },
+  {
+    "file": "native.log.gz",
+    "source": "/private/tmp/stage3-registration-end-native.log",
+    "uncompressedBytes": 1462,
+    "uncompressedSha256": "99499ae6056e66ee1d6a0f68dec7e9214af8c45d9e74dd774134b710347e3dda",
+    "sha256": "89319a7cc0eb9c862303445cb95c7e548a2618dbd9ef3d7cf2c4b8f56ebfec87"
+  }
+]

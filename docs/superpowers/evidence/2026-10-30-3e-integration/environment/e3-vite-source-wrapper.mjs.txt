@@ -1,0 +1,8 @@
+import { build as actualBuild } from '/Users/kingsley/.codex/worktrees/plugin-3d/Kobrixa/node_modules/vite/dist/node/index.js';
+const root='/Users/kingsley/.codex/worktrees/plugin-3e/Kobrixa';
+export const build = options => actualBuild({...options, resolve:{...options.resolve, alias:[
+{find:/^@eslint-community\/regexpp$/,replacement:'/Users/kingsley/.codex/worktrees/plugin-3d/Kobrixa/node_modules/@eslint-community/regexpp/index.js'},
+{find:/^semver$/,replacement:'/Users/kingsley/.codex/worktrees/plugin-3d/Kobrixa/node_modules/semver/index.js'},
+{find:/^zod$/,replacement:'/Users/kingsley/.codex/worktrees/plugin-3d/Kobrixa/node_modules/zod/index.js'},
+{find:/^@kobrixa\/plugin-protocol$/,replacement:root+'/packages/plugin-protocol/src/index.ts'},
+{find:/^@kobrixa\/plugin-runtime$/,replacement:root+'/packages/plugin-runtime/src/index.ts'}]}});

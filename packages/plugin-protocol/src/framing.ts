@@ -48,7 +48,7 @@ function assertHeaderPrefix(buffer: Uint8Array): void {
 
 export class ContentLengthDecoder {
   #buffer = new Uint8Array(0);
-  readonly #utf8 = new TextDecoder("utf-8", { fatal: true });
+  readonly #utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
   constructor(private readonly maxBytes: number = PLUGIN_LIMITS.messageBytes) {}
 
   push(chunk: Uint8Array): string[] {

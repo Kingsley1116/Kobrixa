@@ -1,0 +1,345 @@
+[
+  {
+    "file": "product-tampered.log.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-installed-product-cRGLEW/tampered.log",
+    "bytes": 9591,
+    "sha256": "d2279753beebd17e79cc2f2a3f3d6ff78757f556bb09bdf5507713603128a6d7",
+    "gzipSha256": "ba8f3399519f1d673eab4fa3e66d148addf7b702f583fc2bbdefa1a4bae931c7"
+  },
+  {
+    "file": "product-missing.log.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-installed-product-cRGLEW/missing.log",
+    "bytes": 9752,
+    "sha256": "4fe4ab594a479b5291852df3a96fce86c221867d049b9747e7c194c177bf3537",
+    "gzipSha256": "bf394d0e9f407622090c1743f40835137be191646a2f96bc8ad3f4da08870ae4"
+  },
+  {
+    "file": "product-healthy.log.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-installed-product-cRGLEW/healthy.log",
+    "bytes": 11224,
+    "sha256": "7b53d9a28192deb46178f41144250c7dbfd94ec2d280377c3a35fdcb19911564",
+    "gzipSha256": "93a19d5064ce8688cd470ba9d6c30ae31555979aade0461451a9489564cf8caf"
+  },
+  {
+    "file": "product-installed.json.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-installed-product-cRGLEW/installed.json",
+    "bytes": 137111,
+    "sha256": "fdf0c83d583741a65ba49e20fcf13881a71b86ab2ea17ce9d2def0c41aac95ba",
+    "gzipSha256": "205537907a279524bb1ada1108f937d61b22410bc08450485df78c1ecc53404f"
+  },
+  {
+    "file": "product-restart.log.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-installed-product-cRGLEW/restart.log",
+    "bytes": 5064,
+    "sha256": "0c87876938c3ec775ec367ed7d1fc663eb1188348f622f73ceb451a866c5d5ae",
+    "gzipSha256": "7dc4506b898e864e7a44128ac5269ebfa131195e5fc3d8f3440b29e299b86089"
+  },
+  {
+    "file": "lab-payload-audit.json.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-installed-e0I9Md/payload-audit.json",
+    "bytes": 873,
+    "sha256": "99eca9489c6758d5a97bed16fdf493076e73f11cfaeff5f6b8eedd0f679b15ad",
+    "gzipSha256": "7a384fa9fc8ce4532560d8e8bfead72eb9cc5938ade30a140745c3e91282d03d"
+  },
+  {
+    "file": "lab-installed.json.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-installed-e0I9Md/installed.json",
+    "bytes": 56348,
+    "sha256": "aa438b4a8152468dcb8b30ec537ca0f13f24d7be8b4d5e8a988c567c8b76bfe3",
+    "gzipSha256": "eb54b974e6f06a635fdc822a0bd3c29ba17235d32095d0b7e93e73cb8acab9eb"
+  },
+  {
+    "file": "lab-artifact-identity.json.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-installed-e0I9Md/artifact-identity.json",
+    "bytes": 51701,
+    "sha256": "65b34728f711ca3eaf4bb5d9eb2cbd180d7261dd31d13677a54ec7a6f91c979a",
+    "gzipSha256": "7925e4aa2957f3acd0494c71d6ec334b7cd949a8105fb0006a49241cc68f596f"
+  },
+  {
+    "file": "lab-healthy-isolation.sb.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-installed-e0I9Md/healthy/isolation.sb",
+    "bytes": 481,
+    "sha256": "a22e4c348ca33a81fd82cba1932e264fdb15450eec6e24b7bd946faac2d9e4b2",
+    "gzipSha256": "5ee87bca2574ed69ddbfe0c4ce814ec3c3182b26bce2e36f71ed37aca90cb0e9"
+  },
+  {
+    "file": "lab-healthy-producer.json.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-installed-e0I9Md/healthy/producer.json",
+    "bytes": 2203044,
+    "sha256": "65727475912a0ab07946536e6db10091f9e8a3c7598143abcd511db2155b0e26",
+    "gzipSha256": "a4200afc6e335abd84af06e1d81a789281c89a24828e7600d005c128ea347e9e"
+  },
+  {
+    "file": "lab-healthy-native.log.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-installed-e0I9Md/healthy/native.log",
+    "bytes": 2153,
+    "sha256": "731a487a20efd2105b4a1154deb1f9f36ff2d45a63c374a15dfdd7bd1df4d950",
+    "gzipSha256": "62c8db580451a1f8b0d61cf9e06019a4495e8805fec3383cd30599c3360ec555"
+  },
+  {
+    "file": "lab-healthy-process.json.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-installed-e0I9Md/healthy/process.json",
+    "bytes": 238,
+    "sha256": "46a911533d6a357bdcb4a25cbb1f10ae694ce7d666d35904dab8fcd7eb0cb4b1",
+    "gzipSha256": "8a2916d336ce9e8ad603b4c40d8aeb9a566f184c038987d67408b2157ec7df7c"
+  },
+  {
+    "file": "lab-absent-isolation.sb.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-installed-e0I9Md/absent/isolation.sb",
+    "bytes": 480,
+    "sha256": "ef94e5168e28a446fba3371631586d421319eff701b7f2a2e2627964336745e3",
+    "gzipSha256": "bd321496611658c735ae44f5d0b6138ee77ab3e06a6b954ec8c9dafece3bd21c"
+  },
+  {
+    "file": "lab-absent-producer.json.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-installed-e0I9Md/absent/producer.json",
+    "bytes": 3744,
+    "sha256": "0f2c4ad47f391dfea83704d3e6dd5817f212daf1ab7c88ce6b6d358411daeb7c",
+    "gzipSha256": "260e399546e26007008ae32f3126e5a6ecb7e3129f1d8dd900db7b35bc7bffdb"
+  },
+  {
+    "file": "lab-absent-native.log.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-installed-e0I9Md/absent/native.log",
+    "bytes": 1378,
+    "sha256": "371435054e639ebbb41011ad1c151da75a9fbc1ff902f902ea75efaec57e174f",
+    "gzipSha256": "a556fcfdc9211cec3d44542e54f9ca0b68bda933210fcbcf0b919a52023a5271"
+  },
+  {
+    "file": "lab-absent-process.json.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-installed-e0I9Md/absent/process.json",
+    "bytes": 224,
+    "sha256": "fbaf1fd1755689b86b3011386274991d306b6fead028806a9516852d3531970e",
+    "gzipSha256": "372f7a45ebc804054a3b7210f651d439253c31b28bd1021623c5e7203cda6ff2"
+  },
+  {
+    "file": "lab-missing-resource-isolation.sb.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-installed-e0I9Md/missing-resource/isolation.sb",
+    "bytes": 490,
+    "sha256": "f0335a4b6b2531f2d8954d40b7fdaa16f7bf6365794b732ef19db54d8d832709",
+    "gzipSha256": "9c34709554332dfaf92e9ac830e9062f49a77ec747edc836a7b7e0d7145a68b5"
+  },
+  {
+    "file": "lab-missing-resource-producer.json.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-installed-e0I9Md/missing-resource/producer.json",
+    "bytes": 3754,
+    "sha256": "281558a4aa01cdd87e0db9de913c2bc4962430656d6c6cf4eb5d069cb0bf83b8",
+    "gzipSha256": "305e811a6db40146f4e9853aecef96729999bd122f03782be19ae580ccc5b9ea"
+  },
+  {
+    "file": "lab-missing-resource-native.log.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-installed-e0I9Md/missing-resource/native.log",
+    "bytes": 1378,
+    "sha256": "92a4d0c7b0c7f348ad19ebd2e98b43090c4f3c83733c67545d9bd0c181a328d6",
+    "gzipSha256": "a82214b05a669977a3c2e2c47770aab5a4f1f9377263e762877b740c0e85d01c"
+  },
+  {
+    "file": "lab-missing-resource-process.json.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-installed-e0I9Md/missing-resource/process.json",
+    "bytes": 224,
+    "sha256": "f7cbdaaaff4bff1134452eb5fdcecba4d4aaaa7ee6a690a56a5a19810bf840f2",
+    "gzipSha256": "7d5357eba22aa365be6e198ce35e94ee42d5420a3e82fda54983ad3b7fe35116"
+  },
+  {
+    "file": "lab-tampered-isolation.sb.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-installed-e0I9Md/tampered/isolation.sb",
+    "bytes": 482,
+    "sha256": "0583b264e7d5dcd7741211e304875c6bb3d18949710487d6534fefcf5d746296",
+    "gzipSha256": "aa2455e03650f56fad7ba23fa2a461581cb2935822d8ff621618df82215154df"
+  },
+  {
+    "file": "lab-tampered-producer.json.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-installed-e0I9Md/tampered/producer.json",
+    "bytes": 3745,
+    "sha256": "c6439c3841843fc942fdf67a27d7cac69cbef5fbd42bacb37c515c076c92fa37",
+    "gzipSha256": "864956befb22d369d9418282748a560407c1bcd72f5c666368f86be275abaa1e"
+  },
+  {
+    "file": "lab-tampered-native.log.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-installed-e0I9Md/tampered/native.log",
+    "bytes": 1378,
+    "sha256": "83cdf462d3bba1e51ed55c2042c037a9eecaecb73a6eeae21129b9a2358c5306",
+    "gzipSha256": "326a1b8dcf59c6338389bda6e4468164d747ff47c71355d973720a89ed2d915a"
+  },
+  {
+    "file": "lab-tampered-process.json.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-installed-e0I9Md/tampered/process.json",
+    "bytes": 224,
+    "sha256": "ed7b27678c068ec35e1ab659508e6673f7dd13cbd9f4715fa5c697b502c58357",
+    "gzipSha256": "cf841158a445ff36bd627a436e9c262eed46fb38d6b4abd62e3f9708f2a5b500"
+  },
+  {
+    "file": "restart-restart-before.json.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-public-ooe0Za/restart-before.json",
+    "bytes": 25621,
+    "sha256": "6cd5f84b679296e06519b4e71900ce72c4a841ee9d1f03046c6e5d325622fd62",
+    "gzipSha256": "5e081ae137bc9b777f38f23aa719bf4b73ff3d0f2b04c0ad0175102908080762"
+  },
+  {
+    "file": "restart-producer-restart-2.json.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-public-ooe0Za/producer-restart-2.json",
+    "bytes": 628154,
+    "sha256": "4e6712db8762969ef9aff021f156211729d94f3f7683226f10f23c3d6c59a833",
+    "gzipSha256": "6bebaf5e30883bf369c3b0e89464549be973936c907ee70329850075ac28c404"
+  },
+  {
+    "file": "restart-restart-receipt.json.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-public-ooe0Za/restart-receipt.json",
+    "bytes": 44666,
+    "sha256": "115d68cdb8196100d9bf66ed56a7e6dacc21ec59419e7fc4c2a9f830d890a70e",
+    "gzipSha256": "d8acc5898cbf74db7180fa4cb01cf8d82a842c1b34f9ef7c3a39ae78f6b5d7d5"
+  },
+  {
+    "file": "restart-process-restart-1.json.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-public-ooe0Za/process-restart-1.json",
+    "bytes": 103,
+    "sha256": "ca0e6067c31bbaa0d2fa27ec0deed21a11584c9393188e2e3b72f23126f2a218",
+    "gzipSha256": "a83262ab75718579e10971280cdc6ab260c8bd1a17443592f9a75709abaca4d7"
+  },
+  {
+    "file": "restart-native-restart-1.log.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-public-ooe0Za/native-restart-1.log",
+    "bytes": 1904,
+    "sha256": "71ca1338be63c630ac60b7f7fd599ae6c9cdf5ce340b2184f84d4a5bd5ef38ae",
+    "gzipSha256": "b8b9fe5c78fecfc66ee1ea534e6e13d41a4f1d27e6fc31b555982b7a948a090b"
+  },
+  {
+    "file": "restart-restart-evidence.json.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-public-ooe0Za/restart-evidence.json",
+    "bytes": 3123217,
+    "sha256": "3ce31ae8f0829b638168548224e80caad926247aba5a0b10a3dc559b98152be9",
+    "gzipSha256": "97380f8cea9fadc0dc46ccca58584cc05c29827da648d4c13934a1be3e553237"
+  },
+  {
+    "file": "restart-native-restart-2.log.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-public-ooe0Za/native-restart-2.log",
+    "bytes": 1912,
+    "sha256": "1799178ed60e34df48718d576d0b42372d4463d2b7ac9dd3827630b80ecdab88",
+    "gzipSha256": "c2f98e4fee49dbb47a133c450c6b4fe57a345de38b1873aaea153d7c2a846a84"
+  },
+  {
+    "file": "restart-process-restart-2.json.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-public-ooe0Za/process-restart-2.json",
+    "bytes": 104,
+    "sha256": "19469c29c74b919e983c00953a45aee4521bb06ee3cff62e89210dd6cbaab046",
+    "gzipSha256": "e72183549213fbfedfa8a8ff89b93a4b22493c52655fb637f166a3ebeec1eb18"
+  },
+  {
+    "file": "restart-artifact-identity.json.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-public-ooe0Za/artifact-identity.json",
+    "bytes": 43620,
+    "sha256": "e02acef06a401100c2e6967bf99ea4699b51dca773f454ab0b0e84f2dd1b3824",
+    "gzipSha256": "0272bca93f34737161fdb48190d5e1b38cf7df87f5610411940948b23b24ccd2"
+  },
+  {
+    "file": "restart-producer-restart-1.json.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-public-ooe0Za/producer-restart-1.json",
+    "bytes": 2250089,
+    "sha256": "62875eae5e14d37aab54df059a286d933eff31f03224d0d82a8d9bf7c9f4e091",
+    "gzipSha256": "c7535b22c5a851b4517df2f5aea1f03aed678fcfff0cbc144618fe61f295e6bc"
+  },
+  {
+    "file": "failed-provider-fixture-payload-audit.json.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-installed-ofTsYg/payload-audit.json",
+    "bytes": 873,
+    "sha256": "99eca9489c6758d5a97bed16fdf493076e73f11cfaeff5f6b8eedd0f679b15ad",
+    "gzipSha256": "7a384fa9fc8ce4532560d8e8bfead72eb9cc5938ade30a140745c3e91282d03d"
+  },
+  {
+    "file": "failed-provider-fixture-artifact-identity.json.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-installed-ofTsYg/artifact-identity.json",
+    "bytes": 49964,
+    "sha256": "13f178456ffc9f829c2d90d7bfb8e4f66bf874292f0c1bffc4490cf802318ca1",
+    "gzipSha256": "dcb1c86c18b5f0b94d2073be8a071fdfd37cc260a3eaee9ddfe705ca7bd727fd"
+  },
+  {
+    "file": "failed-provider-fixture-healthy-isolation.sb.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-installed-ofTsYg/healthy/isolation.sb",
+    "bytes": 481,
+    "sha256": "d3f56e1dbbc9eee68faf5e1217804c563bf32585663d988134a2ea52d0201ac5",
+    "gzipSha256": "f97049623ead858ccc289f2f4aab2d899089a666f37cbaf38395624887d52cba"
+  },
+  {
+    "file": "failed-provider-fixture-healthy-producer.json.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-installed-ofTsYg/healthy/producer.json",
+    "bytes": 10944,
+    "sha256": "8fa927424e293517142bfd97a819eea382e412d2a0fbeae7d6a7890e1ab11fe7",
+    "gzipSha256": "d9a23d2f6795833d2573b1774c81d6b5ce1f0c6d63d0af7ebcef532e0729ba1b"
+  },
+  {
+    "file": "failed-provider-fixture-healthy-native.log.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-installed-ofTsYg/healthy/native.log",
+    "bytes": 1370,
+    "sha256": "7e90368cd8abe7c88aba1a201cc3ba10adc66ededd4384f4690102c8d9b961f7",
+    "gzipSha256": "520784493a5090660791d7ccec0f6edf68aa0bfba6e017d9d6b2ef039a0d90c0"
+  },
+  {
+    "file": "failed-provider-fixture-healthy-process.json.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/kobrixa-lab-installed-ofTsYg/healthy/process.json",
+    "bytes": 223,
+    "sha256": "adecaa1396000b74a7b84fd35b772dfb6f2fc92f1db24f9a70c26a5bec01e194",
+    "gzipSha256": "baacbb43301245bbe7e345b8fc7a229be6cf8394294e25fc97a6d1253f40f393"
+  },
+  {
+    "file": "d8-final-product-build.log.gz",
+    "source": "/private/tmp/d8-final-product-build.log",
+    "bytes": 23197,
+    "sha256": "15fb9c06339d146aa53d08abc199360fb8e46c5a8f58c6488ef03198942d4d1a",
+    "gzipSha256": "5595c3b920e9d20ef6506d95ac8dd293bf87d1189b3c3247477179cfbbead187"
+  },
+  {
+    "file": "d8-final-product-online-build.log.gz",
+    "source": "/private/tmp/d8-final-product-online-build.log",
+    "bytes": 21212,
+    "sha256": "18ab443a532e7e578856ed7a2f17393546ca3043cb63ebb51651bc4c4b077ab4",
+    "gzipSha256": "a83d90e3b77b15d7430b547e0e7ad7af3f97f459b986fbba5334a2629cdbc024"
+  },
+  {
+    "file": "d8-final-installed-product-native.log.gz",
+    "source": "/private/tmp/d8-final-installed-product-native.log",
+    "bytes": 1642,
+    "sha256": "2d82c052105dea9858665ab49f77ee56061673b2d688f429abf2e9496319df4a",
+    "gzipSha256": "7530da0fe03389beeff127100be8d569cd711e1453084288b25bd16d74dfcaa7"
+  },
+  {
+    "file": "d8-final-lab-native2.log.gz",
+    "source": "/private/tmp/d8-final-lab-native2.log",
+    "bytes": 5877,
+    "sha256": "53039ff9ce53db722a714674775179f976f85623f2a5ce1999163d766eaf0c2a",
+    "gzipSha256": "d420043168701c865962b65c5a4ef9ed87812f31f4ebf3862139becf9496a77f"
+  },
+  {
+    "file": "stage3-d8-full-desktop.log.gz",
+    "source": "/private/tmp/stage3-d8-full-desktop.log",
+    "bytes": 1687,
+    "sha256": "14cc37a6ed04b0fdf979542dcad37150f1c3c6989429c9a02edcc4e2f4fb1916",
+    "gzipSha256": "e5ed81806ae370b79b0cdfa1b2da51d5d8a08419525834de6f378bec253abc90"
+  },
+  {
+    "file": "d8-ipc-final-followup.log.gz",
+    "source": "/private/tmp/d8-ipc-final-followup.log",
+    "bytes": 223,
+    "sha256": "0fa0e3294af8bfa9334dff421f5d858b3ef7e94df9a0a64fbab63cec74fc3887",
+    "gzipSha256": "8545aba92e665a8f03e8862d0e50ff70e2042e86924a5a925a9ff1fe9f6c22c0"
+  },
+  {
+    "file": "d8-independent-review.md.gz",
+    "source": "/private/tmp/d8-independent-review.md",
+    "bytes": 5092,
+    "sha256": "6eab6f7df4bdd3c01315ba7ea76635033be611af734952a62c2ed088078009d8",
+    "gzipSha256": "0b93ce15e1feaeb81b053ac20f37bb34641f6c25b1ae9e27f294d0baae7eb3d2"
+  },
+  {
+    "file": "d8-installed-provider-tests-final.log.gz",
+    "source": "/private/tmp/d8-installed-provider-tests-final.log",
+    "bytes": 2529,
+    "sha256": "4eb4b13437705176791b7c98fcbf24db320ada7b00566cd8f715e77e3385807e",
+    "gzipSha256": "fc5204cb5f223fa79eafb8391d4982786971a198fe57b21a581ec86a5356207c"
+  },
+  {
+    "file": "product-audit.json.gz",
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/product-audit.json",
+    "bytes": 806,
+    "sha256": "9091aebc802b3881c6b19c061eeb64a42be02d8fc97c95d93eef877626a6fa59",
+    "gzipSha256": "6ec9971078e3d68e3d0465d4d5030073d8cb6db946822c4463a28d04062c6ce6"
+  }
+]

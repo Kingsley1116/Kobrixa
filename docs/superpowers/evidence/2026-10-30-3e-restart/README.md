@@ -1,0 +1,5 @@
+# Device preferences across an actual application restart
+
+Linux arm64 native run `RURYTe`, harness `00d033b`: **PASS**. Two distinct Electron main processes (83, then 233) ran serially with the same fresh profile and normal shutdown. Phase 1 imports all nine original values and uses actual generic form input for CAS/reset/CAS, leaving skipUnchangedAssets=false (original=true). Phase 2 reads the same revision and values, with fresh scope and no settings/import publication. Original file and renderer bytes remain unchanged; completed import/barrier/consumed nonce and referenced object hashes remain stable. Neither phase activates the feature or replays device work; cleanup counters and outside survivor sets are zero.
+
+This is a source-built acceptance host with the real persistence worker and renderer, not unchanged full-product packaging or physical hardware. Raw logs retain expected rejected completed migration challenges and shutdown-time unsubscribe messages; no values were removed. The outside receipt binds complete original evidence by SHA-256. Full Stage3, Lab restart, load and manual/hardware gates remain separate.

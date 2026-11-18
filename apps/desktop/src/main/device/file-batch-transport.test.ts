@@ -1,3 +1,4 @@
+import type { LegacyFileSession } from "../device-broker/legacy-files.js";
 import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import os from "node:os";
@@ -91,6 +92,13 @@ describe("batch transfers over EV3 protocol", () => {
     });
     const signal = new AbortController().signal,
       session = await transport.connect(transport.descriptor, signal);
+    const fileSession: LegacyFileSession = Object.assign(session, {
+      confirm: async <T>(work: () => Promise<T>): Promise<T> => work(),
+      renewConfirmation() {},
+      remaining: () => ({ idleRemainingMs: 120000, totalRemainingMs: 600000 }),
+      cancel: async () => {},
+    });
+
     try {
       await mkdir(path.join(local, "robot", "empty"), { recursive: true });
       await writeFile(path.join(local, "robot", "empty.rbf"), "");
@@ -99,7 +107,7 @@ describe("batch transfers over EV3 protocol", () => {
       await mkdir(download);
       let selected = path.join(local, "robot");
       const manager = new FileBatchManager(
-        async (_id, work) => work(session, signal),
+        async (_id, work) => work(fileSession, signal),
         { showOpenDialog: async () => ({ canceled: false, filePaths: [selected] }) },
         () => {},
         () => {},

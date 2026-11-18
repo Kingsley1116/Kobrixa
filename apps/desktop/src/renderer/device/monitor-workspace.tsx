@@ -1,71 +1,68 @@
-import { useSyncExternalStore, type ComponentProps } from "react";
-import { TabList } from "../components/tab-list.js";
-import { MonitorPanel } from "./monitor-panel.js";
-import { SensorLabPanel } from "./sensor-lab-panel.js";
-import type { SensorLabController } from "./sensor-lab-controller.js";
+import { useSyncExternalStore } from "react";
+import type { Locale } from "../i18n/copy.js";
+import type { RendererSession } from "../plugin-ui/bootstrap.js";
 
+/** Compatibility destination for the saved Monitor tab; feature UI lives only
+ * in the public plugin renderer. Catalog visits never start optional processes. */
 export function MonitorWorkspace({
-  lab,
-  view,
-  onView,
-  ...props
-}: ComponentProps<typeof MonitorPanel> & {
-  lab: SensorLabController;
-  view: "readings" | "lab";
-  onView(view: "readings" | "lab"): void;
+  plugins,
+  onOpenTools,
+  locale,
+}: {
+  plugins: Pick<RendererSession, "catalog" | "select">;
+  onOpenTools(): void;
+  locale: Locale;
 }): React.JSX.Element {
-  const zh = props.locale === "zh-TW";
-  const labState = useSyncExternalStore(lab.subscribe, lab.getSnapshot);
-  const motorBusy = useSyncExternalStore(props.motor.subscribe, props.motor.getBusy);
+  const zh = locale === "zh-TW";
+  const catalog = useSyncExternalStore(plugins.catalog.subscribe, plugins.catalog.getSnapshot);
   return (
     <div className="monitor-workspace">
-      <TabList
-        className="monitor-subtabs"
-        variant="compact"
-        label={zh ? "監測工具" : "Monitor tools"}
-        value={view}
-        onChange={onView}
-        tabs={(["readings", "lab"] as const).map((value) => ({
-          value,
-          id: `monitor-view-${value}`,
-          panelId: `monitor-page-${value}`,
-          label:
-            value === "readings"
-              ? zh
-                ? "讀值"
-                : "Readings"
-              : zh
-                ? "曲線與校正"
-                : "Curves & calibration",
-        }))}
-      />
-      <div
-        id="monitor-page-readings"
-        role="tabpanel"
-        aria-labelledby="monitor-view-readings"
-        hidden={view !== "readings"}
-      >
-        <MonitorPanel
-          {...props}
-          recording={labState.lab.active}
-          motorActive={props.active && view === "readings"}
-        />
-      </div>
-      <div
-        id="monitor-page-lab"
-        role="tabpanel"
-        aria-labelledby="monitor-view-lab"
-        hidden={view !== "lab"}
-      >
-        <SensorLabPanel
-          controller={lab}
-          monitor={props.controller}
-          locale={props.locale}
-          sessionId={props.sessionId}
-          onConnect={props.onConnect}
-          locked={!!props.locked || motorBusy}
-        />
-      </div>
+      {(
+        [
+          ["device-ev3", "EV3 device", "EV3 裝置"],
+          ["sensor-lab", "Sensor Lab", "Sensor Lab"],
+        ] as const
+      ).map(([id, en, localized]) => {
+        const entry = () =>
+          plugins.catalog
+            .getSnapshot()
+            .entries.find(
+              (item) =>
+                item.kind === "panel" &&
+                item.sourceKey === `builtin:kobrixa.${id}` &&
+                item.pluginId === `kobrixa.${id}` &&
+                item.id === `kobrixa.${id}.panel` &&
+                item.availability === "available",
+            );
+        const available = catalog.phase === "ready" && !!entry();
+        return (
+          <section key={id} data-plugin-destination={id}>
+            <p role="status">
+              {catalog.phase === "loading"
+                ? zh
+                  ? "正在載入插件工具…"
+                  : "Loading plugin tools…"
+                : available
+                  ? zh
+                    ? `${localized} 已移至插件工具。`
+                    : `${en} is available in Plugin tools.`
+                  : zh
+                    ? `${localized} 目前無法使用。請至插件工具查看狀態。`
+                    : `${en} is unavailable. Check its status in Plugin tools.`}
+            </p>
+            <button
+              onClick={() => {
+                const current =
+                  plugins.catalog.getSnapshot().phase === "ready" ? entry() : undefined;
+                if (current) plugins.select(current);
+                onOpenTools();
+              }}
+            >
+              {zh ? `開啟 ${localized} 插件工具` : `Open ${en} plugin tools`}
+            </button>
+          </section>
+        );
+      })}
     </div>
   );
 }

@@ -1,0 +1,11 @@
+
+ RUN  v5.0.4 /Users/kingsley/.codex/worktrees/plugin-3e/Kobrixa
+
+[warn] `inlineDynamicImports` option is deprecated, please use `codeSplitting: false` instead.
+[warn] `inlineDynamicImports` option is deprecated, please use `codeSplitting: false` instead.
+
+ Test Files  2 passed (2)
+      Tests  47 passed | 1 skipped (48)
+   Start at  02:34:17
+   Duration  1.25s (tests 67%, import 18%, transform 15%)
+

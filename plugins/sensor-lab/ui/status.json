@@ -1,0 +1,57 @@
+{
+  "kind": "status",
+  "tone": "neutral",
+  "text": {
+    "ref": {
+      "scope": "data",
+      "key": "summary"
+    }
+  },
+  "data": {
+    "reservation": {
+      "schema": {
+        "type": "string",
+        "maxLength": 36,
+        "nullable": true
+      },
+      "initial": null
+    },
+    "summary": {
+      "schema": {
+        "type": "string",
+        "maxLength": 1000,
+        "nullable": false
+      },
+      "initial": "Unavailable / 無法使用"
+    }
+  },
+  "actions": [
+    {
+      "id": "open",
+      "label": {
+        "en": "Open Sensor Lab",
+        "zh-TW": "開啟感測器工具"
+      },
+      "action": {
+        "kind": "core",
+        "action": "openPanel",
+        "panelId": "kobrixa.sensor-lab.panel"
+      }
+    },
+    {
+      "id": "stop",
+      "label": {
+        "en": "Stop recording",
+        "zh-TW": "停止錄製"
+      },
+      "action": {
+        "kind": "core",
+        "action": "stopRecording",
+        "reservation": {
+          "scope": "data",
+          "key": "reservation"
+        }
+      }
+    }
+  ]
+}

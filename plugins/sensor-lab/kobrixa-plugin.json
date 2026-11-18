@@ -1,0 +1,401 @@
+{
+  "id": "kobrixa.sensor-lab",
+  "version": "1.0.0",
+  "apiVersion": "^1.8.0",
+  "displayName": {
+    "en": "Sensor Lab",
+    "zh-TW": "感測器工具"
+  },
+  "runtime": {
+    "kind": "node",
+    "entry": "main.cjs"
+  },
+  "permissions": [
+    "devices.read",
+    "ui.panels",
+    "ui.status",
+    "ui.clipboard",
+    "storage.read",
+    "storage.write",
+    "storage.export"
+  ],
+  "requires": {
+    "devices": [
+      {
+        "capability": "telemetry.v1",
+        "required": true
+      }
+    ]
+  },
+  "activationEvents": ["onPanel:kobrixa.sensor-lab.panel"],
+  "contributes": {
+    "commands": [
+      {
+        "id": "kobrixa.sensor-lab.capture-a",
+        "title": {
+          "en": "Capture A",
+          "zh-TW": "擷取 A"
+        },
+        "invocation": "context-v1",
+        "arguments": {}
+      },
+      {
+        "id": "kobrixa.sensor-lab.capture-b",
+        "title": {
+          "en": "Capture B",
+          "zh-TW": "擷取 B"
+        },
+        "invocation": "context-v1",
+        "arguments": {}
+      },
+      {
+        "id": "kobrixa.sensor-lab.zero",
+        "title": {
+          "en": "Zero current reading",
+          "zh-TW": "目前讀值歸零"
+        },
+        "invocation": "context-v1",
+        "arguments": {}
+      },
+      {
+        "id": "kobrixa.sensor-lab.clear-zero",
+        "title": {
+          "en": "Clear zero",
+          "zh-TW": "清除歸零"
+        },
+        "invocation": "context-v1",
+        "arguments": {}
+      },
+      {
+        "id": "kobrixa.sensor-lab.apply",
+        "title": {
+          "en": "Apply calibration",
+          "zh-TW": "套用校正"
+        },
+        "invocation": "context-v1",
+        "arguments": {}
+      },
+      {
+        "id": "kobrixa.sensor-lab.reset",
+        "title": {
+          "en": "Reset calibration",
+          "zh-TW": "重設校正"
+        },
+        "invocation": "context-v1",
+        "arguments": {}
+      },
+      {
+        "id": "kobrixa.sensor-lab.remove-channel",
+        "title": {
+          "en": "Remove selected channel",
+          "zh-TW": "移除所選通道"
+        },
+        "invocation": "context-v1",
+        "arguments": {}
+      },
+      {
+        "id": "kobrixa.sensor-lab.select-channel",
+        "title": {
+          "en": "Select channel",
+          "zh-TW": "選取通道"
+        },
+        "invocation": "context-v1",
+        "arguments": {
+          "key": {
+            "type": "string",
+            "maxLength": 128,
+            "nullable": false
+          },
+          "revision": {
+            "type": "string",
+            "maxLength": 128,
+            "nullable": true
+          },
+          "dataset": {
+            "type": "number",
+            "min": 0,
+            "max": 9007199254740991,
+            "integer": true,
+            "nullable": false
+          }
+        }
+      },
+      {
+        "id": "kobrixa.sensor-lab.start",
+        "title": {
+          "en": "Start recording",
+          "zh-TW": "開始錄製"
+        },
+        "invocation": "context-v1",
+        "arguments": {}
+      },
+      {
+        "id": "kobrixa.sensor-lab.cursor",
+        "title": {
+          "en": "Inspect readings",
+          "zh-TW": "檢查讀值"
+        },
+        "invocation": "context-v1",
+        "arguments": {
+          "time": {
+            "type": "number",
+            "min": 0,
+            "max": 1.7976931348623157e308,
+            "integer": false,
+            "nullable": false
+          },
+          "presentation": {
+            "type": "number",
+            "min": 0,
+            "max": 9007199254740991,
+            "integer": true,
+            "nullable": false
+          }
+        }
+      },
+      {
+        "id": "kobrixa.sensor-lab.view-record",
+        "title": {
+          "en": "View",
+          "zh-TW": "檢視"
+        },
+        "invocation": "context-v1",
+        "arguments": {
+          "key": {
+            "type": "string",
+            "maxLength": 128,
+            "nullable": false
+          },
+          "revision": {
+            "type": "string",
+            "maxLength": 128,
+            "nullable": true
+          },
+          "dataset": {
+            "type": "number",
+            "min": 0,
+            "max": 9007199254740991,
+            "integer": true,
+            "nullable": false
+          }
+        }
+      },
+      {
+        "id": "kobrixa.sensor-lab.compare-record",
+        "title": {
+          "en": "Compare",
+          "zh-TW": "比較"
+        },
+        "invocation": "context-v1",
+        "arguments": {
+          "key": {
+            "type": "string",
+            "maxLength": 128,
+            "nullable": false
+          },
+          "revision": {
+            "type": "string",
+            "maxLength": 128,
+            "nullable": true
+          },
+          "dataset": {
+            "type": "number",
+            "min": 0,
+            "max": 9007199254740991,
+            "integer": true,
+            "nullable": false
+          }
+        }
+      },
+      {
+        "id": "kobrixa.sensor-lab.delete-history",
+        "title": {
+          "en": "Delete saved item",
+          "zh-TW": "刪除儲存項目"
+        },
+        "invocation": "context-v1",
+        "arguments": {
+          "key": {
+            "type": "string",
+            "maxLength": 128,
+            "nullable": false
+          },
+          "revision": {
+            "type": "string",
+            "maxLength": 128,
+            "nullable": true
+          },
+          "dataset": {
+            "type": "number",
+            "min": 0,
+            "max": 9007199254740991,
+            "integer": true,
+            "nullable": false
+          }
+        }
+      },
+      {
+        "id": "kobrixa.sensor-lab.apply-profile",
+        "title": {
+          "en": "Apply",
+          "zh-TW": "套用"
+        },
+        "invocation": "context-v1",
+        "arguments": {
+          "key": {
+            "type": "string",
+            "maxLength": 128,
+            "nullable": false
+          },
+          "revision": {
+            "type": "string",
+            "maxLength": 128,
+            "nullable": true
+          },
+          "dataset": {
+            "type": "number",
+            "min": 0,
+            "max": 9007199254740991,
+            "integer": true,
+            "nullable": false
+          }
+        }
+      },
+      {
+        "id": "kobrixa.sensor-lab.delete-profiles",
+        "title": {
+          "en": "Delete saved item",
+          "zh-TW": "刪除儲存項目"
+        },
+        "invocation": "context-v1",
+        "arguments": {
+          "key": {
+            "type": "string",
+            "maxLength": 128,
+            "nullable": false
+          },
+          "revision": {
+            "type": "string",
+            "maxLength": 128,
+            "nullable": true
+          },
+          "dataset": {
+            "type": "number",
+            "min": 0,
+            "max": 9007199254740991,
+            "integer": true,
+            "nullable": false
+          }
+        }
+      },
+      {
+        "id": "kobrixa.sensor-lab.save-profile",
+        "title": {
+          "en": "Save profile",
+          "zh-TW": "儲存設定檔"
+        },
+        "invocation": "context-v1",
+        "arguments": {}
+      },
+      {
+        "id": "kobrixa.sensor-lab.profiles-next",
+        "title": {
+          "en": "Next profiles",
+          "zh-TW": "下一頁設定檔"
+        },
+        "invocation": "context-v1",
+        "arguments": {}
+      },
+      {
+        "id": "kobrixa.sensor-lab.history-next",
+        "title": {
+          "en": "Next recordings",
+          "zh-TW": "下一頁紀錄"
+        },
+        "invocation": "context-v1",
+        "arguments": {}
+      },
+      {
+        "id": "kobrixa.sensor-lab.live",
+        "title": {
+          "en": "Return to live preview",
+          "zh-TW": "返回即時預覽"
+        },
+        "invocation": "context-v1",
+        "arguments": {}
+      },
+      {
+        "id": "kobrixa.sensor-lab.clear-comparison",
+        "title": {
+          "en": "Clear comparison",
+          "zh-TW": "清除比較"
+        },
+        "invocation": "context-v1",
+        "arguments": {}
+      },
+      {
+        "id": "kobrixa.sensor-lab.export",
+        "title": {
+          "en": "Export raw CSV",
+          "zh-TW": "匯出原始 CSV"
+        },
+        "invocation": "context-v1",
+        "arguments": {}
+      },
+      {
+        "id": "kobrixa.sensor-lab.copy-code",
+        "title": {
+          "en": "Copy code",
+          "zh-TW": "複製程式碼"
+        },
+        "invocation": "context-v1",
+        "arguments": {}
+      },
+      {
+        "id": "kobrixa.sensor-lab.select-current",
+        "title": {
+          "en": "Use current connection",
+          "zh-TW": "使用目前連線"
+        },
+        "invocation": "context-v1",
+        "arguments": {}
+      },
+      {
+        "id": "kobrixa.sensor-lab.refresh",
+        "title": {
+          "en": "Refresh availability",
+          "zh-TW": "重新整理可用性"
+        },
+        "invocation": "context-v1",
+        "arguments": {}
+      }
+    ],
+    "panels": [
+      {
+        "id": "kobrixa.sensor-lab.panel",
+        "title": {
+          "en": "Sensor Lab",
+          "zh-TW": "感測器工具"
+        },
+        "location": "right",
+        "resource": {
+          "version": 2,
+          "path": "ui/panel.json"
+        }
+      }
+    ],
+    "status": [
+      {
+        "id": "kobrixa.sensor-lab.status",
+        "title": {
+          "en": "Sensor Lab status",
+          "zh-TW": "感測器工具狀態"
+        },
+        "resource": {
+          "version": 2,
+          "path": "ui/status.json"
+        }
+      }
+    ]
+  }
+}

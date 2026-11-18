@@ -3,6 +3,7 @@ export const USB_RETRY_LIMITS = ["unlimited", 3, 5, 10] as const;
 export const WIFI_CONNECT_TIMEOUTS = [3000, 5000, 10000, 30000] as const;
 export const WIFI_HANDSHAKE_TIMEOUTS = [1000, 3000, 5000, 10000] as const;
 
+/** Internal policy/import DTO; not exposed through the renderer device API. */
 export interface DevicePreferences {
   skipUnchangedAssets: boolean;
   usbAutoReconnect: boolean;

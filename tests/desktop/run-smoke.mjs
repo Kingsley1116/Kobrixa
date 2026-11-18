@@ -1,3 +1,5 @@
+import { sensorLabAcceptanceHandoff } from "./sensor-lab-smoke.mjs";
+import { motorAcceptanceHandoff } from "./motor-test-smoke.mjs";
 import { rawResourcePlugin } from "./raw-resource-plugin.mjs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -7,6 +9,8 @@ import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { createServer } from "vite";
 import { build } from "esbuild";
+console.log(motorAcceptanceHandoff());
+console.log(sensorLabAcceptanceHandoff());
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const temporary = await mkdtemp(path.join(tmpdir(), "kobrixa-desktop-smoke-"));
 const require = createRequire(import.meta.url);
@@ -98,8 +102,6 @@ try {
     entryPoints: [
       path.join(root, "apps/desktop/src/main/window/keyboard.ts"),
       path.join(root, "apps/desktop/src/main/device/monitor-service.ts"),
-      path.join(root, "apps/desktop/src/main/device/motor-test-service.ts"),
-      path.join(root, "apps/desktop/src/main/sensor-lab/service.ts"),
       path.join(root, "apps/desktop/src/shared/workspace-search.ts"),
       path.join(root, "apps/desktop/src/main/language/language.ts"),
       path.join(root, "apps/desktop/src/main/language/language-worker.ts"),

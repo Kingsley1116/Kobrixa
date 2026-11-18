@@ -1,0 +1,13 @@
+{
+  "source": "/private/tmp/stage3-desktop-regression-4acba30.log",
+  "rawSha256": "945a77b81e2a277189f53963a2d419638889d6b14c8a77dd33050f2b953f5a8f",
+  "archiveSha256": "c471e81b82d36b10bf9d06b9759cf94e27f12cd3827aae48b8ac0264240fb705",
+  "productCommit": "9a48b48",
+  "testBaseline": "4acba30",
+  "counts": {
+    "passed": 4051,
+    "skipped": 22,
+    "filesPassed": 309,
+    "filesSkipped": 1
+  }
+}

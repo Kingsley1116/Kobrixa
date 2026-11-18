@@ -149,6 +149,39 @@ describe("confirmed program execution", () => {
     expect(h.firmware.requests).toHaveLength(2);
   });
 
+  it.each([false, true])(
+    "keeps confirmed startup behind the bound I/O authority (revoked after stop: %s)",
+    async (revoke) => {
+      const h = setup();
+      let exchanges = 0;
+      const view = h.session.bindIo({
+        step: "ordinary",
+        signal: h.signal,
+        boundary: {
+          beforeExchange(step) {
+            expect(step).toBe("ordinary");
+            if (revoke && exchanges > 0) throw new Error("authority revoked");
+          },
+          afterExchange() {},
+          timeoutMs: () => 5000,
+        },
+        exchange: (_payload, invoke) => {
+          exchanges++;
+          return invoke(h.signal, 5000);
+        },
+      });
+      if (revoke) {
+        await expect(view.run(target, h.signal)).rejects.toThrow("authority revoked");
+        expect(h.firmware.actions).toEqual(["stop"]);
+        expect(exchanges).toBe(1);
+      } else {
+        await view.run(target, h.signal);
+        expect(h.firmware.actions).toEqual(["stop", "load:" + target, "start"]);
+        expect(exchanges).toBe(2);
+      }
+    },
+  );
+
   it("does not mistake the old program's STOPPED/OK result for a new start", async () => {
     const h = setup();
     h.firmware.startAccepted = false;

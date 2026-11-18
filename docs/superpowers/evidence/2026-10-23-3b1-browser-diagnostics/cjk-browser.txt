@@ -1,0 +1,29 @@
+(electron) 'console-message' arguments are deprecated and will be removed. Please use Event<WebContentsConsoleMessageEventParams> object instead.
+renderer: %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools
+You might need to use a local HTTP server (instead of file://): https://react.dev/link/react-devtools-faq font-weight:bold
+[96740:1023/023405.339206:INFO:CONSOLE:234] "%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools
+You might need to use a local HTTP server (instead of file://): https://react.dev/link/react-devtools-faq font-weight:bold", source: file:///private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-LVsPDg/.vite/renderer/main_window/assets/index-Cg4j6c_Y.js (234)
+renderer:  Note that 'script-src' was not explicitly set, so 'default-src' is used as a fallback.
+[96740:1023/023405.364900:INFO:CONSOLE:1201] " Note that 'script-src' was not explicitly set, so 'default-src' is used as a fallback.", source: file:///private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-LVsPDg/.vite/renderer/main_window/assets/index-Cg4j6c_Y.js (1201)
+renderer:  Note that 'script-src' was not explicitly set, so 'default-src' is used as a fallback.
+[96740:1023/023405.435838:INFO:CONSOLE:911] " Note that 'script-src' was not explicitly set, so 'default-src' is used as a fallback.", source:  (911)
+[plugin acceptance.ui-1] UI_PID:96786
+[plugin acceptance.ui-0] UI_PID:96787
+UI_PHASE browser-probe-complete
+UI_PHASE painted
+UI_RENDERER_METRICS {"pid":96782,"metrics":[{"cpu":{"cumulativeCPUUsage":0.952843,"percentCPUUsage":0,"idleWakeupsPerSecond":0},"pid":96740,"type":"Browser","creationTime":1792694044130.304,"memory":{"workingSetSize":223872,"peakWorkingSetSize":229072},"sandboxed":false},{"cpu":{"cumulativeCPUUsage":0.206719,"percentCPUUsage":0,"idleWakeupsPerSecond":0},"pid":96778,"type":"GPU","creationTime":1792694044793.295,"serviceName":"GPU","memory":{"workingSetSize":140896,"peakWorkingSetSize":141184},"sandboxed":true},{"cpu":{"cumulativeCPUUsage":0.098093,"percentCPUUsage":0,"idleWakeupsPerSecond":0},"pid":96779,"type":"Utility","creationTime":1792694044811.353,"serviceName":"network.mojom.NetworkService","name":"Network Service","memory":{"workingSetSize":85648,"peakWorkingSetSize":90800},"sandboxed":true},{"cpu":{"cumulativeCPUUsage":0.542305,"percentCPUUsage":0,"idleWakeupsPerSecond":0},"pid":96782,"type":"Tab","creationTime":1792694044974.695,"memory":{"workingSetSize":263504,"peakWorkingSetSize":263808},"sandboxed":true},{"cpu":{"cumulativeCPUUsage":0.134419,"percentCPUUsage":0,"idleWakeupsPerSecond":0},"pid":96786,"type":"Utility","creationTime":1792694045504.006,"serviceName":"node.mojom.NodeService","name":"Kobrixa plugin acceptance.ui-1","memory":{"workingSetSize":132240,"peakWorkingSetSize":132240},"sandboxed":false},{"cpu":{"cumulativeCPUUsage":0.135145,"percentCPUUsage":0,"idleWakeupsPerSecond":0},"pid":96787,"type":"Utility","creationTime":1792694045633.795,"serviceName":"node.mojom.NodeService","name":"Kobrixa plugin acceptance.ui-0","memory":{"workingSetSize":131408,"peakWorkingSetSize":131408},"sandboxed":false}],"focused":true,"visible":true}
+UI_NATIVE_TARGET {"bounds":{"x":1247,"y":328,"focused":false},"size":[1420,872]}
+UI_PHASE captured
+UI_PHASE focus-requested
+UI_PHASE native-window-focused
+UI_PHASE native-input-complete
+Error occurred in handler for 'plugins:recovery:snapshot': Error: Device recovery is unavailable.
+    at Object.sessions (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-LVsPDg/.vite/build/main.cjs:401:5074)
+    at async Object.entries (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-LVsPDg/.vite/build/main.cjs:400:50477)
+    at async nj.snapshot (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-LVsPDg/.vite/build/main.cjs:400:48821)
+    at async Session.<anonymous> (node:electron/js2c/browser_init:1:119972)
+Error occurred in handler for 'plugins:recovery:snapshot': Error: Device recovery is unavailable.
+    at Object.sessions (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-LVsPDg/.vite/build/main.cjs:401:5074)
+    at async Object.entries (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-LVsPDg/.vite/build/main.cjs:400:50477)
+    at async nj.snapshot (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-LVsPDg/.vite/build/main.cjs:400:48821)
+    at async Session.<anonymous> (node:electron/js2c/browser_init:1:119972)

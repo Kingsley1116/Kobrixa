@@ -1,0 +1,100 @@
+[
+  {
+    "file": "parity-artifact-identity.json.gz",
+    "source": "/private/tmp/kobrixa-d7-linux-cursor-f38fb2f/kobrixa-lab-public-9MWl1L/artifact-identity.json",
+    "bytes": 44323,
+    "sha256": "a11783e052531de77bb82a793b75e9b99bfd898755885da2b111e568ab0032c9",
+    "gzipSha256": "083ef8a6611f529ea09da92663e7044fdc2332adc0d8d79da91516fe58ca1781"
+  },
+  {
+    "file": "parity-producer.json.gz",
+    "source": "/private/tmp/kobrixa-d7-linux-cursor-f38fb2f/kobrixa-lab-public-9MWl1L/producer.json",
+    "bytes": 4780017,
+    "sha256": "a0604f7ceb35f7ae9b3aa29c69ee8a8f8fc27b5e873a2834f901b8d576194bba",
+    "gzipSha256": "8060a1427fa91f2cdde064d353867e55fe838d9737e65822bc1ce32753b047dd"
+  },
+  {
+    "file": "parity-receipt.json.gz",
+    "source": "/private/tmp/kobrixa-d7-linux-cursor-f38fb2f/kobrixa-lab-public-9MWl1L/receipt.json",
+    "bytes": 46502,
+    "sha256": "9187bdeb91f0d99594617cad987aeda24588adfb58f4601569e0a7a0438af421",
+    "gzipSha256": "2b9bec23154bbe755f5d21fe4e61a18a11834c8dcfbcbaf9302a0316c1021696"
+  },
+  {
+    "file": "parity-native.log.gz",
+    "source": "/private/tmp/kobrixa-d7-linux-cursor-f38fb2f/kobrixa-lab-public-9MWl1L/native.log",
+    "bytes": 1670,
+    "sha256": "0023a7f0392c81afc6484689bcc44e1c670ee8b8e7f9b7397c26720277fb62ed",
+    "gzipSha256": "302b60813a751cc3972a561362458ccce6b19dce1f8a6dda236743602c6c81fc"
+  },
+  {
+    "file": "restart-artifact-identity.json.gz",
+    "source": "/private/tmp/kobrixa-d7-linux-cursor-f38fb2f/kobrixa-lab-public-m29KHm/artifact-identity.json",
+    "bytes": 44323,
+    "sha256": "a11783e052531de77bb82a793b75e9b99bfd898755885da2b111e568ab0032c9",
+    "gzipSha256": "083ef8a6611f529ea09da92663e7044fdc2332adc0d8d79da91516fe58ca1781"
+  },
+  {
+    "file": "restart-producer-restart-1.json.gz",
+    "source": "/private/tmp/kobrixa-d7-linux-cursor-f38fb2f/kobrixa-lab-public-m29KHm/producer-restart-1.json",
+    "bytes": 2277713,
+    "sha256": "b37d58e8a6e8a0ce4b4bfa3d0a0882eaabfd6a3dba75b93a4ef81fac821facbd",
+    "gzipSha256": "38abc746d6fd6aa69aaebd946b826821c405c45578aa18579bb5685196b35f77"
+  },
+  {
+    "file": "restart-producer-restart-2.json.gz",
+    "source": "/private/tmp/kobrixa-d7-linux-cursor-f38fb2f/kobrixa-lab-public-m29KHm/producer-restart-2.json",
+    "bytes": 633893,
+    "sha256": "5725180c4ceef3849ae376290b08120349f0c66c4f57f9fa8bdeacba666175a8",
+    "gzipSha256": "d8d4013f2d6077e5267742f45b9b9fa9d2335e54a3390a3b5f345bcc9999e911"
+  },
+  {
+    "file": "restart-process-restart-1.json.gz",
+    "source": "/private/tmp/kobrixa-d7-linux-cursor-f38fb2f/kobrixa-lab-public-m29KHm/process-restart-1.json",
+    "bytes": 103,
+    "sha256": "ec60157c1b7ed0e580f1418ad78be36b59cc12076086728b7b836b51c329b094",
+    "gzipSha256": "be8e7b389ec527625c0b0661570ab054c6ff2d71fdf6eea889ca8735652e7d52"
+  },
+  {
+    "file": "restart-process-restart-2.json.gz",
+    "source": "/private/tmp/kobrixa-d7-linux-cursor-f38fb2f/kobrixa-lab-public-m29KHm/process-restart-2.json",
+    "bytes": 103,
+    "sha256": "2551aa187ed3c4e596e9b793852a76fe3c52f971de3fc5e47076333a3ad78d73",
+    "gzipSha256": "d3e53f6aae6cba52b1be7095d511021c3a481fa099081aae2df9eecc028e688a"
+  },
+  {
+    "file": "restart-native-restart-1.log.gz",
+    "source": "/private/tmp/kobrixa-d7-linux-cursor-f38fb2f/kobrixa-lab-public-m29KHm/native-restart-1.log",
+    "bytes": 1903,
+    "sha256": "3c55036877182840ea52b8847bf471521d239b3a0006abdc2d7a0fd57e7d13f6",
+    "gzipSha256": "c30b4006b1884ed6015956fa48c95ef5da63f008c3a69b99766607549d131a62"
+  },
+  {
+    "file": "restart-native-restart-2.log.gz",
+    "source": "/private/tmp/kobrixa-d7-linux-cursor-f38fb2f/kobrixa-lab-public-m29KHm/native-restart-2.log",
+    "bytes": 1903,
+    "sha256": "61ce64a9335f584587ea81437fb64ebbdd4ec49eabb2a8a80b40246a8340fa7d",
+    "gzipSha256": "a53334d12dd0778bd79788bed709c6535843fec36ef1ebe129b29b91dc0b403c"
+  },
+  {
+    "file": "restart-restart-before.json.gz",
+    "source": "/private/tmp/kobrixa-d7-linux-cursor-f38fb2f/kobrixa-lab-public-m29KHm/restart-before.json",
+    "bytes": 25640,
+    "sha256": "e0d96ca981effcbc12b246b792f3e7bd7359ffe31965bb8599ed72bad23d0843",
+    "gzipSha256": "62388e7120e7090c94f587aaad19ff1824cb5e0fa51b637fca2949c20ec6d63f"
+  },
+  {
+    "file": "restart-restart-evidence.json.gz",
+    "source": "/private/tmp/kobrixa-d7-linux-cursor-f38fb2f/kobrixa-lab-public-m29KHm/restart-evidence.json",
+    "bytes": 3158915,
+    "sha256": "18ac9f0064c80790e514ac5ab92b99fda28b700113a5e553eb652e680cbea527",
+    "gzipSha256": "6c0547774e6ced10e8b34880f5a0b2cc3594ac3bb9c17be19cab2d574758d4be"
+  },
+  {
+    "file": "restart-restart-receipt.json.gz",
+    "source": "/private/tmp/kobrixa-d7-linux-cursor-f38fb2f/kobrixa-lab-public-m29KHm/restart-receipt.json",
+    "bytes": 45380,
+    "sha256": "8dff6eadaa78d5bfc0374e0f92e926271a00f5de4f2ca86d91d738f70a9de42f",
+    "gzipSha256": "a623e44b0dcc57a64ade115ea7ca01bb69e4fd06574879a8d912c4414411bc34"
+  }
+]

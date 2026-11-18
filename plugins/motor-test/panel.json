@@ -1,0 +1,2821 @@
+{
+  "kind": "panel",
+  "data": {
+    "session": {
+      "schema": {
+        "type": "string",
+        "maxLength": 256,
+        "nullable": false
+      },
+      "initial": "No connection selected / 尚未選取連線"
+    },
+    "transport": {
+      "schema": {
+        "type": "string",
+        "maxLength": 256,
+        "nullable": false
+      },
+      "initial": "—"
+    },
+    "session-state": {
+      "schema": {
+        "type": "string",
+        "maxLength": 256,
+        "nullable": false
+      },
+      "initial": "—"
+    },
+    "availability": {
+      "schema": {
+        "type": "string",
+        "maxLength": 1000,
+        "nullable": false
+      },
+      "initial": "Unavailable. Use connection UI and device/plugin management, then select the current connection. / 無法使用。請使用連線介面與裝置／插件管理，再選取目前連線。"
+    },
+    "summary": {
+      "schema": {
+        "type": "string",
+        "maxLength": 256,
+        "nullable": false
+      },
+      "initial": "Unavailable / 無法使用"
+    },
+    "phase": {
+      "schema": {
+        "type": "string",
+        "maxLength": 256,
+        "nullable": false
+      },
+      "initial": "Idle / 待命"
+    },
+    "stage": {
+      "schema": {
+        "type": "string",
+        "maxLength": 256,
+        "nullable": false
+      },
+      "initial": "—"
+    },
+    "movement": {
+      "schema": {
+        "type": "string",
+        "maxLength": 256,
+        "nullable": false
+      },
+      "initial": "Not started / 尚未啟動"
+    },
+    "dispatch": {
+      "schema": {
+        "type": "string",
+        "maxLength": 256,
+        "nullable": false
+      },
+      "initial": "Not sent / 尚未送出"
+    },
+    "stop-requested": {
+      "schema": {
+        "type": "string",
+        "maxLength": 256,
+        "nullable": false
+      },
+      "initial": "No / 否"
+    },
+    "confirmation": {
+      "schema": {
+        "type": "string",
+        "maxLength": 256,
+        "nullable": false
+      },
+      "initial": "Not required / 不需確認"
+    },
+    "angle": {
+      "schema": {
+        "type": "string",
+        "maxLength": 256,
+        "nullable": false
+      },
+      "initial": "No reading / 無讀值"
+    },
+    "displacement": {
+      "schema": {
+        "type": "string",
+        "maxLength": 256,
+        "nullable": false
+      },
+      "initial": "No reading / 無讀值"
+    },
+    "elapsed": {
+      "schema": {
+        "type": "string",
+        "maxLength": 256,
+        "nullable": false
+      },
+      "initial": "0 ms"
+    },
+    "error": {
+      "schema": {
+        "type": "string",
+        "maxLength": 1000,
+        "nullable": false
+      },
+      "initial": ""
+    },
+    "port-a": {
+      "schema": {
+        "type": "string",
+        "maxLength": 256,
+        "nullable": false
+      },
+      "initial": "Unknown / 未知"
+    },
+    "port-b": {
+      "schema": {
+        "type": "string",
+        "maxLength": 256,
+        "nullable": false
+      },
+      "initial": "Unknown / 未知"
+    },
+    "port-c": {
+      "schema": {
+        "type": "string",
+        "maxLength": 256,
+        "nullable": false
+      },
+      "initial": "Unknown / 未知"
+    },
+    "port-d": {
+      "schema": {
+        "type": "string",
+        "maxLength": 256,
+        "nullable": false
+      },
+      "initial": "Unknown / 未知"
+    },
+    "operation": {
+      "schema": {
+        "type": "string",
+        "maxLength": 36,
+        "nullable": true
+      },
+      "initial": null
+    },
+    "available": {
+      "schema": {
+        "type": "boolean",
+        "nullable": false
+      },
+      "initial": false
+    },
+    "can-start": {
+      "schema": {
+        "type": "boolean",
+        "nullable": false
+      },
+      "initial": false
+    },
+    "has-error": {
+      "schema": {
+        "type": "boolean",
+        "nullable": false
+      },
+      "initial": false
+    },
+    "progress": {
+      "schema": {
+        "type": "number",
+        "min": 0,
+        "max": 1,
+        "integer": false,
+        "nullable": true
+      },
+      "initial": null
+    },
+    "active-hold": {
+      "schema": {
+        "type": "enum",
+        "values": [
+          "a-forward",
+          "a-reverse",
+          "b-forward",
+          "b-reverse",
+          "c-forward",
+          "c-reverse",
+          "d-forward",
+          "d-reverse"
+        ],
+        "nullable": true
+      },
+      "initial": null
+    }
+  },
+  "fields": {
+    "port": {
+      "schema": {
+        "type": "enum",
+        "values": ["A", "B", "C", "D"],
+        "nullable": false
+      },
+      "initial": "A",
+      "required": true
+    },
+    "a-mode": {
+      "schema": {
+        "type": "enum",
+        "values": ["jog", "timed", "relative-angle"],
+        "nullable": false
+      },
+      "initial": "jog",
+      "required": false,
+      "requiredWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "port"
+        },
+        "right": "A"
+      }
+    },
+    "a-power": {
+      "schema": {
+        "type": "number",
+        "min": 1,
+        "max": 100,
+        "integer": true,
+        "nullable": true
+      },
+      "initial": 20,
+      "required": false,
+      "requiredWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "port"
+        },
+        "right": "A"
+      }
+    },
+    "a-seconds": {
+      "schema": {
+        "type": "number",
+        "min": 0.1,
+        "max": 5,
+        "integer": false,
+        "nullable": true
+      },
+      "initial": 1,
+      "required": false,
+      "requiredWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "A"
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "a-mode"
+            },
+            "right": "timed"
+          }
+        ]
+      }
+    },
+    "a-degrees": {
+      "schema": {
+        "type": "number",
+        "min": 1,
+        "max": 3600,
+        "integer": true,
+        "nullable": true
+      },
+      "initial": 90,
+      "required": false,
+      "requiredWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "A"
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "a-mode"
+            },
+            "right": "relative-angle"
+          }
+        ]
+      }
+    },
+    "a-direction": {
+      "schema": {
+        "type": "enum",
+        "values": ["1", "-1"],
+        "nullable": false
+      },
+      "initial": "1",
+      "required": false,
+      "requiredWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "A"
+          },
+          {
+            "op": "ne",
+            "left": {
+              "scope": "form",
+              "key": "a-mode"
+            },
+            "right": "jog"
+          }
+        ]
+      }
+    },
+    "a-brake": {
+      "schema": {
+        "type": "boolean",
+        "nullable": false
+      },
+      "initial": true,
+      "required": false,
+      "requiredWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "port"
+        },
+        "right": "A"
+      }
+    },
+    "b-mode": {
+      "schema": {
+        "type": "enum",
+        "values": ["jog", "timed", "relative-angle"],
+        "nullable": false
+      },
+      "initial": "jog",
+      "required": false,
+      "requiredWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "port"
+        },
+        "right": "B"
+      }
+    },
+    "b-power": {
+      "schema": {
+        "type": "number",
+        "min": 1,
+        "max": 100,
+        "integer": true,
+        "nullable": true
+      },
+      "initial": 20,
+      "required": false,
+      "requiredWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "port"
+        },
+        "right": "B"
+      }
+    },
+    "b-seconds": {
+      "schema": {
+        "type": "number",
+        "min": 0.1,
+        "max": 5,
+        "integer": false,
+        "nullable": true
+      },
+      "initial": 1,
+      "required": false,
+      "requiredWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "B"
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "b-mode"
+            },
+            "right": "timed"
+          }
+        ]
+      }
+    },
+    "b-degrees": {
+      "schema": {
+        "type": "number",
+        "min": 1,
+        "max": 3600,
+        "integer": true,
+        "nullable": true
+      },
+      "initial": 90,
+      "required": false,
+      "requiredWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "B"
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "b-mode"
+            },
+            "right": "relative-angle"
+          }
+        ]
+      }
+    },
+    "b-direction": {
+      "schema": {
+        "type": "enum",
+        "values": ["1", "-1"],
+        "nullable": false
+      },
+      "initial": "1",
+      "required": false,
+      "requiredWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "B"
+          },
+          {
+            "op": "ne",
+            "left": {
+              "scope": "form",
+              "key": "b-mode"
+            },
+            "right": "jog"
+          }
+        ]
+      }
+    },
+    "b-brake": {
+      "schema": {
+        "type": "boolean",
+        "nullable": false
+      },
+      "initial": true,
+      "required": false,
+      "requiredWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "port"
+        },
+        "right": "B"
+      }
+    },
+    "c-mode": {
+      "schema": {
+        "type": "enum",
+        "values": ["jog", "timed", "relative-angle"],
+        "nullable": false
+      },
+      "initial": "jog",
+      "required": false,
+      "requiredWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "port"
+        },
+        "right": "C"
+      }
+    },
+    "c-power": {
+      "schema": {
+        "type": "number",
+        "min": 1,
+        "max": 100,
+        "integer": true,
+        "nullable": true
+      },
+      "initial": 20,
+      "required": false,
+      "requiredWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "port"
+        },
+        "right": "C"
+      }
+    },
+    "c-seconds": {
+      "schema": {
+        "type": "number",
+        "min": 0.1,
+        "max": 5,
+        "integer": false,
+        "nullable": true
+      },
+      "initial": 1,
+      "required": false,
+      "requiredWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "C"
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "c-mode"
+            },
+            "right": "timed"
+          }
+        ]
+      }
+    },
+    "c-degrees": {
+      "schema": {
+        "type": "number",
+        "min": 1,
+        "max": 3600,
+        "integer": true,
+        "nullable": true
+      },
+      "initial": 90,
+      "required": false,
+      "requiredWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "C"
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "c-mode"
+            },
+            "right": "relative-angle"
+          }
+        ]
+      }
+    },
+    "c-direction": {
+      "schema": {
+        "type": "enum",
+        "values": ["1", "-1"],
+        "nullable": false
+      },
+      "initial": "1",
+      "required": false,
+      "requiredWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "C"
+          },
+          {
+            "op": "ne",
+            "left": {
+              "scope": "form",
+              "key": "c-mode"
+            },
+            "right": "jog"
+          }
+        ]
+      }
+    },
+    "c-brake": {
+      "schema": {
+        "type": "boolean",
+        "nullable": false
+      },
+      "initial": true,
+      "required": false,
+      "requiredWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "port"
+        },
+        "right": "C"
+      }
+    },
+    "d-mode": {
+      "schema": {
+        "type": "enum",
+        "values": ["jog", "timed", "relative-angle"],
+        "nullable": false
+      },
+      "initial": "jog",
+      "required": false,
+      "requiredWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "port"
+        },
+        "right": "D"
+      }
+    },
+    "d-power": {
+      "schema": {
+        "type": "number",
+        "min": 1,
+        "max": 100,
+        "integer": true,
+        "nullable": true
+      },
+      "initial": 20,
+      "required": false,
+      "requiredWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "port"
+        },
+        "right": "D"
+      }
+    },
+    "d-seconds": {
+      "schema": {
+        "type": "number",
+        "min": 0.1,
+        "max": 5,
+        "integer": false,
+        "nullable": true
+      },
+      "initial": 1,
+      "required": false,
+      "requiredWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "D"
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "d-mode"
+            },
+            "right": "timed"
+          }
+        ]
+      }
+    },
+    "d-degrees": {
+      "schema": {
+        "type": "number",
+        "min": 1,
+        "max": 3600,
+        "integer": true,
+        "nullable": true
+      },
+      "initial": 90,
+      "required": false,
+      "requiredWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "D"
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "d-mode"
+            },
+            "right": "relative-angle"
+          }
+        ]
+      }
+    },
+    "d-direction": {
+      "schema": {
+        "type": "enum",
+        "values": ["1", "-1"],
+        "nullable": false
+      },
+      "initial": "1",
+      "required": false,
+      "requiredWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "D"
+          },
+          {
+            "op": "ne",
+            "left": {
+              "scope": "form",
+              "key": "d-mode"
+            },
+            "right": "jog"
+          }
+        ]
+      }
+    },
+    "d-brake": {
+      "schema": {
+        "type": "boolean",
+        "nullable": false
+      },
+      "initial": true,
+      "required": false,
+      "requiredWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "port"
+        },
+        "right": "D"
+      }
+    }
+  },
+  "root": "root",
+  "nodes": [
+    {
+      "id": "root",
+      "type": "group",
+      "layout": "stack",
+      "label": {
+        "en": "Motor test",
+        "zh-TW": "馬達測試"
+      },
+      "children": [
+        "instructions",
+        "session-info",
+        "select-current",
+        "refresh",
+        "availability",
+        "port-states",
+        "port",
+        "a-group",
+        "b-group",
+        "c-group",
+        "d-group",
+        "stop",
+        "recovery",
+        "summary",
+        "results",
+        "progress",
+        "error"
+      ]
+    },
+    {
+      "id": "instructions",
+      "type": "help",
+      "value": {
+        "text": {
+          "en": "Connect using the existing connection UI, then explicitly select the current connection. Opening this panel never connects or moves a motor. Leaving the panel requests a stop; reopening never resumes motion.",
+          "zh-TW": "請先使用既有連線介面，再明確選取目前連線。開啟面板不會連線或驅動馬達。離開面板會要求停止；重開不會繼續運轉。"
+        }
+      }
+    },
+    {
+      "id": "session-info",
+      "type": "keyValue",
+      "rows": [
+        {
+          "id": "session",
+          "label": {
+            "en": "Connection",
+            "zh-TW": "連線"
+          },
+          "value": {
+            "ref": {
+              "scope": "data",
+              "key": "session"
+            }
+          }
+        },
+        {
+          "id": "transport",
+          "label": {
+            "en": "Transport",
+            "zh-TW": "傳輸方式"
+          },
+          "value": {
+            "ref": {
+              "scope": "data",
+              "key": "transport"
+            }
+          }
+        },
+        {
+          "id": "session-state",
+          "label": {
+            "en": "Connection state",
+            "zh-TW": "連線狀態"
+          },
+          "value": {
+            "ref": {
+              "scope": "data",
+              "key": "session-state"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "select-current",
+      "type": "action",
+      "label": {
+        "en": "Use current connection",
+        "zh-TW": "使用目前連線"
+      },
+      "action": {
+        "kind": "command",
+        "command": "kobrixa.motor-test.select-current",
+        "arguments": {}
+      },
+      "variant": "normal"
+    },
+    {
+      "id": "refresh",
+      "type": "action",
+      "label": {
+        "en": "Refresh availability",
+        "zh-TW": "重新整理可用性"
+      },
+      "action": {
+        "kind": "command",
+        "command": "kobrixa.motor-test.refresh",
+        "arguments": {}
+      },
+      "variant": "normal"
+    },
+    {
+      "id": "availability",
+      "type": "alert",
+      "text": {
+        "ref": {
+          "scope": "data",
+          "key": "availability"
+        }
+      },
+      "severity": "info",
+      "visibleWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "data",
+          "key": "available"
+        },
+        "right": false
+      }
+    },
+    {
+      "id": "port-states",
+      "type": "keyValue",
+      "rows": [
+        {
+          "id": "a",
+          "label": {
+            "en": "Port A",
+            "zh-TW": "連接埠 A"
+          },
+          "value": {
+            "ref": {
+              "scope": "data",
+              "key": "port-a"
+            }
+          }
+        },
+        {
+          "id": "b",
+          "label": {
+            "en": "Port B",
+            "zh-TW": "連接埠 B"
+          },
+          "value": {
+            "ref": {
+              "scope": "data",
+              "key": "port-b"
+            }
+          }
+        },
+        {
+          "id": "c",
+          "label": {
+            "en": "Port C",
+            "zh-TW": "連接埠 C"
+          },
+          "value": {
+            "ref": {
+              "scope": "data",
+              "key": "port-c"
+            }
+          }
+        },
+        {
+          "id": "d",
+          "label": {
+            "en": "Port D",
+            "zh-TW": "連接埠 D"
+          },
+          "value": {
+            "ref": {
+              "scope": "data",
+              "key": "port-d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "port",
+      "type": "choice",
+      "field": "port",
+      "label": {
+        "en": "Port",
+        "zh-TW": "連接埠"
+      },
+      "presentation": "segmented",
+      "options": [
+        {
+          "value": "A",
+          "label": {
+            "en": "A",
+            "zh-TW": "A"
+          }
+        },
+        {
+          "value": "B",
+          "label": {
+            "en": "B",
+            "zh-TW": "B"
+          }
+        },
+        {
+          "value": "C",
+          "label": {
+            "en": "C",
+            "zh-TW": "C"
+          }
+        },
+        {
+          "value": "D",
+          "label": {
+            "en": "D",
+            "zh-TW": "D"
+          }
+        }
+      ]
+    },
+    {
+      "id": "a-mode",
+      "field": "a-mode",
+      "label": {
+        "en": "Mode",
+        "zh-TW": "模式"
+      },
+      "type": "choice",
+      "presentation": "select",
+      "options": [
+        {
+          "value": "jog",
+          "label": {
+            "en": "Jog",
+            "zh-TW": "點動"
+          }
+        },
+        {
+          "value": "timed",
+          "label": {
+            "en": "Timed",
+            "zh-TW": "定時"
+          }
+        },
+        {
+          "value": "relative-angle",
+          "label": {
+            "en": "Relative angle",
+            "zh-TW": "相對角度"
+          }
+        }
+      ]
+    },
+    {
+      "id": "a-power",
+      "field": "a-power",
+      "label": {
+        "en": "Power",
+        "zh-TW": "功率"
+      },
+      "type": "range",
+      "step": 1
+    },
+    {
+      "id": "a-seconds",
+      "field": "a-seconds",
+      "label": {
+        "en": "Duration",
+        "zh-TW": "運轉時間"
+      },
+      "type": "number",
+      "step": 1.3877787807814457e-17,
+      "visibleWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "A"
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "a-mode"
+            },
+            "right": "timed"
+          }
+        ]
+      },
+      "enabledWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "A"
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "a-mode"
+            },
+            "right": "timed"
+          }
+        ]
+      },
+      "unit": {
+        "en": "seconds",
+        "zh-TW": "秒"
+      },
+      "help": {
+        "en": "0.1–5 seconds, rounded to the nearest millisecond.",
+        "zh-TW": "0.1–5 秒，四捨五入至整數毫秒。"
+      }
+    },
+    {
+      "id": "a-degrees",
+      "field": "a-degrees",
+      "label": {
+        "en": "Relative angle",
+        "zh-TW": "相對角度"
+      },
+      "type": "number",
+      "step": 1,
+      "visibleWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "A"
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "a-mode"
+            },
+            "right": "relative-angle"
+          }
+        ]
+      },
+      "enabledWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "A"
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "a-mode"
+            },
+            "right": "relative-angle"
+          }
+        ]
+      },
+      "unit": {
+        "en": "degrees",
+        "zh-TW": "度"
+      },
+      "help": {
+        "en": "Whole degrees, 1–3600.",
+        "zh-TW": "整數角度，1–3600 度。"
+      }
+    },
+    {
+      "id": "a-direction",
+      "field": "a-direction",
+      "label": {
+        "en": "Direction",
+        "zh-TW": "方向"
+      },
+      "type": "choice",
+      "presentation": "select",
+      "options": [
+        {
+          "value": "1",
+          "label": {
+            "en": "Forward",
+            "zh-TW": "正向"
+          }
+        },
+        {
+          "value": "-1",
+          "label": {
+            "en": "Reverse",
+            "zh-TW": "反向"
+          }
+        }
+      ],
+      "visibleWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "A"
+          },
+          {
+            "op": "ne",
+            "left": {
+              "scope": "form",
+              "key": "a-mode"
+            },
+            "right": "jog"
+          }
+        ]
+      },
+      "enabledWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "A"
+          },
+          {
+            "op": "ne",
+            "left": {
+              "scope": "form",
+              "key": "a-mode"
+            },
+            "right": "jog"
+          }
+        ]
+      }
+    },
+    {
+      "id": "a-brake",
+      "field": "a-brake",
+      "label": {
+        "en": "Brake on release",
+        "zh-TW": "釋放時煞車"
+      },
+      "type": "boolean",
+      "help": {
+        "en": "Release uses this setting. Cancel and safety stops require braking.",
+        "zh-TW": "釋放時使用此設定；取消與安全停止一律煞車。"
+      }
+    },
+    {
+      "id": "a-forward",
+      "type": "holdAction",
+      "label": {
+        "en": "Hold forward",
+        "zh-TW": "按住正轉"
+      },
+      "command": "kobrixa.motor-test.jog",
+      "arguments": {
+        "direction": {
+          "literal": "1"
+        }
+      },
+      "visibleWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "a-mode"
+        },
+        "right": "jog"
+      },
+      "enabledWhen": {
+        "op": "any",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "can-start"
+            },
+            "right": true
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "active-hold"
+            },
+            "right": "a-forward"
+          }
+        ]
+      },
+      "help": {
+        "en": "Hold pointer, Space, or Enter. Release to stop.",
+        "zh-TW": "按住滑鼠、空白鍵或 Enter；釋放即要求停止。"
+      }
+    },
+    {
+      "id": "a-reverse",
+      "type": "holdAction",
+      "label": {
+        "en": "Hold reverse",
+        "zh-TW": "按住反轉"
+      },
+      "command": "kobrixa.motor-test.jog",
+      "arguments": {
+        "direction": {
+          "literal": "-1"
+        }
+      },
+      "visibleWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "a-mode"
+        },
+        "right": "jog"
+      },
+      "enabledWhen": {
+        "op": "any",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "can-start"
+            },
+            "right": true
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "active-hold"
+            },
+            "right": "a-reverse"
+          }
+        ]
+      },
+      "help": {
+        "en": "Hold pointer, Space, or Enter. Release to stop.",
+        "zh-TW": "按住滑鼠、空白鍵或 Enter；釋放即要求停止。"
+      }
+    },
+    {
+      "id": "a-start",
+      "type": "action",
+      "label": {
+        "en": "Start",
+        "zh-TW": "開始"
+      },
+      "action": {
+        "kind": "command",
+        "command": "kobrixa.motor-test.start",
+        "arguments": {}
+      },
+      "variant": "primary",
+      "visibleWhen": {
+        "op": "ne",
+        "left": {
+          "scope": "form",
+          "key": "a-mode"
+        },
+        "right": "jog"
+      },
+      "enabledWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "data",
+          "key": "can-start"
+        },
+        "right": true
+      }
+    },
+    {
+      "id": "a-group",
+      "type": "group",
+      "label": {
+        "en": "Port A",
+        "zh-TW": "連接埠 A"
+      },
+      "layout": "stack",
+      "children": [
+        "a-mode",
+        "a-power",
+        "a-seconds",
+        "a-degrees",
+        "a-direction",
+        "a-brake",
+        "a-forward",
+        "a-reverse",
+        "a-start"
+      ],
+      "visibleWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "port"
+        },
+        "right": "A"
+      }
+    },
+    {
+      "id": "b-mode",
+      "field": "b-mode",
+      "label": {
+        "en": "Mode",
+        "zh-TW": "模式"
+      },
+      "type": "choice",
+      "presentation": "select",
+      "options": [
+        {
+          "value": "jog",
+          "label": {
+            "en": "Jog",
+            "zh-TW": "點動"
+          }
+        },
+        {
+          "value": "timed",
+          "label": {
+            "en": "Timed",
+            "zh-TW": "定時"
+          }
+        },
+        {
+          "value": "relative-angle",
+          "label": {
+            "en": "Relative angle",
+            "zh-TW": "相對角度"
+          }
+        }
+      ]
+    },
+    {
+      "id": "b-power",
+      "field": "b-power",
+      "label": {
+        "en": "Power",
+        "zh-TW": "功率"
+      },
+      "type": "range",
+      "step": 1
+    },
+    {
+      "id": "b-seconds",
+      "field": "b-seconds",
+      "label": {
+        "en": "Duration",
+        "zh-TW": "運轉時間"
+      },
+      "type": "number",
+      "step": 1.3877787807814457e-17,
+      "visibleWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "B"
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "b-mode"
+            },
+            "right": "timed"
+          }
+        ]
+      },
+      "enabledWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "B"
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "b-mode"
+            },
+            "right": "timed"
+          }
+        ]
+      },
+      "unit": {
+        "en": "seconds",
+        "zh-TW": "秒"
+      },
+      "help": {
+        "en": "0.1–5 seconds, rounded to the nearest millisecond.",
+        "zh-TW": "0.1–5 秒，四捨五入至整數毫秒。"
+      }
+    },
+    {
+      "id": "b-degrees",
+      "field": "b-degrees",
+      "label": {
+        "en": "Relative angle",
+        "zh-TW": "相對角度"
+      },
+      "type": "number",
+      "step": 1,
+      "visibleWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "B"
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "b-mode"
+            },
+            "right": "relative-angle"
+          }
+        ]
+      },
+      "enabledWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "B"
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "b-mode"
+            },
+            "right": "relative-angle"
+          }
+        ]
+      },
+      "unit": {
+        "en": "degrees",
+        "zh-TW": "度"
+      },
+      "help": {
+        "en": "Whole degrees, 1–3600.",
+        "zh-TW": "整數角度，1–3600 度。"
+      }
+    },
+    {
+      "id": "b-direction",
+      "field": "b-direction",
+      "label": {
+        "en": "Direction",
+        "zh-TW": "方向"
+      },
+      "type": "choice",
+      "presentation": "select",
+      "options": [
+        {
+          "value": "1",
+          "label": {
+            "en": "Forward",
+            "zh-TW": "正向"
+          }
+        },
+        {
+          "value": "-1",
+          "label": {
+            "en": "Reverse",
+            "zh-TW": "反向"
+          }
+        }
+      ],
+      "visibleWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "B"
+          },
+          {
+            "op": "ne",
+            "left": {
+              "scope": "form",
+              "key": "b-mode"
+            },
+            "right": "jog"
+          }
+        ]
+      },
+      "enabledWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "B"
+          },
+          {
+            "op": "ne",
+            "left": {
+              "scope": "form",
+              "key": "b-mode"
+            },
+            "right": "jog"
+          }
+        ]
+      }
+    },
+    {
+      "id": "b-brake",
+      "field": "b-brake",
+      "label": {
+        "en": "Brake on release",
+        "zh-TW": "釋放時煞車"
+      },
+      "type": "boolean",
+      "help": {
+        "en": "Release uses this setting. Cancel and safety stops require braking.",
+        "zh-TW": "釋放時使用此設定；取消與安全停止一律煞車。"
+      }
+    },
+    {
+      "id": "b-forward",
+      "type": "holdAction",
+      "label": {
+        "en": "Hold forward",
+        "zh-TW": "按住正轉"
+      },
+      "command": "kobrixa.motor-test.jog",
+      "arguments": {
+        "direction": {
+          "literal": "1"
+        }
+      },
+      "visibleWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "b-mode"
+        },
+        "right": "jog"
+      },
+      "enabledWhen": {
+        "op": "any",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "can-start"
+            },
+            "right": true
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "active-hold"
+            },
+            "right": "b-forward"
+          }
+        ]
+      },
+      "help": {
+        "en": "Hold pointer, Space, or Enter. Release to stop.",
+        "zh-TW": "按住滑鼠、空白鍵或 Enter；釋放即要求停止。"
+      }
+    },
+    {
+      "id": "b-reverse",
+      "type": "holdAction",
+      "label": {
+        "en": "Hold reverse",
+        "zh-TW": "按住反轉"
+      },
+      "command": "kobrixa.motor-test.jog",
+      "arguments": {
+        "direction": {
+          "literal": "-1"
+        }
+      },
+      "visibleWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "b-mode"
+        },
+        "right": "jog"
+      },
+      "enabledWhen": {
+        "op": "any",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "can-start"
+            },
+            "right": true
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "active-hold"
+            },
+            "right": "b-reverse"
+          }
+        ]
+      },
+      "help": {
+        "en": "Hold pointer, Space, or Enter. Release to stop.",
+        "zh-TW": "按住滑鼠、空白鍵或 Enter；釋放即要求停止。"
+      }
+    },
+    {
+      "id": "b-start",
+      "type": "action",
+      "label": {
+        "en": "Start",
+        "zh-TW": "開始"
+      },
+      "action": {
+        "kind": "command",
+        "command": "kobrixa.motor-test.start",
+        "arguments": {}
+      },
+      "variant": "primary",
+      "visibleWhen": {
+        "op": "ne",
+        "left": {
+          "scope": "form",
+          "key": "b-mode"
+        },
+        "right": "jog"
+      },
+      "enabledWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "data",
+          "key": "can-start"
+        },
+        "right": true
+      }
+    },
+    {
+      "id": "b-group",
+      "type": "group",
+      "label": {
+        "en": "Port B",
+        "zh-TW": "連接埠 B"
+      },
+      "layout": "stack",
+      "children": [
+        "b-mode",
+        "b-power",
+        "b-seconds",
+        "b-degrees",
+        "b-direction",
+        "b-brake",
+        "b-forward",
+        "b-reverse",
+        "b-start"
+      ],
+      "visibleWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "port"
+        },
+        "right": "B"
+      }
+    },
+    {
+      "id": "c-mode",
+      "field": "c-mode",
+      "label": {
+        "en": "Mode",
+        "zh-TW": "模式"
+      },
+      "type": "choice",
+      "presentation": "select",
+      "options": [
+        {
+          "value": "jog",
+          "label": {
+            "en": "Jog",
+            "zh-TW": "點動"
+          }
+        },
+        {
+          "value": "timed",
+          "label": {
+            "en": "Timed",
+            "zh-TW": "定時"
+          }
+        },
+        {
+          "value": "relative-angle",
+          "label": {
+            "en": "Relative angle",
+            "zh-TW": "相對角度"
+          }
+        }
+      ]
+    },
+    {
+      "id": "c-power",
+      "field": "c-power",
+      "label": {
+        "en": "Power",
+        "zh-TW": "功率"
+      },
+      "type": "range",
+      "step": 1
+    },
+    {
+      "id": "c-seconds",
+      "field": "c-seconds",
+      "label": {
+        "en": "Duration",
+        "zh-TW": "運轉時間"
+      },
+      "type": "number",
+      "step": 1.3877787807814457e-17,
+      "visibleWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "C"
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "c-mode"
+            },
+            "right": "timed"
+          }
+        ]
+      },
+      "enabledWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "C"
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "c-mode"
+            },
+            "right": "timed"
+          }
+        ]
+      },
+      "unit": {
+        "en": "seconds",
+        "zh-TW": "秒"
+      },
+      "help": {
+        "en": "0.1–5 seconds, rounded to the nearest millisecond.",
+        "zh-TW": "0.1–5 秒，四捨五入至整數毫秒。"
+      }
+    },
+    {
+      "id": "c-degrees",
+      "field": "c-degrees",
+      "label": {
+        "en": "Relative angle",
+        "zh-TW": "相對角度"
+      },
+      "type": "number",
+      "step": 1,
+      "visibleWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "C"
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "c-mode"
+            },
+            "right": "relative-angle"
+          }
+        ]
+      },
+      "enabledWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "C"
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "c-mode"
+            },
+            "right": "relative-angle"
+          }
+        ]
+      },
+      "unit": {
+        "en": "degrees",
+        "zh-TW": "度"
+      },
+      "help": {
+        "en": "Whole degrees, 1–3600.",
+        "zh-TW": "整數角度，1–3600 度。"
+      }
+    },
+    {
+      "id": "c-direction",
+      "field": "c-direction",
+      "label": {
+        "en": "Direction",
+        "zh-TW": "方向"
+      },
+      "type": "choice",
+      "presentation": "select",
+      "options": [
+        {
+          "value": "1",
+          "label": {
+            "en": "Forward",
+            "zh-TW": "正向"
+          }
+        },
+        {
+          "value": "-1",
+          "label": {
+            "en": "Reverse",
+            "zh-TW": "反向"
+          }
+        }
+      ],
+      "visibleWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "C"
+          },
+          {
+            "op": "ne",
+            "left": {
+              "scope": "form",
+              "key": "c-mode"
+            },
+            "right": "jog"
+          }
+        ]
+      },
+      "enabledWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "C"
+          },
+          {
+            "op": "ne",
+            "left": {
+              "scope": "form",
+              "key": "c-mode"
+            },
+            "right": "jog"
+          }
+        ]
+      }
+    },
+    {
+      "id": "c-brake",
+      "field": "c-brake",
+      "label": {
+        "en": "Brake on release",
+        "zh-TW": "釋放時煞車"
+      },
+      "type": "boolean",
+      "help": {
+        "en": "Release uses this setting. Cancel and safety stops require braking.",
+        "zh-TW": "釋放時使用此設定；取消與安全停止一律煞車。"
+      }
+    },
+    {
+      "id": "c-forward",
+      "type": "holdAction",
+      "label": {
+        "en": "Hold forward",
+        "zh-TW": "按住正轉"
+      },
+      "command": "kobrixa.motor-test.jog",
+      "arguments": {
+        "direction": {
+          "literal": "1"
+        }
+      },
+      "visibleWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "c-mode"
+        },
+        "right": "jog"
+      },
+      "enabledWhen": {
+        "op": "any",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "can-start"
+            },
+            "right": true
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "active-hold"
+            },
+            "right": "c-forward"
+          }
+        ]
+      },
+      "help": {
+        "en": "Hold pointer, Space, or Enter. Release to stop.",
+        "zh-TW": "按住滑鼠、空白鍵或 Enter；釋放即要求停止。"
+      }
+    },
+    {
+      "id": "c-reverse",
+      "type": "holdAction",
+      "label": {
+        "en": "Hold reverse",
+        "zh-TW": "按住反轉"
+      },
+      "command": "kobrixa.motor-test.jog",
+      "arguments": {
+        "direction": {
+          "literal": "-1"
+        }
+      },
+      "visibleWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "c-mode"
+        },
+        "right": "jog"
+      },
+      "enabledWhen": {
+        "op": "any",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "can-start"
+            },
+            "right": true
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "active-hold"
+            },
+            "right": "c-reverse"
+          }
+        ]
+      },
+      "help": {
+        "en": "Hold pointer, Space, or Enter. Release to stop.",
+        "zh-TW": "按住滑鼠、空白鍵或 Enter；釋放即要求停止。"
+      }
+    },
+    {
+      "id": "c-start",
+      "type": "action",
+      "label": {
+        "en": "Start",
+        "zh-TW": "開始"
+      },
+      "action": {
+        "kind": "command",
+        "command": "kobrixa.motor-test.start",
+        "arguments": {}
+      },
+      "variant": "primary",
+      "visibleWhen": {
+        "op": "ne",
+        "left": {
+          "scope": "form",
+          "key": "c-mode"
+        },
+        "right": "jog"
+      },
+      "enabledWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "data",
+          "key": "can-start"
+        },
+        "right": true
+      }
+    },
+    {
+      "id": "c-group",
+      "type": "group",
+      "label": {
+        "en": "Port C",
+        "zh-TW": "連接埠 C"
+      },
+      "layout": "stack",
+      "children": [
+        "c-mode",
+        "c-power",
+        "c-seconds",
+        "c-degrees",
+        "c-direction",
+        "c-brake",
+        "c-forward",
+        "c-reverse",
+        "c-start"
+      ],
+      "visibleWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "port"
+        },
+        "right": "C"
+      }
+    },
+    {
+      "id": "d-mode",
+      "field": "d-mode",
+      "label": {
+        "en": "Mode",
+        "zh-TW": "模式"
+      },
+      "type": "choice",
+      "presentation": "select",
+      "options": [
+        {
+          "value": "jog",
+          "label": {
+            "en": "Jog",
+            "zh-TW": "點動"
+          }
+        },
+        {
+          "value": "timed",
+          "label": {
+            "en": "Timed",
+            "zh-TW": "定時"
+          }
+        },
+        {
+          "value": "relative-angle",
+          "label": {
+            "en": "Relative angle",
+            "zh-TW": "相對角度"
+          }
+        }
+      ]
+    },
+    {
+      "id": "d-power",
+      "field": "d-power",
+      "label": {
+        "en": "Power",
+        "zh-TW": "功率"
+      },
+      "type": "range",
+      "step": 1
+    },
+    {
+      "id": "d-seconds",
+      "field": "d-seconds",
+      "label": {
+        "en": "Duration",
+        "zh-TW": "運轉時間"
+      },
+      "type": "number",
+      "step": 1.3877787807814457e-17,
+      "visibleWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "D"
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "d-mode"
+            },
+            "right": "timed"
+          }
+        ]
+      },
+      "enabledWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "D"
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "d-mode"
+            },
+            "right": "timed"
+          }
+        ]
+      },
+      "unit": {
+        "en": "seconds",
+        "zh-TW": "秒"
+      },
+      "help": {
+        "en": "0.1–5 seconds, rounded to the nearest millisecond.",
+        "zh-TW": "0.1–5 秒，四捨五入至整數毫秒。"
+      }
+    },
+    {
+      "id": "d-degrees",
+      "field": "d-degrees",
+      "label": {
+        "en": "Relative angle",
+        "zh-TW": "相對角度"
+      },
+      "type": "number",
+      "step": 1,
+      "visibleWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "D"
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "d-mode"
+            },
+            "right": "relative-angle"
+          }
+        ]
+      },
+      "enabledWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "D"
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "d-mode"
+            },
+            "right": "relative-angle"
+          }
+        ]
+      },
+      "unit": {
+        "en": "degrees",
+        "zh-TW": "度"
+      },
+      "help": {
+        "en": "Whole degrees, 1–3600.",
+        "zh-TW": "整數角度，1–3600 度。"
+      }
+    },
+    {
+      "id": "d-direction",
+      "field": "d-direction",
+      "label": {
+        "en": "Direction",
+        "zh-TW": "方向"
+      },
+      "type": "choice",
+      "presentation": "select",
+      "options": [
+        {
+          "value": "1",
+          "label": {
+            "en": "Forward",
+            "zh-TW": "正向"
+          }
+        },
+        {
+          "value": "-1",
+          "label": {
+            "en": "Reverse",
+            "zh-TW": "反向"
+          }
+        }
+      ],
+      "visibleWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "D"
+          },
+          {
+            "op": "ne",
+            "left": {
+              "scope": "form",
+              "key": "d-mode"
+            },
+            "right": "jog"
+          }
+        ]
+      },
+      "enabledWhen": {
+        "op": "all",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "form",
+              "key": "port"
+            },
+            "right": "D"
+          },
+          {
+            "op": "ne",
+            "left": {
+              "scope": "form",
+              "key": "d-mode"
+            },
+            "right": "jog"
+          }
+        ]
+      }
+    },
+    {
+      "id": "d-brake",
+      "field": "d-brake",
+      "label": {
+        "en": "Brake on release",
+        "zh-TW": "釋放時煞車"
+      },
+      "type": "boolean",
+      "help": {
+        "en": "Release uses this setting. Cancel and safety stops require braking.",
+        "zh-TW": "釋放時使用此設定；取消與安全停止一律煞車。"
+      }
+    },
+    {
+      "id": "d-forward",
+      "type": "holdAction",
+      "label": {
+        "en": "Hold forward",
+        "zh-TW": "按住正轉"
+      },
+      "command": "kobrixa.motor-test.jog",
+      "arguments": {
+        "direction": {
+          "literal": "1"
+        }
+      },
+      "visibleWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "d-mode"
+        },
+        "right": "jog"
+      },
+      "enabledWhen": {
+        "op": "any",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "can-start"
+            },
+            "right": true
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "active-hold"
+            },
+            "right": "d-forward"
+          }
+        ]
+      },
+      "help": {
+        "en": "Hold pointer, Space, or Enter. Release to stop.",
+        "zh-TW": "按住滑鼠、空白鍵或 Enter；釋放即要求停止。"
+      }
+    },
+    {
+      "id": "d-reverse",
+      "type": "holdAction",
+      "label": {
+        "en": "Hold reverse",
+        "zh-TW": "按住反轉"
+      },
+      "command": "kobrixa.motor-test.jog",
+      "arguments": {
+        "direction": {
+          "literal": "-1"
+        }
+      },
+      "visibleWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "d-mode"
+        },
+        "right": "jog"
+      },
+      "enabledWhen": {
+        "op": "any",
+        "items": [
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "can-start"
+            },
+            "right": true
+          },
+          {
+            "op": "eq",
+            "left": {
+              "scope": "data",
+              "key": "active-hold"
+            },
+            "right": "d-reverse"
+          }
+        ]
+      },
+      "help": {
+        "en": "Hold pointer, Space, or Enter. Release to stop.",
+        "zh-TW": "按住滑鼠、空白鍵或 Enter；釋放即要求停止。"
+      }
+    },
+    {
+      "id": "d-start",
+      "type": "action",
+      "label": {
+        "en": "Start",
+        "zh-TW": "開始"
+      },
+      "action": {
+        "kind": "command",
+        "command": "kobrixa.motor-test.start",
+        "arguments": {}
+      },
+      "variant": "primary",
+      "visibleWhen": {
+        "op": "ne",
+        "left": {
+          "scope": "form",
+          "key": "d-mode"
+        },
+        "right": "jog"
+      },
+      "enabledWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "data",
+          "key": "can-start"
+        },
+        "right": true
+      }
+    },
+    {
+      "id": "d-group",
+      "type": "group",
+      "label": {
+        "en": "Port D",
+        "zh-TW": "連接埠 D"
+      },
+      "layout": "stack",
+      "children": [
+        "d-mode",
+        "d-power",
+        "d-seconds",
+        "d-degrees",
+        "d-direction",
+        "d-brake",
+        "d-forward",
+        "d-reverse",
+        "d-start"
+      ],
+      "visibleWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "port"
+        },
+        "right": "D"
+      }
+    },
+    {
+      "id": "stop",
+      "type": "action",
+      "label": {
+        "en": "Stop (brake)",
+        "zh-TW": "停止（煞車）"
+      },
+      "variant": "danger",
+      "action": {
+        "kind": "core",
+        "action": "stop",
+        "operation": {
+          "scope": "data",
+          "key": "operation"
+        }
+      }
+    },
+    {
+      "id": "recovery",
+      "type": "action",
+      "label": {
+        "en": "Open core recovery",
+        "zh-TW": "開啟核心復原"
+      },
+      "variant": "normal",
+      "action": {
+        "kind": "core",
+        "action": "openRecovery"
+      }
+    },
+    {
+      "id": "summary",
+      "type": "status",
+      "text": {
+        "ref": {
+          "scope": "data",
+          "key": "summary"
+        }
+      },
+      "tone": "neutral"
+    },
+    {
+      "id": "results",
+      "type": "keyValue",
+      "rows": [
+        {
+          "id": "phase",
+          "label": {
+            "en": "Phase",
+            "zh-TW": "階段"
+          },
+          "value": {
+            "ref": {
+              "scope": "data",
+              "key": "phase"
+            }
+          }
+        },
+        {
+          "id": "stage",
+          "label": {
+            "en": "Stage",
+            "zh-TW": "執行步驟"
+          },
+          "value": {
+            "ref": {
+              "scope": "data",
+              "key": "stage"
+            }
+          }
+        },
+        {
+          "id": "movement",
+          "label": {
+            "en": "Movement",
+            "zh-TW": "移動結果"
+          },
+          "value": {
+            "ref": {
+              "scope": "data",
+              "key": "movement"
+            }
+          }
+        },
+        {
+          "id": "dispatch",
+          "label": {
+            "en": "Dispatch",
+            "zh-TW": "送出狀態"
+          },
+          "value": {
+            "ref": {
+              "scope": "data",
+              "key": "dispatch"
+            }
+          }
+        },
+        {
+          "id": "stop-requested",
+          "label": {
+            "en": "Stop requested",
+            "zh-TW": "已要求停止"
+          },
+          "value": {
+            "ref": {
+              "scope": "data",
+              "key": "stop-requested"
+            }
+          }
+        },
+        {
+          "id": "confirmation",
+          "label": {
+            "en": "Stop confirmation",
+            "zh-TW": "停止確認"
+          },
+          "value": {
+            "ref": {
+              "scope": "data",
+              "key": "confirmation"
+            }
+          }
+        },
+        {
+          "id": "angle",
+          "label": {
+            "en": "Angle",
+            "zh-TW": "角度"
+          },
+          "value": {
+            "ref": {
+              "scope": "data",
+              "key": "angle"
+            }
+          }
+        },
+        {
+          "id": "displacement",
+          "label": {
+            "en": "Displacement",
+            "zh-TW": "位移"
+          },
+          "value": {
+            "ref": {
+              "scope": "data",
+              "key": "displacement"
+            }
+          }
+        },
+        {
+          "id": "elapsed",
+          "label": {
+            "en": "Elapsed",
+            "zh-TW": "經過時間"
+          },
+          "value": {
+            "ref": {
+              "scope": "data",
+              "key": "elapsed"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "progress",
+      "type": "progress",
+      "label": {
+        "en": "Progress",
+        "zh-TW": "進度"
+      },
+      "max": 1,
+      "value": {
+        "ref": {
+          "scope": "data",
+          "key": "progress"
+        }
+      }
+    },
+    {
+      "id": "error",
+      "type": "alert",
+      "severity": "error",
+      "text": {
+        "ref": {
+          "scope": "data",
+          "key": "error"
+        }
+      },
+      "visibleWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "data",
+          "key": "has-error"
+        },
+        "right": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+[
+  {
+    "source": "/private/tmp/kobrixa-b2-single-native-904a7e3/kobrixa-installed-product-3LYYbI/installed.json",
+    "archive": "installed.json.gz",
+    "rawBytes": 70687,
+    "rawSha256": "6c55da54856bb5adf79349540677c9a407254fadcb12a16e2aedabb8b476fdd4",
+    "archiveSha256": "0c5db9503aee80ba5994965ea84830b15b45ec7bc60cf9b00b70a67dd4f59240"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-single-native-904a7e3/kobrixa-installed-product-3LYYbI/single-instance.log",
+    "archive": "single-instance.log.gz",
+    "rawBytes": 10320,
+    "rawSha256": "3bfe5bc20167bc3aed318dc93e6e70a89ec09a4fca01b8017d0844069a933064",
+    "archiveSha256": "743c9015a969389676439c20e2dd63f39d378737bf6e5fe43246d6ba5a71b806"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-single-native-904a7e3/kobrixa-installed-product-3LYYbI/single-instance-secondary.log",
+    "archive": "single-instance-secondary.log.gz",
+    "rawBytes": 1192,
+    "rawSha256": "71eb9a2b8dc207c89cd571527dbf36c2d39c44e463d35fbfdaf6ae85de59445e",
+    "archiveSha256": "0df50dcdaece20e00d26db1a7e62131059a07b5a51d5476e9edfaa7d8dc90371"
+  },
+  {
+    "source": "/private/tmp/b2-installed-single-native1.log",
+    "archive": "b2-installed-single-native1.log.gz",
+    "rawBytes": 1599,
+    "rawSha256": "f3f1d00c4d09b8fca822e40a9e5bf94ca15954bba9b8876828024d8556c01f9b",
+    "archiveSha256": "690b51d7b81fb97bbc0114c53ebe3068d225aa3ecddd18db5a58a0645e319bb8"
+  },
+  {
+    "source": "/private/tmp/kobrixa-d8-final-native-a77387d/product-audit.json",
+    "archive": "product-audit.json.gz",
+    "rawBytes": 806,
+    "rawSha256": "9091aebc802b3881c6b19c061eeb64a42be02d8fc97c95d93eef877626a6fa59",
+    "archiveSha256": "6ec9971078e3d68e3d0465d4d5030073d8cb6db946822c4463a28d04062c6ce6"
+  }
+]

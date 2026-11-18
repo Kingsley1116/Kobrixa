@@ -1,13 +1,5 @@
 import type { Locale } from "../i18n/copy.js";
 import { SETTINGS_CHOICES, type Settings } from "./settings.js";
-import {
-  DEFAULT_DEVICE_PREFERENCES,
-  USB_RETRY_INTERVALS,
-  USB_RETRY_LIMITS,
-  WIFI_CONNECT_TIMEOUTS,
-  WIFI_HANDSHAKE_TIMEOUTS,
-  type DevicePreferences,
-} from "../../shared/device-preferences.js";
 import type { UpdatePreferences } from "../../shared/updates.js";
 import {
   DEFAULT_FILE_PREFERENCES,
@@ -32,12 +24,10 @@ export type SettingValue = string | number | boolean | null;
 export interface CatalogContext {
   settings: Settings;
   defaults: Settings;
-  device: DevicePreferences | undefined;
   files: FilePreferences | undefined;
   updates: UpdatePreferences | undefined;
   reducedMotion: boolean;
   onChange<K extends keyof Settings>(key: K, value: Settings[K]): void;
-  onDeviceChange(patch: Partial<DevicePreferences>): void;
   onFileChange(patch: Partial<FilePreferences>): void;
   onUpdateChange(patch: Partial<UpdatePreferences>): void;
 }
@@ -48,7 +38,7 @@ export interface SettingDefinition {
   label: Text;
   hint: Text;
   keywords?: string;
-  source: "app" | "device" | "files" | "updates";
+  source: "app" | "files" | "updates";
   options?: readonly { value: string | number; label: Text }[];
   read(context: CatalogContext): SettingValue | undefined;
   defaultValue(context: CatalogContext): SettingValue;
@@ -82,31 +72,6 @@ const app = <K extends keyof Settings>(
   read: (context) => context.settings[key],
   defaultValue: (context) => context.defaults[key],
   change: (context, value) => context.onChange(key, value as Settings[K]),
-});
-const device = <K extends keyof DevicePreferences>(
-  key: K,
-  label: Text,
-  hint: Text,
-  choices?: SettingDefinition["options"],
-): SettingDefinition => ({
-  id: `device.${key}`,
-  controlId: `setting-${key}`,
-  source: "device",
-  category: "device",
-  label,
-  hint,
-  ...(choices ? { options: choices } : {}),
-  read: (context) => context.device?.[key],
-  defaultValue: () => DEFAULT_DEVICE_PREFERENCES[key],
-  change: (context, value) => context.onDeviceChange({ [key]: value }),
-  ...(key === "usbRetryInterval" || key === "usbRetryLimit"
-    ? {
-        disabled: (context: CatalogContext): Text | undefined =>
-          context.device?.usbAutoReconnect === false
-            ? ["啟用 USB 自動重連後可調整。", "Enable USB automatic reconnect to adjust this."]
-            : undefined,
-      }
-    : {}),
 });
 const files = <K extends keyof FilePreferences>(
   key: K,
@@ -488,30 +453,6 @@ export const SETTINGS_CATALOG: readonly SettingDefinition[] = [
     ["顯示錯誤與警告清單。", "Show the errors and warnings list."],
   ),
   app(
-    "connectionMode",
-    "device",
-    ["連線方式", "Connection method"],
-    [
-      "記住 USB／Wi-Fi 選擇，供下一次連線使用。",
-      "Remember USB/Wi-Fi selection for the next connection.",
-    ],
-    {
-      options: options(SETTINGS_CHOICES.connectionMode, [
-        ["USB", "USB"],
-        ["Wi-Fi", "Wi-Fi"],
-      ]),
-    },
-  ),
-  app(
-    "rememberWifiAddress",
-    "device",
-    ["記住 Wi-Fi 位址", "Remember Wi-Fi address"],
-    [
-      "保存最後成功手動連線的位址。關閉會清除保存值，保留當次輸入。",
-      "Save the last successful manually entered address. Turning off clears the saved address, keeping current input.",
-    ],
-  ),
-  app(
     "revealDiagnostics",
     "device",
     ["自動展開編譯診斷", "Reveal build diagnostics"],
@@ -532,58 +473,6 @@ export const SETTINGS_CATALOG: readonly SettingDefinition[] = [
       "設備操作失敗時顯示活動記錄；需要連線的提示始終保留。",
       "Open activity on device operation failure. Required connection prompts remain visible.",
     ],
-  ),
-  device(
-    "skipUnchangedAssets",
-    ["略過未變更的素材", "Skip unchanged assets"],
-    [
-      "上傳前比對 EV3 上的檔案大小與校驗值。關閉後完整重新上傳；程式檔每次都會上傳。",
-      "Compare asset sizes and checksums on the EV3 before uploading. Turn off to upload everything again. The program is always uploaded.",
-    ],
-  ),
-  device(
-    "usbAutoReconnect",
-    ["USB 自動重連", "USB automatic reconnect"],
-    [
-      "依序號尋找斷線的設備。關閉會立即取消恢復；重連不會自動執行程式。",
-      "Find the disconnected device by serial number. Turning off cancels recovery immediately. Reconnecting never runs programs.",
-    ],
-  ),
-  device(
-    "usbRetryInterval",
-    ["USB 重試間隔", "USB retry interval"],
-    [
-      "漸進式依序等待 1、2、5 秒，之後每 5 秒重試。變更適用於下一輪恢復。",
-      "Backoff waits 1, 2, then 5 seconds repeatedly. Changes apply to the next recovery.",
-    ],
-    options(USB_RETRY_INTERVALS, [
-      ["漸進式", "Backoff"],
-      ...[1, 2, 5, 10].map((v) => [`${v} 秒`, `${v} seconds`] as Text),
-    ]),
-  ),
-  device(
-    "usbRetryLimit",
-    ["USB 自動重連嘗試上限", "USB reconnect attempt limit"],
-    [
-      "包含斷線後立即進行的第一次嘗試，達上限後改為手動連線。變更適用於下一輪恢復。",
-      "Includes the immediate first attempt. Reconnect manually after the limit. Changes apply to the next recovery.",
-    ],
-    options(USB_RETRY_LIMITS, [
-      ["不限", "Unlimited"],
-      ...[3, 5, 10].map((v) => [`${v} 次`, `${v} attempts`] as Text),
-    ]),
-  ),
-  device(
-    "wifiConnectTimeout",
-    ["Wi-Fi 建立連線逾時", "Wi-Fi connection timeout"],
-    ["下一次建立 TCP 連線的等待上限。", "TCP connection timeout for the next connection."],
-    seconds(WIFI_CONNECT_TIMEOUTS),
-  ),
-  device(
-    "wifiHandshakeTimeout",
-    ["Wi-Fi 握手逾時", "Wi-Fi handshake timeout"],
-    ["下一次等待 EV3 接受連線的上限。", "How long to wait for EV3 to accept the next connection."],
-    seconds(WIFI_HANDSHAKE_TIMEOUTS),
   ),
   {
     id: "updates.enabled",

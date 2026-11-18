@@ -1,3 +1,4 @@
+import type { PluginUiBridge, CoreRecoveryPort } from "./plugin-ui.js";
 import type {
   StaticLanguagesCatalog,
   ReportLanguageRegistrationFailureInput,
@@ -103,6 +104,11 @@ export type PluginsViewEvent =
   { type: "state"; state: PluginsView } | { type: "notice"; notice: StoredNotice };
 export type PluginEvent = PluginsViewEvent;
 export interface PluginsApi {
+  settings: SettingsApi170;
+  legacyPreferences: LegacyPreferencesApi;
+  persistenceRecovery: PersistenceRecoveryBridge;
+  ui: PluginUiBridge;
+  recovery: CoreRecoveryPort;
   state(): Promise<PluginsView>;
   diagnosticHelp(): Promise<PluginHelpCatalogView>;
   staticLanguages(): Promise<StaticLanguagesCatalog>;
@@ -124,3 +130,12 @@ export interface PluginsApi {
   clearSafeModeLock(): Promise<PluginsResult>;
   onEvent(listener: (event: PluginEvent) => void): () => void;
 }
+
+export type { CoreActionReference, CoreWindowScope } from "./plugin-ui.js";
+export type { DrainReport } from "./plugin-persistence.js";
+
+import type {
+  SettingsApi170,
+  LegacyPreferencesApi,
+  PersistenceRecoveryBridge,
+} from "./plugin-persistence.js";

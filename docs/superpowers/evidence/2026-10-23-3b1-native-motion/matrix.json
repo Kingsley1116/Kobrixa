@@ -1,0 +1,404 @@
+{
+  "kind": "ui-motion-matrix",
+  "reports": [
+    {
+      "scenario": {
+        "boundary": "prepare",
+        "position": "before",
+        "fault": "hide"
+      },
+      "path": "prepare-before-hide.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "prepare",
+        "position": "before",
+        "fault": "authority-loss"
+      },
+      "path": "prepare-before-authority-loss.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "prepare",
+        "position": "before",
+        "fault": "cancel"
+      },
+      "path": "prepare-before-cancel.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "prepare",
+        "position": "before",
+        "fault": "renderer-freeze"
+      },
+      "path": "prepare-before-renderer-freeze.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "prepare",
+        "position": "before",
+        "fault": "renderer-crash"
+      },
+      "path": "prepare-before-renderer-crash.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "prepare",
+        "position": "before",
+        "fault": "plugin-kill"
+      },
+      "path": "prepare-before-plugin-kill.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "prepare",
+        "position": "after",
+        "fault": "hide"
+      },
+      "path": "prepare-after-hide.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "prepare",
+        "position": "after",
+        "fault": "authority-loss"
+      },
+      "path": "prepare-after-authority-loss.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "prepare",
+        "position": "after",
+        "fault": "cancel"
+      },
+      "path": "prepare-after-cancel.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "prepare",
+        "position": "after",
+        "fault": "renderer-freeze"
+      },
+      "path": "prepare-after-renderer-freeze.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "prepare",
+        "position": "after",
+        "fault": "renderer-crash"
+      },
+      "path": "prepare-after-renderer-crash.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "prepare",
+        "position": "after",
+        "fault": "plugin-kill"
+      },
+      "path": "prepare-after-plugin-kill.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "start",
+        "position": "before",
+        "fault": "hide"
+      },
+      "path": "start-before-hide.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "start",
+        "position": "before",
+        "fault": "authority-loss"
+      },
+      "path": "start-before-authority-loss.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "start",
+        "position": "before",
+        "fault": "cancel"
+      },
+      "path": "start-before-cancel.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "start",
+        "position": "before",
+        "fault": "renderer-freeze"
+      },
+      "path": "start-before-renderer-freeze.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "start",
+        "position": "before",
+        "fault": "renderer-crash"
+      },
+      "path": "start-before-renderer-crash.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "start",
+        "position": "before",
+        "fault": "plugin-kill"
+      },
+      "path": "start-before-plugin-kill.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "start",
+        "position": "after",
+        "fault": "hide"
+      },
+      "path": "start-after-hide.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "start",
+        "position": "after",
+        "fault": "authority-loss"
+      },
+      "path": "start-after-authority-loss.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "start",
+        "position": "after",
+        "fault": "cancel"
+      },
+      "path": "start-after-cancel.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "start",
+        "position": "after",
+        "fault": "renderer-freeze"
+      },
+      "path": "start-after-renderer-freeze.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "start",
+        "position": "after",
+        "fault": "renderer-crash"
+      },
+      "path": "start-after-renderer-crash.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "start",
+        "position": "after",
+        "fault": "plugin-kill"
+      },
+      "path": "start-after-plugin-kill.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "arm",
+        "position": "before",
+        "fault": "hide"
+      },
+      "path": "arm-before-hide.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "arm",
+        "position": "before",
+        "fault": "authority-loss"
+      },
+      "path": "arm-before-authority-loss.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "arm",
+        "position": "before",
+        "fault": "cancel"
+      },
+      "path": "arm-before-cancel.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "arm",
+        "position": "before",
+        "fault": "renderer-freeze"
+      },
+      "path": "arm-before-renderer-freeze.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "arm",
+        "position": "before",
+        "fault": "renderer-crash"
+      },
+      "path": "arm-before-renderer-crash.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "arm",
+        "position": "before",
+        "fault": "plugin-kill"
+      },
+      "path": "arm-before-plugin-kill.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "arm",
+        "position": "after",
+        "fault": "hide"
+      },
+      "path": "arm-after-hide.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "arm",
+        "position": "after",
+        "fault": "authority-loss"
+      },
+      "path": "arm-after-authority-loss.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "arm",
+        "position": "after",
+        "fault": "cancel"
+      },
+      "path": "arm-after-cancel.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "arm",
+        "position": "after",
+        "fault": "renderer-freeze"
+      },
+      "path": "arm-after-renderer-freeze.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "arm",
+        "position": "after",
+        "fault": "renderer-crash"
+      },
+      "path": "arm-after-renderer-crash.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "arm",
+        "position": "after",
+        "fault": "plugin-kill"
+      },
+      "path": "arm-after-plugin-kill.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "pulse",
+        "position": "before",
+        "fault": "hide"
+      },
+      "path": "pulse-before-hide.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "pulse",
+        "position": "before",
+        "fault": "authority-loss"
+      },
+      "path": "pulse-before-authority-loss.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "pulse",
+        "position": "before",
+        "fault": "cancel"
+      },
+      "path": "pulse-before-cancel.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "pulse",
+        "position": "before",
+        "fault": "renderer-freeze"
+      },
+      "path": "pulse-before-renderer-freeze.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "pulse",
+        "position": "before",
+        "fault": "renderer-crash"
+      },
+      "path": "pulse-before-renderer-crash.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "pulse",
+        "position": "before",
+        "fault": "plugin-kill"
+      },
+      "path": "pulse-before-plugin-kill.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "pulse",
+        "position": "after",
+        "fault": "hide"
+      },
+      "path": "pulse-after-hide.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "pulse",
+        "position": "after",
+        "fault": "authority-loss"
+      },
+      "path": "pulse-after-authority-loss.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "pulse",
+        "position": "after",
+        "fault": "cancel"
+      },
+      "path": "pulse-after-cancel.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "pulse",
+        "position": "after",
+        "fault": "renderer-freeze"
+      },
+      "path": "pulse-after-renderer-freeze.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "pulse",
+        "position": "after",
+        "fault": "renderer-crash"
+      },
+      "path": "pulse-after-renderer-crash.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "pulse",
+        "position": "after",
+        "fault": "plugin-kill"
+      },
+      "path": "pulse-after-plugin-kill.json.gz"
+    }
+  ],
+  "artifact": {
+    "commit": "c25a06d91352aedb4edef82e17b2fbf22c08aa55",
+    "dirty": true,
+    "sha256": {
+      "main.cjs": "8f38096a9f19c1536420a0fbec16c6c169ec0e65318ef628acc084c725b7557c",
+      "template/preload.cjs": "5c5f814bcd90bd8052368baddef282ff0c1ed72f1e9b13c5748079e47d1a352e",
+      "template/source/kobrixa-plugin.json": "ae440cba6c643c3d3649d81c16c2543f23ae10c00273b8e081e7e8795024e023",
+      "template/source/main.cjs": "bfd98a013eae4a6ad2076fef93137bdb0d8087158981eae9bbf1444b6f4472a2",
+      "template/source/panel.json": "b15175e6d589a26e8b35170f2165b6079803f29aeb89c82b2d6a8b2417f21ceb",
+      "template/renderer/index.html": "0d2472e49e9290612529ea614763ca85208c2c72ce0d0097ffb586348bd0477a",
+      "template/renderer/assets/index-7OV_7gMa.js": "d6c47e467decf4c1b17f80dd293d4006cf06b0a13c70b134eba11fc4290497b0",
+      "template/renderer/assets/index-7OV_7gMa.js.map": "36c84ab429ffad933a2a1a63a90ccd812c0ff8c997187b99125fd981e1613ec0",
+      "template/renderer/assets/index-Ctv-p2WS.css": "35b19a04601f52a29ec5472c63ac8fe5b97c1ef863157b2bfa48bdb15271ec83"
+    }
+  }
+}

@@ -1,0 +1,98 @@
+{
+  "schema": 1,
+  "date": "2026-10-30",
+  "integrationCommit": "dfae9155946cda04c3b6c2e460d68d4dd54bc062",
+  "featureCommit": "03e6d49",
+  "providerCommit": "5b29c47",
+  "claims": {
+    "coreTests": {
+      "passed": 852,
+      "files": 36
+    },
+    "featureTests": {
+      "passed": 40,
+      "files": 3,
+      "transport": "node:worker_threads MessageChannel; both peers same process; actual SDK/router/broker, UI/settings wire fixtures"
+    },
+    "assemblyTests": {
+      "passed": 47,
+      "skipped": 1,
+      "files": 2,
+      "build": "actual production EV3 entry/resource index in temporary output"
+    },
+    "mainImportTypes": "pass",
+    "rendererImportTypes": "pass",
+    "fullDesktop": {
+      "passed": 4053,
+      "skipped": 22,
+      "passedFiles": 317,
+      "skippedFiles": 1,
+      "configuration": "environment/e6-full-desktop.config.mjs.txt",
+      "productCommit": "dfae915",
+      "runCommit": "b0a21a3",
+      "note": "Full single run after temporary dependency/source resolution fixes; preceding failures retained in controller tmp, no product changes to repair environment."
+    }
+  },
+  "sourceSha256": {
+    "apps/desktop/packaging.ts": "ae30ec44586f02df618620b3da0856e8ab084e0a2ba4a69020ed3b19d5934252",
+    "apps/desktop/src/builtin-features/device-ev3/controller.test.ts": "a00c25e301ad5d3379a79fc2aca38781c504fab9c95adb716527a372412d2b15",
+    "apps/desktop/src/builtin-features/device-ev3/lifecycle.test.ts": "e7b41580f1b7510d7241097ba546e4bceaf0444ff3f2a8f89e811bc376f134c2",
+    "apps/desktop/src/builtin-features/device-ev3/private-dependency.test.ts": "d828bb002387e811a8255a671e3d6efd2a05aa4d17897114d431ce4115cb6e9c",
+    "apps/desktop/src/builtin-features/device-ev3/public-transport.test.ts": "40a154988e8f2eac9f389f53e654d3da4d97095e5abb4f8a6755694d54351be7",
+    "apps/desktop/src/main/device-broker/broker.test.ts": "da7157303d2233146b3f98cdc489dc420d2a331540202212c9dce62790ba6c24",
+    "apps/desktop/src/main/device-broker/broker.ts": "a74da5b92b330ea7548ceba47a1fc40308b6a47bc05f8369ff8ad9f7c1ffccc7",
+    "apps/desktop/src/main/device-broker/legacy-device.ts": "9233c45a586a2211dde04130e76c56badfe27d08816a5d96dc08d12f6a3238a4",
+    "apps/desktop/src/main/device-providers/ev3/broker-integration.test.ts": "75128002df9d0230ef46a1a0707c70b505c5275dbb512d94d820d46da66f9a2c",
+    "apps/desktop/src/main/device-providers/ev3/catalog.test.ts": "b4634d6a78975939b7d7046790f54bbc27ef5e30676588a4f63b4a7c5ae9f69d",
+    "apps/desktop/src/main/device-providers/ev3/catalog.ts": "3df2d98e8b3f5a553275d87ac2c9924650a1138081a5721bae5280c718841d79",
+    "apps/desktop/src/main/device-providers/ev3/provider.ts": "7789b505cf25f89395c1b477e32d6c96e3142000bcff1d839107eb867986ac2a",
+    "apps/desktop/src/main/device/device.test.ts": "db38eea9a5f7ad28633e889fa681ddd44cc2caa9eebe83df40e3a09f45039920",
+    "apps/desktop/src/main/device/device.ts": "5c4d1a3820187e5b5656033a10c5f734b03ae723b1ef48683c614fe6f4e176a9",
+    "apps/desktop/src/main/index.ts": "d86bac9aed29f422cfad9b18ddd838ab631a5d1ab9c72e7bdc659cba292b7383",
+    "apps/desktop/src/main/packaging.test.ts": "e6c8bb7938c5e69f51587d6de27179f38a6de45835ba416bc769ce551cf6e9b1",
+    "apps/desktop/src/main/plugins/builtin.test.ts": "d22eb297292629a3db275336cd56eb637ec95a4083ddd5438e5959f755b99e97",
+    "apps/desktop/src/main/plugins/builtin.ts": "f9032f44ab3754677bd3c4cb40679881d0724f02847b6952d850a22830715e21",
+    "apps/desktop/src/renderer/app.tsx": "9ee04134f0b4aabaaebe97557ed62d5f61e3e39108e1e8c3b231eecdbe0f48e6",
+    "apps/desktop/src/renderer/device/device-panel.test.ts": "c8cb1e56f284deff04e2f5c4907889d64846242ee9e3e7d59165a361389ebe3e",
+    "apps/desktop/src/renderer/device/device-panel.tsx": "17fd278e2080673ac621662a740a53fcbc476d2014c671e66657d2fe906c6671",
+    "apps/desktop/src/renderer/execution/execution.test.ts": "e65587c7852381f598baf0a20b8630d54bb2beb35cdc47018554ba15ed242830",
+    "apps/desktop/src/renderer/execution/execution.ts": "5630b607c76989bd9b993b9f1effd75122b2b837557b0d86316f1ed7c6906e7a",
+    "apps/desktop/src/renderer/settings/device-settings.ts": "eddde438e04bf273bde652e6beed1315d10fd414bda0f0d9196aa1fb71e12fb7",
+    "apps/desktop/src/renderer/settings/settings-panel.test.ts": "9754379219095244ff723bbbb7cbb2c1b49f5d59f6c4b05663f08aa084c1437b",
+    "apps/desktop/src/renderer/settings/settings-panel.tsx": "3b817f2ebc40be403d2752f75398e5126545344f47eec0b25ed20dd2a6d3d4f9",
+    "apps/desktop/src/renderer/settings/settings-state.test.ts": "be743aa1535d5ce932006e45462ca76f2853ecb9bde4b14d99ffdb80f84c18f5",
+    "apps/desktop/src/renderer/settings/settings-state.ts": "585ef7f6ecf5e94db565568bb2347e0512d6cb0f1d2b4f7b0386e32e602a2aac",
+    "apps/desktop/src/shared/api.ts": "a282f1ceb97034855873d99fbf2b7956bdcfd6e58fa75ad9d8cb0f07aaedb30d",
+    "plugins/device-ev3/kobrixa-plugin.json": "9a64ebb5523b37ac4795654e16ee5a6598ddb2b6d715b266567c782200acc4be",
+    "plugins/device-ev3/settings/preferences.json": "2f35302732d95d1b31cffe2e0660ccd00f53e01f47fc7bcbf941a4589d7a9d77",
+    "plugins/device-ev3/src/controller.ts": "7d586551662416e89739917349870f3007a0dacb4651f0a04dc24de721c55f92",
+    "plugins/device-ev3/src/main.ts": "04788d272948f99afce3c52812390ccafd5e582150cf123475769567596e1200",
+    "plugins/device-ev3/src/presentation.ts": "e64c007c6d534ac12bcc92991b4c025e82ff14c5bfbd784aecfbe9d045e4a1ca",
+    "plugins/device-ev3/ui/panel.json": "1345a839db396ea6bbd01f564d91db20057527ae4f681c0b070d4073d5d303d8"
+  },
+  "artifactSha256": {
+    "core-review.md": "54bb2b8d8d72f95872330654ac7ffdee59ee84cc868272a1cc2d76518d6c55bf",
+    "cutover-review.md": "a1da6e505d3ef19ad1e0bf1db4ca0578120eb61777edd08c0876516c6a103795",
+    "p08-review.md": "0e43a39dfde367ad502085895a8d206572b9125f86df1d4a97481f3a6367f1e0",
+    "core-tests.log": "981b3a327af2267287da74643b4e63dd95884d9241eed3491d474cdbc545559e",
+    "feature-tests.log": "1040521f20e9e6adc2ce025fdad5591a3d58c39b421b993cd13f5cf81535934f",
+    "assembly-tests.log": "f12939b4978284c968babb3a075c2bb99e8b2e2ab3d64d7dd1308215de648f00",
+    "full-desktop.log": "aa433d6053488dd36a423afb06d18f7e230dc7cdbaa283829a65454f1a69a692",
+    "environment/e6-esbuild-wrapper.mjs.txt": "a547678bd523b2f54cbde007ea0732eb5640bbca6e7e883f3408b176b1565f61",
+    "environment/e4-assembly-vitest.config.mjs.txt": "23d6dc300def60d56eebb6f5cc45c23f6f85a7b2bcb5a77aa99c2e4f12388f7a",
+    "environment/e6-full-desktop.config.mjs.txt": "1aba8661fbb90783f3cd0680ab12f3bc602d502dba4dcd139441877c64475834",
+    "environment/e4-build-wrapper.mjs.txt": "a0dfb7a74a70a868585770eb2fd28789cdf2b3fe3a8ff14bbb6e1ad71b8bc1dd",
+    "environment/e3-vite-source-wrapper.mjs.txt": "d002acd3b9972516e74b0e47c1b051ddbe8ad65f6b9c4326c4e1cd0e242bd816",
+    "environment/e3-gate-vitest.config.mjs.txt": "4c3047cf6d301de42916cc204b8b145f781fd3c1f294f40636df7e3d8f280278"
+  },
+  "notEstablished": [
+    "Electron native device feature product path",
+    "Python device interop native producer",
+    "source-free installed product",
+    "physical USB/Wi-Fi/power events",
+    "complete P01–P12 differential parity",
+    "legacy removal",
+    "Stage 3 closeout",
+    "stage-2 manual acceptance"
+  ]
+}

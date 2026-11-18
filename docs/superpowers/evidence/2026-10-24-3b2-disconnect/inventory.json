@@ -1,0 +1,37 @@
+[
+  {
+    "file": "native-receipt.json.gz",
+    "source": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/B2-disconnect-cleanup-native.json",
+    "uncompressedBytes": 218823,
+    "uncompressedSha256": "ba88b6889f6e489fb3232811767cde9fb2103ed9d5eb69678ffcbeef1dfe8dd2",
+    "sha256": "1476f92cf092564a194ac68c80f162033413fb97d32beb4ce62f036b20e6dd8c"
+  },
+  {
+    "file": "candidate.json.gz",
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-AaQtsZ/disconnect-retry.candidate.json",
+    "uncompressedBytes": 104464,
+    "uncompressedSha256": "01f2a04fd449cb209387020c089b186b5603f0f40dd9bda48c57f28edaff53d8",
+    "sha256": "5435dae1d37837076a3fad3e9650141edf56a8863490b8b3c3816d955abdf597"
+  },
+  {
+    "file": "native-config.json.gz",
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-AaQtsZ/disconnect-retry.json",
+    "uncompressedBytes": 1180,
+    "uncompressedSha256": "c870ede6f25800559f2dda0dc735676b1d764ff11d49333fab7f7de359c292c5",
+    "sha256": "3ca2e4cac9eb0bbbe0aa18b7b46e120a1dcbaaae5ff7348042603e7f05aa4b9b"
+  },
+  {
+    "file": "native.log.gz",
+    "source": "/private/tmp/b2-disconnect-cleanup-native.log",
+    "uncompressedBytes": 1460,
+    "uncompressedSha256": "0be498155efdb857aeadd49f86b2b708abc83cd87d13d92cc29d887a8a03ee77",
+    "sha256": "2001db7014394c0b76122ff8f936c51515dcb9417adcb67e2b356381d6352a77"
+  },
+  {
+    "file": "renderer-artifact.json.gz",
+    "source": "/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-renderer-sI7bH2/renderer-artifact.json",
+    "uncompressedBytes": 21983,
+    "uncompressedSha256": "a40b7f4378c6157ee8e6a53ac8234c2ce2704e3954eb9df7dbc36969600c82ea",
+    "sha256": "f31a185d83fba19b4d1f1699cfabff0151396ac2e23236e5d9de907db66122bf"
+  }
+]

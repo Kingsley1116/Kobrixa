@@ -3,45 +3,36 @@ import type { Copy, Locale } from "../i18n/copy.js";
 import type { ExecutionState } from "../execution/execution.js";
 import { versionLabel } from "../execution/version-label.js";
 import { Icon } from "../components/icon.js";
-import { Picker } from "../components/picker.js";
 
 export function DevicePanel({
   t,
   locale,
   state,
-  devices,
-  discovering,
   locked,
-  mode,
-  onMode,
-  selected,
-  onSelect,
-  address,
-  onAddress,
-  onDiscover,
-  onConnect,
   onDisconnect,
   onCancel,
+  onOpenConnectionTools,
 }: {
   t: Copy;
   locale: Locale;
   state: ExecutionState;
-  devices: DeviceDescriptor[];
-  discovering: boolean;
   locked: boolean;
-  mode: "usb" | "wifi";
-  onMode(mode: "usb" | "wifi"): void;
-  selected: string | undefined;
-  onSelect(id: string): void;
-  address: string;
-  onAddress(value: string): void;
-  onDiscover(): void;
-  onConnect(): void;
   onDisconnect(): void;
   onCancel(): void;
+  onOpenConnectionTools?: () => void;
+  // Ignored compatibility props for retained recovery callers. These never
+  // render controls or invoke the retired discovery/connection writers.
+  devices?: DeviceDescriptor[];
+  discovering?: boolean;
+  mode?: "usb" | "wifi";
+  onMode?(mode: "usb" | "wifi"): void;
+  selected?: string | undefined;
+  onSelect?(id: string): void;
+  address?: string;
+  onAddress?(value: string): void;
+  onDiscover?(): void;
+  onConnect?(): void;
 }): React.JSX.Element {
-  const connectionBusy = locked && state.phase !== "awaitingDevice";
-  const found = devices.filter((device) => device.transport === mode);
   return (
     <>
       <div className="device-identity">
@@ -90,61 +81,9 @@ export function DevicePanel({
           {t.cancelRecovery}
         </button>
       ) : !state.session ? (
-        <>
-          <div className="connection-method" role="group" aria-label={t.mode}>
-            <button
-              aria-pressed={mode === "usb"}
-              disabled={connectionBusy}
-              onClick={() => onMode("usb")}
-            >
-              USB
-            </button>
-            <button
-              aria-pressed={mode === "wifi"}
-              disabled={connectionBusy}
-              onClick={() => onMode("wifi")}
-            >
-              Wi-Fi
-            </button>
-          </div>
-          <p className="panel-hint">{mode === "usb" ? t.usbHint : t.wifiHint}</p>
-          <button className="wide" disabled={connectionBusy || discovering} onClick={onDiscover}>
-            {discovering ? t.searching : t.discover}
-          </button>
-          <label>
-            {t.selectDevice}
-            <Picker
-              locale={locale}
-              label={t.selectDevice}
-              searchable
-              value={selected}
-              disabled={connectionBusy || !found.length}
-              onChange={onSelect}
-              options={found.map((device) => ({
-                value: device.id,
-                label: `${device.name} · ${device.transport.toUpperCase()}`,
-              }))}
-            />
-          </label>
-          {mode === "wifi" && (
-            <label>
-              {t.address}
-              <input
-                disabled={connectionBusy}
-                placeholder="192.168.0.42"
-                value={address}
-                onChange={(event) => onAddress(event.target.value)}
-              />
-            </label>
-          )}
-          <button
-            className="primary wide"
-            disabled={connectionBusy || (!selected && !(mode === "wifi" && address.trim()))}
-            onClick={onConnect}
-          >
-            {state.phase === "connecting" ? t.phases.connecting : t.connect}
-          </button>
-        </>
+        <button className="wide" disabled={!onOpenConnectionTools} onClick={onOpenConnectionTools}>
+          {locale === "zh-TW" ? "開啟 EV3 插件工具" : "Open EV3 plugin tools"}
+        </button>
       ) : (
         <button className="wide" disabled={locked} onClick={onDisconnect}>
           {t.disconnect}
@@ -184,5 +123,24 @@ export function DevicePanel({
         {state.deployed && <code>{state.deployed.path}</code>}
       </div>
     </>
+  );
+}
+
+/** Capture observation is not authoritative import readiness: completed profiles
+ * deliberately reject fresh challenges. Keep the retry action neutral. */
+export function DevicePreferenceCaptureNotice({
+  locale,
+  retry,
+}: {
+  locale: Locale;
+  retry(): void;
+}): React.JSX.Element {
+  return (
+    <div>
+      {locale === "zh-TW"
+        ? "需要時可重試匯入裝置偏好；已完成的匯入不會重做。"
+        : "You can retry importing device preferences if needed. Completed imports are not repeated."}
+      <button onClick={retry}>{locale === "zh-TW" ? "檢查匯入" : "Check import"}</button>
+    </div>
   );
 }
