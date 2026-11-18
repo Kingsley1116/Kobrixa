@@ -1225,6 +1225,78 @@ test("independent recording validator reopens raw files and rejects corrupt join
       await persist({ ...files, "profile-audit.json": JSON.stringify(copy) });
       await assert.rejects(verify, error);
     });
+  // Hand-authored excerpts of the two rule installations. Only the second
+  // event has a SOCKADDR. The kernel and auditd fields are separated by GS.
+  const install = (id, pid) => [
+    `type=CONFIG_CHANGE msg=audit(${id}): op=add_rule key="${key}" list=4 res=1\x1dAUID="unset"`,
+    `type=SYSCALL msg=audit(${id}): arch=c000003e syscall=44 success=yes items=0 ppid=50 pid=${pid} uid=0 euid=0 comm="auditctl" exe="/usr/sbin/auditctl" key=(null)\x1dARCH=x86_64 SYSCALL=sendto`,
+  ];
+  const firstInstall = install("100.911:202", 51);
+  const secondInstall = [
+    ...install("100.921:209", 52),
+    "type=SOCKADDR msg=audit(100.921:209): saddr=100000000000000000000000\x1dSADDR={ saddr_fam=netlink nlnk-pid=0 }",
+  ];
+  const [config, send, socket] = secondInstall;
+  for (const [label, records, accepted] of [
+    ["both audit rule installations", [...firstInstall, ...secondInstall], true],
+    ["audit rule removal", [config.replace("add_rule", "remove_rule"), send, socket], true],
+    [
+      "keyless send from another executable",
+      [config, send.replace("/usr/sbin/auditctl", "/bin/other")],
+    ],
+    [
+      "keyless profile write",
+      [send.replace("syscall=44", "syscall=257").replace("/usr/sbin/auditctl", "/copy/kobrixa")],
+    ],
+    ["keyless auditctl without a rule change", [send, socket]],
+    ["audit rule change in another event", [config.replace(":209", ":208"), send]],
+    ["audit rule change at another time", [config.replace("100.921", "100.922"), send]],
+    ["audit rule change for another key", [config.replace(key, key + "-other"), send]],
+    ["two changes for one send", [config, config, send]],
+    ["two sends for one change", [config, send, send]],
+    ["two destinations for one send", [config, send, socket, socket]],
+    [
+      "send declaring a path item without its PATH record",
+      [config, send.replace("items=0", "items=1")],
+    ],
+    ["missing syscall key field", [config, send.replace(" key=(null)", "")]],
+    ["key only in auditd enrichment", [send + ' key="' + key + '"']],
+    ["unsuccessful audit rule change", [config.replace("res=1", "res=0"), send]],
+    ["auditctl without real root uid", [config, send.replace(" uid=0", " uid=1")]],
+    ["auditctl without effective root uid", [config, send.replace(" euid=0", " euid=1")]],
+    ["auditctl using another syscall", [config, send.replace("syscall=44", "syscall=2")]],
+    ["auditctl using another ABI", [config, send.replace("c000003e", "40000003")]],
+    [
+      "auditctl using another socket family",
+      [config, send, socket.replace("saddr=1000", "saddr=0200")],
+    ],
+    [
+      "rule change accompanied by a profile path",
+      [
+        config,
+        send,
+        socket,
+        `type=PATH msg=audit(100.921:209): item=0 name="${run.profile}/cache.db" nametype=NORMAL`,
+      ],
+    ],
+  ]) {
+    await t.test(label, async () => {
+      const raw = [...records, files["profile-audit.log"]].join("\n");
+      await persist({
+        ...files,
+        "profile-audit.log": raw,
+        "profile-audit.json": JSON.stringify({ ...audit, sha256: digest(raw) }),
+      });
+      if (accepted) assert.deepEqual(await verify(), result);
+      else await assert.rejects(verify, /audit rule attribution/);
+    });
+  }
+  await t.test("valid raw recording cannot clear a retained receipt failure", async () => {
+    const retained = JSON.parse(files["installed.json"]);
+    retained.unrun.push("prior recording failure");
+    await persist({ ...files, "installed.json": JSON.stringify(retained) });
+    await assert.rejects(verify, /prior recording failure/);
+  });
   await t.test("unknown process writes during launch", async () => {
     const raw = files["profile-audit.log"].replace(
       /(102\.600:1\) success=yes )pid=101 ppid=50/,

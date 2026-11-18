@@ -175,6 +175,59 @@ function checkAbiCoverage({ kernel, attempts, rules }, profile, key) {
   return covered;
 }
 
+// ausearch -k selects whole events. Parse the kernel fields before auditd's
+// optional enrichment separator and join records by timestamp AND serial.
+function auditEvents(raw) {
+  const events = new Map();
+  for (const line of raw.split("\n")) {
+    if (!/^type=(SYSCALL|CONFIG_CHANGE|SOCKADDR|PATH)\b/.test(line)) continue;
+    const kernelRecord = line.split("\x1d", 1)[0];
+    const header = /^type=(\w+) msg=audit\(((\d+\.\d+):\d+)\):? /.exec(kernelRecord);
+    assert.ok(header, "timestamped kernel audit event");
+    const [, type, id, stamp] = header;
+    if (!events.has(id)) events.set(id, { id, at: Number(stamp) * 1000, records: [] });
+    const fields = new Map();
+    for (const [, name, value] of kernelRecord.matchAll(/ (\w+)=("[^"]*"|[^ ]+)/g)) {
+      assert.ok(!fields.has(name), "duplicate kernel audit field " + name);
+      fields.set(name, value);
+    }
+    events.get(id).records.push({ type, fields });
+  }
+  return events.values();
+}
+
+function hasAuditKey(fields, key) {
+  return fields.get("key") === '"' + key + '"' || fields.get("key") === key;
+}
+
+function isRuleManagement(records, syscall, key) {
+  const changes = records.filter((r) => r.type === "CONFIG_CHANGE");
+  if (changes.length !== 1) return false;
+  const change = changes[0].fields;
+  const destinations = records.filter((r) => r.type === "SOCKADDR");
+  // The kernel logs a successful rule change in the sending syscall's
+  // audit context while processing its audit netlink message. That join
+  // also identifies the socket when the first rule has no SOCKADDR record.
+  return (
+    hasAuditKey(change, key) &&
+    ["add_rule", "remove_rule"].includes(change.get("op")) &&
+    change.get("list") === "4" &&
+    change.get("res") === "1" &&
+    records.filter((r) => r.type === "SYSCALL").length === 1 &&
+    !records.some((r) => r.type === "PATH") &&
+    destinations.length <= 1 &&
+    (!destinations.length || destinations[0].fields.get("saddr") === "100000000000000000000000") &&
+    syscall.get("key") === "(null)" &&
+    syscall.get("comm") === '"auditctl"' &&
+    syscall.get("exe") === '"/usr/sbin/auditctl"' &&
+    syscall.get("uid") === "0" &&
+    syscall.get("euid") === "0" &&
+    syscall.get("arch") === "c000003e" &&
+    syscall.get("syscall") === "44" &&
+    syscall.get("items") === "0"
+  );
+}
+
 export function verifyProfileWrites(
   state,
   raw,
@@ -210,25 +263,30 @@ export function verifyProfileWrites(
   const observationStart = Math.min(start, bracket.start + bracket.clock.low - 1);
   const observationEnd = Math.max(end, bracket.end + bracket.clock.high + 1);
   const primaryTimes = [];
-  for (const line of raw.split("\n").filter((l) => l.startsWith("type=SYSCALL "))) {
-    assert.ok(
-      line.includes('key="' + key + '"') || line.endsWith("key=" + key),
-      "audit rule attribution",
-    );
-    assert.match(line, /\bsuccess=yes\b/);
-    const pid = Number(/\bpid=(\d+)/.exec(line)?.[1]),
-      parent = Number(/\bppid=(\d+)/.exec(line)?.[1]);
-    assert.ok(pid > 0 && Number.isSafeInteger(parent));
-    assert.ok(
-      !secondary.observedPids.includes(pid) && !secondary.observedPids.includes(parent),
-      "secondary profile write",
-    );
-    const stamp = /msg=audit\((\d+\.\d+):\d+\)/.exec(line);
-    assert.ok(stamp, "timestamped kernel audit event");
-    const at = Number(stamp[1]) * 1000;
-    if (at >= observationStart && at <= observationEnd)
-      assert.ok(pid === primary || parent === primary, "unattributed profile write during launch");
-    if (pid === primary) primaryTimes.push(at);
+  for (const { id, at, records } of auditEvents(raw)) {
+    for (const { type, fields } of records) {
+      if (type !== "SYSCALL") continue;
+      assert.equal(fields.get("success"), "yes");
+      assert.match(fields.get("pid"), /^\d+$/);
+      assert.match(fields.get("ppid"), /^\d+$/);
+      const pid = Number(fields.get("pid")),
+        parent = Number(fields.get("ppid"));
+      assert.ok(Number.isSafeInteger(pid) && pid > 0 && Number.isSafeInteger(parent));
+      assert.ok(
+        !secondary.observedPids.includes(pid) && !secondary.observedPids.includes(parent),
+        `secondary profile write in audit(${id}) pid=${pid} ppid=${parent}`,
+      );
+      if (!hasAuditKey(fields, key)) {
+        assert.ok(isRuleManagement(records, fields, key), "audit rule attribution");
+        continue;
+      }
+      if (at >= observationStart && at <= observationEnd)
+        assert.ok(
+          pid === primary || parent === primary,
+          "unattributed profile write during launch",
+        );
+      if (pid === primary) primaryTimes.push(at);
+    }
   }
   assert.equal(
     createHash("sha256").update(raw).digest("hex"),

@@ -438,7 +438,6 @@ export async function verifyContinuity(file) {
     ["partial", "passed"].includes(r.status),
     "recording receipt had an unsuccessful execution",
   );
-  assert.deepEqual(r.unrun, r.status === "partial" ? ["primaryRecordingInterrupted"] : []);
   assert.deepEqual(r.recording.missing, []);
   assert.deepEqual(r.recording.unexpectedPauses, []);
   if (r.status === "partial") assert.equal(r.primaryRecordingInterrupted, undefined);
@@ -919,6 +918,8 @@ export async function verifyContinuity(file) {
   assert.deepEqual(resumeWindow.bracket, bracket, "measured recording bracket");
   assert.equal(resumeWindow.holdCompleteExchanges, phases.heldEntry.length, "measured hold count");
   assert.equal(resumeWindow.completeExchanges, phases.resumed.length, "measured overlap count");
+  // Replay the raw checks before enforcing the receipt's original unrun list.
+  assert.deepEqual(r.unrun, r.status === "partial" ? ["primaryRecordingInterrupted"] : []);
   const derived = {
     profileWriteAudit,
     resumeWindow,
