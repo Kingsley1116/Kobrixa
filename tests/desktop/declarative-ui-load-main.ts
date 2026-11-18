@@ -5,19 +5,22 @@ import path from "node:path";
 import { Session } from "node:inspector";
 import { cpus, totalmem, platform, arch } from "node:os";
 import { getHeapStatistics } from "node:v8";
-import { app, type BrowserWindow } from "electron";
-import type { FoundationDiagnostics } from "@kobrixa/plugin-runtime";
+import { app, contentTracing, type BrowserWindow } from "electron";
+import type { FoundationDiagnostics, FoundationDiagnosticEvent } from "@kobrixa/plugin-runtime";
 import type { DesktopMainComposition } from "../../apps/desktop/src/main/device-broker/lifecycle-coordinator.js";
 import { desktopUi } from "../../apps/desktop/src/main/plugins/controller.js";
 import { diagnosticsFor as mainDiagnostics } from "../../apps/desktop/src/main/plugins/ui-bridge.js";
 import { diagnosticsFor as stateDiagnostics } from "../../packages/plugin-runtime/src/ui-state.js";
 import { measureSlowRenderer, type SnapshotDelay } from "./declarative-ui-slow-main.js";
 import {
+  loadComposition,
   loadEvaluation,
   loadReadiness,
   loadResult,
   waitForLoad,
 } from "./declarative-ui-load-fixture.js";
+
+import { diagnoseMain } from "./declarative-ui-load-diagnose-main.js";
 
 const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const wall = () => performance.timeOrigin + performance.now();
@@ -136,19 +139,35 @@ export async function runUiLoad(input: {
   const tracePath = path.join(directory, "main-events.jsonl");
   const traceFd = openSync(tracePath, "w");
   let recording = false;
-  const off = mainDiagnostics(ui.bridge).onEvent((event) => {
+  const diagnostic =
+    process.env.KOBRIXA_UI_LOAD_DIAGNOSE === "1"
+      ? diagnoseMain(
+          ui.states,
+          window.webContents,
+          directory,
+          contentTracing,
+          process.versions.electron,
+        )
+      : undefined;
+  const observer = (event: FoundationDiagnosticEvent) => {
     if (!recording) return;
     const current = event.binding && ui.states.state(event.owner, event.binding);
     writeSync(
       traceFd,
       JSON.stringify({ ...event, revision: current?.ok ? current.value.revision : null }) + "\n",
     );
-  });
+  };
+  const off = mainDiagnostics(ui.bridge).onEvent(diagnostic ? diagnostic.wrap(observer) : observer);
   try {
+    if (diagnostic && input.slow)
+      throw new Error("Load profiling requires a maximum-load scenario");
     window.on("blur", regainFocus);
     window.on("hide", regainFocus);
     window.on("minimize", regainFocus);
-    await window.loadFile(path.join(directory, "renderer/index.html"));
+    await window.loadFile(
+      path.join(directory, "renderer/index.html"),
+      diagnostic ? { query: { diagnostic: "1" } } : undefined,
+    );
     await foreground();
     await wait("window.uiLoad", "load shell ready");
     await js("window.uiLoad.ready.then(() => true)");
@@ -239,9 +258,12 @@ export async function runUiLoad(input: {
     const warmupAt = wall();
     await pause(5000);
     await foreground();
+    if (diagnostic) await diagnostic.start();
     recording = true;
     await input.workload?.start();
+    const rendererStartRequestMain = wall();
     const start = await js<number>("window.uiLoad.start()");
+    const rendererStartReplyMain = wall();
     const native: Array<{ kind: string; at: number }> = [];
     const deadline = performance.now() + input.durationMs;
     let n = 0;
@@ -320,6 +342,13 @@ export async function runUiLoad(input: {
       path.join(directory, "renderer-events.json"),
       JSON.stringify(await js("window.uiLoad.stop()")),
     );
+    if (diagnostic) {
+      await writeFile(
+        path.join(directory, "diagnostic-renderer.json"),
+        JSON.stringify(await js("window.uiLoad.diagnosticStop()")),
+      );
+      await diagnostic.stop();
+    }
     await js("window.uiLoad.clear()");
     await foreground();
     const cycleCounters = await js(`window.uiLoad.cycles(${input.cycles})`);
@@ -335,7 +364,15 @@ export async function runUiLoad(input: {
     const afterHeap = await heap("after");
     return {
       kind: "ui-maximum-load-run",
-      composition: "composeDesktopMain/createDesktopFoundation",
+      ...loadComposition(!!diagnostic),
+      durationBoundaries: {
+        warmupStartMain: warmupAt,
+        rendererStartRequestMain,
+        activeStartRenderer: start,
+        rendererStartReplyMain,
+        activeEndMain: end,
+        rendererToMainOffset: best.offset,
+      },
       scope: "actual production pane/status/singleton with formal fake provider",
       warmupMs: start + best.offset - warmupAt,
       durationMs: end - start - best.offset,
@@ -369,9 +406,13 @@ export async function runUiLoad(input: {
     window.off("hide", regainFocus);
     window.off("minimize", regainFocus);
     if (focusRecovery) clearImmediate(focusRecovery);
-    off();
-    closeSync(traceFd);
-    inspector.disconnect();
-    if (window.webContents.debugger.isAttached()) window.webContents.debugger.detach();
+    try {
+      await diagnostic?.stop();
+    } finally {
+      off();
+      closeSync(traceFd);
+      inspector.disconnect();
+      if (window.webContents.debugger.isAttached()) window.webContents.debugger.detach();
+    }
   }
 }

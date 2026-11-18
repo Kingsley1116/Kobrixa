@@ -12,6 +12,8 @@ import type { UiLabels } from "../../apps/desktop/src/renderer/plugin-ui/host-po
 import "../../apps/desktop/src/renderer/styles/index.css";
 import { assertLoadCatalog, waitForLoad } from "./declarative-ui-load-fixture.js";
 
+import { diagnoseRenderer } from "./declarative-ui-load-diagnose-renderer.js";
+
 const check = (value: unknown, label: string): void => {
   if (!value) throw new Error(label);
 };
@@ -46,8 +48,12 @@ const labels: UiLabels = {
 settingsStore.set("rightPanel", "plugins");
 // This standalone foundation UI-load fixture has no device-migration host.
 // Use the actual UI/recovery bridges without the optional migration adapter.
+const diagnostic =
+  window.location?.search === "?diagnostic=1"
+    ? diagnoseRenderer(window.kobrixa.plugins.ui)
+    : undefined;
 const windowOwner = createPluginUiWindow({
-  bridge: window.kobrixa.plugins.ui,
+  bridge: diagnostic?.bridge ?? window.kobrixa.plugins.ui,
   recovery: window.kobrixa.plugins.recovery,
   settings: settingsStore,
   storage: {
@@ -100,12 +106,19 @@ function discover() {
     const record = owner.session.record(entry);
     if (!record || records.has(record.state)) continue;
     retain(record.state, stateDiagnostics);
+    const stopWatching = diagnostic?.watch(record.state);
+    const off = stateDiagnostics(record.state).onEvent((event) => {
+      if (recording)
+        observations.push({ ...event, revision: record.state.getSnapshot().snapshot.revision });
+    });
     recordOffs.set(
       record.state,
-      stateDiagnostics(record.state).onEvent((event) => {
-        if (recording)
-          observations.push({ ...event, revision: record.state.getSnapshot().snapshot.revision });
-      }),
+      stopWatching
+        ? () => {
+            off();
+            stopWatching();
+          }
+        : off,
     );
   }
 }
@@ -277,7 +290,9 @@ Object.assign(window, {
     bounds,
     cycles,
     sample,
+    diagnosticStop: () => diagnostic?.stop(),
     start() {
+      diagnostic?.start();
       observations.length = 0;
       inputPaints.length = 0;
       hides.length = 0;

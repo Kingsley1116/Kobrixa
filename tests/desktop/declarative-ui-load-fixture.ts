@@ -1,5 +1,13 @@
 import type { UiCatalogEntry } from "@kobrixa/plugin-protocol";
 
+// The load driver retains all three trials. The acceptance reader independently
+// requires the exact production composition, including when reading offline.
+export function loadComposition(diagnostic: boolean) {
+  return diagnostic
+    ? { diagnostic: true, composition: "diagnoseMain(composeDesktopMain/createDesktopFoundation)" }
+    : { composition: "composeDesktopMain/createDesktopFoundation" };
+}
+
 /** Timers can wake early; the orphan observation requires elapsed time, not a
  * requested timeout. Return the measured interval without rounding it up. */
 export async function waitLoadInterval(

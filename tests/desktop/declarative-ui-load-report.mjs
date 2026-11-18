@@ -10,6 +10,36 @@ async function textAt(file) {
   return (file.endsWith(".gz") ? gunzipSync(bytes) : bytes).toString("utf8");
 }
 
+export function describeDurations(report) {
+  return {
+    warmup: { measuredMs: report.warmupMs, minimumMs: 5000, passed: report.warmupMs >= 5000 },
+    active: { measuredMs: report.durationMs, minimumMs: 60000, passed: report.durationMs >= 60000 },
+    boundaries: report.durationBoundaries ?? null,
+  };
+}
+
+// Explain the existing match window. Preserve its selected result and the
+// neighboring candidates, including observations outside the budget.
+export function describeRevokes(hides, main, offset, uncertainty) {
+  return hides.map((hide) => {
+    const at = hide.at + offset;
+    const deltas = main
+      .filter((e) => e.kind === "revoke" && e.binding.panelInstance === hide.panelInstance)
+      .map((e) => e.time - at);
+    return {
+      hide,
+      at,
+      lowerMs: -uncertainty,
+      upperMs: 100,
+      sameInstance: deltas.length,
+      nearestDeltaMs: deltas.reduce(
+        (best, n) => (best === null || Math.abs(n) < Math.abs(best) ? n : best),
+        null,
+      ),
+    };
+  });
+}
+
 export async function analyzeLoad(matrixFile) {
   const matrix = JSON.parse(await readFile(matrixFile, "utf8"));
   assert.equal(matrix.kind, "ui-maximum-load");
@@ -118,7 +148,24 @@ export async function analyzeLoad(matrixFile) {
           orphanFollowup.remainingPids.length === 0),
       noFailures: report.failures.length === 0,
     };
+    const durationDetails = describeDurations(report);
+    if (!checks.fullDuration)
+      console.log(JSON.stringify({ reportPath, fullDuration: false, durationDetails }));
+    let revokeDetails;
+    if (!revokeSummary) {
+      revokeDetails = describeRevokes(
+        renderer.hides.filter((_, index) => revoke[index] === null),
+        main,
+        report.clock.offset,
+        uncertainty,
+      );
+      console.log(
+        JSON.stringify({ reportPath, hides: renderer.hides.length, missingRevokes: revokeDetails }),
+      );
+    }
     runs.push({
+      durationDetails,
+      revokeDetails,
       reportPath,
       checks,
       pass: Object.values(checks).every(Boolean),
