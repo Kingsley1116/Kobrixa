@@ -22,5 +22,13 @@ export default defineConfig({
       },
     ],
   },
-  test: { name: "desktop", environment: "node", include: ["src/**/*.test.ts"] },
+  test: {
+    name: "desktop",
+    environment: "node",
+    include: ["src/**/*.test.ts"],
+    // Many suites drive real worker threads and on-disk stores. Vitest's 5 s
+    // default expires under parallel load on hosted runners. This is the
+    // framework's hang detector only; acceptance budgets live in the tests.
+    testTimeout: 30_000,
+  },
 });
