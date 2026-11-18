@@ -5,7 +5,11 @@ import type {
   OwnerRetirement,
   DrainReport,
 } from "@kobrixa/plugin-runtime";
-import type { LifecycleCoordinator, CloseReport } from "../device-broker/lifecycle-coordinator.js";
+import {
+  CleanupBlocked,
+  type LifecycleCoordinator,
+  type CloseReport,
+} from "../device-broker/lifecycle-coordinator.js";
 export type { CloseReport } from "../device-broker/lifecycle-coordinator.js";
 export class ShutdownCoordinator {
   constructor(private readonly lifecycle: LifecycleCoordinator) {}
@@ -31,24 +35,22 @@ export class ShutdownCoordinator {
     this.lifecycle.allowCloseRetry();
   }
   async close(reason: "shutdown" | "update"): Promise<CloseReport> {
+    let blocker = false;
+    let device: CloseReport["device"] | undefined;
     try {
       await this.lifecycle.close(reason === "shutdown" ? "close" : "update");
-      return {
-        blocker: false,
-        timedOut: false,
-        legacySaved: true,
-        device: { stopConfirmed: true, journalCommitted: true, faultIds: [] },
-        owners: this.lifecycle.reports(),
-      };
-    } catch {
-      return {
-        blocker: true,
-        timedOut: false,
-        legacySaved: false,
-        device: { stopConfirmed: false, journalCommitted: false, faultIds: [] },
-        owners: this.lifecycle.reports(),
-      };
+      device = this.lifecycle.closeDisposition();
+    } catch (error) {
+      blocker = true;
+      if (error instanceof CleanupBlocked && error.device) device = structuredClone(error.device);
     }
+    return {
+      blocker,
+      timedOut: false,
+      legacySaved: !blocker,
+      device: device ?? { stopConfirmed: false, journalCommitted: false, faultIds: [] },
+      owners: this.lifecycle.reports(),
+    };
   }
   dispose(): void {
     /* Lifetime belongs to composeDesktopMain. */

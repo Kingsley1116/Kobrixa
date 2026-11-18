@@ -1,4 +1,4 @@
-import { permitsUnavailableClose } from "./journal-disposition.js";
+import { permitsUnavailableClose, type JournalDisposition } from "./journal-disposition.js";
 import type { DrainReason } from "@kobrixa/plugin-protocol";
 import { randomUUID } from "node:crypto";
 import { resumeQuiescedSession } from "./broker.js";
@@ -142,7 +142,7 @@ export type CloseReport = {
   blocker: boolean;
   timedOut: boolean;
   legacySaved: boolean;
-  device: DeviceDisposition;
+  device: JournalDisposition;
   owners: RetirementReport[];
 };
 type EndWork = {
@@ -185,9 +185,9 @@ export class LifecycleCoordinator {
   #close: Promise<void> | undefined;
   #closeStarted: number | undefined;
   #closed = false;
-  #closeDevice: DeviceDisposition | undefined;
+  #closeDevice: JournalDisposition | undefined;
   /** Actual successful close receipt, including an unavailable/no-evidence journal. */
-  closeDisposition(): DeviceDisposition | undefined {
+  closeDisposition(): JournalDisposition | undefined {
     return this.#closeDevice && structuredClone(this.#closeDevice);
   }
   constructor(private readonly input: CoordinatorInput) {
