@@ -821,11 +821,15 @@ test("Windows ancestry retains a late-sampled child of an already exited observe
 });
 
 test("secondary entry observer records original mutations and requires a terminal receipt", async () => {
-  const { execFile } = await import("node:child_process");
-  const { promisify } = await import("node:util");
+  const { spawnSync } = await import("node:child_process");
   const { collectSecondaryObservation } = await import("./builtin-process-installed.mjs");
-  for (const mutate of [false, true]) {
-    const { stderr } = await promisify(execFile)(process.execPath, [
+  for (const [exitCall, mutate] of [
+    ["electron.app.exit", false],
+    ["electron.app.exit", true],
+    ["process.reallyExit", false],
+    ["process.exit", false],
+  ]) {
+    const child = spawnSync(process.execPath, [
       "--input-type=module",
       "-e",
       `
@@ -833,7 +837,7 @@ test("secondary entry observer records original mutations and requires a termina
       import { installSecondaryObservation } from ${JSON.stringify(new URL("./builtin-process-installed.mjs", import.meta.url).href)};
       const realRequire = createRequire(import.meta.url);
       const fs = realRequire('node:fs'), write = fs.writeSync;
-      const electron = {app:{isReady:()=>false, requestSingleInstanceLock:()=>false}, utilityProcess:{fork:()=>({original:true})}};
+      const electron = {app:{exit:process.reallyExit.bind(process),isReady:()=>false, requestSingleInstanceLock:()=>false}, utilityProcess:{fork:()=>({original:true})}};
       const require = name => name === 'electron' ? electron : realRequire(name);
       installSecondaryObservation(require, process, row => write(2, '\\nKOBRIXA_SECONDARY '+JSON.stringify(row)+'\\n'));
       if (electron.app.requestSingleInstanceLock() !== false) throw Error('Lock changed');
@@ -843,16 +847,99 @@ test("secondary entry observer records original mutations and requires a termina
           if (error.code !== 'ENOENT') throw error;
         }
       }
+      process.on('exit', () => write(2, 'Node exit hook ran\\n'));
+      ${exitCall}(0);
     `,
     ]);
-    const observed = collectSecondaryObservation(stderr);
+    assert.ifError(child.error);
+    const stderr = child.stderr.toString();
+    assert.equal(child.status, 0, stderr);
+    assert.equal(stderr.includes("Node exit hook ran"), exitCall === "process.exit");
+    assert.ok(stderr.includes('"api":' + JSON.stringify(exitCall.replace("electron.", ""))));
+    const secondary = {
+      pid: child.pid,
+      exit: {
+        pid: child.pid,
+        code: child.status,
+        signal: child.signal,
+        at: Date.now(),
+        monotonic: Number(process.hrtime.bigint()) / 1e6,
+      },
+    };
+    const observed = collectSecondaryObservation(stderr, secondary);
+    assert.throws(
+      () =>
+        collectSecondaryObservation(stderr, { ...secondary, exit: { ...secondary.exit, code: 7 } }),
+      /controller exit code/,
+    );
+    assert.throws(
+      () =>
+        collectSecondaryObservation(stderr.replace("Node exit hook ran", "").trimEnd(), secondary),
+      /truncated secondary record/,
+    );
+    const { preExitMonotonic, ...hook } = observed;
+    hook.exitMonotonic = preExitMonotonic;
+    const hookLine = "KOBRIXA_SECONDARY " + JSON.stringify(hook) + "\n";
+    assert.deepEqual(collectSecondaryObservation(stderr + hookLine, secondary), observed);
+    const historicalEntry = {
+      phase: "installed",
+      pid: hook.pid,
+      beforeReady: true,
+      installedMonotonic: hook.installedMonotonic,
+    };
+    const legacy = "KOBRIXA_SECONDARY " + JSON.stringify(historicalEntry) + "\n" + hookLine;
+    const archived = {
+      pid: secondary.pid,
+      exit: { code: child.status, signal: child.signal, at: secondary.exit.at },
+    };
+    assert.deepEqual(collectSecondaryObservation(legacy, archived), hook);
+    assert.throws(() => collectSecondaryObservation(legacy, secondary));
     assert.deepEqual(observed.locks, [{ acquired: false }]);
     assert.deepEqual(observed.workers, []);
     assert.deepEqual(observed.children, []);
     assert.equal(observed.utilities.length, mutate ? 1 : 0);
     assert.equal(observed.writes.length > 0, mutate);
-    assert.throws(() => collectSecondaryObservation(stderr.split("\n").slice(0, 2).join("\n")));
-    assert.throws(() => collectSecondaryObservation(stderr + stderr));
+    assert.throws(() =>
+      collectSecondaryObservation(stderr.split("\n").slice(0, 2).join("\n"), secondary),
+    );
+    assert.throws(() => collectSecondaryObservation(stderr + stderr, secondary));
+  }
+});
+
+test("secondary debugger disconnect during resume or detach requires an identified normal OS exit", async () => {
+  const { observeSecondaryStartup } = await import("./builtin-process-installed.mjs");
+  for (const method of ["Debugger.resume", "Debugger.disable"]) {
+    for (const exit of [
+      { pid: 10, code: 0, signal: null },
+      { pid: 10, code: 1, signal: null },
+      { pid: 11, code: 0, signal: null },
+      { pid: 10, code: null, signal: "SIGKILL" },
+    ]) {
+      let evaluations = 0;
+      const client = {
+        event: async () => ({ callFrames: [{ callFrameId: "entry" }] }),
+        async send(command) {
+          if (command === method) throw Error("Debug transport closed");
+          if (command === "Debugger.evaluateOnCallFrame")
+            return {
+              result: {
+                value: evaluations++ ? true : { pid: 10, executable: "app", ready: false },
+              },
+            };
+        },
+      };
+      const result = observeSecondaryStartup(
+        client,
+        10,
+        "app",
+        new Map(),
+        async () => [{ pid: 10, created: "original" }],
+        undefined,
+        async () => exit,
+      );
+      if (exit.pid === 10 && exit.code === 0) assert.equal((await result).pid, 10);
+      else await assert.rejects(result);
+    }
   }
 });
 

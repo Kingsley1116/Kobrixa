@@ -1,10 +1,11 @@
+import { collectSecondaryObservation } from "./builtin-installed-secondary.mjs";
 import {
   assertInstalledPrimary,
   assertSecondaryObservation,
   motorId,
   requiredCompilers,
 } from "./builtin-installed-primary.mjs";
-export { assertInstalledPrimary, assertSecondaryObservation };
+export { assertInstalledPrimary, assertSecondaryObservation, collectSecondaryObservation };
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -269,20 +270,14 @@ export async function observeInstalledCase(observe, platform, failures) {
 }
 
 // Installed before the original entry executes. Only observe original calls;
-// synchronous exit output survives app.quit() and inspector detachment.
+// Each synchronous record survives an abrupt native exit.
 export function installSecondaryObservation(require, process, emit) {
   const electron = require("electron");
   if (electron.app.isReady()) throw Error("Secondary observer installed after readiness");
-  const evidence = {
-    pid: process.pid,
-    beforeReady: true,
-    installedMonotonic: Number(process.hrtime.bigint()) / 1e6,
-    workers: [],
-    utilities: [],
-    children: [],
-    writes: [],
-    locks: [],
-  };
+  const now = () => Number(process.hrtime.bigint()) / 1e6;
+  let sequence = 0;
+  const record = (phase, detail) =>
+    emit({ phase, pid: process.pid, sequence: sequence++, ...detail });
   const cleanups = [];
   const replace = (target, key, replacement) => {
     const descriptor = Object.getOwnPropertyDescriptor(target, key);
@@ -298,7 +293,7 @@ export function installSecondaryObservation(require, process, emit) {
     for (const cleanup of cleanups.reverse()) cleanup();
     require("node:module").syncBuiltinESMExports();
   };
-  const wrap = (target, key, rows, describe = (args) => args.map((value) => String(value))) => {
+  const wrap = (target, key, phase, describe = (args) => args.map((value) => String(value))) => {
     const original = target[key];
     if (typeof original !== "function") throw Error(`Missing observation API: ${key}`);
     replace(
@@ -307,19 +302,19 @@ export function installSecondaryObservation(require, process, emit) {
       new Proxy(original, {
         apply(fn, receiver, args) {
           const detail = describe(args);
-          if (detail !== null) rows.push({ api: key, arguments: detail });
+          if (detail !== null) record(phase, { api: key, arguments: detail });
           return Reflect.apply(fn, receiver, args);
         },
         construct(fn, args, newTarget) {
-          rows.push({ api: key, arguments: describe(args) });
+          record(phase, { api: key, arguments: describe(args) });
           return Reflect.construct(fn, args, newTarget === target[key] ? fn : newTarget);
         },
       }),
     );
   };
   try {
-    wrap(require("node:worker_threads"), "Worker", evidence.workers);
-    wrap(electron.utilityProcess, "fork", evidence.utilities);
+    wrap(require("node:worker_threads"), "Worker", "workers");
+    wrap(electron.utilityProcess, "fork", "utilities");
     const children = require("node:child_process");
     for (const key of [
       "spawn",
@@ -330,7 +325,7 @@ export function installSecondaryObservation(require, process, emit) {
       "execFileSync",
       "fork",
     ])
-      wrap(children, key, evidence.children);
+      wrap(children, key, "children");
     const fs = require("node:fs");
     const mutators = [
       "writeFile",
@@ -351,12 +346,12 @@ export function installSecondaryObservation(require, process, emit) {
       "mkdtemp",
     ];
     for (const key of mutators) {
-      wrap(fs, key, evidence.writes);
-      wrap(fs, key + "Sync", evidence.writes);
-      wrap(fs.promises, key, evidence.writes);
+      wrap(fs, key, "writes");
+      wrap(fs, key + "Sync", "writes");
+      wrap(fs.promises, key, "writes");
     }
     for (const key of ["open", "openSync"])
-      wrap(fs, key, evidence.writes, (args) => {
+      wrap(fs, key, "writes", (args) => {
         const flags = args[1] ?? "r";
         const writable =
           typeof flags === "number"
@@ -371,7 +366,7 @@ export function installSecondaryObservation(require, process, emit) {
             : flags !== "r" && flags !== "rs";
         return writable ? [String(args[0]), flags] : null;
       });
-    wrap(fs.promises, "open", evidence.writes, (args) => {
+    wrap(fs.promises, "open", "writes", (args) => {
       const flags = args[1] ?? "r";
       const writable =
         typeof flags === "number"
@@ -386,49 +381,51 @@ export function installSecondaryObservation(require, process, emit) {
           : flags !== "r" && flags !== "rs";
       return writable ? [String(args[0]), flags] : null;
     });
-    wrap(fs, "createWriteStream", evidence.writes);
+    wrap(fs, "createWriteStream", "writes");
     for (const key of ["write", "writeSync", "writev", "writevSync", "ftruncate", "ftruncateSync"])
-      wrap(fs, key, evidence.writes, (args) =>
-        [1, 2].includes(args[0]) ? null : [String(args[0])],
-      );
+      wrap(fs, key, "writes", (args) => ([1, 2].includes(args[0]) ? null : [String(args[0])]));
     const originalLock = electron.app.requestSingleInstanceLock;
     replace(electron.app, "requestSingleInstanceLock", function (...args) {
+      const request = sequence;
+      record("lock-request", {});
       const acquired = Reflect.apply(originalLock, this, args);
-      evidence.locks.push({ acquired });
+      record("lock-result", { request, acquired });
       return acquired;
     });
+    // process.exit delegates to process.reallyExit. Record the outer call once.
+    let inProcessExit = false;
+    for (const [target, key, api] of [
+      [electron.app, "exit", "app.exit"],
+      [process, "exit", "process.exit"],
+      [process, "reallyExit", "process.reallyExit"],
+    ]) {
+      const original = target[key];
+      if (typeof original !== "function") throw Error("Missing exit API: " + api);
+      replace(target, key, function (...args) {
+        if (inProcessExit && api === "process.reallyExit")
+          return Reflect.apply(original, this, args);
+        record("pre-exit", {
+          api,
+          code: args[0] ?? (target === process ? (process.exitCode ?? 0) : 0),
+          monotonic: now(),
+        });
+        if (api !== "process.exit") return Reflect.apply(original, this, args);
+        inProcessExit = true;
+        try {
+          return Reflect.apply(original, this, args);
+        } finally {
+          inProcessExit = false;
+        }
+      });
+    }
     require("node:module").syncBuiltinESMExports();
-    emit({
-      phase: "installed",
-      pid: process.pid,
-      beforeReady: true,
-      installedMonotonic: evidence.installedMonotonic,
-    });
-    process.once("exit", (code) => {
-      const exitMonotonic = Number(process.hrtime.bigint()) / 1e6;
-      restore();
-      emit({ phase: "exit", code, exitMonotonic, ...evidence });
-    });
+    record("installed", { beforeReady: true, installedMonotonic: now() });
   } catch (error) {
     restore();
     throw error;
   }
 
   return true;
-}
-
-export function collectSecondaryObservation(output) {
-  const rows = output
-    .split("\n")
-    .filter((line) => line.startsWith("KOBRIXA_SECONDARY "))
-    .map((line) => JSON.parse(line.slice("KOBRIXA_SECONDARY ".length)));
-  assert.equal(rows.length, 2, "Secondary observation must include installation and exit");
-  assert.equal(rows[0].phase, "installed");
-  assert.equal(rows[1].phase, "exit");
-  assert.equal(rows[0].pid, rows[1].pid);
-  assert.equal(rows[0].installedMonotonic, rows[1].installedMonotonic);
-  assert.equal(rows[0].beforeReady, true);
-  return rows[1];
 }
 
 export async function observeSecondaryStartup(
@@ -438,8 +435,10 @@ export async function observeSecondaryStartup(
   known,
   table = processTable,
   bounds,
+  confirmExit,
 ) {
-  let startup;
+  let startup,
+    resumePending = false;
   try {
     await observeBeforeStartup(client, async (evaluate) => {
       startup = await evaluate(
@@ -451,8 +450,15 @@ export async function observeSecondaryStartup(
       assert.equal(
         await evaluate(`(() => {
       const write = require('node:fs').writeSync;
-      return (${installSecondaryObservation.toString()})(require, process,
-        row => write(2, '\\nKOBRIXA_SECONDARY ' + JSON.stringify(row) + '\\n'));
+      return (${installSecondaryObservation.toString()})(require, process, row => {
+        const bytes = Buffer.from('\\nKOBRIXA_SECONDARY ' + JSON.stringify(row) + '\\n');
+        let offset = 0;
+        while (offset < bytes.length) {
+          const count = write(2, bytes, offset, bytes.length - offset);
+          if (!count) throw Error("Incomplete secondary observation write");
+          offset += count;
+        }
+      });
     })()`),
         true,
       );
@@ -460,10 +466,22 @@ export async function observeSecondaryStartup(
       descendants(await table(), pid, known);
       assert.ok(known.get(pid), "Secondary creation identity must be observed before resume");
       if (bounds) bounds.resumeRequested = monotonic();
+      resumePending = true;
     });
   } catch (error) {
-    await client.send("Debugger.disable");
-    throw error;
+    if (
+      resumePending &&
+      confirmExit &&
+      ["Debug transport closed", "Debug transport error"].includes(error.message)
+    ) {
+      const observed = await confirmExit();
+      assert.equal(observed.pid, pid);
+      assert.equal(observed.code, 0);
+      assert.equal(observed.signal, null);
+    } else {
+      await client.send("Debugger.disable").catch(() => {});
+      throw error;
+    }
   }
   return startup;
 }
@@ -1255,7 +1273,8 @@ async function observeSingleInstance(client, config, run, binding) {
     ended = false,
     failure;
   const known = new Map();
-  let output = "";
+  let stdout = "",
+    stderr = "";
   const secondary = observation.secondary;
   await main.js(`(() => {
     const {app,BrowserWindow}=__installedProbe.electron, window=BrowserWindow.getAllWindows()[0];
@@ -1300,11 +1319,11 @@ async function observeSingleInstance(client, config, run, binding) {
     });
     secondary.pid = child.pid;
     secondary.startedAt = Date.now();
-    child.stdout.on("data", (chunk) => {
-      output += chunk;
+    child.stdout.setEncoding("utf8").on("data", (chunk) => {
+      stdout += chunk;
     });
-    child.stderr.on("data", (chunk) => {
-      output += chunk;
+    child.stderr.setEncoding("utf8").on("data", (chunk) => {
+      stderr += chunk;
     });
     let launchError;
     exit = new Promise((resolve, reject) => {
@@ -1318,20 +1337,33 @@ async function observeSingleInstance(client, config, run, binding) {
           code,
           signal,
           at: Date.now(),
-          ...(config.recording ? { monotonic: monotonic() } : {}),
+          pid: child.pid,
+          monotonic: monotonic(),
         };
+        if (config.recording)
+          run.debuggerEvents.push({ event: "secondary-exited", ...secondary.exit });
         resolve();
       });
     });
     exit.catch(() => {});
     closed = new Promise((resolve) => child.once("close", resolve));
+    const waitForExit = () =>
+      until(
+        async () => {
+          if (launchError) throw launchError;
+          descendants(await processTable(), child.pid, known);
+          return secondary.exit;
+        },
+        "secondary normal exit",
+        15000,
+      );
     {
       // A short-lived secondary can exit between CIM samples. Hold its actual
       // entry until the OS creation identity has been recorded, then resume it.
       const url = await until(() => {
         if (launchError) throw launchError;
         assert.equal(ended, false, "Secondary exited before startup observation");
-        return output.match(/Debugger listening on (ws:\/\/[^\s]+)/)?.[1];
+        return stderr.match(/Debugger listening on (ws:\/\/[^\s]+)/)?.[1];
       }, "secondary inspector readiness");
       secondaryInspector = await connect(url);
       if (config.recording)
@@ -1352,19 +1384,12 @@ async function observeSingleInstance(client, config, run, binding) {
         known,
         processTable,
         config.recording && secondary,
+        waitForExit,
       );
       offResumed?.();
       secondaryInspector.close();
     }
-    await until(
-      async () => {
-        if (launchError) throw launchError;
-        descendants(await processTable(), child.pid, known);
-        return ended;
-      },
-      "secondary normal exit",
-      15000,
-    );
+    await waitForExit();
     await exit;
     assert.equal(secondary.exit.code, 0);
     assert.equal(secondary.exit.signal, null);
@@ -1449,10 +1474,11 @@ async function observeSingleInstance(client, config, run, binding) {
     secondary.observedPids = [...known.keys()];
     secondary.observedIdentities = [...known].map(([pid, created]) => ({ pid, created }));
     secondary.log = path.join(config.directory, "single-instance-secondary.log");
+    const output = stdout ? stdout + "\n" + stderr : stderr;
     await writeFile(secondary.log, output);
     secondary.logSha256 = sha256(output);
     try {
-      secondary.observation = collectSecondaryObservation(output);
+      secondary.observation = collectSecondaryObservation(output, secondary);
       assertSecondaryObservation(secondary);
     } catch (error) {
       errors.push(error);

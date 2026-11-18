@@ -20,6 +20,17 @@ export function assertSecondaryObservation(secondary) {
   assert.equal(observed.pid, secondary.pid);
   assert.equal(observed.beforeReady, true);
   assert.equal(observed.code, 0);
+  if (secondary.exit.pid !== undefined || observed.preExitMonotonic !== undefined) {
+    assert.equal(secondary.exit.pid, secondary.pid);
+    assert.equal(observed.exitMonotonic, secondary.exit.monotonic);
+    assert.ok(
+      Number.isFinite(observed.exitMonotonic) &&
+        Number.isFinite(observed.preExitMonotonic) &&
+        observed.installedMonotonic <= observed.preExitMonotonic &&
+        observed.preExitMonotonic <= observed.exitMonotonic,
+      "secondary exit clock",
+    );
+  }
   assert.deepEqual(observed.locks, [{ acquired: false }]);
   for (const key of ["workers", "utilities", "children", "writes"])
     assert.deepEqual(

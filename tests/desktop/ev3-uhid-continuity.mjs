@@ -1,3 +1,4 @@
+import { collectSecondaryObservation } from "./builtin-installed-secondary.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -203,21 +204,7 @@ function exchangeInterval(clock, wire, frame, delivery) {
 
 function secondaryExit(log, secondary) {
   assert.equal(digest(log), secondary.logSha256);
-  const events = log
-    .toString()
-    .split(/\r?\n/)
-    .filter((s) => s.startsWith("KOBRIXA_SECONDARY "))
-    .map((s) => JSON.parse(s.substring(s.indexOf(" ") + 1)));
-  assert.deepEqual(
-    events.map((e) => e.phase),
-    ["installed", "exit"],
-    "secondary log order",
-  );
-  const [entry, exit] = events;
-  assert.equal(entry.pid, secondary.pid);
-  assert.equal(exit.pid, entry.pid);
-  assert.equal(entry.beforeReady, true);
-  assert.equal(entry.installedMonotonic, exit.installedMonotonic);
+  const exit = collectSecondaryObservation(log, secondary);
   assert.deepEqual(exit, secondary.observation);
   return exit.exitMonotonic;
 }
@@ -263,6 +250,8 @@ export async function measureResumeWindow(dir, run, recording) {
       secondary,
     );
     assert.ok(Number.isFinite(resume) && Number.isFinite(exit), "unmeasured resume or exit");
+    const aliveUntil = secondary.observation.preExitMonotonic ?? exit;
+    assert.ok(resume < aliveUntil, "secondary exit clock");
     result.durationMs = exit - resume;
     const trace = await readFile(path.join(dir, "peer-trace.log"));
     assert.equal(digest(trace), recording.traceSha256, "selected peer trace digest");
@@ -281,7 +270,7 @@ export async function measureResumeWindow(dir, run, recording) {
       "peer trace does not bracket the observed window",
     );
     assert.ok(exit >= resume, "raw exit preceded observed resume");
-    const candidates = reads.filter((w) => w.at > resume && w.end < exit);
+    const candidates = reads.filter((w) => w.at > resume && w.end < aliveUntil);
     if (!candidates.length) result.completeExchanges = 0;
     const bytes = await readFile(path.join(dir, run.name + "-port.json"));
     assert.equal(digest(bytes), run.recordingArtifactHashes["-port.json"], "primary port digest");
@@ -305,7 +294,7 @@ export async function measureResumeWindow(dir, run, recording) {
       const { frame, at } = byValue.get(wire.value);
       const interval = exchangeInterval(clock, wire, frame, at);
       exchanges.push({ sequence: frame.sequence, start: interval.start, end: interval.end });
-      if (interval.start > resume && interval.end < exit) counted.add(frame.sequence);
+      if (interval.start > resume && interval.end < aliveUntil) counted.add(frame.sequence);
     }
     result.bracket = recordingBracket(exchanges, secondary, exit);
     result.holdCompleteExchanges = exchanges.filter(
@@ -340,7 +329,7 @@ function joinFrames({
     "secondary monotonic intervals",
   );
   assert.ok(
-    resumeConfirmed < bounds.exitHook && bounds.exitHook <= exit.monotonic,
+    resumeConfirmed < bounds.aliveUntil && bounds.aliveUntil <= exit.monotonic,
     "secondary exit clock",
   );
   assert.equal(saved.frames.length, frames.length, "complete history through release");
@@ -399,13 +388,13 @@ function joinFrames({
     });
     if (end < beforeSpawn) phases.before.push(f.sequence);
     else if (end < resumeConfirmed) phases.heldEntry.push(f.sequence);
-    else if (start > resumeConfirmed && end < bounds.exitHook) phases.resumed.push(f.sequence);
+    else if (start > resumeConfirmed && end < bounds.aliveUntil) phases.resumed.push(f.sequence);
     else if (start > exit.monotonic && end < stopAt) phases.after.push(f.sequence);
     // Never credit transition windows or the delay after exit as during.
   }
   assert.ok(phases.before.length >= 3, "fresh pre-launch frames");
   assert.ok(phases.after.length >= 1, "fresh post-exit frame");
-  const bracket = recordingBracket(exchanges, bounds, bounds.exitHook);
+  const bracket = recordingBracket(exchanges, bounds, bounds.observation.exitMonotonic);
   assert.ok(bracket.before && bracket.after, "complete bracketing endpoints");
   // All entries in exchanges have passed the consecutive broker, wire and
   // history joins above, including entries that cross a lifetime boundary.
@@ -470,6 +459,9 @@ export async function verifyContinuity(file) {
         ? [
             { event: "before-spawn", at: secondary.beforeSpawn },
             { event: "secondary-resumed", pid: secondary.pid, at: secondary.resumeConfirmed },
+            ...(secondary.exit.pid === undefined
+              ? []
+              : [{ event: "secondary-exited", ...secondary.exit }]),
           ]
         : [],
       "recorded debugger events",
@@ -895,7 +887,10 @@ export async function verifyContinuity(file) {
     source,
     reservation,
     reads,
-    bounds: { ...secondary, exitHook: secondary.observation.exitMonotonic },
+    bounds: {
+      ...secondary,
+      aliveUntil: secondary.observation.preExitMonotonic ?? secondary.observation.exitMonotonic,
+    },
     clock: wire,
     stopAt: recording.stopAt,
   });

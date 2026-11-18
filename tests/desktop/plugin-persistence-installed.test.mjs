@@ -1,3 +1,4 @@
+import { collectSecondaryObservation } from "./builtin-installed-secondary.mjs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
@@ -180,12 +181,9 @@ test(
     assertSingleInstanceReceipt(report);
     const { createHash } = await import("node:crypto");
     const secondary = report.runs[0].singleInstance.secondary;
-    assert.equal(
-      createHash("sha256")
-        .update(await readFile(secondary.log))
-        .digest("hex"),
-      secondary.logSha256,
-    );
+    const log = await readFile(secondary.log);
+    assert.equal(createHash("sha256").update(log).digest("hex"), secondary.logSha256);
+    assert.deepEqual(collectSecondaryObservation(log, secondary), secondary.observation);
   },
 );
 
@@ -306,7 +304,9 @@ test("independent recording validator reopens raw files and rejects corrupt join
     resumeConfirmed: 2650,
   });
   secondary.observation.installedMonotonic = 2550;
-  secondary.observation.exitMonotonic = 3200;
+  secondary.exit.pid = secondary.pid;
+  secondary.observation.exitMonotonic = 3250;
+  secondary.observation.preExitMonotonic = 3200;
   secondary.exit.monotonic = 3250;
   secondary.startedAt = 102525;
   secondary.exit.at = 103250;
@@ -666,6 +666,7 @@ test("independent recording validator reopens raw files and rejects corrupt join
         const s = row.singleInstance.secondary;
         events.push({ event: "before-spawn", at: s.beforeSpawn });
         events.push({ event: "secondary-resumed", pid: s.pid, at: s.resumeConfirmed });
+        events.push({ event: "secondary-exited", ...s.exit });
         const log = [
           {
             phase: "installed",
@@ -673,10 +674,20 @@ test("independent recording validator reopens raw files and rejects corrupt join
             beforeReady: true,
             installedMonotonic: s.observation.installedMonotonic,
           },
-          s.observation,
+          { phase: "lock-request" },
+          { phase: "lock-result", request: 1, acquired: false },
+          {
+            phase: "pre-exit",
+            api: "app.exit",
+            code: 0,
+            monotonic: s.observation.preExitMonotonic,
+          },
         ]
-          .map((e) => "KOBRIXA_SECONDARY " + JSON.stringify(e))
-          .join("\n");
+          .map(
+            (e, sequence) =>
+              "KOBRIXA_SECONDARY " + JSON.stringify({ pid: s.pid, sequence, ...e }) + "\n",
+          )
+          .join("");
         files["single-instance-secondary.log"] = log;
         s.logSha256 = digest(log);
       }
@@ -747,7 +758,7 @@ test("independent recording validator reopens raw files and rejects corrupt join
   assert.equal(result.primaryRecordingInterrupted, false);
   assert.deepEqual(result.unrun, []);
   assert.deepEqual(result.profileWriteAudit.coveredAbis, ["b64", "b32"]);
-  assert.equal(result.resumeWindow.durationMs, 550);
+  assert.equal(result.resumeWindow.durationMs, 600);
   assert.equal(result.resumeWindow.completeExchanges, 1);
   assert.equal(result.resumeWindow.readBefore.value, 404);
   assert.equal(result.resumeWindow.readAfter.value, 406);
@@ -756,7 +767,7 @@ test("independent recording validator reopens raw files and rejects corrupt join
     const primary = JSON.parse(files["installed.json"]).runs[0];
     await rm(path.join(dir, primary.name + "-port.json"));
     const window = await measureResumeWindow(dir, primary, r.recording);
-    assert.equal(window.durationMs, 550);
+    assert.equal(window.durationMs, 600);
     assert.deepEqual(window.readBefore, result.resumeWindow.readBefore);
     assert.deepEqual(window.readAfter, result.resumeWindow.readAfter);
     assert.equal(window.wireGapMs, 999);
@@ -767,7 +778,10 @@ test("independent recording validator reopens raw files and rejects corrupt join
   });
   await t.test("short synthetic window needs no inside-lifetime exchange", async () => {
     const copy = structuredClone(r);
-    copy.runs[0].singleInstance.secondary.observation.exitMonotonic = 2750;
+    const s = copy.runs[0].singleInstance.secondary;
+    s.observation.preExitMonotonic = 2749;
+    s.observation.exitMonotonic = s.exit.monotonic = 2750;
+    s.exit.at = 102750;
     await persist(rawArtifacts(copy));
     const verified = await verify();
     assert.equal(verified.primaryRecordingInterrupted, false);
@@ -776,6 +790,16 @@ test("independent recording validator reopens raw files and rejects corrupt join
     assert.equal(verified.resumeWindow.bracket.before.sequence, 13);
     assert.equal(verified.resumeWindow.bracket.after.sequence, 14);
     assert.ok(Math.abs(verified.resumeWindow.bracket.gapMs - 496) < 1);
+  });
+  await t.test("controller reap delay cannot supply an inside or post-exit exchange", async () => {
+    const copy = structuredClone(r);
+    copy.runs[0].singleInstance.secondary.observation.preExitMonotonic = 2750;
+    await persist(rawArtifacts(copy));
+    const verified = await verify();
+    assert.equal(verified.resumeWindow.completeExchanges, 0);
+    assert.deepEqual(verified.phases.resumed, []);
+    assert.equal(verified.resumeWindow.bracket.after.sequence, 15);
+    assert.equal(verified.resumeWindow.durationMs, 600);
   });
   await t.test(
     "unrelated slow port observation does not discredit a bracketed sample",
@@ -794,7 +818,8 @@ test("independent recording validator reopens raw files and rejects corrupt join
       const s = obs.secondary;
       s.resumeRequested = 5190;
       s.resumeConfirmed = 5200;
-      s.observation.exitMonotonic = 5300;
+      s.observation.preExitMonotonic = 5300;
+      s.observation.exitMonotonic = 5350;
       s.exit.monotonic = 5350;
       s.exit.at = 105350;
       s.cleanupObservedAt = 110350;
@@ -811,7 +836,7 @@ test("independent recording validator reopens raw files and rejects corrupt join
       assert.deepEqual(verified.phases.heldEntry, [14, 15, 16, 17, 18]);
       const w = verified.resumeWindow;
       assert.equal(w.holdDurationMs, 2680);
-      assert.equal(w.durationMs, 100);
+      assert.equal(w.durationMs, 150);
       assert.equal(w.holdCompleteExchanges, 5);
       assert.equal(w.completeExchanges, 0);
       assert.equal(w.bracket.before.sequence, 18);
@@ -928,7 +953,8 @@ test("independent recording validator reopens raw files and rejects corrupt join
       "aggregate bracket exceeds freshness despite fresh adjacent samples",
       (r) => {
         const s = r.runs[0].singleInstance.secondary;
-        s.observation.exitMonotonic = 5200;
+        s.observation.preExitMonotonic = 5200;
+        s.observation.exitMonotonic = 5250;
         s.exit.monotonic = 5250;
         s.exit.at = 105250;
         s.cleanupObservedAt = 110250;
@@ -997,6 +1023,13 @@ test("independent recording validator reopens raw files and rejects corrupt join
         r.runs[0].singleInstance.secondary.startedAt = 75;
       },
       /spawn wall time/,
+    ],
+    [
+      "incompatible controller exit clock",
+      (r) => {
+        r.runs[0].singleInstance.secondary.exit.at = 103200;
+      },
+      /exit wall time/,
     ],
     ["primary paused", (r) => r.recording.unexpectedPauses.push({ reason: "other" }), /other/],
     [
@@ -1158,6 +1191,68 @@ test("independent recording validator reopens raw files and rejects corrupt join
     await persist({ ...files, [name]: output, "installed.json": JSON.stringify(summary) });
     await assert.rejects(verify, /worker output reconciles/);
   });
+  for (const [name, alter, error] of [
+    ["missing pre-exit", (rows) => rows.pop(), /missing secondary pre-exit/],
+    [
+      "missing lock result",
+      (rows) => {
+        rows.splice(2, 1);
+        rows[2].sequence--;
+      },
+      /missing secondary lock result/,
+    ],
+    ["sequence gap", (rows) => rows.splice(2, 1), /secondary sequence gap/],
+    [
+      "late write",
+      (rows) =>
+        rows.push({
+          pid: 102,
+          sequence: 4,
+          phase: "writes",
+          api: "writeFile",
+          arguments: ["profile"],
+        }),
+      /after pre-exit/,
+    ],
+    [
+      "lock acquired",
+      (rows) => {
+        rows[2].acquired = true;
+      },
+      /Expected values to be strictly deep-equal/,
+    ],
+    [
+      "write before exit",
+      (rows) => {
+        rows[3].sequence++;
+        rows.splice(3, 0, {
+          pid: 102,
+          sequence: 3,
+          phase: "writes",
+          api: "writeFile",
+          arguments: ["profile"],
+        });
+      },
+      /Expected values to be strictly deep-equal/,
+    ],
+  ]) {
+    await t.test("secondary stream rejects " + name, async () => {
+      const summary = JSON.parse(files["installed.json"]);
+      const rows = files["single-instance-secondary.log"]
+        .trimEnd()
+        .split("\n")
+        .map((line) => JSON.parse(line.slice("KOBRIXA_SECONDARY ".length)));
+      alter(rows);
+      const log = rows.map((row) => "KOBRIXA_SECONDARY " + JSON.stringify(row) + "\n").join("");
+      summary.runs[0].singleInstance.secondary.logSha256 = digest(log);
+      await persist({
+        ...files,
+        "single-instance-secondary.log": log,
+        "installed.json": JSON.stringify(summary),
+      });
+      await assert.rejects(verify, error);
+    });
+  }
   await t.test("secondary raw exit arrives before installation", async () => {
     const summary = JSON.parse(files["installed.json"]);
     const reordered = files["single-instance-secondary.log"].split("\n").reverse().join("\n");
