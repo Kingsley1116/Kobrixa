@@ -6,6 +6,7 @@ import {
   type DeviceBrokerOptions,
 } from "./broker-port.js";
 import { operationHarness, pluginPrincipal, ID } from "./fake-provider.js";
+import { OperationStore } from "./operations.js";
 import type { BuiltinDeviceProvider } from "./provider.js";
 it("F19 canonical factory has no hidden Electron side effects", () => {
   expectTypeOf<ReturnType<typeof createDeviceBroker>>().toEqualTypeOf<
@@ -1160,23 +1161,10 @@ it("contract2 recording excludes fault recovery on a healthy session", async () 
   expect(h.provider.calls).toHaveLength(before);
 });
 
-it("contract2 a terminal motion receipt is not proof its original provider promise settled", async () => {
-  const h = await realSetup(),
-    principal = pluginPrincipal();
-  const entered = retirementGate(),
-    release = retirementGate(),
-    completed = retirementGate();
-  h.provider.motion = async () => {
-    entered.resolve();
-    await release.promise;
-    completed.resolve();
-    return { movement: "interrupted", angle: null, displacement: null };
-  };
-  let originalCleanup: Parameters<typeof h.provider.stopAndReadback>[2] | undefined;
-  vi.spyOn(h.provider, "stopAndReadback").mockImplementationOnce(async (_key, _target, ctx) => {
-    originalCleanup = ctx;
-    throw new Error("original motion stop failed");
-  });
+async function startTestMotion(
+  h: Awaited<ReturnType<typeof realSetup>>,
+  principal: ReturnType<typeof pluginPrincipal>,
+) {
   const scope = h.broker.intent.bindMotionScope({
     owner: principal.owner,
     contextRef: ID,
@@ -1209,6 +1197,314 @@ it("contract2 a terminal motion receipt is not proof its original provider promi
       )
     ).ok,
   ).toBe(true);
+  return prepared.value.operation.operationId;
+}
+
+async function startAtHeldPreflight(
+  h: Awaited<ReturnType<typeof realSetup>>,
+  principal: ReturnType<typeof pluginPrincipal>,
+) {
+  const entered = retirementGate(),
+    release = retirementGate();
+  vi.spyOn(h.provider, "executeFiniteMotion").mockImplementationOnce(async (_key, _motion, ctx) => {
+    await ctx.exchange("preflight", async () => {
+      entered.resolve();
+      await release.promise;
+      ctx.assertContinuation("preflight");
+    });
+    throw new Error("preflight must be cancelled");
+  });
+  const id = await startTestMotion(h, principal);
+  await entered.promise;
+  return { id, release };
+}
+
+it("retires a timed-out motion only after its own transport, readback and journal settle", async () => {
+  vi.useFakeTimers();
+  try {
+    const h = await realSetup(),
+      principal = pluginPrincipal();
+    const { id, release } = await startAtHeldPreflight(h, principal);
+    const stop = await h.broker.request(
+      principal,
+      "devices/motion/stop",
+      { operationId: id, stopMode: "brake" },
+      signal(),
+    );
+    expect(stop.ok).toBe(true);
+    await vi.advanceTimersByTimeAsync(2100);
+    expect(h.provider.calls).not.toContain("stop");
+    const disposing = retirementGate(),
+      finishDispose = retirementGate();
+    const dispose = h.provider.dispose.bind(h.provider);
+    vi.spyOn(h.provider, "dispose").mockImplementation(async (ctx) => {
+      disposing.resolve();
+      await finishDispose.promise;
+      await dispose(ctx);
+    });
+    const retiring = h.unregister.retirement!.retire();
+    expect(h.provider.calls).not.toContain("disconnect");
+    release.resolve();
+    await disposing.promise;
+    const entryIds = h.broker.recovery.snapshot().faults.map((fault) => fault.id);
+    const clear = () =>
+      h.broker.recovery.clearResolved({
+        entryIds,
+        action: h.actions.mint(h.scope, { kind: "device-clear", entryIds }),
+      });
+    try {
+      expect((await clear()).ok).toBe(false);
+    } finally {
+      finishDispose.resolve();
+      await retiring;
+    }
+    expect(h.broker.recovery.snapshot().faults).toContainEqual(
+      expect.objectContaining({
+        operationId: id,
+        sessionId: h.sessionId,
+        state: "resolved",
+        stopConfirmation: "confirmed",
+      }),
+    );
+    expect(h.provider.calls.filter((call) => call === "disconnect")).toHaveLength(1);
+    expect(h.provider.calls.filter((call) => call === "dispose")).toHaveLength(1);
+    expect((await clear()).ok).toBe(true);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("retains the original unconfirmed fault when held preflight outlasts the stop deadline", async () => {
+  vi.useFakeTimers();
+  try {
+    const h = await realSetup();
+    const principal = pluginPrincipal();
+    const { id, release } = await startAtHeldPreflight(h, principal);
+    const stop = await h.broker.request(
+      principal,
+      "devices/motion/stop",
+      { operationId: id, stopMode: "brake" },
+      signal(),
+    );
+    expect(stop.ok).toBe(true);
+    h.setNow(2000);
+    await vi.advanceTimersByTimeAsync(2000);
+    h.setNow(15000);
+    await vi.advanceTimersByTimeAsync(13000);
+    const retained = h.broker.recovery.snapshot();
+    expect(retained.faults).toHaveLength(1);
+    const fault = retained.faults[0]!;
+    expect(fault).toMatchObject({
+      operationId: id,
+      sessionId: h.sessionId,
+      state: "unconfirmed",
+      stopConfirmation: "unconfirmed",
+      cause: "readback-failed",
+      resolution: null,
+    });
+    expect(retained.blockers).toEqual([fault.id]);
+    release.resolve();
+    await expect(h.unregister.retirement!.retire()).rejects.toMatchObject({
+      disposition: { stopConfirmed: false, journalCommitted: true, faultIds: [fault.id] },
+    });
+    expect(h.provider.calls).not.toContain("stop");
+    expect(h.provider.calls).not.toContain("disconnect");
+    expect(h.provider.calls).not.toContain("dispose");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+// Hold the final commit from stop +14s to +17s. Both the readback and the
+// provider continuation run through the real broker with its injected clock.
+const motionFaults = [
+  "missing readback",
+  "pending execution",
+  "missing settlement receipt",
+  "late settlement",
+  "at deadline",
+  "failed publication",
+  "different journal revision",
+  "different operation",
+  "different session",
+  "different generation",
+  "different key",
+  "different physical identity",
+  "passive owner",
+  "duplicate outputs",
+  "later start",
+] as const;
+type MotionFault = (typeof motionFaults)[number];
+
+async function originalMotion(fault?: MotionFault, quarantine = true) {
+  const h = await realSetup();
+  const entered = retirementGate(),
+    finishExecution = retirementGate();
+  const readback = retirementGate(),
+    publishing = retirementGate(),
+    publish = retirementGate();
+  const commit = h.dependencies.journal.commit.bind(h.dependencies.journal);
+  h.dependencies.journal.commit = async (document) => {
+    if (document.revision === 2) {
+      publishing.resolve();
+      await publish.promise;
+    }
+    await commit(document);
+    // Publication may be visible even though its acknowledgement failed.
+    if (document.revision === 2 && fault === "failed publication") throw new Error("commit failed");
+  };
+  h.provider.motion = async () => {
+    entered.resolve();
+    await finishExecution.promise;
+    return { movement: "interrupted", angle: null, displacement: null };
+  };
+  const provider: BuiltinDeviceProvider = h.provider;
+  const stop = provider.stopAndReadback.bind(provider);
+  vi.spyOn(provider, "stopAndReadback").mockImplementationOnce(async (...args) => {
+    await readback.promise;
+    const result = await stop(...args);
+    if (fault === "missing readback") return { ...result, value: null };
+    if (fault === "duplicate outputs")
+      for (const output of result.value!.outputs)
+        output.actuatorId = result.value!.outputs[0]!.actuatorId;
+    return result;
+  });
+  const start = vi.spyOn(OperationStore.prototype, "start");
+  let store: OperationStore;
+  let id: string;
+  try {
+    id = await startTestMotion(h, pluginPrincipal());
+    const receiver = start.mock.contexts[0];
+    if (!(receiver instanceof OperationStore)) throw new Error("Missing broker operation store");
+    store = receiver;
+  } finally {
+    start.mockRestore();
+  }
+  await entered.promise;
+  const row = store.rows.rows.get(id)!.value;
+  const lane = row.input.lane;
+  if (quarantine) {
+    lane.quarantined = true;
+    expect(lane.quarantineOwners).toEqual([id]);
+  }
+  // Supply an internally consistent but foreign original receipt. Both the
+  // in-memory fault and its final journal publication carry the changed field.
+  if (fault === "different operation") row.fault!.operationId = ID;
+  if (fault === "different session") row.fault!.sessionId = ID;
+  if (fault === "different generation") row.fault!.providerGeneration++;
+  const stopping = await h.broker.request(
+    pluginPrincipal(),
+    "devices/motion/stop",
+    { operationId: id, stopMode: "brake" },
+    signal(),
+  );
+  expect(stopping.ok).toBe(true);
+  h.setNow(14000);
+  readback.resolve();
+  await publishing.promise;
+  if (fault !== "pending execution") {
+    h.setNow(fault === "late settlement" ? 16000 : fault === "at deadline" ? 15000 : 14999);
+    finishExecution.resolve();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  h.setNow(17000);
+  publish.resolve();
+  await store.settled(id);
+  // Isolate the operation latch even when the provider tracker has drained.
+  if (fault === "missing settlement receipt") row.settlement = "pending";
+  if (fault === "different journal revision") {
+    const document = await h.dependencies.journal.load();
+    const entry = document.entries[0]!;
+    await commit(
+      journalDocument(document.revision + 1, [{ ...entry, revision: entry.revision + 1 }]),
+    );
+  }
+  if (fault === "different key" || fault === "different physical identity") {
+    const describe = h.provider.describe.bind(h.provider);
+    vi.spyOn(h.provider, "describe").mockImplementation((key) => {
+      const live = describe(key);
+      return fault === "different key"
+        ? { ...live, key: {} as typeof key }
+        : { ...live, physical: { ...live.physical, digest: "b".repeat(64) } };
+    });
+  }
+  if (fault === "passive owner") {
+    // Add a second transport owner while retaining the proven motion owner.
+    lane.foreground = "passive-read";
+    lane.quarantined = true;
+    lane.foreground = id;
+    expect(lane.quarantineOwners).toEqual([id, "passive-read"]);
+  }
+  if (fault === "later start") {
+    // Inject an admission-fence failure, let a second real start complete,
+    // and present the original owner for retirement again.
+    lane.releaseForClose(id);
+    lane.quarantined = false;
+    const later = await startTestMotion(h, pluginPrincipal());
+    expect((await store.settled(later)).stopConfirmed).toBe(true);
+    lane.foreground = id;
+    lane.quarantined = true;
+    lane.release(id);
+  }
+  return { h, finishExecution };
+}
+
+it.each(motionFaults)("original motion blocks retirement with %s", async (fault) => {
+  const { h, finishExecution } = await originalMotion(fault);
+  const disconnect = vi.spyOn(h.provider, "disconnect"),
+    dispose = vi.spyOn(h.provider, "dispose");
+  try {
+    await expectRetirementBlocked(h);
+    expect(disconnect).not.toHaveBeenCalled();
+    expect(dispose).not.toHaveBeenCalled();
+  } finally {
+    finishExecution.resolve();
+  }
+});
+
+it("late execution settlement quarantines a previously healthy lane", async () => {
+  const { h } = await originalMotion("late settlement", false);
+  const disconnect = vi.spyOn(h.provider, "disconnect"),
+    dispose = vi.spyOn(h.provider, "dispose");
+  await expectRetirementBlocked(h);
+  expect(disconnect).not.toHaveBeenCalled();
+  expect(dispose).not.toHaveBeenCalled();
+});
+
+it("original motion settled before expiry permits dispose retry after its key is invalidated", async () => {
+  const { h } = await originalMotion();
+  h.provider.invalidateKeyOnDisconnect = true;
+  const disconnect = vi.spyOn(h.provider, "disconnect");
+  const dispose = vi
+    .spyOn(h.provider, "dispose")
+    .mockRejectedValueOnce(new Error("dispose failed"));
+  await expect(h.unregister.retirement!.retire()).rejects.toThrow("dispose failed");
+  expect(() => h.provider.describe(h.provider.session)).toThrow("Closed provider key");
+  expect(() => h.broker.registerProvider(h.provider)).toThrow("retirement is pending");
+  await h.unregister.retirement!.retire();
+  expect(disconnect).toHaveBeenCalledTimes(1);
+  expect(dispose).toHaveBeenCalledTimes(2);
+  expect(() => h.broker.registerProvider(h.provider)).not.toThrow();
+});
+
+it("contract2 a terminal motion receipt is not proof its original provider promise settled", async () => {
+  const h = await realSetup(),
+    principal = pluginPrincipal();
+  const entered = retirementGate(),
+    release = retirementGate(),
+    completed = retirementGate();
+  h.provider.motion = async () => {
+    entered.resolve();
+    await release.promise;
+    completed.resolve();
+    return { movement: "interrupted", angle: null, displacement: null };
+  };
+  let originalCleanup: Parameters<typeof h.provider.stopAndReadback>[2] | undefined;
+  vi.spyOn(h.provider, "stopAndReadback").mockImplementationOnce(async (_key, _target, ctx) => {
+    originalCleanup = ctx;
+    throw new Error("original motion stop failed");
+  });
+  await startTestMotion(h, principal);
   await entered.promise;
   const receipt = h.broker.sessions.quiesce(h.sessionId, { reason: "suspended" });
   const original = await receipt.settled;

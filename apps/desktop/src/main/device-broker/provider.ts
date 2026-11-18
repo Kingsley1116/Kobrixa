@@ -265,6 +265,10 @@ export class ExchangeLane {
     this.#released = true;
     if (!this.#inflight && !this.quarantined) this.foreground = null;
   }
+  /** Final, proven shutdown may disconnect. Ordinary reservations stay fenced. */
+  releaseForClose(id: string): void {
+    if (id === this.foreground && this.#released && !this.#inflight) this.foreground = null;
+  }
   async drain(deadline: number): Promise<void> {
     // Wait for ownership of the transport lane, not for the previous caller's
     // successful result. In particular, an aborted work exchange must not reject

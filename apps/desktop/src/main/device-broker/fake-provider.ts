@@ -84,6 +84,8 @@ export class FakeProvider implements BuiltinDeviceProvider {
     );
   }
   #candidates: ProviderCandidateKey[];
+  invalidateKeyOnDisconnect = false;
+  #closedKey = false;
   #connected = 0;
   #modes = new Map<string, string>();
   private call(name: string): void {
@@ -208,10 +210,12 @@ export class FakeProvider implements BuiltinDeviceProvider {
       this.#sourceRevision = 1;
       this.#modeId = "0";
       this.#modes.clear();
+      this.#closedKey = false;
       return success(this.describe(this.session));
     });
   }
   describe(_key: ProviderSessionKey): ProviderConnection {
+    if (this.#closedKey) throw new Error("Closed provider key");
     return {
       key: this.session,
       descriptor: this.descriptor,
@@ -222,6 +226,7 @@ export class FakeProvider implements BuiltinDeviceProvider {
   async disconnect(_session: ProviderSessionKey, ctx: ProviderCleanupContext) {
     return ctx.exchange("disconnect", async () => {
       this.call("disconnect");
+      this.#closedKey = this.invalidateKeyOnDisconnect;
       return success(null);
     });
   }

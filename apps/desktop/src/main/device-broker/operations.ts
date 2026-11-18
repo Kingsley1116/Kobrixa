@@ -1,4 +1,6 @@
+import { isIdle } from "./recovery-port.js";
 import { journalDocument } from "./journal.js";
+import { isDeepStrictEqual } from "node:util";
 import { randomUUID } from "node:crypto";
 import type { MotionSpec, MotionSnapshot, ResourceOwner } from "@kobrixa/plugin-protocol";
 import type {
@@ -37,7 +39,8 @@ type Row = {
   consumed: boolean;
   control: ReturnType<typeof createContexts> | null;
   fault: SafetyFaultEntry | null;
-  pending: boolean;
+  execution?: Promise<void>;
+  settlement: "not-started" | "pending" | "in-time" | "late";
   cleanup: Promise<void> | null;
   timer: ReturnType<typeof setInterval> | null;
   done: Promise<DeviceDisposition>;
@@ -53,6 +56,7 @@ export type OperationDependencies = {
   check: (input: MotionAdmission) => void;
 };
 export class OperationStore {
+  #lastStart = new WeakMap<ExchangeLane, string>();
   #listeners = new Set<(snapshot: MotionSnapshot) => void>();
   subscribe(listener: (snapshot: MotionSnapshot) => void): () => void {
     this.#listeners.add(listener);
@@ -111,7 +115,7 @@ export class OperationStore {
       consumed: false,
       control: null,
       fault: null,
-      pending: false,
+      settlement: "not-started",
       cleanup: null,
       timer: null,
       done,
@@ -154,6 +158,7 @@ export class OperationStore {
       this.#finish(r);
       throw error;
     }
+    this.#lastStart.set(r.input.lane, id);
     r.snapshot.startAccepted = true;
     r.snapshot.stage = "waiting-read";
     r.snapshot.preparedRemainingMs = 0;
@@ -287,22 +292,18 @@ export class OperationStore {
       await this.#write(r);
       r.journalCommitted = true;
       ctx.work.assertContinuation("preflight");
-      r.pending = true;
+      r.settlement = "pending";
       r.snapshot.dispatch = "unknown";
       const execution = r.input.provider.executeFiniteMotion(r.input.key, r.input.motion, ctx.work);
-      void execution.then(
-        () => {
-          r.pending = false;
-        },
-        () => {
-          r.pending = false;
-        },
-      );
+      const settled = () => {
+        r.settlement = this.deps.now() < ctx.cleanup.deadlineMonotonicMs ? "in-time" : "late";
+      };
+      r.execution = execution.then(settled, settled);
       const outcome = await this.#bounded(
         execution,
         Math.max(1, ctx.work.deadlineMonotonicMs - this.deps.now()),
       );
-      if (!r.terminal) {
+      if (!r.terminal && r.snapshot.stage !== "terminal") {
         r.snapshot.dispatch = outcome.dispatch;
         r.result = outcome.value;
         if (outcome.value) {
@@ -311,9 +312,15 @@ export class OperationStore {
           r.snapshot.displacement = outcome.value.displacement;
         }
       }
-      if (outcome.error) ctx.stop(outcome.error.reason, true);
+      if (outcome.error && r.snapshot.stage !== "terminal") ctx.stop(outcome.error.reason, true);
     } catch {
-      if (r.pending) {
+      // An independent stop may already be publishing its readback. Its final
+      // commit owns disposition even if the cancelled execute rejects now.
+      if (r.cleanup) {
+        await r.cleanup;
+        return;
+      }
+      if (r.settlement === "pending") {
         r.input.lane.quarantined = true;
         r.snapshot.dispatch = "unknown";
       }
@@ -348,12 +355,7 @@ export class OperationStore {
         Math.max(1, ctx.cleanup.deadlineMonotonicMs - this.deps.now()),
       );
       const observation = outcome.value;
-      confirmed =
-        outcome.stopConfirmation === "confirmed" &&
-        !!observation &&
-        observation.programStopped &&
-        observation.outputs.length === 4 &&
-        observation.outputs.every((o) => o.known && o.busy === false && o.speed === 0);
+      confirmed = !outcome.error && outcome.stopConfirmation === "confirmed" && isIdle(observation);
     } catch {
       confirmed = false;
     }
@@ -396,8 +398,18 @@ export class OperationStore {
         /* Retain journalCommitted=false and quarantine below. */
       }
     }
-    if (!confirmed || !r.journalCommitted || r.pending) r.input.lane.quarantined = true;
-    if (!r.pending) r.input.provider.releaseOperation(r.snapshot.operationId);
+    // A confirmed readback can beat the cancelled execute continuation. Join
+    // that original call within the existing stop deadline before releasing it.
+    if (confirmed && r.settlement === "pending" && r.execution) {
+      const remaining = ctx.cleanup.deadlineMonotonicMs - this.deps.now();
+      if (remaining > 0) await this.#bounded(r.execution, remaining).catch(() => {});
+    }
+    if (!confirmed || !r.journalCommitted || r.settlement === "pending" || r.settlement === "late")
+      r.input.lane.quarantined = true;
+    if (r.settlement !== "pending") {
+      r.input.provider.releaseOperation(r.snapshot.operationId);
+      delete r.execution;
+    }
     r.input.lane.release(r.snapshot.operationId);
     this.#finish(r);
   }
@@ -416,6 +428,30 @@ export class OperationStore {
           : [],
       journalCommitted: r.journalCommitted,
     });
+  }
+  confirmsRetiredMotion(
+    id: string,
+    lane: ExchangeLane,
+    key: ProviderSessionKey,
+    fault: SafetyFaultEntry,
+  ): boolean {
+    const row = this.rows.rows.get(id)?.value;
+    return (
+      !!row &&
+      row.terminal &&
+      this.#lastStart.get(lane) === id &&
+      row.settlement === "in-time" &&
+      !row.execution &&
+      row.journalCommitted &&
+      row.input.lane === lane &&
+      row.input.key === key &&
+      row.control?.work.cancellation.aborted === true &&
+      fault.operationClass === "finite-motion" &&
+      fault.state === "resolved" &&
+      fault.stopConfirmation === "confirmed" &&
+      fault.resolution?.kind === "confirmed-on-original-session" &&
+      isDeepStrictEqual(row.fault, fault)
+    );
   }
   settled(id: string): Promise<DeviceDisposition> {
     const row = this.rows.rows.get(id);

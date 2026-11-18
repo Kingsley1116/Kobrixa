@@ -223,6 +223,7 @@ type Session = {
     { sequence: number; valid(): boolean; covers(owner: string): boolean }
   >;
   originalDisposition?: Promise<DeviceDisposition[]>;
+  confirmsMotion(owner: string): boolean;
   providerPending: Set<Promise<unknown>>;
   snapshot: DeviceSessionSnapshot;
   sources: SourceCatalog;
@@ -302,9 +303,13 @@ async function settleRecovery(
       !current.lane.quarantineOwners.every(
         (owner) =>
           owner !== null &&
-          [...current.recoveryProofs.values()].some(
-            (proof) => proof.covers(owner) && proof.valid(),
-          ),
+          ((close &&
+            current.providerPending.size === 0 &&
+            !current.lane.occupied &&
+            current.confirmsMotion(owner)) ||
+            [...current.recoveryProofs.values()].some(
+              (proof) => proof.covers(owner) && proof.valid(),
+            )),
       )
     )
       disposition.stopConfirmed = false;
@@ -317,8 +322,16 @@ async function settleRecovery(
       close &&
       disposition.stopConfirmed &&
       (disposition.journalCommitted || permitsUnavailableClose(disposition))
-    )
+    ) {
       current.recoveryClosed = true;
+      const foreground = current.lane.foreground;
+      if (
+        foreground &&
+        current.lane.quarantineOwners.includes(foreground) &&
+        current.confirmsMotion(foreground)
+      )
+        current.lane.releaseForClose(foreground);
+    }
     observe?.(disposition, recovery);
     return disposition;
   }
@@ -1205,8 +1218,26 @@ export function createBroker(
   const retainedRecoveryEvidence = new Map<number, Set<string>>();
   const recoveryDriver: RecoveryDriver = {
     wallNow: () => wallNow(),
-    canClearResolved: (ids) =>
-      ![...retainedRecoveryEvidence.values()].some((entries) => ids.some((id) => entries.has(id))),
+    canClearResolved(ids) {
+      if (
+        [...retainedRecoveryEvidence.values()].some((entries) => ids.some((id) => entries.has(id)))
+      )
+        return false;
+      const current = session;
+      if (!current?.lane.quarantined) return true;
+      // A journal subscriber can clear a resolved entry immediately upon
+      // publication, before OperationStore has finished its settlement.
+      return !input.journal
+        .snapshot()
+        .faults.some(
+          (fault) =>
+            ids.includes(fault.id) &&
+            fault.operationClass === "finite-motion" &&
+            fault.sessionId === current.snapshot.sessionId &&
+            fault.providerGeneration === current.generation &&
+            current.lane.quarantineOwners.includes(fault.operationId),
+        );
+    },
     describe(sessionId) {
       const current = session;
       return current && current.snapshot.sessionId === sessionId
@@ -1847,6 +1878,27 @@ export function createBroker(
         const providerPending = new Set<Promise<unknown>>();
         const current: Session = {
           hadReservations: false,
+          confirmsMotion(owner) {
+            const journal = input.journal.snapshot();
+            const fault = journal.faults.find((entry) => entry.operationId === owner);
+            if (
+              session !== current ||
+              current.connectionClosed ||
+              journal.journalHealth !== "ready" ||
+              !fault ||
+              fault.providerGeneration !== generation ||
+              fault.sessionId !== id ||
+              !operations.confirmsRetiredMotion(owner, lane, connection.key, fault)
+            )
+              return false;
+            try {
+              input.profile.assertHeld();
+              const live = current.provider.describe(connection.key);
+              return live.key === connection.key && samePhysical(live.physical, fault.physical);
+            } catch {
+              return false;
+            }
+          },
           providerPending,
           recoveryHistory: [],
           recoveryProofs: new Map(),
@@ -2895,7 +2947,7 @@ export function createBroker(
       let pending: Promise<void> | undefined;
       let current: Session | null = null;
       let hadReservations = false;
-      let disconnected = false;
+      let disconnectedDevice: Promise<DeviceDisposition> | undefined;
       const admission = (allowed: boolean) => {
         if (removed || retiring) return;
         const wasHeld = providerHeld(provider.id);
@@ -2941,8 +2993,11 @@ export function createBroker(
               15000,
             );
           // Reuse the participant's original session receipt and recovery evidence.
-          const device = (async () =>
-            resources.retireProvider(provider.id, registration.generation))();
+          const device = disconnectedDevice
+            ? disconnectedDevice.then((receipt) =>
+                combineDispositions([receipt, journalDisposition(input.journal)]),
+              )
+            : (async () => resources.retireProvider(provider.id, registration.generation))();
           const storage = current
             ? settleProviderRetirementLifecycle(
                 resources,
@@ -2982,10 +3037,12 @@ export function createBroker(
               faultIds: [],
             });
           const ctx = contexts(samplerPrincipal, current, "connection", 15000);
-          if (current && session === current && !disconnected && !current.connectionClosed) {
+          if (current && session === current && !disconnectedDevice && !current.connectionClosed) {
             const outcome = await current.provider.disconnect(current.connection.key, ctx.cleanup);
             if (outcome.error) throw new Error("Provider disconnect failed.", { cause: outcome });
-            disconnected = true;
+            // This registration is fenced and the provider may now forget its key.
+            // Reuse the accepted device receipt if disposal needs an explicit retry.
+            disconnectedDevice = device;
           }
           await provider.dispose(ctx.cleanup);
           if (current && session === current) {

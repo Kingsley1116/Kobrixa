@@ -106,6 +106,98 @@ it("F10 pending journal failure prevents risk; final failure retains a blocker",
       expect(store.query(h.admission.principal, op.operationId).stopConfirmation).toBe("confirmed");
   }
 });
+it("late execution rejection cannot finish a motion while the final readback commit is pending", async () => {
+  const h = operationHarness(),
+    store = new OperationStore(h.dependencies);
+  let rejectExecution!: (e: Error) => void, releaseWrite!: () => void;
+  let entered!: () => void, publishing!: () => void;
+  const running = new Promise<void>((yes) => {
+    entered = yes;
+  });
+  const finalWrite = new Promise<void>((yes) => {
+    publishing = yes;
+  });
+  const commit = h.dependencies.journal.commit;
+  h.dependencies.journal.commit = async (document) => {
+    if (document.revision === 2) {
+      publishing();
+      await new Promise<void>((yes) => {
+        releaseWrite = yes;
+      });
+    }
+    await commit(document);
+  };
+  h.provider.motion = async () => {
+    entered();
+    return new Promise((_yes, no) => {
+      rejectExecution = no;
+    });
+  };
+  const op = store.prepare(h.admission);
+  store.start(h.admission.principal, op.operationId);
+  await running;
+  store.stop(h.admission.principal, op.operationId, "brake");
+  await finalWrite;
+  rejectExecution(new Error("cancelled provider"));
+  await new Promise<void>((yes) => setImmediate(yes));
+  try {
+    expect(store.query(h.admission.principal, op.operationId)).toMatchObject({
+      phase: "stopped",
+      stopConfirmation: "confirmed",
+      dispatch: "unknown",
+    });
+    expect(h.admission.lane.foreground).toBe(op.operationId);
+  } finally {
+    releaseWrite();
+  }
+  expect(await store.settled(op.operationId)).toEqual({
+    stopConfirmed: true,
+    journalCommitted: true,
+    faultIds: [],
+  });
+});
+it("confirmed readback joins the original cancelled execution before releasing the provider", async () => {
+  const h = operationHarness(),
+    store = new OperationStore(h.dependencies);
+  function deferred() {
+    let resolve!: () => void;
+    const promise = new Promise<void>((yes) => {
+      resolve = yes;
+    });
+    return { promise, resolve };
+  }
+  const started = deferred(),
+    resume = deferred();
+  const committed = deferred();
+  const commit = h.dependencies.journal.commit;
+  h.dependencies.journal.commit = async (document) => {
+    await commit(document);
+    if (document.entries.some((entry) => entry.state === "resolved")) committed.resolve();
+  };
+  h.provider.motion = async () => {
+    started.resolve();
+    await resume.promise;
+    return { movement: "interrupted", angle: null, displacement: null };
+  };
+  const release = vi.spyOn(h.provider, "releaseOperation");
+  const op = store.prepare(h.admission);
+  store.start(h.admission.principal, op.operationId);
+  await started.promise;
+  store.stop(h.admission.principal, op.operationId, "brake");
+  await committed.promise;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  try {
+    expect(store.query(h.admission.principal, op.operationId).stopConfirmation).toBe("confirmed");
+    expect(h.admission.lane.foreground).toBe(op.operationId);
+    expect(h.admission.lane.quarantined).toBe(false);
+    expect(release).not.toHaveBeenCalled();
+  } finally {
+    resume.resolve();
+    await store.settled(op.operationId);
+  }
+  expect(release).toHaveBeenCalledExactlyOnceWith(op.operationId);
+  expect(h.admission.lane.foreground).toBeNull();
+});
 it.each(["completed", "interrupted"] as const)(
   "late stop during final journal write preserves the %s terminal observation",
   async (movement) => {
