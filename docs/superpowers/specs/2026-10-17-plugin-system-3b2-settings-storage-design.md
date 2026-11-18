@@ -784,6 +784,8 @@ JSON Schema 與兩種 SDK 必須跑相同 wire 正反例；另外啟動真實 JS
 
 ### 12.2 最大合法資料量與性能門檻
 
+**2026-10-17 T0，superseded-by-ruling（2026-11-18，僅限獨立 main／worker RSS）。** 原文保留如下。現行記憶體驗收依 §12.2.1，其餘門檻仍有效。
+
 T0 固定量測環境欄位：OS／architecture、CPU／RAM、filesystem、app artifact／commit、Node/Electron、fixture bytes／records、warm/cold、30 次樣本的 p50／p95／max、main/worker RSS。不能用實測慢就單方面放寬 umbrella budgets。
 
 | 工作負載                                                      | 通過門檻                                                                                                                       |
@@ -795,6 +797,23 @@ T0 固定量測環境欄位：OS／architecture、CPU／RAM、filesystem、app a
 | import 50 最大 records＋settings                              | streaming peak 記憶體符合上述限制；每 item 前後可恢復、每批回應進度；不設以刪資料換取完成時間的捷徑。                          |
 
 執行受影響的 protocol／runtime／SDK／desktop tests、schema drift、Python tests、typecheck／lint／format，並接既有 plugins／settings／Sensor Lab smoke 的相容檢查。可用命令包含 `pnpm --filter @kobrixa/plugin-protocol schema`、`pnpm test:python-sdk`、`pnpm check:desktop`、`pnpm test:desktop`；新增 fault／public storage smoke 的精確入口由 plan 配給唯一測試 writer。只跑必要範圍後整合共用一次結果，不將未跑完整 smoke 寫成全通過。
+
+#### 12.2.1 B2 process RSS v1
+
+**2026-11-18 owner ruling R2.** 保留 persistence worker threads。原始獨立 main／worker RSS 門檻列為 superseded-by-ruling，兩項各自的 baseline／peak 增量皆未獲證實。以下為 W16 的前瞻量測契約 `b2-process-rss/v1`，與 API 版本及歷史 receipt 格式分開。數值待 owner 核准，原始實驗結果不作換算。
+
+| 待核准欄位（高於上限即失敗）            | 建議值與事前推導                                                                                                                                                                                                                                |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Peak delta bytes — OWNER-TO-APPROVE     | **40 MiB**。設計估算容許 host encoded queue 8 MiB、一份傳輸中副本 8 MiB、host metadata cache 8 MiB、四個執行中 job 各一個 256 KiB decoded chunk（共 1 MiB），合計 25 MiB。另留 15 MiB 給序列化暫存、V8／allocator page 與工作期間的 main 活動。 |
+| Retained delta bytes — OWNER-TO-APPROVE | **16 MiB**。清除暫存及工作後，以最多 8 MiB host metadata cache 加 8 MiB allocator／runtime 保留頁面估算。                                                                                                                                       |
+
+這是容量規劃假設。每 source 的 queue／cache 已包含在 host 配額內，416 MiB logical disk bytes 以串流處理。owner 須在首筆驗收樣本前登錄簽核人、日期、兩個整數 byte 限額（1 MiB = 1,048,576 bytes）、核准依據與契約版本。後續改動採新版本、重新事前簽核及新樣本；保留所有先前試次與 verdict。
+
+1. **Host and repetitions.** 每個交付 OS／arch 使用具名、閒置的 local SSD host。逐次記錄 OS build、arch、CPU 型號／核心、實體 RAM、SSD 型號、filesystem／可用空間、電源模式、背景負載、app commit／artifact SHA-256、Node／Electron／V8 版本與 flags、完整命令、fixture 實際 bytes／筆數、profile、PID、trial ID 與時間。每平台執行三次獨立 pressure trial；§12.2 的 50 筆最大 import＋settings 同樣以三次獨立 import trial 量測。每次新啟 app 與獨立 profile，import 原始資料預置於磁碟。分開記錄 cold 啟動與 warm 樣本。
+2. **Baseline.** 以同一 Electron main PID（含 persistence threads）為單位。啟動正式 worker、空 catalog／空目的地與觀察器，完成 readiness；維持無工作 5 秒 warmup，再取 5 秒 idle RSS 中位數 B。偶數樣本取中間兩值平均。baseline 完成後才可送第一個 seed／import／staging request。禁止預載最大資料或用先前試次作 baseline。
+3. **Pressure and cleanup.** 以 public list、256 KiB 分段讀回、staging receipts 證明 50 × 8 MiB destinations 加上兩筆完整 8 MiB staging（合計 436,207,616 logical bytes）。保留 replacement／commit／flush／restage、128 keys／64 KiB、16 fields、至少 600 秒 device 壓力及 1,000 次 UI cycles。用 worker 的 enter／settlement 時間證明四個 job 同時執行；host pending ≤32、encoded bytes ≤8 MiB、每 source ≤1 MiB、每 source ≤16 ordinary pending RPC。保留 30 筆原始各項 latency 與 cold／warm 分組的 p50／p95／max。Import trial 從第一個 import request 起量測，逐筆核對 destination 與 settings，再做相同 cleanup。釋放 stages、pins、handles、訂閱及 trial 資源，核實已結算的 flush／abort、queue 歸零與 cleanup counters。回到與 baseline 相同的 idle composition（同 PID、同一批已啟動的 worker），維持 10 秒；取最後 5 秒 RSS 的最大值 R。然後才結束 worker／app 並核對退出。
+4. **Sampling and GC.** 以獨立的輕量取樣 thread 每 20 ms 呼叫 `process.memoryUsage.rss()`，以 monotonic timestamp、PID、sequence 和 phase 串流寫出 bytes；從 warmup 至 retained window 連續取樣。P 為 baseline 結束至 retained window 結束之間的最高**觀測** RSS，包含 seeding、併發、flush、cleanup。任兩樣本或 phase 端點距最近樣本逾 100 ms、漏 sequence、truncated traces 或 PID 更替使該試次無法驗收。每個 main／persistence isolate 在 baseline、工作中每秒及 cleanup 後記錄 `process.memoryUsage()` 的 heapUsed、heapTotal、external、arrayBuffers，附 threadId 與 timestamp，逐 isolate 保留 raw／peak／retained。arrayBuffers 已包含於 external，heapUsed 已包含於 heapTotal；四欄各自呈現，不累加或從 RSS 扣除。RSS 試次採 runtime 自然 GC，全程禁用顯式 GC、heap snapshot 與記憶體壓縮指令；必測的 post-GC UI heap／cycles 另起獨立試次按原方法執行。
+5. **Verdict.** 每次報 B、P、R 與有號差值 P−B、R−B。由獨立 verifier 根據原始 sequence、phase、工作量與簽核記錄重算。每個平台每次兩個差值皆 ≤ 對應的已核准限額才符合這個記憶體項目；任一超限即 FAIL，不得以平均或替換試次抵銷。缺簽核、方法不符、缺樣／缺診斷、工作量或 cleanup 無法證實均保持 OPEN／incomplete，未執行記為 NOT RUN。此契約僅取代原始獨立 RSS 兩欄，原 import 正確性、UI retained heap、latency、commit、Stop、queue、cache、free-space 及其他既有驗收義務依各自適用條款辦理。
 
 ### 12.3 MANUAL 驗收
 
