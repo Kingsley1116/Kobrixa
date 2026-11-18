@@ -81,9 +81,30 @@ async function observeDiscoveryCommand(client) {
   }
 }
 
+function discoveryReplyKind(result) {
+  if (
+    result?.ok === true &&
+    result.value?.kind === "command" &&
+    result.value.invocationId &&
+    Array.isArray(result.value.value?.fieldErrors) &&
+    result.value.value.fieldErrors.length === 0
+  )
+    return "command";
+  const error = result?.error;
+  if (
+    result?.ok === false &&
+    error?.code === "PLUGIN_E_STALE_RESOURCE" &&
+    error.detail?.kind === "resource" &&
+    error.detail.reason === "stale" &&
+    error.detail.resource === "ui-binding"
+  )
+    return "stale-after-dispatch";
+  return null;
+}
+
 // Installed in the renderer before the Device tab is selected. Only product
 // bridge events can identify the panel and candidate dataset publication.
-export function observeCandidatePublication(ui, product) {
+export function observeCandidatePublication(ui, product, classifyReply = discoveryReplyKind) {
   let binding,
     armed = false,
     publication,
@@ -147,13 +168,7 @@ export function observeCandidatePublication(ui, product) {
       if (result === undefined) invoked = true;
       else if (invoked) {
         reply = result;
-        if (
-          !result.ok ||
-          result.value.kind !== "command" ||
-          !result.value.invocationId ||
-          result.value.value.fieldErrors.length
-        )
-          error ??= "Discover command failed: " + JSON.stringify(result);
+        if (!classifyReply(result)) error ??= "Discover command failed: " + JSON.stringify(result);
       }
     },
     rendered() {
@@ -229,7 +244,7 @@ export function devicePanelStep(step, product) {
       const { candidate, selected, publication, reply, error } = window.__uhidDiscovery.status();
       if (error) throw new Error(error);
       if (
-        !reply?.ok ||
+        !reply ||
         !candidate ||
         (selected && (candidate.key !== selected.key || candidate.version !== selected.version))
       )
@@ -260,19 +275,28 @@ export function devicePanelStep(step, product) {
 // JSON-RPC ids are scoped to the peer and the utility process. During a
 // deadline the outer command may still be pending; retain the inner reply.
 export function matchDiscoveryWire(rows, status, product) {
-  const binding = status.selected?.publication.binding ?? status.binding;
-  const invocationId = status.reply?.value?.invocationId;
+  const { binding } = status;
+  if (status.error) throw new Error(status.error);
+  const rendererReply = discoveryReplyKind(status.reply);
+  if (status.reply && !rendererReply)
+    throw new Error("Discover command failed: " + JSON.stringify(status.reply));
+  assert.ok(binding, "original Device panel binding");
+  if (status.selected)
+    assert.deepEqual(status.selected.publication.binding, binding, "candidate publication binding");
   const requests = rows.filter(
     (row) =>
       row.direction === "host-plugin" &&
       row.message.method === "command/invoke" &&
       row.message.params.command === "kobrixa.device-ev3.discover" &&
-      row.message.params.context.binding.panelInstance === binding?.panelInstance &&
-      (!invocationId || row.message.params.invocationId === invocationId),
+      row.message.params.context.binding.panelInstance === binding.panelInstance,
   );
   assert.equal(requests.length, 1, "original Discover invocation");
   const command = requests[0];
   assert.deepEqual(command.message.params.context.binding, binding);
+  const invocationId = command.message.params.invocationId;
+  assert.ok(invocationId, "wire Discover invocationId");
+  if (rendererReply === "command")
+    assert.equal(status.reply.value.invocationId, invocationId, "Discover invocationId mismatch");
   const port = rows
     .slice(rows.indexOf(command) + 1)
     .filter(
@@ -285,6 +309,19 @@ export function matchDiscoveryWire(rows, status, product) {
       !row.message.method &&
       row.message.id === command.message.id,
   );
+  if (end >= 0) {
+    const message = port[end].message;
+    assert.equal(
+      message.result?.ok,
+      true,
+      "original Discover command reply: " + JSON.stringify(message),
+    );
+    assert.deepEqual(
+      message.result.value?.fieldErrors,
+      [],
+      "original Discover command fieldErrors",
+    );
+  }
   const calls = end < 0 ? port : port.slice(0, end);
   const queries = calls.filter(
     (row) => row.direction === "plugin-host" && row.message.method === "devices/discover",
@@ -300,7 +337,7 @@ export function matchDiscoveryWire(rows, status, product) {
         row.message.id === query.message.id,
     );
   assert.ok(
-    answer?.message.result?.ok,
+    answer?.message.result?.ok === true,
     "successful original devices/discover reply: " + JSON.stringify(answer?.message),
   );
   const candidates = answer.message.result.value.candidates;
@@ -314,10 +351,16 @@ export function matchDiscoveryWire(rows, status, product) {
     candidate,
     "broker candidate matching published and rendered USB row: " + JSON.stringify(candidates),
   );
-  assert.ok(end >= 0 && port[end].message.result?.ok, "original Discover command reply");
-  assert.ok(invocationId, "renderer Discover reply");
+  assert.ok(end >= 0, "original Discover command reply");
+  assert.ok(rendererReply, "renderer Discover reply");
   assert.ok(status.selected, status.missing ?? "published candidate and matching rendered row");
-  return { invocationId, requestId: query.message.id, candidate, selected: status.selected };
+  return {
+    rendererReply,
+    invocationId,
+    requestId: query.message.id,
+    candidate,
+    selected: status.selected,
+  };
 }
 
 // The accessible name identifies a key. The command sent by the installed
@@ -350,11 +393,11 @@ export async function connectUhidPanel(client, traceFile, readDeviceWire, check 
     );
   const diagnostics = async () => {
     const status = await step("diagnostics");
-    if (!status.armed) return status;
+    if (!status.invoked) return status;
     try {
       return { ...status, discovery: matchDiscoveryWire(await readDeviceWire(), status, name) };
     } catch (error) {
-      return { ...status, wireObservation: error.message };
+      return { ...status, missing: status.error ?? error.message, wireObservation: error.message };
     }
   };
   const wait = (action) =>
@@ -373,7 +416,7 @@ export async function connectUhidPanel(client, traceFile, readDeviceWire, check 
   if (gates.G2.status !== "PASS") throw new Error("UHID provisioning incomplete");
   await access(gates.G2.observation.device, constants.R_OK | constants.W_OK);
   await client.js(
-    `window.__uhidDiscovery=(${observeCandidatePublication.toString()})(window.kobrixa.plugins.ui,${JSON.stringify(name)});true`,
+    `window.__uhidDiscovery=(${observeCandidatePublication.toString()})(window.kobrixa.plugins.ui,${JSON.stringify(name)},${discoveryReplyKind.toString()});true`,
   );
   let stopCommands;
   try {

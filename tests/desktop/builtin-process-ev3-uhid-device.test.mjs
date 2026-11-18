@@ -7,6 +7,18 @@ import {
   matchSelectedRow,
 } from "./ev3-uhid-device.mjs";
 
+const commandReply = {
+  ok: true,
+  value: { kind: "command", invocationId: "one", value: { fieldErrors: [] } },
+};
+const staleReply = {
+  ok: false,
+  error: {
+    code: "PLUGIN_E_STALE_RESOURCE",
+    detail: { kind: "resource", reason: "stale", resource: "ui-binding" },
+  },
+};
+
 test("only the armed original panel and matching revision can supply the candidate key", async () => {
   let notify;
   const pages = [];
@@ -76,11 +88,12 @@ test("selection requires the published key and original candidate version", asyn
     querySelector: () => button,
   };
   const pane = { querySelectorAll: () => [row] };
+  let rendererReply = commandReply;
   const ctx = {
     document: { querySelector: () => pane },
     window: {
       __uhidDiscovery: {
-        status: () => ({ candidate, selected, reply: { ok: true } }),
+        status: () => ({ candidate, selected, reply: rendererReply }),
         rendered: () => {
           selected = { ...candidate };
         },
@@ -91,6 +104,8 @@ test("selection requires the published key and original candidate version", asyn
     runInNewContext(`(${devicePanelStep.toString()})("${step}","fixture")`, ctx);
   assert.equal(run("candidate"), undefined);
   label = "Select: id";
+  assert.equal(run("candidate"), "fixture usb");
+  rendererReply = staleReply;
   assert.equal(run("candidate"), "fixture usb");
   candidate.version = "2";
   assert.equal(run("select"), false);
@@ -142,10 +157,11 @@ test("command probes read the original action and reply without stopping executi
   }
 });
 
-test("joins the returned USB candidate on the invoking process and command interval", () => {
+function discoveryFixture(reply = commandReply) {
   const binding = { panelInstance: "panel" };
   const status = {
-    reply: { value: { invocationId: "one" } },
+    binding,
+    reply,
     selected: { key: "usb1", publication: { binding, revision: 2 } },
   };
   const candidate = { candidateId: "usb1", name: "fixture", transport: "usb" };
@@ -165,9 +181,28 @@ test("joins the returned USB candidate on the invoking process and command inter
     id: 1,
     result: { ok: true, value: { candidates: [candidate] } },
   });
-  const end = row("plugin-host", { id: 1, result: { ok: true } });
+  const end = row("plugin-host", {
+    id: 1,
+    result: { ok: true, value: { output: {}, fieldErrors: [] } },
+  });
   const verify = (rows) => matchDiscoveryWire(rows, status, "fixture");
-  assert.deepEqual(verify([command, query, answer, end]).candidate, candidate);
+  return {
+    command,
+    query,
+    answer,
+    end,
+    candidate,
+    status,
+    verify,
+    rows: [command, query, answer, end],
+  };
+}
+
+test("joins the returned USB candidate on the invoking process and command interval", () => {
+  const { command, query, answer, end, candidate, status, verify, rows } = discoveryFixture();
+  const result = verify(rows);
+  assert.deepEqual(result.candidate, candidate);
+  assert.equal(result.rendererReply, "command");
   assert.throws(
     () => verify([command, query, { ...answer, utility: 43 }, end]),
     /devices\/discover reply/,
@@ -175,6 +210,65 @@ test("joins the returned USB candidate on the invoking process and command inter
   assert.throws(() => verify([command, query, end, answer]), /devices\/discover reply/);
   status.selected.key = "other";
   assert.throws(() => verify([command, query, answer, end]), /matching published/);
+});
+
+test("stale UI binding after successful dispatch requires the published and rendered candidate", () => {
+  const { rows, status, verify } = discoveryFixture(staleReply);
+  const result = verify(rows);
+  assert.equal(result.rendererReply, "stale-after-dispatch");
+  assert.equal(result.invocationId, "one");
+  status.selected.key = "other";
+  assert.throws(() => verify(rows), /matching published/);
+  delete status.selected;
+  assert.throws(() => verify(rows), /published candidate and matching rendered row/);
+});
+
+test("stale UI binding without a unique original dispatch fails", () => {
+  const { command, query, answer, end, verify, rows } = discoveryFixture(staleReply);
+  assert.throws(() => verify([query, answer, end]), /original Discover invocation/);
+  assert.throws(() => verify([...rows, command]), /original Discover invocation/);
+});
+
+test("stale UI binding cannot mask a failed plugin reply or command field errors", () => {
+  const { end, verify, rows } = discoveryFixture(staleReply);
+  end.message.result = { ok: false, error: { code: "PLUGIN_E_INTERNAL" } };
+  assert.throws(() => verify(rows), /original Discover command reply.*PLUGIN_E_INTERNAL/);
+  end.message.result = { ok: true, value: { fieldErrors: [{ field: "port" }] } };
+  assert.throws(() => verify(rows), /original Discover command fieldErrors/);
+});
+
+test("the renderer observer retains the first failure and only allows the specific stale reply", () => {
+  let notify;
+  const observation = observeCandidatePublication({ onEvent: (f) => (notify = f) }, "fixture");
+  const binding = { contributionId: "kobrixa.device-ev3.panel", panelInstance: "original" };
+  notify({ binding });
+  observation.arm();
+  observation.command(binding, undefined);
+  observation.command(binding, staleReply);
+  assert.equal(observation.status().error, undefined);
+  const failure = { ok: false, error: { code: "PLUGIN_E_INTERNAL" } };
+  observation.command(binding, failure);
+  observation.command(binding, staleReply);
+  assert.match(observation.status().error, /Discover command failed.*PLUGIN_E_INTERNAL/);
+  for (const reply of [
+    failure,
+    {
+      ok: false,
+      error: { ...staleReply.error, detail: { ...staleReply.error.detail, resource: "dataset" } },
+    },
+    { ok: true, value: { ...commandReply.value, value: { fieldErrors: [{ field: "port" }] } } },
+  ]) {
+    const { verify, rows } = discoveryFixture(reply);
+    assert.throws(() => verify(rows), /Discover command failed/);
+  }
+});
+
+test("renderer and wire invocation IDs must agree and cannot hide a second dispatch", () => {
+  const { rows, command, verify } = discoveryFixture();
+  const other = structuredClone(command);
+  other.message.params.invocationId = "other";
+  assert.throws(() => verify([other, ...rows.slice(1)]), /invocationId mismatch/);
+  assert.throws(() => verify([...rows, other]), /original Discover invocation/);
 });
 
 test("a stale DOM row with the same key cannot attest a newer publication", () => {
