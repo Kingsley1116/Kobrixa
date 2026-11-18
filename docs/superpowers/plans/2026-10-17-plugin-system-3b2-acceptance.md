@@ -4,7 +4,7 @@
 
 Keep the persistence threads. The independent RSS entries in the dated reconciliation, load row, exact gates, observation table and October clarification below are **superseded-by-ruling**. Both original deltas remain unverified. All recorded failures, partial receipts and NOT RUN observations retain their dated outcomes.
 
-Use the [prospective B2 process RSS v1 contract](../specs/2026-10-17-plugin-system-3b2-settings-storage-design.md#1221-b2-process-rss-v1). Both byte caps require dated owner approval before collection. W16 must retain per-platform raw baselines, sampled peaks, post-cleanup retained RSS and isolate diagnostics for every fresh trial. A process-wide pass can close only the amended memory item. All other B2, UI and broker limits still apply.
+Use the [prospective B2 process RSS v1 contract](../specs/2026-10-17-plugin-system-3b2-settings-storage-design.md#1221-b2-process-rss-v1). The owner approved both byte caps on 2026-11-18 (peak delta 41,943,040 bytes, retained delta 16,777,216 bytes); no v1 sample existed at approval. W16 must retain per-platform raw baselines, sampled peaks, post-cleanup retained RSS and isolate diagnostics for every fresh trial. A process-wide pass can close only the amended memory item. All other B2, UI and broker limits still apply.
 
 **W16 harness handoff** (paths under `tests/desktop/`):
 

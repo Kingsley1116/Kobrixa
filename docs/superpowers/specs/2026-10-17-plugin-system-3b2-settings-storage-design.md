@@ -802,10 +802,12 @@ T0 固定量測環境欄位：OS／architecture、CPU／RAM、filesystem、app a
 
 **2026-11-18 owner ruling R2.** 保留 persistence worker threads。原始獨立 main／worker RSS 門檻列為 superseded-by-ruling，兩項各自的 baseline／peak 增量皆未獲證實。以下為 W16 的前瞻量測契約 `b2-process-rss/v1`，與 API 版本及歷史 receipt 格式分開。數值待 owner 核准，原始實驗結果不作換算。
 
-| 待核准欄位（高於上限即失敗）            | 建議值與事前推導                                                                                                                                                                                                                                |
-| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Peak delta bytes — OWNER-TO-APPROVE     | **40 MiB**。設計估算容許 host encoded queue 8 MiB、一份傳輸中副本 8 MiB、host metadata cache 8 MiB、四個執行中 job 各一個 256 KiB decoded chunk（共 1 MiB），合計 25 MiB。另留 15 MiB 給序列化暫存、V8／allocator page 與工作期間的 main 活動。 |
-| Retained delta bytes — OWNER-TO-APPROVE | **16 MiB**。清除暫存及工作後，以最多 8 MiB host metadata cache 加 8 MiB allocator／runtime 保留頁面估算。                                                                                                                                       |
+| 待核准欄位（高於上限即失敗）             | 建議值與事前推導                                                                                                                                                                                                                                |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Peak delta bytes — 已核准 2026-11-18     | **40 MiB**。設計估算容許 host encoded queue 8 MiB、一份傳輸中副本 8 MiB、host metadata cache 8 MiB、四個執行中 job 各一個 256 KiB decoded chunk（共 1 MiB），合計 25 MiB。另留 15 MiB 給序列化暫存、V8／allocator page 與工作期間的 main 活動。 |
+| Retained delta bytes — 已核准 2026-11-18 | **16 MiB**。清除暫存及工作後，以最多 8 MiB host metadata cache 加 8 MiB allocator／runtime 保留頁面估算。                                                                                                                                       |
+
+**核准記錄（2026-11-18）。** 簽核人：專案 owner（Kingsley1116）。契約版本 `b2-process-rss/v1`。Peak delta 上限 41,943,040 bytes（40 MiB）；retained delta 上限 16,777,216 bytes（16 MiB）。核准依據為上表的事前推導，核准時尚無任何 v1 驗收樣本或試跑量測。
 
 這是容量規劃假設。每 source 的 queue／cache 已包含在 host 配額內，416 MiB logical disk bytes 以串流處理。owner 須在首筆驗收樣本前登錄簽核人、日期、兩個整數 byte 限額（1 MiB = 1,048,576 bytes）、核准依據與契約版本。後續改動採新版本、重新事前簽核及新樣本；保留所有先前試次與 verdict。
 
