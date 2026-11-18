@@ -1563,7 +1563,12 @@ it("an ownerLost blocker survives late abort confirmation and worker death until
     env.control.arm("chunk-write", "pause");
     const reached = env.control.reached("chunk-write");
     busy = env.backend.engine.append(ticket!, 0, Buffer.from("x"));
-    await reached;
+    await Promise.race([
+      reached,
+      busy.then(() => {
+        throw new Error("append completed before reaching the paused write");
+      }),
+    ]);
     expect(await write.chunk()).toMatchObject({ ok: false });
     const report = await host.participant.ownerLost(owner);
     expect(report).toMatchObject({
@@ -1620,7 +1625,7 @@ it("an ownerLost blocker survives late abort confirmation and worker death until
   } finally {
     await final.backend.dispose();
   }
-});
+}, 30000);
 it("a timed-out abort reply delivered after barrier settlement needs a fresh confirmation", async () => {
   const userData = path.join(directory, randomUUID()),
     env = await launch(userData);

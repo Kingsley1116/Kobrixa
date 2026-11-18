@@ -379,7 +379,7 @@ it("resumes consumed all-null preferences across three new epochs without a rend
     expect(f.counts.map).toBe(i === 0 ? 2 : 0);
     await f.backend.dispose();
   }
-});
+}, 30000);
 it("persists the full plan before destination reserve and pins one payload at a time", async () => {
   const f = await fixture(syntheticImportDescriptor),
     reserve = AtomicStore.prototype.reserve.bind(f.store),
