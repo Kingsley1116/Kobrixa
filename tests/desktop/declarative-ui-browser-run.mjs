@@ -1,3 +1,4 @@
+import { buildProduction } from "../../tools/release/production-vite.mjs";
 import "../../tools/release/journal-harness.mjs";
 import assert from "node:assert/strict";
 import { spawn, spawnSync, execFileSync } from "node:child_process";
@@ -43,7 +44,7 @@ await cp(
 );
 if (diagnostics || presentation) {
   const { build: buildRenderer } = await import("vite");
-  await buildRenderer({
+  await buildProduction(buildRenderer, {
     root: path.join(root, "apps/desktop"),
     configFile: path.join(root, "apps/desktop/vite.renderer.config.ts"),
     base: "./",

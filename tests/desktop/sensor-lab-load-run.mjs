@@ -1,3 +1,4 @@
+import { buildProduction } from "../../tools/release/production-vite.mjs";
 import { processTable, descendants } from "./builtin-installed-client.mjs";
 import { createProcessMonitor, finishProcessObservation } from "./device-ui-stdio-run.mjs";
 import assert from "node:assert/strict";
@@ -112,7 +113,7 @@ export async function buildLabLoad(directory) {
     path.join(leaf, "resource-index.json"),
     JSON.stringify({ version: 1, pluginId, files }),
   );
-  await vite.build({
+  await buildProduction(vite.build, {
     configLoader: "runner",
     cacheDir: path.join(directory, "vite-cache"),
     root: path.join(root, "apps/desktop"),

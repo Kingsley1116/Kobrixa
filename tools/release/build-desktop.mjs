@@ -1,3 +1,4 @@
+import { buildProduction } from "./production-vite.mjs";
 import { stageProductionJournal, withJournalUnpack } from "./journal-win32.mjs";
 import { build as viteBuild } from "vite";
 import { build as packageElectron } from "electron-builder";
@@ -42,7 +43,7 @@ for (const [config, entry, name] of [
 ]) {
   await buildDesktopEntry(config, entry, name);
 }
-await viteBuild({
+await buildProduction(viteBuild, {
   configFile: path.join(desktop, "vite.renderer.config.ts"),
   root: desktop,
   base: "./",

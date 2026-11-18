@@ -1,3 +1,4 @@
+import { buildProduction } from "../../tools/release/production-vite.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
@@ -45,7 +46,7 @@ export async function buildFoundationRenderer(directory) {
   });
   for (const input of Object.keys(bundled.metafile.inputs))
     await recordSource(path.resolve(root, input));
-  await vite.build({
+  await buildProduction(vite.build, {
     configLoader: "runner",
     cacheDir: path.join(directory, "vite-cache"),
     root: path.join(root, "apps/desktop"),

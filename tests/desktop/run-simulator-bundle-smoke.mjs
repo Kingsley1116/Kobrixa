@@ -1,3 +1,4 @@
+import { buildProduction } from "../../tools/release/production-vite.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -141,7 +142,8 @@ try {
     { command: "build", mode: "production" },
     path.join(desktop, "vite.build-worker.config.ts"),
   );
-  await build(
+  await buildProduction(
+    build,
     mergeConfig(
       {
         configFile: false,
@@ -162,7 +164,7 @@ try {
       user.config,
     ),
   );
-  await build({
+  await buildProduction(build, {
     configFile: path.join(desktop, "vite.renderer.config.ts"),
     root: desktop,
     base: "./",

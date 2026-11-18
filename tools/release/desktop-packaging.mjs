@@ -2,13 +2,16 @@ import path from "node:path";
 import { builtinModules } from "node:module";
 import { build, loadConfigFromFile, mergeConfig, runnerImport } from "vite";
 import { repositoryRoot } from "./common.mjs";
+import { buildProduction, withSavedNodeEnv } from "./production-vite.mjs";
 
 const desktop = path.join(repositoryRoot, "apps/desktop");
 // Load the same TypeScript packaging module as Forge, including its .js-to-.ts
 // source imports. Native Node type stripping alone does not resolve those imports.
-const { module: packaging } = await runnerImport(path.join(desktop, "packaging.ts"), {
-  configFile: false,
-});
+// runnerImport initializes an unset NODE_ENV to development. Restore the caller's
+// environment after loading, so later builds cannot silently ship development React.
+const { module: packaging } = await withSavedNodeEnv(() =>
+  runnerImport(path.join(desktop, "packaging.ts"), { configFile: false }),
+);
 export const {
   copyNativeDependencies,
   validateBuiltinPayloads,
@@ -19,7 +22,7 @@ export const {
 
 export async function buildBuiltinPayloads(fixture, buildRoot = path.join(desktop, ".vite/build")) {
   for (const leaf of packaging.builtinProcessBuilds(fixture)) {
-    await build({
+    await buildProduction(build, {
       root: desktop,
       configFile: path.join(desktop, leaf.config),
       build: { outDir: path.join(buildRoot, "plugins", leaf.slug) },
@@ -47,7 +50,8 @@ export async function buildDesktopEntry(
     { command: "build", mode: "production", forgeConfigSelf: { entry } },
     path.join(desktop, config),
   );
-  await build(
+  await buildProduction(
+    build,
     mergeConfig(
       {
         configFile: false,

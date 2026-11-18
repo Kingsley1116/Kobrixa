@@ -1,3 +1,5 @@
+import { assertProductionRenderer } from "../../tools/release/production-renderer.mjs";
+import { buildProduction } from "../../tools/release/production-vite.mjs";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -188,7 +190,7 @@ await writeFile(
     ],
   }),
 );
-await buildRenderer({
+await buildProduction(buildRenderer, {
   root: path.join(root, "apps/desktop"),
   configFile: path.join(root, "apps/desktop/vite.renderer.config.ts"),
   base: "./",
@@ -210,6 +212,10 @@ await buildRenderer({
   ],
   build: { outDir: path.join(template, "renderer"), emptyOutDir: true },
 });
+const rendererDirectory = path.join(template, "renderer");
+await assertProductionRenderer(await readdir(rendererDirectory, { recursive: true }), (name) =>
+  readFile(path.join(rendererDirectory, name)),
+);
 const artifact = {
   commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
   dirty:

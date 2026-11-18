@@ -1,3 +1,4 @@
+import { buildProduction } from "../../tools/release/production-vite.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
@@ -973,7 +974,7 @@ export async function buildNative(directory) {
     entryPoints: [path.join(root, "apps/desktop/src/preload/index.ts")],
     outfile: path.join(template, "preload.cjs"),
   });
-  await vite.build({
+  await buildProduction(vite.build, {
     configLoader: "runner",
     cacheDir: path.join(directory, "vite-cache"),
     root: path.join(root, "apps/desktop"),

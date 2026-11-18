@@ -1,3 +1,4 @@
+import { buildProduction } from "../../tools/release/production-vite.mjs";
 import {
   processTable as installedProcessTable,
   terminateProcess,
@@ -313,7 +314,7 @@ export async function materializeFoundationFixtures(
       path.join(sourceRoot, "src/optional-off-consumer.ts"),
     );
     const config = builtinPluginConfig({ slug, pluginId: id, sourceRoot });
-    await viteBuild({
+    await buildProduction(viteBuild, {
       ...config,
       configFile: false,
       resolve: { ...config.resolve, conditions: ["node"] },
@@ -1275,7 +1276,7 @@ export async function runFoundationEvidence({
         path.join(root, source),
       ]),
     );
-    await vite.build({
+    await buildProduction(vite.build, {
       configLoader: "runner",
       root: path.join(root, "apps/desktop"),
       configFile: path.join(root, "apps/desktop/vite.renderer.config.ts"),

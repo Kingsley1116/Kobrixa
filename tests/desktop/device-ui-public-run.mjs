@@ -1,3 +1,4 @@
+import { buildProduction } from "../../tools/release/production-vite.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
@@ -494,7 +495,7 @@ export async function buildDevice(directory, { productionLeaf } = {}) {
       JSON.stringify({ version: 1, pluginId, files }),
     );
   }
-  await vite.build({
+  await buildProduction(vite.build, {
     configLoader: "runner",
     cacheDir: path.join(directory, "vite-cache"),
     root: path.join(root, "apps/desktop"),

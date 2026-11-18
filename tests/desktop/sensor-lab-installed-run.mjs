@@ -1,3 +1,4 @@
+import { buildProduction } from "../../tools/release/production-vite.mjs";
 import assert from "node:assert/strict";
 import {
   cp,
@@ -135,7 +136,7 @@ export async function buildInstalled(directory, artifact) {
     path.join(directory, "plugins/device-ev3"),
     "kobrixa.device-ev3",
   );
-  await vite.build({
+  await buildProduction(vite.build, {
     configLoader: "runner",
     cacheDir: path.join(directory, "vite-cache"),
     root: path.join(root, "apps/desktop"),

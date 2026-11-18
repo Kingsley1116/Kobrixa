@@ -1,6 +1,8 @@
+import { listPackage } from "@electron/asar";
+import { assertProductionRenderer } from "../../tools/release/production-renderer.mjs";
 import { connect, descendants, processTable } from "./builtin-installed-client.mjs";
 import { createHash } from "node:crypto";
-import { devicePreferencesExpression } from "./builtin-process-installed.mjs";
+import { devicePreferencesExpression, openInstalledArchive } from "./builtin-process-installed.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
@@ -134,6 +136,13 @@ async function checkPackage(profile, cp) {
   const resources = path.join(
     installedDirectory,
     process.platform === "darwin" ? "Kobrixa.app/Contents/Resources" : "resources",
+  );
+  const archive = path.join(resources, "app.asar");
+  const renderer = path.join(".vite", "renderer", "main_window") + path.sep;
+  const members = listPackage(archive).map((member) => path.normalize(member).slice(1));
+  await assertProductionRenderer(
+    members.filter((member) => member.startsWith(renderer)),
+    openInstalledArchive(archive).extract,
   );
   const settingsDigest = createHash("sha256")
     .update(

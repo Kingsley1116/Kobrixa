@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import { Worker } from "node:worker_threads";
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
+import { build } from "vite";
+import { buildProduction } from "./production-vite.mjs";
+import { assertProductionRenderer } from "./production-renderer.mjs";
 import { test } from "node:test";
 import { cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,6 +21,71 @@ import {
   PERSISTENCE_WORKER_ENTRY,
   withPersistenceWorkerUnpack,
 } from "./desktop-packaging.mjs";
+
+test("importing desktop-packaging preserves NODE_ENV", async () => {
+  for (const previous of [undefined, "development", "test", "production"]) {
+    const env = { ...process.env };
+    if (previous === undefined) delete env.NODE_ENV;
+    else env.NODE_ENV = previous;
+    // A fresh process per value exercises top-level evaluation every time.
+    await promisify(execFile)(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `
+      import assert from "node:assert/strict";
+      const before = process.env.NODE_ENV;
+      await import(${JSON.stringify(new URL("./desktop-packaging.mjs", import.meta.url).href)});
+      assert.equal(process.env.NODE_ENV, before);
+    `,
+      ],
+      { env },
+    );
+  }
+});
+
+test("production Vite builds emit production React even with a development caller", async (t) => {
+  const previous = process.env.NODE_ENV;
+  t.after(() => {
+    if (previous === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previous;
+  });
+  process.env.NODE_ENV = "development";
+  const desktopRequire = createRequire(new URL("../../apps/desktop/package.json", import.meta.url));
+  const config = {
+    configFile: false,
+    logLevel: "silent",
+    build: { write: false, rollupOptions: { input: desktopRequire.resolve("react-dom/client") } },
+  };
+  async function check(result) {
+    const chunks = result.output.filter((entry) => entry.type === "chunk");
+    const scripts = new Map(chunks.map(({ fileName, code }) => [fileName, code]));
+    await assertProductionRenderer([...scripts.keys()], (file) => scripts.get(file));
+  }
+  await check(await buildProduction(build, config));
+  assert.equal(process.env.NODE_ENV, "development");
+  await assert.rejects(
+    check(await build({ ...config, mode: "production" })),
+    /Development React marker/,
+  );
+});
+
+test("renderer checks reject mixed React chunks and missing production code", async () => {
+  const files = {
+    "vendor.js": "Minified React error #",
+    "worker.js": 'const transform = "jsxDEV"',
+    "app.js": "runtime.jsxDEV(Component)",
+    "app.js.map": "react-dom-client.development.js",
+  };
+  const read = (name) => files[name];
+  await assertProductionRenderer(["vendor.js", "worker.js", "app.js.map"], read);
+  await assert.rejects(
+    assertProductionRenderer(Object.keys(files), read),
+    /Development React marker in app.js/,
+  );
+  await assert.rejects(assertProductionRenderer(["worker.js"], read), /Missing production React/);
+});
 
 test("release packaging builds, validates and unpacks the same builtin leaves as Forge", async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), "kobrixa-release-plugin-"));
