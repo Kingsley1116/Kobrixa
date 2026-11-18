@@ -244,3 +244,21 @@ test("dotenv credentials are ignored at every depth but example templates remain
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("maximum migration load runs after the ordinary desktop suites", () => {
+  const file = "src/main/plugins/persistence/sensor-lab-migration-load.test.ts";
+  const pkg = (url) => JSON.parse(readFileSync(new URL(url, import.meta.url))).scripts;
+  const root = pkg("../../package.json");
+  for (const script of [
+    root["test:ci"],
+    root["test:desktop"],
+    pkg("../../apps/desktop/package.json").test,
+  ]) {
+    const [ordinary, load] = script.split(" && ");
+    assert.match(ordinary, /--exclude .*sensor-lab-migration-load\.test\.ts/);
+    assert.ok(load.startsWith("vitest run ") && load.endsWith(file));
+    assert.ok(!load.includes("--passWithNoTests"));
+  }
+  assert.ok(root.test.includes("pnpm --filter @kobrixa/desktop test"));
+  assert.ok(classifyPaths(["apps/desktop/" + file]).desktop);
+});

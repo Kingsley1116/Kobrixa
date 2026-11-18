@@ -9,7 +9,7 @@
     "build": "install-electron && node ../../tools/release/build-desktop.mjs",
     "package": "install-electron && node ../../tools/release/build-desktop.mjs",
     "check": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run --exclude src/main/plugins/persistence/sensor-lab-migration-load.test.ts && vitest run src/main/plugins/persistence/sensor-lab-migration-load.test.ts",
     "make": "node ../../tools/release/distribute.mjs"
   },
   "dependencies": {
