@@ -48,7 +48,15 @@ function nativeTargetId(element: Element) {
 }
 Object.assign(window, { labNativeTargetId: nativeTargetId });
 // Observe trusted browser events without synthesizing events or invoking feature code.
-for (const type of ["pointerdown", "pointerup", "pointercancel", "keydown", "keyup", "input"]) {
+for (const type of [
+  "pointerdown",
+  "pointerup",
+  "pointercancel",
+  "click",
+  "keydown",
+  "keyup",
+  "input",
+]) {
   window.addEventListener(
     type,
     (event) => {
@@ -78,6 +86,51 @@ for (const type of ["pointerdown", "pointerup", "pointercancel", "keydown", "key
 settingsStore.set("rightPanel", "plugins");
 settingsStore.set("locale", "en");
 const owner = pluginUiWindow();
+// Observe the same panel record and control that PanelTree uses for dispatch.
+Object.assign(window, {
+  labRefreshTarget(x: number, y: number, targetId: number) {
+    const panel = owner.session.catalog
+      .getSnapshot()
+      .entries.find((entry) => entry.kind === "panel" && entry.pluginId === "kobrixa.sensor-lab");
+    const record = panel && owner.session.record(panel);
+    const state = record?.state;
+    const interaction = record?.interactions?.getSnapshot();
+    const button = document.querySelector<HTMLButtonElement>(
+      '[role="tabpanel"] [data-ui-node="refresh"] button',
+    );
+    const hit = document.elementFromPoint(x, y);
+    const focused = document.hasFocus();
+    return {
+      ready: !!(
+        focused &&
+        button &&
+        !button.disabled &&
+        nativeTargetId(button) === targetId &&
+        button.contains(hit) &&
+        state?.actionEnabled("refresh") &&
+        state.formCurrent() &&
+        state.derivedCurrent() &&
+        interaction?.view &&
+        !interaction.busy
+      ),
+      enabled: state?.actionEnabled("refresh"),
+      formCurrent: state?.formCurrent(),
+      derivedCurrent: state?.derivedCurrent(),
+      busy: interaction?.busy,
+      focused,
+      activeElement: document.activeElement?.tagName,
+      hit: hit?.tagName,
+      hitNode: hit?.closest("[data-ui-node]")?.getAttribute("data-ui-node"),
+      targetId,
+      x,
+      y,
+      binding: state?.form().binding,
+      presentation: record?.datasets?.getSnapshot().presentation,
+      viewGeneration: interaction?.view?.generation,
+      problem: interaction?.problem ?? state?.getSnapshot().problem,
+    };
+  },
+});
 function Harness() {
   const { values } = useSettings();
   const [narrow, setNarrow] = useState(false);

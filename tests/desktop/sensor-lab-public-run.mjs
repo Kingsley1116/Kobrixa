@@ -1180,6 +1180,68 @@ export function verifyLabRestart(r) {
   }
   return { deleted: deleted.id, retained: saved.id, mainPids: outside.map((x) => x.pid) };
 }
+export function refreshFailureTrace(report) {
+  const start = report.restart.beforeRefresh;
+  const requests = report.wire.filter(
+    ({ message, sequence }) => sequence > start && message.method && message.id !== undefined,
+  );
+  const wire = requests.map((request) => {
+    const { message, owner } = request;
+    const reply = report.wire.find(
+      (row) =>
+        row.sequence > request.sequence &&
+        row.direction !== request.direction &&
+        row.owner.hostEpoch === owner.hostEpoch &&
+        row.owner.processEpoch === owner.processEpoch &&
+        row.owner.generation === owner.generation &&
+        row.message.id === message.id &&
+        !row.message.method,
+    );
+    return {
+      method: message.method,
+      command: message.params?.command,
+      kind: message.params?.kind,
+      id: message.id,
+      binding: message.params?.context?.binding,
+      owner,
+      request: request.sequence,
+      reply: reply?.sequence ?? null,
+      ok: reply?.message.result?.ok,
+      error: reply?.message.error ?? reply?.message.result?.error,
+      fieldErrors: reply?.message.result?.value?.fieldErrors,
+      entries: reply?.message.result?.value?.entries?.length,
+    };
+  });
+  const ipc = report.ipc
+    .filter(
+      (r) =>
+        r.sequence > start &&
+        (r.channel === "plugins:ui:interact" || r.error || r.result?.ok === false),
+    )
+    .map((r) => ({
+      channel: r.channel,
+      kind: r.args[0]?.kind,
+      node: r.args[0]?.nodeId,
+      binding: r.args[0]?.binding,
+      request: r.sequence,
+      reply: r.finishedSequence ?? null,
+      ok: r.result?.ok,
+      error: r.error ?? r.result?.error,
+    }));
+  const firstError = [...wire, ...ipc]
+    .filter((r) => r.reply > start && r.error)
+    .sort((a, b) => a.reply - b.reply)[0];
+  return {
+    start,
+    failures: report.failures,
+    binding: report.restart.input?.binding,
+    input: report.restart.input,
+    native: report.native.filter((r) => r.sequence > start),
+    ipc,
+    wire,
+    firstError,
+  };
+}
 async function runLabRestartProcess(directory, electron, env, phase) {
   const child = spawn(
     electron,
@@ -1233,6 +1295,17 @@ async function runLabRestartProcess(directory, electron, env, phase) {
     JSON.stringify(outside, null, 2),
   );
   await writeFile(path.join(directory, `native-restart-${phase}.log`), logs.join(""));
+  if (result.code !== 0) {
+    try {
+      const report = JSON.parse(
+        await readFile(path.join(directory, `producer-restart-${phase}.json`)),
+      );
+      if (report.restart?.beforeRefresh !== undefined)
+        console.error("Restart history trace", JSON.stringify(refreshFailureTrace(report)));
+    } catch (error) {
+      console.error("Unable to read restart trace", String(error));
+    }
+  }
   assert.deepEqual(errors, []);
   assert.deepEqual(survivors, []);
   assert.equal(timedOut, false);

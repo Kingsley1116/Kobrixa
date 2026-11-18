@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { runInNewContext } from "node:vm";
 import { labClickTargetScript } from "./sensor-lab-click-target.ts";
 import {
+  refreshFailureTrace,
   sourceHashKey,
   verifyOracleFreshness,
   restartOriginals,
@@ -1214,7 +1215,7 @@ test("D7 snapshot reads real record .bin, import .json and deleted heads with st
 
 test("D7 actual IPC tap records success and rejection completion in the shared sequence", async () => {
   const source = await readFile(new URL("./sensor-lab-public-main.ts", import.meta.url), "utf8");
-  const body = source.match(/const result = action\(\.\.\.args\);([\s\S]*?)return result;/);
+  const body = source.match(/ipc\.push\(row\);([\s\S]*?)\n {10}\}\);/);
   assert.ok(body);
   const tap = new Function(
     "action",
@@ -1222,14 +1223,17 @@ test("D7 actual IPC tap records success and rejection completion in the shared s
     "row",
     "wall",
     "sequence",
-    `const result = action(...args);${body[1]}return result;`,
+    `return (async () => { ${body[1]} })();`,
   );
-  for (const reject of [false, true]) {
+  for (const reject of [false, "async", "sync"]) {
     const row = {},
       outcome = { actual: true },
       error = new Error("actual failure");
     const result = tap(
-      () => (reject ? Promise.reject(error) : Promise.resolve(outcome)),
+      () => {
+        if (reject === "sync") throw error;
+        return reject ? Promise.reject(error) : Promise.resolve(outcome);
+      },
       [],
       row,
       () => 50,
@@ -1450,4 +1454,152 @@ test("native click rechecks a target that changes after scrolling without activa
   });
   elements[0].textContent = "Delete";
   assert.equal(probe(true), null);
+});
+
+test("restart failure trace retains an unanswered list and the earliest rejected reply", () => {
+  const owner = { generation: 1, processEpoch: "p", hostEpoch: "h" };
+  const report = {
+    restart: { beforeRefresh: 10 },
+    failures: [],
+    checkpoints: {},
+    native: [],
+    wire: [
+      {
+        owner,
+        sequence: 11,
+        direction: "plugin-host",
+        message: { id: 1, method: "storage/list", params: { kind: "history" } },
+      },
+      {
+        owner: { ...owner, generation: 2 },
+        sequence: 12,
+        direction: "host-plugin",
+        message: { id: 1, result: { ok: true } },
+      },
+      {
+        owner,
+        sequence: 13,
+        direction: "host-plugin",
+        message: { id: 2, method: "command/invoke", params: { command: "refresh" } },
+      },
+      {
+        owner,
+        sequence: 14,
+        direction: "plugin-host",
+        message: { id: 2, error: { message: "plugin failure" } },
+      },
+    ],
+    ipc: [
+      {
+        sequence: 12,
+        finishedSequence: 15,
+        channel: "plugins:ui:interact",
+        args: [{ nodeId: "refresh" }],
+        error: "later rejection",
+      },
+    ],
+  };
+  const trace = refreshFailureTrace(report);
+  assert.equal(trace.wire[0].reply, null);
+  assert.equal(trace.firstError.reply, 14);
+  assert.deepEqual(trace.firstError.error, { message: "plugin failure" });
+});
+
+test("restart refresh requires the focused hit target and a ready command view", async () => {
+  const { transform } = await import("esbuild");
+  const shell = await readFile(
+    new URL("./sensor-lab-public-renderer.tsx", import.meta.url),
+    "utf8",
+  );
+  const { code } = await transform(shell, { loader: "tsx", format: "cjs", jsx: "automatic" });
+  const button = { closest: () => null, contains: (element) => element === button };
+  let hit = button,
+    focused = true,
+    current = true;
+  const view = { view: { generation: 3 }, busy: false };
+  const state = {
+    form: () => ({ binding: { panelInstance: "current" } }),
+    getSnapshot: () => ({}),
+    actionEnabled: () => true,
+    formCurrent: () => true,
+    derivedCurrent: () => current,
+  };
+  const panel = { kind: "panel", pluginId: "kobrixa.sensor-lab" };
+  const session = {
+    catalog: { getSnapshot: () => ({ entries: [panel] }) },
+    select() {},
+    record: () => ({ state, interactions: { getSnapshot: () => view } }),
+  };
+  const window = { addEventListener() {} };
+  const modules = {
+    react: {},
+    "react/jsx-runtime": { jsx() {} },
+    "react-dom/client": { createRoot: () => ({ render() {} }) },
+    "../../apps/desktop/src/renderer/settings/settings-state.js": {
+      settingsStore: { set() {} },
+      pluginUiWindow: () => ({ session, ready: Promise.resolve() }),
+    },
+  };
+  runInNewContext(code, {
+    window,
+    require: (id) => modules[id] ?? {},
+    document: {
+      getElementById() {},
+      querySelector: () => button,
+      elementFromPoint: () => hit,
+      hasFocus: () => focused,
+    },
+  });
+  const id = window.labNativeTargetId(button);
+  const ready = () => window.labRefreshTarget(50, 30, id).ready;
+  assert.equal(ready(), true);
+  hit = { closest: () => null };
+  assert.equal(ready(), false);
+  hit = button;
+  focused = false;
+  assert.equal(ready(), false);
+  focused = true;
+  current = false;
+  assert.equal(ready(), false);
+  current = true;
+  view.busy = true;
+  assert.equal(ready(), false);
+  view.busy = false;
+  assert.equal(window.labRefreshTarget(50, 30, id + 1).ready, false);
+});
+
+test("command acceptance waits for the enclosing IPC and surfaces a late stale rejection", async () => {
+  const { transform } = await import("esbuild");
+  const source = await readFile(new URL("./sensor-lab-public-main.ts", import.meta.url), "utf8");
+  const { code } = await transform(source, { loader: "ts", format: "cjs" });
+  const module = { exports: {} };
+  runInNewContext(code, { module, require: (id) => (id === "node:assert/strict" ? assert : {}) });
+  const binding = { panelInstance: "panel" };
+  const action = {
+    sequence: 2,
+    channel: "plugins:ui:interact",
+    args: [{ nodeId: "refresh", binding }],
+  };
+  const params = {
+    command: "kobrixa.sensor-lab.refresh",
+    invocationId: "inv",
+    context: { binding },
+  };
+  const wire = [
+    {
+      request: { sequence: 3, message: { params } },
+      response: { sequence: 4, message: { result: { ok: true } } },
+    },
+  ];
+  const poll = () => module.exports.acceptedCommand(1, "refresh", "refresh", [action], wire);
+  assert.equal(poll(), undefined);
+  action.finishedSequence = 5;
+  action.result = { ok: false, error: "stale presentation" };
+  assert.throws(poll, /stale presentation/);
+  action.result = { ok: true, value: { invocationId: "other" } };
+  assert.equal(poll(), undefined);
+  action.result.value.invocationId = "inv";
+  assert.equal(poll(), wire[0]);
+  action.args[0].binding = { panelInstance: "other" };
+  assert.throws(poll, assert.AssertionError);
 });

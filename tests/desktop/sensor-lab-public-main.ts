@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { labClickTargetScript } from "./sensor-lab-click-target.js";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { realpath, writeFile } from "node:fs/promises";
 import { app, BrowserWindow, ipcMain } from "electron";
 import type { DrainOffer, DrainReport, PluginLauncher } from "@kobrixa/plugin-runtime";
@@ -61,6 +62,44 @@ type Wire = {
   owner: ResourceOwner;
   message: ObjectValue;
 };
+export function acceptedCommand(
+  before: number,
+  node: string,
+  name: string,
+  ipc: ObjectValue[],
+  exchanges: Array<{ request: Wire; response: Wire }>,
+) {
+  const actions = ipc.filter(
+    (r) =>
+      r.channel === "plugins:ui:interact" &&
+      Number(r.sequence) > before &&
+      object((r.args as unknown[])[0]).nodeId === node,
+  );
+  const rejected = actions.find((r) => r.error || (r.result && object(r.result).ok === false));
+  if (rejected) assert.fail(JSON.stringify(rejected));
+  const row = exchanges.find(
+    ({ request }) =>
+      request.sequence > before &&
+      object(request.message.params).command === `kobrixa.sensor-lab.${name}`,
+  );
+  if (!row) return;
+  assert.ok(
+    !row.response.message.error && object(row.response.message.result).ok === true,
+    JSON.stringify(row.response.message),
+  );
+  const params = object(row.request.message.params);
+  assert.equal(typeof params.invocationId, "string");
+  const action = actions.find(
+    (r) =>
+      Number(r.sequence) < row.request.sequence &&
+      Number(r.finishedSequence) > row.response.sequence &&
+      r.result &&
+      accepted(r.result).invocationId === params.invocationId,
+  );
+  if (!action) return;
+  assert.deepEqual(object((action.args as unknown[])[0]).binding, object(params.context).binding);
+  return row;
+}
 const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 async function until<T>(
   check: () => T | Promise<T>,
@@ -159,6 +198,7 @@ export function runNativeLab(): void {
           (row) =>
             row.sequence > request.sequence &&
             row.direction !== direction &&
+            row.owner === request.owner &&
             row.message.id === request.message.id &&
             !row.message.method,
         );
@@ -358,7 +398,7 @@ export function runNativeLab(): void {
           !window.isDestroyed() && trustedWorkbench(event, window.webContents);
         const handle: IpcHandle = (name, action) => {
           ipcNames.push(name);
-          ipcMain.handle(name, (...args: Parameters<typeof action>) => {
+          ipcMain.handle(name, async (...args: Parameters<typeof action>) => {
             assert.ok(trusted(args[0]));
             const row: ObjectValue = {
               channel: name,
@@ -367,20 +407,16 @@ export function runNativeLab(): void {
               args: args.slice(1),
             };
             ipc.push(row);
-            const result = action(...args);
-            void Promise.resolve(result).then(
-              (result) => {
-                row.result = result;
-                row.finishedAt = wall();
-                row.finishedSequence = ++sequence;
-              },
-              (error) => {
-                row.error = String(error);
-                row.finishedAt = wall();
-                row.finishedSequence = ++sequence;
-              },
-            );
-            return result;
+            try {
+              row.result = await action(...args);
+              return row.result;
+            } catch (error) {
+              row.error = String(error);
+              throw error;
+            } finally {
+              row.finishedAt = wall();
+              row.finishedSequence = ++sequence;
+            }
           });
         };
         registerUiIpc({ handle, bridge: ui.bridge, trusted });
@@ -447,20 +483,48 @@ export function runNativeLab(): void {
         await until(() => window.isFocused(), "native focus");
         const js = <T>(source: string) =>
           window.webContents.executeJavaScript(source) as Promise<T>;
-        const click = async (selector: string, text?: string) => {
+        const click = async (selector: string, text?: string, restartRefresh = false) => {
           const bounds = await until(
             async () => {
               const ready = await js<boolean>(labClickTargetScript(selector, text, false));
-              if (!ready) return;
+              if (!ready) {
+                if (restartRefresh)
+                  restart.input = {
+                    selector,
+                    target: "missing or disabled",
+                    windowFocused: window.isFocused(),
+                    contentsFocused: window.webContents.isFocused(),
+                  };
+                return;
+              }
               await pause(100);
               // Re-query after scrolling/settling: renderer updates can disable,
               // replace, or hide the target between readiness and measurement.
-              return js<{
+              const measured = await js<{
                 x: number;
                 y: number;
                 targetId: number;
                 ariaLabel: string | null;
               } | null>(labClickTargetScript(selector, text, true));
+              if (restartRefresh && measured) {
+                const probe = await js<ObjectValue>(
+                  `window.labRefreshTarget(${measured.x}, ${measured.y}, ${measured.targetId})`,
+                );
+                restart.input = {
+                  ...probe,
+                  windowFocused: window.isFocused(),
+                  contentsFocused: window.webContents.isFocused(),
+                };
+                if (
+                  !probe.ready ||
+                  !window.isFocused() ||
+                  !window.webContents.isFocused() ||
+                  !probe.binding ||
+                  !isDeepStrictEqual(probe.binding, state()?.binding)
+                )
+                  return;
+              }
+              return measured;
             },
             `enabled target ${selector} ${text ?? ""}`,
           );
@@ -513,17 +577,28 @@ export function runNativeLab(): void {
         };
         const command = async (node: string, name = node) => {
           const before = sequence;
-          await click(`[data-ui-node="${node}"] button`);
-          await until(
-            () =>
-              exchanges("command/invoke", "host-plugin").find(
-                (row) =>
-                  row.request.sequence > before &&
-                  object(row.request.message.params).command === `kobrixa.sensor-lab.${name}` &&
-                  success(row),
-              ),
-            `successful ${name}`,
-          );
+          const restartRefresh = !!restartPhase && node === "refresh";
+          if (restartRefresh) {
+            restart.beforeRefresh = before;
+            delete restart.input;
+          }
+          await click(`[data-ui-node="${node}"] button`, undefined, restartRefresh);
+          return until(() => {
+            const row = acceptedCommand(
+              before,
+              node,
+              name,
+              ipc,
+              exchanges("command/invoke", "host-plugin"),
+            );
+            if (!row) return;
+            if (restartRefresh)
+              assert.deepEqual(
+                object(object(row.request.message.params).context).binding,
+                object(restart.input).binding,
+              );
+            return row;
+          }, `successful ${name}`);
         };
         const latestPage = (dataset: string) =>
           ipc
@@ -585,29 +660,46 @@ export function runNativeLab(): void {
         checkpoints.open = { at: wall(), state: state(), owner };
         if (restartPhase) {
           stage = `restart-${restartPhase}-history`;
-          await command("refresh");
-          const listed = (kind: string) =>
-            exchanges("storage/list")
-              .filter((row) => success(row) && object(row.request.message.params).kind === kind)
-              .at(-1);
-          const history = await until(() => listed("sensor-lab.recording"), "restart history list");
-          const profiles = await until(
-            () => listed("sensor-lab.calibration"),
-            "restart profile list",
-          );
+          const refreshLibraries = async () => {
+            const refresh = await command("refresh");
+            const listed = (kind: string) =>
+              exchanges("storage/list")
+                .filter(
+                  (row) =>
+                    row.request.owner === refresh.request.owner &&
+                    row.request.sequence > refresh.request.sequence &&
+                    row.response.sequence < refresh.response.sequence &&
+                    success(row) &&
+                    object(row.request.message.params).kind === kind,
+                )
+                .at(-1);
+            const history = await until(
+              () => listed("sensor-lab.recording"),
+              "restart history list",
+            );
+            const profiles = await until(
+              () => listed("sensor-lab.calibration"),
+              "restart profile list",
+            );
+            return { history, profiles };
+          };
+          const { history, profiles } = await refreshLibraries();
           const entries = accepted(history.response.message.result).entries as ObjectValue[];
           assert.equal(entries.length, 1);
           restart.history = entries;
           restart.profiles = accepted(profiles.response.message.result).entries;
+          delete restart.beforeRefresh;
           if (restartPhase === "1") {
             assert.equal(entries[0]!.label, "D7 original import");
             restart.deleted = entries[0];
             await rowAction("history", String(entries[0]!.id), "Delete", "delete-history");
-            await command("refresh");
+            const afterDelete = await refreshLibraries();
             assert.deepEqual(
-              accepted(listed("sensor-lab.recording")!.response.message.result).entries,
-              [],
+              accepted(afterDelete.profiles.response.message.result).entries,
+              restart.profiles,
             );
+            assert.deepEqual(accepted(afterDelete.history.response.message.result).entries, []);
+            delete restart.beforeRefresh;
           } else {
             const id = String(entries[0]!.id);
             await rowAction("history", id, "View", "view-record");
@@ -716,6 +808,7 @@ export function runNativeLab(): void {
         await until(() => state(), "reopened panel");
         checkpoints.reopened = { at: wall(), state: state() };
         await command("refresh");
+        delete restart.beforeRefresh;
         await until(
           () =>
             exchanges("storage/stat").some(
@@ -774,7 +867,7 @@ export function runNativeLab(): void {
         const steps: ObjectValue[] = [];
         const parity: ObjectValue = { steps };
         checkpoints.parity = parity;
-        const step = async (name: string, action: () => Promise<void>) => {
+        const step = async (name: string, action: () => Promise<unknown>) => {
           stage = `parity-${name}`;
           const row: ObjectValue = { name, at: wall(), before: sequence };
           steps.push(row);
