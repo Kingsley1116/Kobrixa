@@ -8,6 +8,7 @@ function host(primary: boolean) {
     requestSingleInstanceLock: vi.fn(() => primary),
     hasSingleInstanceLock: () => held,
     whenReady: vi.fn(async () => {}),
+    exit: vi.fn(),
     quit: vi.fn(),
     on: (name, listener) => {
       events.on(name, listener);
@@ -29,7 +30,9 @@ it("F17/F20 secondary never starts a writer, provider, plugin, worker or whenRea
   await Promise.resolve();
   expect(f.app.whenReady).not.toHaveBeenCalled();
   expect(start).not.toHaveBeenCalled();
-  expect(f.app.quit).toHaveBeenCalledOnce();
+  expect(f.app.exit).toHaveBeenCalledExactlyOnceWith(0);
+  expect(f.app.quit).not.toHaveBeenCalled();
+  expect(f.events.eventNames()).toEqual([]);
   expect(focus).not.toHaveBeenCalled();
 });
 it("coalesces second-instance requests before ready, ignores arguments and focuses once", async () => {

@@ -2351,6 +2351,7 @@ it("BM-18 secondary never calls the foundation or manager factories", async () =
     const primary = startPrimary(
       {
         requestSingleInstanceLock: () => false,
+        exit: vi.fn(),
         hasSingleInstanceLock: () => false,
         whenReady: async () => {},
         quit() {},
@@ -4611,6 +4612,9 @@ it("actual primary profile remains held through backend disposal and confirmed w
   const primary = startPrimary(
     {
       requestSingleInstanceLock: () => true,
+      exit() {
+        throw new Error("Unexpected native exit");
+      },
       hasSingleInstanceLock: () => true,
       whenReady: async () => {},
       quit() {

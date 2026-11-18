@@ -5,6 +5,7 @@ export interface PrimaryHost {
   requestSingleInstanceLock(): boolean;
   hasSingleInstanceLock(): boolean;
   whenReady(): Promise<void>;
+  exit(code: number): void;
   quit(): void;
   on(name: "second-instance" | "quit", listener: () => void): unknown;
 }
@@ -14,7 +15,7 @@ export function startPrimary(
   focus: () => boolean,
 ): { profile: ProfileWriterLock; ready: Promise<void>; windowReady(): void } | null {
   if (!app.requestSingleInstanceLock()) {
-    app.quit();
+    app.exit(0);
     return null;
   }
   let held = true;
