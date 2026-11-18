@@ -464,7 +464,7 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
         ? { kind: "complete-staging", expiresMonotonicMs: write.retained.expiresMonotonicMs }
         : { kind: "checkpoint-only" };
     },
-    async recover(owner, report, current, unresolved) {
+    async recover(owner, report, current, unresolved, restartBlocker) {
       // StoredRecovery owns one immutable ticket/pin. Multi-target drains retain one row per target.
       const admissions = records
         .admittedWrites(owner)
@@ -492,7 +492,11 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
           ],
         };
       const items = report.records;
-      let first: string | undefined;
+      const sourceBlocker =
+        restartBlocker && current()
+          ? recovery.retainRestartBlocker(owner, restartBlocker)
+          : undefined;
+      let first = sourceBlocker?.recovery;
       // A terminal service status may have expired before its cleanup reply
       // reached main. Bind each unresolved flush member to its own action.
       for (const id of unresolved) {
@@ -594,7 +598,11 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
           );
           first ??= retained.recovery;
         }
-      return { ...report, ...(first ? { recovery: first } : {}) };
+      return {
+        ...report,
+        ...(sourceBlocker ? { errors: [...report.errors, ...sourceBlocker.errors] } : {}),
+        ...(first ? { recovery: first } : {}),
+      };
     },
     checkpointOpen: (o, id) =>
       records

@@ -148,6 +148,7 @@ export function createRecordService(
         return;
       }
       write.state = disposition === "committed" ? "publishing" : "expired";
+      if (disposition === "committed") await reconcile(write);
       if (write.state === "expired") {
         releaseRetained(write);
         write.terminal = deps.now();
@@ -459,8 +460,14 @@ export function createRecordService(
         return { ok: true, value: { disposition: "committed", receipt: write.receipt } };
       const disposition = await deps.engine.abort(write.ticket);
       if (disposition === "aborted") aborted(write);
-      else write.state = "publishing";
-      return { ok: true, value: { disposition } };
+      else {
+        write.state = "publishing";
+        if (disposition === "committed") await reconcile(write);
+      }
+      return {
+        ok: true,
+        value: { disposition, ...(write.receipt ? { receipt: write.receipt } : {}) },
+      };
     },
     "storage/stat": async (owner, p) => ({
       ok: true,

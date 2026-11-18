@@ -9,8 +9,8 @@ import type {
   CoreActionReference,
   CoreActionValidationPort,
   DrainReport,
-  PersistenceRecoverySnapshot,
 } from "@kobrixa/plugin-runtime";
+import type { PersistenceRecoverySnapshot } from "../../../shared/plugin-persistence.js";
 import { PersistenceFault, ownerKey, limit, stale } from "./record-port.js";
 type Dependencies = {
   now(): number;
@@ -50,6 +50,7 @@ type Entry = {
   owner: ResourceOwner;
   report: DrainReport;
   expires: number;
+  restartRequired?: true;
   actionIds: { retry: string; export: string; discard: string };
   evidence?: Pick<StoredRecovery, "ticket" | "sealedPin">;
 };
@@ -173,7 +174,36 @@ export function createPersistenceRecovery(deps: Dependencies) {
       throw new PersistenceFault("PLUGIN_E_PERMISSION_DENIED");
     return entry;
   }
+  const restartError = {
+    code: "PLUGIN_E_STORAGE_IO",
+    message: "Restart Kobrixa to verify storage before writing to this source again.",
+  };
   const api = {
+    retainRestartBlocker(owner: ResourceOwner, id: Handle): DrainReport {
+      const existing = entries.get(id);
+      if (existing) return structuredClone(existing.report);
+      const report: DrainReport = {
+        state: "uncertain",
+        blocker: true,
+        recovery: id,
+        records: [],
+        pendingSettings: false,
+        errors: [restartError],
+      };
+      // The source fence belongs to this host epoch. A fresh worker can serve
+      // the next epoch only after verified startup recovery completes.
+      entries.set(id, {
+        id,
+        owner: { ...owner },
+        report,
+        restartRequired: true,
+        expires: Infinity,
+        actionIds: { retry: randomUUID(), export: randomUUID(), discard: randomUUID() },
+      });
+      revision++;
+      changed();
+      return structuredClone(report);
+    },
     // Checkpoint metadata and its derived recovery row must share the same
     // ordering as core actions, including every persistence await.
     async persistCheckpoint(
@@ -199,6 +229,7 @@ export function createPersistenceRecovery(deps: Dependencies) {
           ? entries.get(report.recovery)
           : [...entries.values()].find(
               (entry) =>
+                !entry.restartRequired &&
                 ownerKey(entry.owner) === ownerKey(owner) &&
                 entry.report.records[0]?.id === report.records[0]?.id,
             );
@@ -272,15 +303,18 @@ export function createPersistenceRecovery(deps: Dependencies) {
             ...(entry.report.state === "retryable" && Number.isFinite(entry.expires)
               ? { expiresAt: projectWallExpiry(deps, entry.expires) }
               : {}),
-            actions: [
-              ...(entry.report.state === "retryable"
-                ? [{ id: entry.actionIds.retry, kind: "retry" as const }]
-                : []),
-              ...(payload !== "none"
-                ? [{ id: entry.actionIds.export, kind: "export" as const }]
-                : []),
-              { id: entry.actionIds.discard, kind: "discard" as const },
-            ],
+            ...(entry.restartRequired ? { restartRequired: true as const } : {}),
+            actions: entry.restartRequired
+              ? []
+              : [
+                  ...(entry.report.state === "retryable"
+                    ? [{ id: entry.actionIds.retry, kind: "retry" as const }]
+                    : []),
+                  ...(payload !== "none"
+                    ? [{ id: entry.actionIds.export, kind: "export" as const }]
+                    : []),
+                  { id: entry.actionIds.discard, kind: "discard" as const },
+                ],
           };
         }),
       };
@@ -326,6 +360,7 @@ export function createPersistenceRecovery(deps: Dependencies) {
     async discard(id: string, action: CoreActionReference) {
       const entry = checked(id, action, "persistence-discard");
       try {
+        if (entry.restartRequired) return structuredClone(entry.report);
         deps.changing?.(entry.owner);
         const result = await mutate(entry.owner, async () => {
           try {

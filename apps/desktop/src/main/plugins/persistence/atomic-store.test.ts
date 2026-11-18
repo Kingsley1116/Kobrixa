@@ -281,7 +281,7 @@ it("F27: a genuinely uncertain publication keeps reads and mutations blocked unt
         "publish-uncertain",
       );
       expect(await env.store.reconcile(t)).toEqual({ disposition: "unknown" });
-      expect(env.store.settledDisposition(t.id)).toBeNull();
+      expect(env.store.settlement(t.id)).toBeNull();
     }
     fail = false;
     const confirmed = await env.store.reconcile(t);
@@ -344,7 +344,7 @@ it("B2-RF1: cancellation before dispatch wins; after dispatch stays unknown unti
     await atRename;
     env2.store.fence(owner, 0);
     expect(await env2.store.abort(t)).toBe("unknown");
-    expect(env2.store.settledDisposition(t.id)).toBeNull();
+    expect(env2.store.settlement(t.id)).toBeNull();
     expect((await env2.store.reconcile(t)).disposition).toBe("unknown");
     await expect(env2.store.reserve(ticket(new Uint8Array([8])), 1)).rejects.toThrow();
     resume();
@@ -1046,9 +1046,9 @@ it("reports terminal attempts settled by import replacement, but never receiving
     const p = await planned(env),
       a = await env.store.admitImport(owner, p.id, "one");
     await env.store.reserve(a, 1);
-    expect(env.store.settledDisposition(a.id)).toBeNull();
+    expect(env.store.settlement(a.id)).toBeNull();
     await env.store.admitImport(owner, p.id, "one");
-    expect(env.store.settledDisposition(a.id)).toBe("aborted");
+    expect(env.store.settlement(a.id)).toEqual({ disposition: "aborted" });
   } finally {
     await env.close();
   }
@@ -1069,11 +1069,11 @@ it("reports a clean rejected reserve as terminal without settling an unclean res
       return unlink(p);
     };
     await expect(env.store.reserve(t, 1)).rejects.toThrow("open-failed");
-    expect(env.store.settledDisposition(t.id)).toBe("aborted");
+    expect(env.store.settlement(t.id)).toEqual({ disposition: "aborted" });
     unclean = true;
     const uncertain = ticket(new Uint8Array([1]));
     await expect(env.store.reserve(uncertain, 1)).rejects.toThrow("open-failed");
-    expect(env.store.settledDisposition(uncertain.id)).toBeNull();
+    expect(env.store.settlement(uncertain.id)).toBeNull();
     unclean = false;
     await env.store.abort(uncertain);
   } finally {

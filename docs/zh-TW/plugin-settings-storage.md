@@ -22,6 +22,8 @@ receipt 證明已提交的 head。unknown 表示必須對帳，不能解讀成 r
 
 同一 profile 只允許一個 primary instance。第二次啟動聚焦現有視窗後退出，不初始化另一個 writer。關閉 app 會協調 storage drain、device stop 與 fault journal；取消關閉不會復活舊 handles、motion 或錄製。Disconnect 先確認 stop／save 才斷線。suspend 會要求 final save，但 OS 可能先凍結 I/O；wake 不自動續錄。
 
+如果主程式無法關閉儲存檔案，該外掛來源的後續寫入會被封鎖，重新載入外掛後仍然如此。寫入記錄時會回傳 `PLUGIN_E_STORAGE_IO`。捨棄復原項目後，該來源仍會維持封鎖。請重新啟動 Kobrixa，讓主程式取得設定檔寫入鎖、驗證儲存資料並從磁碟重建配額，再接受寫入。
+
 Legacy import 是 host allowlist 管理的一次性作業。原始檔保留不變；plan、逐項 receipt 與 complete marker 持久化，重啟沿用原先配置的目標 IDs。缺 renderer evidence 時維持 pending。完成後使用者刪掉新 record，不會再次匯入。真正 Lab 記錄／校正與九個 device preferences 已有產品 mapper 及局部 worker／restart 觀察，不能取代備份後的使用者原檔人工驗收。
 
 JavaScript method 使用 camelCase；Python method 使用 snake_case，但 params dict 的 wire keys 保留 camelCase。兩者保留相同 ok／value／error business envelope，transport／numeric protocol failure 才拋 RpcError。1.4、1.5、1.6 consumers 維持相容，不收到 persistence drain 或 settings events。UI resource v2 已在 API 1.8 實作；API、resource、套件發行版與應用資料版本分開計算。

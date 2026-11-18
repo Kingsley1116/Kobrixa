@@ -1,5 +1,8 @@
 import type { Handle, PersistenceResult } from "@kobrixa/plugin-protocol";
-import type { PersistenceRecoverySnapshot } from "@kobrixa/plugin-runtime";
+import type { PersistenceRecoverySnapshot as RuntimeRecoverySnapshot } from "@kobrixa/plugin-runtime";
+export type PersistenceRecoverySnapshot = Omit<RuntimeRecoverySnapshot, "items"> & {
+  items: Array<RuntimeRecoverySnapshot["items"][number] & { restartRequired?: true }>;
+};
 export interface PersistenceRecoveryBridge {
   snapshot(input: { itemId: Handle }): Promise<PersistenceResult<PersistenceRecoverySnapshot>>;
   act(input: {
@@ -83,4 +86,4 @@ export type SettingsApi170 = Omit<BoundSettingsService, "open"> & {
     resourceDigest: Sha256;
   }): ReturnType<BoundSettingsService["open"]>;
 };
-export type { SettingsFormBinding, PersistenceRecoverySnapshot } from "@kobrixa/plugin-runtime";
+export type { SettingsFormBinding } from "@kobrixa/plugin-runtime";

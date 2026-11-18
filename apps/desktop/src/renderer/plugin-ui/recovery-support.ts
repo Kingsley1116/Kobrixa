@@ -18,6 +18,7 @@ export type UiLabels = {
   export: string;
   discard: string;
   checkpoint: string;
+  restartRequired?: string;
   holdHint: string;
   actions: Record<"stop" | "reconcile" | "clear-resolved" | "retry-save" | "manage", string>;
 };

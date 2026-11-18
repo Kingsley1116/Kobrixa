@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import type { PersistenceRecoveryBridge } from "../../shared/plugin-persistence.js";
-import type { PersistenceRecoverySnapshot } from "@kobrixa/plugin-runtime";
+import type {
+  PersistenceRecoveryBridge,
+  PersistenceRecoverySnapshot,
+} from "../../shared/plugin-persistence.js";
 import type { UiLabels } from "./host-ports.js";
 export type CorePersistenceDetailProps = {
   snapshot: PersistenceRecoverySnapshot;
@@ -25,7 +27,11 @@ export function CorePersistenceDetail({ snapshot, labels, onAction }: CorePersis
       {snapshot.items.map((item) => (
         <article key={item.id}>
           <h3>{item.pluginId}</h3>
-          {item.payload !== "complete-staging" && <p>{labels.checkpoint}</p>}
+          {item.restartRequired ? (
+            <p>{labels.restartRequired}</p>
+          ) : (
+            item.payload !== "complete-staging" && <p>{labels.checkpoint}</p>
+          )}
           {item.actions
             .filter(
               (action) =>

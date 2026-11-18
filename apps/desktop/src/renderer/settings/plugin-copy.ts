@@ -20,6 +20,7 @@ export const pluginUiCopy: Record<Locale, UiLabels> = {
     retry: "Retry",
     export: "Export…",
     discard: "Discard…",
+    restartRequired: "Restart Kobrixa so it can verify storage before this plugin saves again.",
     checkpoint: "Only the last checkpoint may be available; a complete save cannot be retried.",
     holdHint: "Hold to run; release to stop. Maximum 10 seconds.",
     actions: {
@@ -46,6 +47,7 @@ export const pluginUiCopy: Record<Locale, UiLabels> = {
     retry: "重試",
     export: "匯出…",
     discard: "捨棄…",
+    restartRequired: "請重新啟動 Kobrixa。啟動時會檢查儲存資料，檢查完成後此外掛才能再次儲存。",
     checkpoint: "可能只保留最後檢查點，無法重試完整保存。",
     holdHint: "按住執行，放開停止；最長 10 秒。",
     actions: {

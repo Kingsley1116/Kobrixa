@@ -30,19 +30,41 @@ beforeAll(async () => {
     `import {runPersistenceWorker} from ${JSON.stringify(workerPath)};
       import {syntheticImportDescriptor,syntheticPreferencesImportDescriptor} from ${JSON.stringify(fixturesPath)};
       import {NodePersistenceFs} from ${JSON.stringify(filesystemPath)};
-      import {existsSync,unlinkSync,readFileSync} from "node:fs";
+      import {existsSync,unlinkSync,readFileSync,writeFileSync} from "node:fs";
       // Test-only fault injection: remove an enumerated child on real disk. All source
       // collection, messages, codecs, journals and subsequent reads remain native.
       // Hold one actual terminal reply after cleanup to exercise transport timeout.
       const delayed=${JSON.stringify(path.join(directory, "delay-abort.trigger"))};
       import {parentPort, workerData} from "node:worker_threads";
       const post=parentPort.postMessage.bind(parentPort);
+      const lostCommit = delayed + ".commit";
+      const clockFile = delayed + ".clock";
+      const now = performance.now.bind(performance);
+      const enableClock = () => { performance.now = () => now() + (existsSync(clockFile) ? Number(readFileSync(clockFile,"utf8")) : 0); };
+      const close = NodePersistenceFs.prototype.close;
+      NodePersistenceFs.prototype.close = function(fd) {
+        const trigger = delayed + ".close";
+        if (existsSync(trigger)) {
+          unlinkSync(trigger);
+          return Promise.reject(new Error("native-close"));
+        }
+        return close.call(this, fd);
+      };
       parentPort.postMessage=(frame, ...args) => {
+        if (existsSync(lostCommit)) {
+          const id = readFileSync(lostCommit, "utf8");
+          if (frame.settled?.some(marker => marker.id === id && marker.disposition === "committed")) {
+            if (frame.value?.disposition === "committed") {
+              enableClock();
+              writeFileSync(lostCommit + ".receipt", JSON.stringify(frame.value.receipt));
+              return;
+            }
+            frame = {...frame, settled:frame.settled.filter(marker => marker.id !== id)};
+          }
+        }
         if (frame.value !== "aborted" || !existsSync(delayed)) return post(frame,...args);
         unlinkSync(delayed);
-        const clockFile = delayed + ".clock";
-        const now = performance.now.bind(performance);
-        performance.now = () => now() + (existsSync(clockFile) ? Number(readFileSync(clockFile,"utf8")) : 0);
+        enableClock();
         workerData.faultPort.postMessage({point:"cleanup",time:performance.now(),ticket:null});
         const release = m => {
           if (m.kind !== "release" || m.point !== "cleanup") return;
@@ -87,9 +109,9 @@ beforeAll(async () => {
 afterAll(async () => {
   if (!process.env.B2_NEGATIVE_EVIDENCE_DIR) await rm(directory, { recursive: true, force: true });
 });
-async function launch(userData: string) {
+async function launch(userData: string, hostEpoch = randomUUID()) {
   await mkdir(userData, { recursive: true });
-  const profile = { hostEpoch: randomUUID(), assertHeld() {} };
+  const profile = { hostEpoch, assertHeld() {} };
   const root = await openStoreRoot({ userData, profile });
   let control: PersistenceFaultControl | undefined;
   const started = await startPersistenceWorker({
@@ -1628,7 +1650,15 @@ it("a timed-out abort reply delivered after barrier settlement needs a fresh con
     // The quota reply follows the late frame on the same worker message port.
     await env.backend.evidence.quota(owner);
     expect(env.backend.evidence.tickets(capture())).toEqual([ticket]);
-    expect(await env.backend.engine.abort(ticket)).toBe("aborted");
+    const reordered = {
+      metadata: ticket.metadata,
+      target: ticket.target,
+      deadlineMonotonicMs: ticket.deadlineMonotonicMs,
+      owner: ticket.owner,
+      id: ticket.id,
+    };
+    expect(await env.backend.engine.abort(reordered)).toBe("aborted");
+    expect(env.backend.evidence.confirmedAbort?.(reordered)).toBe(true);
     expect(await env.backend.evidence.flush(capture())).toEqual({
       accepted: [],
       unknown: [],
@@ -1648,6 +1678,147 @@ it("a timed-out abort reply delivered after barrier settlement needs a fresh con
     await reopened.backend.dispose();
   }
 });
+it("projects a lost commit after both retention windows and releases its acknowledged slot", async () => {
+  const env = await launch(path.join(directory, randomUUID()));
+  const owner = ownerFor(env.profile.hostEpoch);
+  const { host } = await hostFor(env, owner);
+  const trigger = path.join(directory, "delay-abort.trigger.commit");
+  const clock = path.join(directory, "delay-abort.trigger.clock");
+  const originalNow = performance.now.bind(performance);
+  let offset = 0;
+  const capture = () =>
+    env.backend.evidence.capture({ kind: "namespace", owner }, performance.now() + 10000);
+  const advance = async () => {
+    offset += 120001;
+    await writeFile(clock, String(offset));
+  };
+  try {
+    const write = await beginByte(host, owner);
+    await write.seal();
+    await writeFile(trigger, write.write);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const commit = write.commit();
+    const receipt = JSON.parse(await vi.waitFor(() => readFile(trigger + ".receipt", "utf8")));
+    await vi.advanceTimersByTimeAsync(10001);
+    expect(await commit).toMatchObject({ ok: false, error: { code: "PLUGIN_E_TIMEOUT" } });
+    vi.useRealTimers();
+    vi.spyOn(performance, "now").mockImplementation(() => originalNow() + offset);
+    for (let window = 0; window < 2; window++) {
+      await advance();
+      expect((await env.backend.reads.stat(owner, write.id)).id).toBe(write.id);
+    }
+    expect(env.backend.evidence.tickets(capture()).map((t) => t.id)).toEqual([write.write]);
+    await rm(trigger);
+    const aborted = await write.abort();
+    const disk = await env.backend.reads.stat(owner, write.id);
+    expect(aborted).toMatchObject({
+      ok: true,
+      value: { disposition: "committed", receipt: { revision: disk.revision } },
+    });
+    if (!aborted.ok) throw Error("missing commit");
+    expect(aborted.value.receipt).toEqual(receipt);
+    expect(await write.status()).toMatchObject({
+      ok: true,
+      value: { state: "committed", receipt: aborted.value.receipt },
+    });
+    expect(await env.backend.evidence.flush(capture())).toMatchObject({
+      state: "saved",
+      accepted: [write.write],
+      unknown: [],
+    });
+    await advance();
+    expect(env.backend.evidence.tickets(capture())).toEqual([]);
+    await env.backend.engine.reserve(make(owner, Buffer.alloc(1)), 1);
+  } finally {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    await Promise.all([
+      rm(trigger, { force: true }),
+      rm(clock, { force: true }),
+      rm(trigger + ".receipt", { force: true }),
+    ]);
+    await host.dispose();
+  }
+});
+
+it("keeps a failed close visible through reload and discard until a new host scans disk", async () => {
+  const userData = path.join(directory, randomUUID());
+  const env = await launch(userData);
+  const owner = ownerFor(env.profile.hostEpoch);
+  const current = { ...owner, generation: 2, processEpoch: randomUUID() };
+  const peer = { ...owner, sourceKey: "builtin:kobrixa.other", pluginId: "kobrixa.other" };
+  const bytes = Buffer.from("saved");
+  const saved = make(owner, bytes),
+    staged = make(owner, Buffer.from("x"));
+  const trigger = path.join(directory, "delay-abort.trigger.close");
+  const { createCoreActionLedger } = await import("../core-recovery.js");
+  const ledger = createCoreActionLedger({ now: () => performance.now(), current: () => true });
+  const { host } = await hostFor(env, owner, ledger);
+  try {
+    await stage(env.backend, saved, bytes);
+    expect((await env.backend.engine.publish(saved)).disposition).toBe("committed");
+    await stage(env.backend, staged, Buffer.from("x"));
+    await env.backend.evidence.retainSealed!(staged);
+    await writeFile(trigger, "");
+    await expect(env.backend.engine.abort(staged)).rejects.toThrow();
+    expect(await env.backend.evidence.quota(current)).toMatchObject({
+      ok: true,
+      value: { recordCount: 1, committedBytes: bytes.length, reservedBytes: 1, pinnedBytes: 1 },
+    });
+    await expect(beginByte(host, current)).rejects.toThrow("PLUGIN_E_STORAGE_IO");
+    const report = await host.participant.ownerLost(current);
+    expect(report).toMatchObject({
+      blocker: true,
+      state: "uncertain",
+      errors: [{ message: expect.stringContaining("Restart Kobrixa") }],
+    });
+    expect(host.recovery.snapshot().items).toMatchObject([
+      { id: report.recovery, actions: [], restartRequired: true },
+    ]);
+    const scope = { hostEpoch: owner.hostEpoch, workbenchInstance: randomUUID() };
+    const action = ledger.mint(scope, { kind: "persistence-discard", recovery: report.recovery! });
+    expect(await host.participant.discard(report.recovery!, action)).toMatchObject({
+      blocker: true,
+      state: "uncertain",
+      recovery: report.recovery,
+    });
+    expect(host.recovery.snapshot().items).toMatchObject([{ id: report.recovery, actions: [] }]);
+    const write = await beginByte(host, peer);
+    await write.seal();
+    expect(await write.commit()).toMatchObject({ ok: true });
+    expect(await host.participant.ownerLost(peer)).toMatchObject({
+      state: "saved",
+      blocker: false,
+    });
+  } finally {
+    await rm(trigger, { force: true });
+    await expect(host.dispose()).rejects.toThrow();
+  }
+  await expect(launch(userData, env.profile.hostEpoch)).rejects.toThrow("recovery-blocked");
+  const fresh = await launch(userData);
+  const freshOwner = ownerFor(fresh.profile.hostEpoch);
+  try {
+    expect(fresh.recovery).toBe("ready");
+    expect(freshOwner.hostEpoch).not.toBe(owner.hostEpoch);
+    expect(await fresh.backend.evidence.quota(freshOwner)).toMatchObject({
+      ok: true,
+      value: {
+        recordCount: 1,
+        committedBytes: bytes.length,
+        reservedBytes: 0,
+        pinnedBytes: 0,
+        temporaryBytes: 0,
+      },
+    });
+    expect((await fresh.backend.evidence.recoveryPage()).items).toEqual([]);
+    const ticket = make(freshOwner, bytes);
+    await stage(fresh.backend, ticket, bytes);
+    expect((await fresh.backend.engine.publish(ticket)).disposition).toBe("committed");
+  } finally {
+    await fresh.backend.dispose();
+  }
+});
+
 it.each(["failed-chunk", "checksum"])(
   "a late %s abort survives both retention windows and discard settles retirement",
   async (failure) => {

@@ -217,6 +217,7 @@ export type PersistenceBarrier = Readonly<{
 }>;
 
 export type PersistenceBarrierEvidence = {
+  restartBlocker?: Handle;
   state: "saved" | "failed" | "unknown";
   accepted: readonly Handle[];
   incomplete: readonly Handle[];

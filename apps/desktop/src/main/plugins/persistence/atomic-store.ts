@@ -68,9 +68,10 @@ import {
 } from "./namespace.js";
 import { parseNonceDocument, parseBarrierDocument } from "./import-sources.js";
 type Outcome = Awaited<ReturnType<PersistenceEnginePort["publish"]>>;
+type Settlement =
+  { disposition: "aborted" } | { disposition: "committed"; receipt: DiskHead["receipt"] };
 type Entry = {
   ticket: PublicationTicket;
-  signature: string;
   ns: Namespace;
   location: Location;
   old: DiskHead | null;
@@ -136,7 +137,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
   private readonly failedReserves = new Map<string, { ticket: PublicationTicket; ns: Namespace }>();
   private readonly tombstones = new Map<
     string,
-    { signature: string; disposition: "committed" | "aborted"; until: number }
+    { ticket: PublicationTicket; settlement: Settlement; until: number }
   >();
   private readonly entries = new Map<string, Entry>();
   private readonly targets = new Map<string, string>();
@@ -148,7 +149,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
   private readonly uncertain = new Map<string, string>();
   private readonly publication = new Map<string, Promise<unknown>>();
   private readonly pins = new Map<string, Pin>();
-  private readonly quarantinedSources = new Set<string>();
+  private readonly quarantinedSources = new Map<string, Handle>();
   private readonly closed = new Map<string, { owner: string; until: number }>();
   private readonly pages = new Set<Page>();
   private readonly cursors = new Map<string, { page: Page; offset: number }>();
@@ -235,7 +236,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     const key = this.targetKey(t);
     if (this.targets.get(key) === t.id) this.targets.delete(key);
   }
-  private readonly terminalDeletes = new Map<string, string>();
+  private readonly terminalDeletes = new Map<string, PublicationTicket>();
   private async admitTerminalDelete(t: PublicationTicket, byteLength: number): Promise<void> {
     if (
       this.finalAdmissions.has(t.id) ||
@@ -285,7 +286,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       cursor = page.nextCursor ?? undefined;
     } while (cursor);
     if (!terminal) throw new Error("stale");
-    this.terminalDeletes.set(t.id, JSON.stringify(t));
+    this.terminalDeletes.set(t.id, structuredClone(t));
   }
   private admitted(t: PublicationTicket): void {
     this.fs.profile.assertHeld();
@@ -296,7 +297,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
         (this.frozen.has(ownerKey(t.owner)) ||
           (t.target.kind === "record" &&
             this.frozenTargets.has(JSON.stringify([ownerKey(t.owner), t.target.id])) &&
-            this.terminalDeletes.get(t.id) !== JSON.stringify(t))))
+            !sameImportValue(this.terminalDeletes.get(t.id), t))))
     )
       throw new Error("stale");
     if (!this.recoveryDocuments.has(t.id) && this.quarantinedSources.has(t.owner.sourceKey))
@@ -308,7 +309,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
   private entry(t: PublicationTicket): Entry {
     this.fs.profile.assertHeld();
     const e = this.entries.get(t.id);
-    if (!e || e.signature !== JSON.stringify(t)) throw new Error("stale");
+    if (!e || !sameImportValue(e.ticket, t)) throw new Error("stale");
     if (
       e.finished !== null &&
       e.finished + 120000 <= this.fs.now() &&
@@ -336,8 +337,11 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     if (e.state !== "committed" && e.state !== "aborted") return;
     // Retain a second bounded window for barriers captured before live-entry expiry.
     this.tombstones.set(id, {
-      signature: e.signature,
-      disposition: e.state,
+      ticket: e.ticket,
+      settlement:
+        e.state === "committed"
+          ? { disposition: e.state, receipt: e.head!.receipt }
+          : { disposition: e.state },
       until: this.fs.now() + 120000,
     });
     while (this.tombstones.size > 1024)
@@ -425,8 +429,8 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       !this.tombstones.has(ticket.id)
     ) {
       this.tombstones.set(ticket.id, {
-        signature: JSON.stringify(ticket),
-        disposition: "aborted",
+        ticket: structuredClone(ticket),
+        settlement: { disposition: "aborted" },
         until: this.fs.now() + 120000,
       });
       while (this.tombstones.size > 1024)
@@ -574,7 +578,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     const pin = e?.retained && this.pins.get(e.retained.pin);
     return (
       !!e?.retained &&
-      e.signature === JSON.stringify(ticket) &&
+      sameImportValue(e.ticket, ticket) &&
       !!pin &&
       !pin.closing &&
       this.fs.now() < e.retained.expiresMonotonicMs &&
@@ -713,11 +717,10 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
         opened = await this.fs.open(temp, "create-exclusive");
       });
       const fd = opened;
-      const frozen = JSON.parse(JSON.stringify(ticket)) as PublicationTicket;
+      const frozen = structuredClone(ticket);
       this.admitted(ticket);
       this.entries.set(ticket.id, {
         ticket: frozen,
-        signature: JSON.stringify(ticket),
         ns,
         location,
         old,
@@ -1060,14 +1063,14 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       !this.entries.has(ticket.id) &&
       !this.failedReserves.has(ticket.id) &&
       ticket.owner.hostEpoch === this.fs.profile.hostEpoch &&
-      tombstone?.disposition === "aborted" &&
+      tombstone?.settlement.disposition === "aborted" &&
       tombstone.until > this.fs.now() &&
-      tombstone.signature === JSON.stringify(ticket)
+      sameImportValue(tombstone.ticket, ticket)
     )
       return "aborted";
     const failed = this.failedReserves.get(ticket.id);
     if (failed) {
-      if (JSON.stringify(ticket) !== JSON.stringify(failed.ticket)) throw new Error("stale");
+      if (!sameImportValue(ticket, failed.ticket)) throw new Error("stale");
       for (const name of [
         "payload.tmp",
         "sealed.json",
@@ -1086,8 +1089,8 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       for (const [identity, write] of this.documentWrites)
         if (write.ticket.id === ticket.id) this.documentWrites.delete(identity);
       this.tombstones.set(ticket.id, {
-        signature: JSON.stringify(ticket),
-        disposition: "aborted",
+        ticket: structuredClone(ticket),
+        settlement: { disposition: "aborted" },
         until: this.fs.now() + 120000,
       });
       while (this.tombstones.size > 1024)
@@ -1325,7 +1328,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       // Keep the descriptor, candidate and quota until worker teardown. Only
       // this source needs recovery; global pruning can continue past this pin.
       p.closeFailed = true;
-      this.quarantinedSources.add(p.source);
+      if (!this.quarantinedSources.has(p.source)) this.quarantinedSources.set(p.source, id);
       throw new Error("recovery-blocked", { cause });
     });
     this.pins.delete(id);
@@ -1538,7 +1541,11 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     if (this.failedReserves.has(ticket.id) && (await this.abort(ticket)) === "aborted")
       return { disposition: "not-committed" };
     const tombstone = this.tombstones.get(ticket.id);
-    if (tombstone?.signature === JSON.stringify(ticket) && tombstone.disposition === "aborted")
+    if (
+      tombstone &&
+      sameImportValue(tombstone.ticket, ticket) &&
+      tombstone.settlement.disposition === "aborted"
+    )
       return { disposition: "not-committed" };
     return this.reconcile(ticket);
   }
@@ -2017,7 +2024,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       const pin = this.pins.get(value.sealedPin);
       if (
         !e ||
-        e.signature !== JSON.stringify(value.ticket) ||
+        !sameImportValue(e.ticket, value.ticket) ||
         !pin ||
         pin.ticket !== e.ticket.id ||
         pin.owner !== ownerKey(value.owner) ||
@@ -2210,13 +2217,9 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       const e = this.entries.get(t.id);
       if (!e) {
         const tombstone = this.tombstones.get(t.id);
-        if (
-          !tombstone ||
-          tombstone.until <= this.fs.now() ||
-          tombstone.signature !== JSON.stringify(t)
-        )
+        if (!tombstone || tombstone.until <= this.fs.now() || !sameImportValue(tombstone.ticket, t))
           unknown.push(t.id);
-        else if (tombstone.disposition === "aborted") incomplete.push(t.id);
+        else if (tombstone.settlement.disposition === "aborted") incomplete.push(t.id);
         continue;
       }
       if (e.retained && e.state === "sealed" && !e.gate.dispatched && !e.recoveryGate?.dispatched) {
@@ -2233,16 +2236,10 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     }
     // A failed descriptor close remains an independent cleanup obligation even
     // when main has already received a publication receipt for the record.
-    for (const [id, pin] of this.pins) {
-      if (!pin.closeFailed || pin.owner !== ownerKey(barrier.scope.owner)) continue;
-      const entry = pin.ticket ? this.entries.get(pin.ticket) : undefined;
-      if (
-        barrier.scope.kind === "namespace" ||
-        (entry?.ticket.target.kind === "record" &&
-          entry.ticket.target.id === barrier.scope.recordId)
-      )
-        unknown.push(id);
-    }
+    const restartBlocker = this.quarantinedSources.get(barrier.scope.owner.sourceKey);
+    if (restartBlocker)
+      for (const [id, pin] of this.pins)
+        if (pin.closeFailed && pin.source === barrier.scope.owner.sourceKey) unknown.push(id);
     const ns = await this.ns(barrier.scope.owner.sourceKey);
     for (const loc of await ns.locations()) {
       const record = liveRecord(await ns.head(loc));
@@ -2253,6 +2250,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
         incomplete.push(record.id);
     }
     return {
+      ...(restartBlocker ? { restartBlocker } : {}),
       state: unknown.length ? "unknown" : incomplete.length ? "failed" : "saved",
       accepted,
       incomplete,
@@ -2265,30 +2263,29 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       e &&
       e.state !== "committed" &&
       e.state !== "aborted" &&
-      e.signature === JSON.stringify(ticket)
+      sameImportValue(e.ticket, ticket)
     ) {
       e.gate.shorten(this.fs.now(), this.fs.now());
       e.recoveryGate?.shorten(this.fs.now(), this.fs.now());
     }
   }
-  settledDisposition(id: string, signature?: string): "committed" | "aborted" | null {
+  settlement(id: string, ticket?: PublicationTicket): Settlement | null {
     const e = this.entries.get(id);
-    if (e)
-      return (!signature || e.signature === signature) &&
-        !e.busy &&
-        (e.state === "committed" || e.state === "aborted")
-        ? e.state
-        : null;
-    const tombstone = this.tombstones.get(id);
-    return tombstone &&
-      (!signature || tombstone.signature === signature) &&
-      tombstone.until > this.fs.now()
-      ? tombstone.disposition
+    if (e) {
+      if (e.busy || (ticket && !sameImportValue(e.ticket, ticket))) return null;
+      if (e.state === "committed") return { disposition: "committed", receipt: e.head!.receipt };
+      return e.state === "aborted" ? { disposition: "aborted" } : null;
+    }
+    const saved = this.tombstones.get(id);
+    return saved &&
+      saved.until > this.fs.now() &&
+      (!ticket || sameImportValue(ticket, saved.ticket))
+      ? saved.settlement
       : null;
   }
   taggedImport(ticket: PublicationTicket, tag: ImportTag): boolean {
     const e = this.entries.get(ticket.id);
-    return !!e && e.signature === JSON.stringify(ticket) && sameImportValue(e.tag, tag);
+    return !!e && sameImportValue(e.ticket, ticket) && sameImportValue(e.tag, tag);
   }
   unresolvedTicket(id: string): boolean {
     const e = this.entries.get(id);

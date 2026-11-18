@@ -59,6 +59,7 @@ export type LifecycleDependencies = {
     report: DrainReport,
     current: () => boolean,
     unresolved: ReadonlySet<string>,
+    restartBlocker?: string,
   ): Promise<DrainReport>;
   checkpointOpen(owner: ResourceOwner, id: string): boolean;
   recovery: Pick<PersistenceParticipant, "recoverySnapshot" | "retry" | "discard">;
@@ -511,6 +512,7 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
           result,
           current,
           new Set(outcomes.flatMap((o) => [...o.unknown, ...o.incomplete])),
+          outcomes.find((o) => o.restartBlocker)?.restartBlocker,
         );
     return current() ? retained : unavailable();
   }

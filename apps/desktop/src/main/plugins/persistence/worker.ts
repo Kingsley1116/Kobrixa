@@ -64,6 +64,9 @@ export interface PersistenceFaultControl {
 }
 import type { FoundationDiagnostics } from "@kobrixa/plugin-runtime";
 const diagnosticInstances = new WeakMap<object, FoundationDiagnostics>();
+// An unclean exit can strand a descriptor or an in-flight publication. Keep its
+// host epoch fenced even when the thread itself no longer exists.
+const workerEpochs = new Map<string, string>();
 const workerInstances = new WeakMap<PersistenceBackend, () => number>();
 export function persistenceWorkerCount(backend: PersistenceBackend): number {
   const count = workerInstances.get(backend);
@@ -390,6 +393,7 @@ export async function startPersistenceWorker(input: {
   input.profile.assertHeld();
   const root = await storeRootPath(input.root, input.profile);
   if (!path.isAbsolute(input.workerEntry)) throw new Error("invalid-worker-entry");
+  if (workerEpochs.get(root) === input.profile.hostEpoch) throw new Error("recovery-blocked");
   const held = new SharedArrayBuffer(sharedBytes);
   Atomics.store(new Int32Array(held), 0, 1);
   const channel = input.testControl ? new MessageChannel() : null;
@@ -397,9 +401,12 @@ export async function startPersistenceWorker(input: {
     workerData: channel ? { faultPort: channel.port2 } : {},
     transferList: channel ? [channel.port2] : [],
   });
+  workerEpochs.set(root, input.profile.hostEpoch);
   let exited = false,
     exitCode: number | undefined;
   worker.once("exit", (code) => {
+    if (code === 0 && closing && workerEpochs.get(root) === input.profile.hostEpoch)
+      workerEpochs.delete(root);
     exited = true;
     exitCode = code;
     channel?.port1.close();
@@ -614,13 +621,18 @@ export async function startPersistenceWorker(input: {
               resolve(value, confirmedAbort) {
                 // A timeout fences the request. Its late transport reply cannot
                 // change the evidence used by a subsequent drain.
+                const acknowledgedCommit =
+                  (operation === "engine.abort" && value === "committed") ||
+                  (operation === "engine.reconcile" &&
+                    (value as { disposition?: string } | null)?.disposition === "committed");
                 if (
                   !cancelled &&
-                  confirmedAbort &&
-                  entry?.ticket.target.kind === "record" &&
-                  JSON.stringify(entry.ticket) === JSON.stringify(parameters[0])
+                  entry &&
+                  (confirmedAbort || acknowledgedCommit) &&
+                  sameImportValue(entry.ticket, parameters[0])
                 ) {
-                  entry.confirmedAbort = true;
+                  if (confirmedAbort && entry.ticket.target.kind === "record")
+                    entry.confirmedAbort = true;
                   entry.settledAt ??= input.now();
                 }
                 resolve(value as Awaited<ReturnType<WorkerOperations[K]>>);
@@ -836,7 +848,7 @@ export async function startPersistenceWorker(input: {
     evidence: {
       confirmedAbort(ticket) {
         const entry = ledger.get(ticket.id);
-        return !!entry?.confirmedAbort && JSON.stringify(entry.ticket) === JSON.stringify(ticket);
+        return !!entry?.confirmedAbort && sameImportValue(entry.ticket, ticket);
       },
       saveCheckpoint: (o, v) => send("evidence.saveCheckpoint", [o, v]),
       retainSealed: (t) => send("evidence.retainSealed", [t]),
@@ -1043,8 +1055,7 @@ export function runPersistenceWorker(input: {
         {
           ticket: PublicationTicket;
           sequence: number;
-          signature: string;
-          terminal?: "aborted" | "committed";
+          terminal?: NonNullable<ReturnType<AtomicStore["settlement"]>>;
         }
       >(),
       destinations = new Map<string, ExportDestination>();
@@ -1055,15 +1066,20 @@ export function runPersistenceWorker(input: {
       // Admission and historical reconciliation may settle a different, actual attempt.
       // Include attempts settled indirectly by the store's pruning.
       for (const e of accepted.values()) {
-        const terminal = store.settledDisposition(e.ticket.id, e.signature);
+        const terminal = store.settlement(e.ticket.id, e.ticket);
         if (terminal) {
           e.terminal = terminal;
-          settled.push({ id: e.ticket.id, disposition: terminal });
+          settled.push({ id: e.ticket.id, disposition: terminal.disposition });
         } else if (store.unresolvedTicket(e.ticket.id)) {
           delete e.terminal;
         }
       }
       return settled;
+    }
+    function retainedSettlement(ticket: PublicationTicket) {
+      for (const admission of accepted.values())
+        if (admission.ticket.id === ticket.id && sameImportValue(admission.ticket, ticket))
+          return admission.terminal;
     }
     const api = {
       "engine.reserveFinal": (t: PublicationTicket, n: number, g: FinalWriteGrant) => {
@@ -1096,30 +1112,29 @@ export function runPersistenceWorker(input: {
       "engine.append": store.append.bind(store),
       "engine.seal": store.seal.bind(store),
       "engine.publish": store.publish.bind(store),
-      "engine.reconcile": store.reconcile.bind(store),
-      "engine.abort": async (ticket: PublicationTicket) => {
-        // Main explicitly acknowledges the slot on retirement. An exact abort can still obtain
-        // the terminal result after both store retention windows have elapsed.
-        for (const admission of accepted.values())
-          if (
-            admission.terminal &&
-            admission.ticket.id === ticket.id &&
-            sameImportValue(admission.ticket, ticket)
-          )
-            return admission.terminal;
-        return store.abort(ticket);
+      "engine.reconcile": (ticket: PublicationTicket) => {
+        const saved = retainedSettlement(ticket);
+        return saved?.disposition === "committed" ? saved : store.reconcile(ticket);
       },
+      "engine.abort": (ticket: PublicationTicket) =>
+        retainedSettlement(ticket)?.disposition ?? store.abort(ticket),
       "reads.settings": store.settings.bind(store),
       "reads.stat": store.stat.bind(store),
       "reads.list": store.list.bind(store),
       "reads.open": store.open.bind(store),
       "reads.read": store.read.bind(store),
       "reads.close": store.close.bind(store),
-      "evidence.flush": (b: PersistenceBarrier, tickets: PublicationTicket[]) =>
-        store.flushEvidence(
-          b,
-          tickets.filter((t) => matches(b.scope, t)),
-        ),
+      "evidence.flush": async (b: PersistenceBarrier, tickets: PublicationTicket[]) => {
+        const members = tickets.filter((t) => matches(b.scope, t));
+        if (!members.length) return store.flushEvidence(b, members);
+        const committed = new Map<string, PublicationTicket>();
+        for (const admission of accepted.values())
+          if (admission.terminal?.disposition === "committed")
+            committed.set(admission.ticket.id, admission.ticket);
+        const outstanding = members.filter((t) => !sameImportValue(t, committed.get(t.id)));
+        const evidence = await store.flushEvidence(b, outstanding);
+        return { ...evidence, accepted: members.map((t) => t.id) };
+      },
       "evidence.quota": async (o: PersistenceOwner) => ({
         ok: true as const,
         value: store.quota.snapshot(o.sourceKey),
@@ -1252,7 +1267,6 @@ export function runPersistenceWorker(input: {
           const ticket = publicationTicketSchema.parse(r.args[0]);
           accepted.set(r.gate!.slot, {
             ticket,
-            signature: JSON.stringify(r.args[0]),
             sequence: r.gate!.sequence,
           });
         } catch (error) {
