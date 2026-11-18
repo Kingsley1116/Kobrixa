@@ -28,8 +28,10 @@ static void put_float(uint8_t *p, float value) {
     p[i] = (uint8_t)(bits >> (8 * i));
 }
 
+// Each native peer starts at an independently chosen, exactly representable
+// binary32 integer. Reject exhaustion rather than reusing a wire challenge.
+static unsigned sample;
 static int answer(const uint8_t *p, size_t n, uint8_t out[REPORT]) {
-  static unsigned sample;
   // hidraw writes include a zero report ID; the transport may remove it.
   if (n && !p[0]) {
     ++p;
@@ -54,7 +56,9 @@ static int answer(const uint8_t *p, size_t n, uint8_t out[REPORT]) {
   input[4] = input[6] = input[7] = 1;
   memcpy(input + 12, "Spike sensor", 12);
   memcpy(input + 28, "unit", 4);
-  sample = sample % 65535 + 1;
+  if (sample >= 16777215)
+    return -1;
+  ++sample;
   put_float(input + 36, (float)sample);
   for (int i = 1; i < 4; ++i)
     input[68 * i] = 126;
@@ -130,6 +134,13 @@ int main(int argc, char **argv) {
     perror("open /dev/uhid");
     return 1;
   }
+  int entropy = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+  if (entropy < 0 || read(entropy, &sample, sizeof sample) != (ssize_t)sizeof sample ||
+      close(entropy)) {
+    perror("peer challenge seed");
+    return 1;
+  }
+  sample &= 0x7fffff;
   struct uhid_event create = {.type = UHID_CREATE2};
   struct uhid_create2_req *dev = &create.u.create2;
   strcpy((char *)dev->name, "Kobrixa UHID spike");

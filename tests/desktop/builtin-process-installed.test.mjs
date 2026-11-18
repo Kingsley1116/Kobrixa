@@ -9,6 +9,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import {
   devicePreferencesExpression,
+  installProbe,
   observeInstalledWorkers,
   installedJournalExpression,
   assertWindowsJournalReady,
@@ -646,4 +647,202 @@ test("both installed CI paths use the shared scoped AppArmor lifecycle", async (
   assert.match(script, /apparmor_parser -r/);
   assert.match(script, /apparmor_parser -R/);
   assert.doesNotMatch(script, /--no-sandbox|--disable-setuid-sandbox|sysctl -w/);
+});
+
+test("installed release logpoint captures the original host reply without pausing or reissuing it", async () => {
+  const { Session } = await import("node:inspector/promises");
+  const { runInThisContext } = await import("node:vm");
+  const { releaseSite, observeRelease } = await import("./ev3-uhid-observe.mjs");
+  const source =
+    "(async function(e,t,i,r){let a=await e.request(i,`devices/recording/release`,{reservationId:t.data},r);return e.current()?a.ok:false})";
+  const session = new Session();
+  session.connect();
+  globalThis.__installedProbe = { releases: [] };
+  const pauses = [];
+  session.on("Debugger.paused", (event) => pauses.push(event.params.reason));
+  const client = {
+    send: (name, params) => session.post(name, params),
+    on(name, listener) {
+      const forward = (event) => listener(event.params);
+      session.on(name, forward);
+      return () => session.off(name, forward);
+    },
+  };
+  let remove;
+  try {
+    const fn = runInThisContext(source, { filename: "/p4-test-release/.vite/build/main.cjs" });
+    remove = await observeRelease(client, "/p4-test-release", source);
+    let calls = 0;
+    const result = { ok: true, value: { reservation: { reason: "released" } } };
+    assert.equal(
+      await fn(
+        {
+          request: async () => {
+            calls++;
+            return result;
+          },
+          current: () => true,
+        },
+        { data: "original" },
+        { owner: { processEpoch: "epoch" } },
+        null,
+      ),
+      true,
+    );
+    assert.deepEqual(pauses, []);
+    assert.equal(calls, 1);
+    assert.equal(globalThis.__installedProbe.releases.length, 1);
+    const [observed] = globalThis.__installedProbe.releases;
+    assert.deepEqual(observed.result, result);
+    assert.equal(observed.reservationId, "original");
+    assert.equal(observed.owner.processEpoch, "epoch");
+    assert.throws(() => releaseSite(source.replace("e.current()", "e.other()")));
+  } finally {
+    try {
+      await remove?.();
+    } finally {
+      session.disconnect();
+    }
+    delete globalThis.__installedProbe;
+  }
+});
+
+test("Lab port observer preserves original handoff, payloads and owner", async () => {
+  const { EventEmitter } = await import("node:events");
+  const { observeLabFork } = await import("./ev3-uhid-observe.mjs");
+  let duringSend;
+  class Port extends EventEmitter {
+    start() {
+      return this;
+    }
+    postMessage(text) {
+      if (text === "fail") throw new Error("send failed");
+      duringSend = Number(process.hrtime.bigint()) / 1e6;
+      return text;
+    }
+  }
+  const incoming = new Port(),
+    outgoing = new Port(),
+    rows = [];
+  const owner = { processEpoch: "only-this-child" };
+  const child = {
+    pid: 123,
+    postMessage: (message, ports) => {
+      assert.deepEqual(ports, [outgoing]);
+      return message.type;
+    },
+  };
+  const start = Port.prototype.start;
+  const restore = observeLabFork(child, JSON.stringify(owner), rows);
+  assert.equal(
+    child.postMessage({ type: "kobrixa-plugin-port" }, [outgoing]),
+    "kobrixa-plugin-port",
+  );
+  assert.equal(incoming.start(), incoming);
+  assert.equal(Port.prototype.start, start);
+  assert.equal(incoming.postMessage('{"id":1}'), '{"id":1}');
+  assert.ok(rows[0].sendStartedAt <= duringSend && duringSend <= rows[0].at);
+  assert.throws(() => incoming.postMessage("fail"), /send failed/);
+  incoming.emit("message", { data: '{"result":42}' });
+  assert.deepEqual(
+    rows.map((r) => [r.owner, r.utility, r.direction, r.message]),
+    [
+      [owner, 123, "host-plugin", { id: 1 }],
+      [owner, 123, "plugin-host", { result: 42 }],
+    ],
+  );
+  restore();
+  assert.equal(incoming.postMessage, Port.prototype.postMessage);
+  assert.equal(incoming.listenerCount("message"), 0);
+  assert.equal(incoming.listenerCount("close"), 0);
+});
+
+test("publication wrapper restores a live worker before graceful exit", () => {
+  class Worker extends EventEmitter {
+    postMessage() {}
+  }
+  const threads = { Worker };
+  const rows = [];
+  const probe = observeInstalledWorkers(
+    threads,
+    (row) => rows.push(row),
+    () => ({}),
+    true,
+  );
+  const child = new threads.Worker("persistence-worker");
+  assert.notEqual(child.postMessage, Worker.prototype.postMessage);
+  assert.equal(probe.restore(), true);
+  assert.equal(child.postMessage, Worker.prototype.postMessage);
+  assert.equal(child.emit, Worker.prototype.emit);
+  assert.deepEqual(child.eventNames(), []);
+  const beforeExit = rows.length;
+  assert.equal(child.emit("exit", 0), false);
+  assert.equal(rows.length, beforeExit);
+});
+
+test("relocated release logpoint is removed and debugger disabled", async () => {
+  const { observeRelease } = await import("./ev3-uhid-observe.mjs");
+  const source =
+    "async function f(e,t,i,r){let a=await e.request(i,`devices/recording/release`,{reservationId:t.data},r);return e.current()?a.ok:false}";
+  const calls = [];
+  const listeners = new Map();
+  const client = {
+    on(name, fn) {
+      listeners.set(name, fn);
+      return () => listeners.delete(name);
+    },
+    async send(name, params) {
+      calls.push(name);
+      if (name === "Debugger.enable")
+        listeners.get("Debugger.scriptParsed")({
+          url: "/test/.vite/build/main.cjs",
+          scriptId: "1",
+        });
+      if (name === "Debugger.getScriptSource") return { scriptSource: source };
+      if (name === "Debugger.setBreakpoint")
+        return {
+          breakpointId: "original",
+          actualLocation: { ...params.location, lineNumber: 999 },
+        };
+      if (name === "Debugger.removeBreakpoint") assert.equal(params.breakpointId, "original");
+    },
+  };
+  await assert.rejects(observeRelease(client, "/test", source), /999/);
+  assert.deepEqual(calls.slice(-2), ["Debugger.removeBreakpoint", "Debugger.disable"]);
+  assert.equal(listeners.size, 0);
+});
+
+test("serialized main probe acknowledges restoration after observing worker shutdown", () => {
+  class Worker extends EventEmitter {
+    postMessage() {}
+  }
+  const threads = { Worker };
+  const fork = () => new EventEmitter();
+  const electron = { app: { isReady: () => false }, utilityProcess: { fork } };
+  const main = Object.assign(new EventEmitter(), { execArgv: [], stderr: { write: () => {} } });
+  const writes = [];
+  const modules = {
+    electron,
+    "node:worker_threads": threads,
+    "node:fs": { writeSync: (fd, text) => writes.push([fd, text]) },
+  };
+  const context = {
+    require: (key) => modules[key],
+    process: main,
+    URL,
+    performance,
+    __recordingCapture: true,
+  };
+  assert.equal(runInNewContext(installProbe, context), true);
+  const probe = context.__installedProbe;
+  assert.equal(probe.observeExit(), true);
+  const worker = new threads.Worker("persistence-worker");
+  worker.emit("exit", 0);
+  main.emit("exit", 0);
+  assert.deepEqual(writes, [[2, "\nKOBRIXA_INSTALLED_RESTORED\n"]]);
+  assert.equal(probe.workers.timeline.at(-1).event, "exit");
+  assert.equal(main.listenerCount("exit"), 0);
+  assert.equal(threads.Worker, Worker);
+  assert.equal(electron.utilityProcess.fork, fork);
+  assert.equal(worker.postMessage, Worker.prototype.postMessage);
 });

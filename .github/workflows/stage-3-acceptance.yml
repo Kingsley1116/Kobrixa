@@ -65,6 +65,21 @@ jobs:
         uses: ./.github/actions/installed-apparmor
         with:
           operation: load
+      - name: Provision installed recording peer
+        if: runner.os == 'Linux' && matrix.gate == 'installed'
+        shell: bash
+        run: |
+          if ! command -v auditctl >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y auditd
+          fi
+          sudo service auditd start
+          sudo auditctl -s
+          driver=tests/desktop/ev3-uhid-spike.mjs
+          results="$RUNNER_TEMP/kobrixa-recording-peer"
+          node "$driver" init "$results"
+          node "$driver" G1 "$results"
+          node "$driver" G2 "$results"
       - name: Execute required native gate
         shell: bash
         run: |
@@ -77,6 +92,10 @@ jobs:
               installed_node="$(node -p 'process.execPath')"
               xvfb-run -a sudo --preserve-env=DISPLAY,XAUTHORITY,TMPDIR,TMP,TEMP unshare --net -- /bin/sh -ec '
                 /usr/sbin/ip link set lo up
+                # The strict gate performs the third fresh ordinary run followed by W17.
+                for attempt in 1 2; do
+                  sudo --preserve-env=DISPLAY,XAUTHORITY,TMPDIR,TMP,TEMP -u "$1" -- "$2" tests/desktop/builtin-process-installed.mjs --isolated
+                done
                 exec sudo --preserve-env=DISPLAY,XAUTHORITY,TMPDIR,TMP,TEMP -u "$1" -- "$2" tests/desktop/stage-3-closeout-run.mjs installed --run
               ' sh "#$(id -u)" "$installed_node" 2>&1 | tee stage-3-native.log
             else
@@ -84,6 +103,16 @@ jobs:
             fi
           else
             node tests/desktop/stage-3-closeout-run.mjs '${{ matrix.gate }}' --run 2>&1 | tee stage-3-native.log
+          fi
+      - name: Stop installed recording peer
+        if: always() && runner.os == 'Linux' && matrix.gate == 'installed'
+        shell: bash
+        run: |
+          unit=kobrixa-uhid-spike.service
+          if systemctl cat "$unit" >/dev/null 2>&1; then
+            systemctl is-active "$unit" || failed=1
+            sudo systemctl stop "$unit"
+            exit "${failed:-0}"
           fi
       - name: Retain installed Linux kernel denials and remove test AppArmor profile
         if: always() && runner.os == 'Linux' && matrix.gate == 'installed'

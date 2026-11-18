@@ -152,3 +152,28 @@ test("installed workflow raises loopback before dropping root and pins the selec
   assert.equal(cleanup.with.operation, "unload");
   assert.match(policy, /apparmor_parser -R/);
 });
+
+test("installed Ubuntu provisions the peer before the strict gate and always stops it", async () => {
+  const { jobs } = parse(
+    await readFile(
+      new URL("../../.github/workflows/stage-3-acceptance.yml", import.meta.url),
+      "utf8",
+    ),
+  );
+  const steps = jobs.native.steps,
+    setup = steps.findIndex((step) => step.name === "Provision installed recording peer");
+  const gate = steps.findIndex((step) => step.name === "Execute required native gate");
+  const stop = steps.findIndex((step) => step.name === "Stop installed recording peer");
+  assert.ok(setup >= 0 && setup < gate && gate < stop);
+  assert.equal(steps[setup].if, "runner.os == 'Linux' && matrix.gate == 'installed'");
+  assert.equal(steps[stop].if, "always() && " + steps[setup].if);
+  assert.match(
+    steps[setup].run,
+    /node "\$driver" init "\$results"\s+node "\$driver" G1 "\$results"\s+node "\$driver" G2 "\$results"/,
+  );
+  assert.match(steps[stop].run, /sudo systemctl stop "\$unit"/);
+  assert.match(
+    steps[gate].run,
+    /for attempt in 1 2; do\s+sudo .*builtin-process-installed\.mjs --isolated\s+done\s+exec sudo .*stage-3-closeout-run\.mjs installed --run/,
+  );
+});

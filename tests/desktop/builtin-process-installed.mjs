@@ -1,3 +1,10 @@
+import {
+  assertInstalledPrimary,
+  assertSecondaryObservation,
+  motorId,
+  requiredCompilers,
+} from "./builtin-installed-primary.mjs";
+export { assertInstalledPrimary, assertSecondaryObservation };
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -32,6 +39,21 @@ import {
   waitForRendererTarget,
 } from "./builtin-installed-client.mjs";
 
+import { verifyLeaf as verifyRecordingLeaf } from "./sensor-lab-installed-artifacts.mjs";
+import { connectUhidPanel } from "./ev3-uhid-device.mjs";
+import {
+  RECORDING_CRITERION,
+  observeLabFork,
+  observeRelease,
+  observeRecordingItem,
+  monotonic,
+  openLab,
+  startLab,
+  labClick,
+  waitRecordingFrames,
+  waitLabCommand,
+} from "./ev3-uhid-observe.mjs";
+import { observeProfileWrites, PROFILE_ATTRIBUTION } from "./ev3-uhid-audit.mjs";
 import { copyDesktopBundle, verifyMacBundle } from "../../tools/release/macos-test-bundle.mjs";
 import { JOURNAL_PRODUCTION_EXPORTS } from "../../tools/release/journal-win32.mjs";
 import { assertInstalledLinuxNetwork } from "./builtin-installed-linux.mjs";
@@ -254,59 +276,102 @@ export function installSecondaryObservation(require, process, emit) {
   const evidence = {
     pid: process.pid,
     beforeReady: true,
+    installedMonotonic: Number(process.hrtime.bigint()) / 1e6,
     workers: [],
     utilities: [],
     children: [],
     writes: [],
     locks: [],
   };
+  const cleanups = [];
+  const replace = (target, key, replacement) => {
+    const descriptor = Object.getOwnPropertyDescriptor(target, key);
+    target[key] = replacement;
+    if (target[key] !== replacement) throw Error("Cannot observe " + key);
+    cleanups.push(() => {
+      if (target[key] !== replacement) return;
+      if (descriptor) Object.defineProperty(target, key, descriptor);
+      else delete target[key];
+    });
+  };
+  const restore = () => {
+    for (const cleanup of cleanups.reverse()) cleanup();
+    require("node:module").syncBuiltinESMExports();
+  };
   const wrap = (target, key, rows, describe = (args) => args.map((value) => String(value))) => {
     const original = target[key];
     if (typeof original !== "function") throw Error(`Missing observation API: ${key}`);
-    target[key] = new Proxy(original, {
-      apply(fn, receiver, args) {
-        const detail = describe(args);
-        if (detail !== null) rows.push({ api: key, arguments: detail });
-        return Reflect.apply(fn, receiver, args);
-      },
-      construct(fn, args, newTarget) {
-        rows.push({ api: key, arguments: describe(args) });
-        return Reflect.construct(fn, args, newTarget === target[key] ? fn : newTarget);
-      },
-    });
-    if (target[key] === original) throw Error(`Cannot observe ${key}`);
+    replace(
+      target,
+      key,
+      new Proxy(original, {
+        apply(fn, receiver, args) {
+          const detail = describe(args);
+          if (detail !== null) rows.push({ api: key, arguments: detail });
+          return Reflect.apply(fn, receiver, args);
+        },
+        construct(fn, args, newTarget) {
+          rows.push({ api: key, arguments: describe(args) });
+          return Reflect.construct(fn, args, newTarget === target[key] ? fn : newTarget);
+        },
+      }),
+    );
   };
-  wrap(require("node:worker_threads"), "Worker", evidence.workers);
-  wrap(electron.utilityProcess, "fork", evidence.utilities);
-  const children = require("node:child_process");
-  for (const key of ["spawn", "spawnSync", "exec", "execSync", "execFile", "execFileSync", "fork"])
-    wrap(children, key, evidence.children);
-  const fs = require("node:fs");
-  const mutators = [
-    "writeFile",
-    "appendFile",
-    "truncate",
-    "rename",
-    "unlink",
-    "rm",
-    "rmdir",
-    "mkdir",
-    "copyFile",
-    "cp",
-    "link",
-    "symlink",
-    "chmod",
-    "chown",
-    "utimes",
-    "mkdtemp",
-  ];
-  for (const key of mutators) {
-    wrap(fs, key, evidence.writes);
-    wrap(fs, key + "Sync", evidence.writes);
-    wrap(fs.promises, key, evidence.writes);
-  }
-  for (const key of ["open", "openSync"])
-    wrap(fs, key, evidence.writes, (args) => {
+  try {
+    wrap(require("node:worker_threads"), "Worker", evidence.workers);
+    wrap(electron.utilityProcess, "fork", evidence.utilities);
+    const children = require("node:child_process");
+    for (const key of [
+      "spawn",
+      "spawnSync",
+      "exec",
+      "execSync",
+      "execFile",
+      "execFileSync",
+      "fork",
+    ])
+      wrap(children, key, evidence.children);
+    const fs = require("node:fs");
+    const mutators = [
+      "writeFile",
+      "appendFile",
+      "truncate",
+      "rename",
+      "unlink",
+      "rm",
+      "rmdir",
+      "mkdir",
+      "copyFile",
+      "cp",
+      "link",
+      "symlink",
+      "chmod",
+      "chown",
+      "utimes",
+      "mkdtemp",
+    ];
+    for (const key of mutators) {
+      wrap(fs, key, evidence.writes);
+      wrap(fs, key + "Sync", evidence.writes);
+      wrap(fs.promises, key, evidence.writes);
+    }
+    for (const key of ["open", "openSync"])
+      wrap(fs, key, evidence.writes, (args) => {
+        const flags = args[1] ?? "r";
+        const writable =
+          typeof flags === "number"
+            ? Boolean(
+                flags &
+                (fs.constants.O_WRONLY |
+                  fs.constants.O_RDWR |
+                  fs.constants.O_CREAT |
+                  fs.constants.O_TRUNC |
+                  fs.constants.O_APPEND),
+              )
+            : flags !== "r" && flags !== "rs";
+        return writable ? [String(args[0]), flags] : null;
+      });
+    wrap(fs.promises, "open", evidence.writes, (args) => {
       const flags = args[1] ?? "r";
       const writable =
         typeof flags === "number"
@@ -321,33 +386,34 @@ export function installSecondaryObservation(require, process, emit) {
           : flags !== "r" && flags !== "rs";
       return writable ? [String(args[0]), flags] : null;
     });
-  wrap(fs.promises, "open", evidence.writes, (args) => {
-    const flags = args[1] ?? "r";
-    const writable =
-      typeof flags === "number"
-        ? Boolean(
-            flags &
-            (fs.constants.O_WRONLY |
-              fs.constants.O_RDWR |
-              fs.constants.O_CREAT |
-              fs.constants.O_TRUNC |
-              fs.constants.O_APPEND),
-          )
-        : flags !== "r" && flags !== "rs";
-    return writable ? [String(args[0]), flags] : null;
-  });
-  wrap(fs, "createWriteStream", evidence.writes);
-  for (const key of ["write", "writeSync", "writev", "writevSync", "ftruncate", "ftruncateSync"])
-    wrap(fs, key, evidence.writes, (args) => ([1, 2].includes(args[0]) ? null : [String(args[0])]));
-  const originalLock = electron.app.requestSingleInstanceLock;
-  electron.app.requestSingleInstanceLock = function (...args) {
-    const acquired = Reflect.apply(originalLock, this, args);
-    evidence.locks.push({ acquired });
-    return acquired;
-  };
-  require("node:module").syncBuiltinESMExports();
-  emit({ phase: "installed", pid: process.pid, beforeReady: true });
-  process.once("exit", (code) => emit({ phase: "exit", code, ...evidence }));
+    wrap(fs, "createWriteStream", evidence.writes);
+    for (const key of ["write", "writeSync", "writev", "writevSync", "ftruncate", "ftruncateSync"])
+      wrap(fs, key, evidence.writes, (args) =>
+        [1, 2].includes(args[0]) ? null : [String(args[0])],
+      );
+    const originalLock = electron.app.requestSingleInstanceLock;
+    replace(electron.app, "requestSingleInstanceLock", function (...args) {
+      const acquired = Reflect.apply(originalLock, this, args);
+      evidence.locks.push({ acquired });
+      return acquired;
+    });
+    require("node:module").syncBuiltinESMExports();
+    emit({
+      phase: "installed",
+      pid: process.pid,
+      beforeReady: true,
+      installedMonotonic: evidence.installedMonotonic,
+    });
+    process.once("exit", (code) => {
+      const exitMonotonic = Number(process.hrtime.bigint()) / 1e6;
+      restore();
+      emit({ phase: "exit", code, exitMonotonic, ...evidence });
+    });
+  } catch (error) {
+    restore();
+    throw error;
+  }
+
   return true;
 }
 
@@ -360,25 +426,9 @@ export function collectSecondaryObservation(output) {
   assert.equal(rows[0].phase, "installed");
   assert.equal(rows[1].phase, "exit");
   assert.equal(rows[0].pid, rows[1].pid);
+  assert.equal(rows[0].installedMonotonic, rows[1].installedMonotonic);
   assert.equal(rows[0].beforeReady, true);
   return rows[1];
-}
-
-export function assertSecondaryObservation(secondary) {
-  const observed = secondary.observation;
-  assert.equal(secondary.startup.pid, secondary.pid);
-  assert.equal(secondary.startup.ready, false);
-  assert.ok(secondary.observedIdentities.some((row) => row.pid === secondary.pid && row.created));
-  assert.equal(observed.pid, secondary.pid);
-  assert.equal(observed.beforeReady, true);
-  assert.equal(observed.code, 0);
-  assert.deepEqual(observed.locks, [{ acquired: false }]);
-  for (const key of ["workers", "utilities", "children", "writes"])
-    assert.deepEqual(
-      observed[key],
-      [],
-      `Secondary ${key} must remain absent from entry through exit`,
-    );
 }
 
 export async function observeSecondaryStartup(
@@ -387,32 +437,39 @@ export async function observeSecondaryStartup(
   executable,
   known,
   table = processTable,
+  bounds,
 ) {
   let startup;
-  await observeBeforeStartup(client, async (evaluate) => {
-    startup = await evaluate(
-      "({pid:process.pid, executable:process.execPath, ready:require('electron').app.isReady()})",
-    );
-    assert.equal(startup.pid, pid);
-    assert.equal(startup.executable, executable);
-    assert.equal(startup.ready, false);
-    assert.equal(
-      await evaluate(`(() => {
+  try {
+    await observeBeforeStartup(client, async (evaluate) => {
+      startup = await evaluate(
+        "({pid:process.pid, executable:process.execPath, ready:require('electron').app.isReady()})",
+      );
+      assert.equal(startup.pid, pid);
+      assert.equal(startup.executable, executable);
+      assert.equal(startup.ready, false);
+      assert.equal(
+        await evaluate(`(() => {
       const write = require('node:fs').writeSync;
       return (${installSecondaryObservation.toString()})(require, process,
         row => write(2, '\\nKOBRIXA_SECONDARY ' + JSON.stringify(row) + '\\n'));
     })()`),
-      true,
-    );
-    descendants(await table(), pid, known);
-    assert.ok(known.get(pid), "Secondary creation identity must be observed before resume");
-  });
+        true,
+      );
+      if (bounds) bounds.heldAt = monotonic();
+      descendants(await table(), pid, known);
+      assert.ok(known.get(pid), "Secondary creation identity must be observed before resume");
+      if (bounds) bounds.resumeRequested = monotonic();
+    });
+  } catch (error) {
+    await client.send("Debugger.disable");
+    throw error;
+  }
   return startup;
 }
 
 const root = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const motorKey = "builtin:kobrixa.motor-test";
-const motorId = "kobrixa.motor-test";
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const errorRecord = (error) => ({
   name: error.name,
@@ -500,9 +557,10 @@ export async function verifyLeaf(directory, pluginId) {
 }
 
 // Serialized into the main inspector before app readiness; no product code changes.
-export function observeInstalledWorkers(threads, emit, clock) {
+export function observeInstalledWorkers(threads, emit, clock, capturePublication = false) {
   const original = threads.Worker;
   const timeline = [];
+  const cleanups = new Set();
   let ordinal = 0;
   const describe = (value, seen = new Set()) => {
     if (value === undefined) return { type: "undefined" };
@@ -548,13 +606,48 @@ export function observeInstalledWorkers(threads, emit, clock) {
         throw error;
       }
       record(worker, "constructed", { threadId: child.threadId });
+      const publications = new Set();
+      const ownPost = Object.getOwnPropertyDescriptor(child, "postMessage");
+      let wrappedPost;
+      function restoreChild() {
+        if (child.emit === observedEmit) {
+          if (ownEmit) Object.defineProperty(child, "emit", ownEmit);
+          else delete child.emit;
+        }
+        if (wrappedPost && child.postMessage === wrappedPost) {
+          if (ownPost) Object.defineProperty(child, "postMessage", ownPost);
+          else delete child.postMessage;
+        }
+        cleanups.delete(restoreChild);
+      }
+      if (capturePublication && String(args[0]).includes("persistence-worker")) {
+        const post = child.postMessage;
+        child.postMessage = wrappedPost = function (message, ...rest) {
+          if (message?.operation === "engine.publish") {
+            publications.add(message.id);
+            record(worker, "publish", {
+              request: describe(message),
+              pid: process.pid,
+              threadId: child.threadId,
+            });
+          }
+          return Reflect.apply(post, this, [message, ...rest]);
+        };
+      }
       const originalEmit = child.emit;
       const ownEmit = Object.getOwnPropertyDescriptor(child, "emit");
       let requestErrors = 0;
       function observedEmit(event, ...values) {
+        if (event === "message" && publications.delete(values[0]?.id))
+          record(worker, "publication-result", {
+            response: describe(values[0]),
+            pid: process.pid,
+            threadId: child.threadId,
+          });
+        if (event === "exit") record(worker, "exit", { code: values[0] });
         if (event === "online") record(worker, "online", { threadId: child.threadId });
         if (event === "error") record(worker, "error", { error: describe(values[0]) });
-        if (event === "exit") record(worker, "exit", { code: values[0] });
+
         if (event === "message" && values[0]?.kind === "ready")
           record(worker, "message", { message: describe(values[0]) });
         // The settings boundary can collapse backend errors to SAVE/io. Retain
@@ -568,13 +661,10 @@ export function observeInstalledWorkers(threads, emit, clock) {
         try {
           return Reflect.apply(originalEmit, this, [event, ...values]);
         } finally {
-          if (event === "exit" && child.emit === observedEmit) {
-            if (ownEmit) Object.defineProperty(child, "emit", ownEmit);
-            else delete child.emit;
-          }
+          if (event === "exit") restoreChild();
         }
       }
-      // No event listeners, refs, timers, or ports are added to the worker.
+      cleanups.add(restoreChild);
       child.emit = observedEmit;
       return child;
     },
@@ -584,6 +674,7 @@ export function observeInstalledWorkers(threads, emit, clock) {
   return {
     timeline,
     restore() {
+      for (const cleanup of cleanups) cleanup();
       if (threads.Worker !== observed) throw Error("Worker observer was replaced");
       threads.Worker = original;
       return threads.Worker === original;
@@ -612,37 +703,54 @@ export const installProbe = `((require) => {
   if (electron.app.isReady()) throw Error('Observe startup before application readiness');
   const workers = (${observeInstalledWorkers.toString()})(require('node:worker_threads'),
     row => process.stderr.write('\\nKOBRIXA_INSTALLED_WORKER ' + JSON.stringify(row) + '\\n'),
-    () => ({ at: Date.now(), monotonicMs: performance.now(), execArgv: [...process.execArgv], resourcesPath: process.resourcesPath }));
+    () => ({ at: Date.now(), monotonicMs: performance.now(), execArgv: [...process.execArgv], resourcesPath: process.resourcesPath }), globalThis.__recordingCapture === true);
   const original = electron.utilityProcess.fork;
-  const records = [];
+  const records = [], wire=[], releases=[], cleanups=[];
   const emit = record => process.stderr.write('\\nKOBRIXA_INSTALLED_PROBE ' + JSON.stringify(record) + '\\n');
   function observed(...args) {
     const child = Reflect.apply(original, this, args);
     const record = { ordinal: records.length, entry: args[0], cwd: args[2]?.cwd, serviceName: args[2]?.serviceName, pid: child.pid ?? null, exited: false };
+    if(globalThis.__recordingCapture && record.serviceName==="Kobrixa plugin kobrixa.sensor-lab") {
+      record.owner=JSON.parse(args[2].env.KOBRIXA_RESOURCE_OWNER);
+      cleanups.push((${observeLabFork.toString()})(child,args[2].env.KOBRIXA_RESOURCE_OWNER,wire));
+    }
     records.push(record);
-    child.once('spawn', () => { record.pid = child.pid; emit(record); });
-    child.once('exit', code => { record.exited = true; record.exitCode = code; emit(record); });
+    const onSpawn = () => { record.pid = child.pid; emit(record); };
+    const onExit = code => { record.exited = true; record.exitCode = code; emit(record); };
+    child.once('spawn', onSpawn);
+    child.once('exit', onExit);
+    cleanups.push(() => { child.off('spawn',onSpawn); child.off('exit',onExit); });
     return child;
   }
-  electron.utilityProcess.fork = observed;
-  if (electron.utilityProcess.fork !== observed) throw Error('Cannot observe original utilityProcess.fork');
-  globalThis.__installedProbe = { electron, require, records, workers, restore() {
-    if (electron.utilityProcess.fork !== observed) throw Error('fork observer was replaced');
-    electron.utilityProcess.fork = original;
-    return workers.restore() && electron.utilityProcess.fork === original;
+  try {
+    electron.utilityProcess.fork = observed;
+    if (electron.utilityProcess.fork !== observed) throw Error('Cannot observe original utilityProcess.fork');
+  } catch (error) {
+    workers.restore();
+    throw error;
+  }
+  let exitListener;
+  function restore() {
+    if (exitListener) process.off('exit', exitListener);
+    for (const cleanup of cleanups) cleanup();
+    try {
+      if (electron.utilityProcess.fork !== observed) throw Error('fork observer was replaced');
+      electron.utilityProcess.fork = original;
+    } finally {
+      workers.restore();
+    }
+    return electron.utilityProcess.fork === original;
+  }
+  globalThis.__installedProbe = { electron, require, records, workers, wire, releases, restore, observeExit() {
+    const write = require('node:fs').writeSync;
+    exitListener = () => {
+      if (restore()) write(2, '\\nKOBRIXA_INSTALLED_RESTORED\\n');
+    };
+    process.once('exit', exitListener);
+    return true;
   }};
   return true;
 })(require)`;
-
-function requiredCompilers(state) {
-  for (const id of ["kobrixa.basic-plus", "kobrixa.ev3"]) {
-    const plugin = state.plugins.find((item) => item.id === id);
-    assert.ok(
-      plugin?.required && plugin.status === "enabled",
-      `Required compiler ${id}: ${JSON.stringify(plugin)}`,
-    );
-  }
-}
 
 async function launchProduct(config, receipt, check) {
   const { directory, cwd, env, profile, isolated, probes } = config;
@@ -654,6 +762,7 @@ async function launchProduct(config, receipt, check) {
     main,
     renderer,
     workerStartup,
+    offPrimaryPause,
     monitor,
     monitoring = false,
     monitorError;
@@ -754,12 +863,52 @@ async function launchProduct(config, receipt, check) {
     main = await connect(mainUrl);
     clients.push(main);
     workerStartup = await releaseStartingWorkers(main, receipt.workerInspector);
-    await observeBeforeStartup(main, async (evaluate) => {
-      assert.equal(await evaluate(installProbe), true);
-      receipt.originalForkObserved = true;
-      receipt.probeBeforeReady = await evaluate("!__installedProbe.electron.app.isReady()");
-      assert.equal(receipt.probeBeforeReady, true, "Observe startup before application readiness");
-    });
+    if (config.recording) {
+      receipt.debuggerEvents = [];
+      let expectEntry = true;
+      offPrimaryPause = main.on("Debugger.paused", ({ reason, hitBreakpoints }) => {
+        receipt.debuggerEvents.push({
+          event: "primary-paused",
+          pid: receipt.pid,
+          at: monotonic(),
+          reason,
+          hitBreakpoints,
+        });
+        if (expectEntry) {
+          expectEntry = false;
+          if (reason !== "Break on start")
+            config.recording.unexpectedPauses.push({ pid: receipt.pid, reason, hitBreakpoints });
+          return;
+        }
+        config.recording.unexpectedPauses.push({ pid: receipt.pid, reason, hitBreakpoints });
+        void main
+          .send("Debugger.resume")
+          .catch((error) =>
+            config.recording.unexpectedPauses.push({ pid: receipt.pid, error: error.message }),
+          );
+      });
+    }
+    try {
+      await observeBeforeStartup(main, async (evaluate) => {
+        if (config.recording) await evaluate("globalThis.__recordingCapture=true");
+        assert.equal(await evaluate(installProbe), true);
+        receipt.originalForkObserved = true;
+        assert.equal(await evaluate("__installedProbe.observeExit()"), true);
+        receipt.probeBeforeReady = await evaluate("!__installedProbe.electron.app.isReady()");
+        assert.equal(
+          receipt.probeBeforeReady,
+          true,
+          "Observe startup before application readiness",
+        );
+      });
+    } catch (error) {
+      try {
+        await main.send("Debugger.disable");
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], "primary entry observation and cleanup");
+      }
+      throw error;
+    }
     const browserUrl = await alive(
       () => output.match(/DevTools listening on (ws:\/\/[^\s]+)/)?.[1],
     );
@@ -860,13 +1009,28 @@ async function launchProduct(config, receipt, check) {
     }
     const state = () => renderer.js("window.kobrixa.plugins.state()");
     const forks = () => main.js("__installedProbe.records");
-    await check({ renderer, main, state, forks });
+    try {
+      await check({ renderer, main, state, forks });
+    } finally {
+      if (config.recording) {
+        receipt.recordingArtifactHashes = {};
+        for (const [suffix, expression] of [
+          ["-port.json", "__installedProbe.wire"],
+          ["-release.json", "__installedProbe.releases"],
+          ["-workers.json", "__installedProbe.workers.timeline"],
+        ]) {
+          await observeRecordingItem(config.recording, suffix, async () => {
+            const bytes = JSON.stringify(await main.js(expression));
+            await writeFile(path.join(directory, receipt.name + suffix), bytes, { flag: "wx" });
+            receipt.recordingArtifactHashes[suffix] = sha256(bytes);
+          });
+        }
+      }
+    }
     receipt.beforeQuit = await state();
     requiredCompilers(receipt.beforeQuit);
     receipt.forks = await forks();
     receipt.workerTimeline = await main.js("__installedProbe.workers.timeline");
-    receipt.probeRestored = await main.js("__installedProbe.restore()");
-    assert.equal(receipt.probeRestored, true);
     await workerStartup.settled();
     // Dispatch quit synchronously and let the official shutdown coordination run.
     await main.js("setTimeout(() => __installedProbe.electron.app.quit(), 0); true");
@@ -882,16 +1046,21 @@ async function launchProduct(config, receipt, check) {
   } finally {
     const cleanupErrors = [];
     // Restore even after an assertion failure, while the main probe is reachable.
-    if (!receipt.probeRestored && main && receipt.originalForkObserved) {
+    if (!ended && !receipt.probeRestored && main && receipt.originalForkObserved) {
       try {
         receipt.forks = await main.js("__installedProbe.records");
         receipt.workerTimeline = await main.js("__installedProbe.workers.timeline");
+      } catch (error) {
+        cleanupErrors.push(errorRecord(error));
+      }
+      try {
         receipt.probeRestored = await main.js("__installedProbe.restore()");
       } catch (error) {
         cleanupErrors.push(errorRecord(error));
       }
     }
     workerStartup?.dispose();
+    offPrimaryPause?.();
     for (const client of clients) client.close();
     try {
       if (!ended && child?.pid) {
@@ -974,6 +1143,18 @@ async function launchProduct(config, receipt, check) {
         cleanupErrors.push(errorRecord(error));
       }
     }
+    if (receipt.gracefulQuit) {
+      try {
+        assert.equal(
+          output.split(/\r?\n/).filter((line) => line === "KOBRIXA_INSTALLED_RESTORED").length,
+          1,
+          "exit probe restoration",
+        );
+        receipt.probeRestored = true;
+      } catch (error) {
+        cleanupErrors.push(errorRecord(error));
+      }
+    }
     monitoring = false;
     await monitor;
     if (monitorError) cleanupErrors.push(errorRecord(monitorError));
@@ -994,6 +1175,15 @@ async function launchProduct(config, receipt, check) {
     }
     try {
       await writeFile(path.join(directory, `${receipt.name}.log`), output);
+      if (receipt.recordingArtifactHashes) {
+        receipt.recordingArtifactHashes[".log"] = sha256(output);
+        const bytes = JSON.stringify(receipt.debuggerEvents);
+        await writeFile(path.join(directory, receipt.name + "-debugger.json"), bytes, {
+          flag: "wx",
+        });
+        receipt.recordingArtifactHashes["-debugger.json"] = sha256(bytes);
+        delete receipt.debuggerEvents;
+      }
     } catch (error) {
       cleanupErrors.push(errorRecord(error));
     }
@@ -1026,117 +1216,9 @@ export function assertSingleInstanceReceipt(report) {
   assert.equal(report.error, undefined);
   assert.equal(report.finalizationError, undefined);
   assert.deepEqual(report.unrun, SINGLE_INSTANCE_UNRUN);
-  for (const key of [
-    "originalPayloadIntact",
-    "originalAppAsarIntact",
-    "copiedAppAsarIntact",
-    "originalExecutableIntact",
-    "noPathNode",
-    "noNodePath",
-    "arbitraryCwd",
-  ])
-    assert.equal(report[key], true, key);
-  for (const key of ["appAsarSha256", "originalExecutableSha256", "payloadIndexSha256"])
-    assert.match(report.artifact[key], /^[a-f0-9]{64}$/);
   assert.equal(report.runs.length, 1);
-  const run = report.runs[0],
-    observation = run.singleInstance,
-    secondary = observation.secondary;
-  assert.equal(run.name, "single-instance");
-  assert.equal(run.error, undefined);
-  assert.equal(run.cleanupErrors, undefined);
-  assert.equal(run.forcedCleanup, false);
-  assert.equal(run.gracefulQuit, true);
-  assert.equal(run.exit.code, 0);
-  assert.equal(run.probeRestored, true);
-  assert.deepEqual(run.remainingPids, []);
-  assert.ok(run.fiveSecondCleanup.endedAt - run.fiveSecondCleanup.startedAt >= 5000);
-  assert.deepEqual(run.fiveSecondCleanup.remainingPids, []);
-  assert.equal(observation.listenersRemoved, true);
-  assert.equal(observation.before.focused, true);
-  assert.equal(observation.defocused.focused, false);
-  assert.equal(observation.after.focused, true);
-  assert.equal(observation.before.pid, run.pid);
-  assert.equal(observation.after.pid, run.pid);
-  assert.equal(observation.before.windowId, observation.after.windowId);
-  assert.equal(observation.before.profile, run.profile);
-  assert.equal(observation.after.profile, run.profile);
-  assert.equal(secondary.requestedProfile, run.profile);
-  assert.ok(Number.isSafeInteger(secondary.pid) && secondary.pid > 0 && secondary.pid !== run.pid);
-  assert.ok(secondary.argv.includes(`--user-data-dir=${run.profile}`));
-  assert.match(secondary.marker, /^--b2-secondary=[a-f0-9-]{36}$/);
-  assert.ok(secondary.argv.includes(secondary.marker));
-  assert.equal(secondary.error, undefined);
-  assertSecondaryObservation(secondary);
-  assert.match(secondary.logSha256, /^[a-f0-9]{64}$/);
-  assert.equal(secondary.exit.code, 0);
-  assert.equal(secondary.exit.signal, null);
-  assert.equal(secondary.forcedCleanup, false);
-  assert.equal(secondary.cleanupErrors, undefined);
-  assert.deepEqual(secondary.remainingPids, []);
-  assert.ok(secondary.cleanupObservedAt - secondary.exit.at >= 5000);
-  const events = observation.events;
-  const second = events.filter((event) => event.kind === "second-instance");
-  assert.equal(second.length, 1);
-  assert.ok(second[0].argv.includes(secondary.marker));
-  assert.ok(second[0].argv.includes(`--user-data-dir=${run.profile}`));
-  assert.equal(second[0].cwd, run.identity.cwd);
-  assert.ok(second[0].at >= observation.defocused.at);
-  assert.ok(
-    events.some(
-      (event) =>
-        event.kind === "focus" &&
-        event.windowId === observation.before.windowId &&
-        event.at >= observation.defocused.at,
-    ),
-  );
-  assert.ok(observation.after.at >= second[0].at);
-  assert.deepEqual(observation.before.forks, observation.after.forks);
-  assert.ok(
-    observation.before.forks.some(
-      (fork) =>
-        fork.serviceName === "Kobrixa plugin kobrixa.motor-test" && fork.pid > 0 && !fork.exited,
-    ),
-  );
-  assert.deepEqual(observation.before.binding, observation.after.binding);
-  assert.deepEqual(observation.before.workerStarts, observation.after.workerStarts);
-  const workers = observation.before.workerStarts.filter(
-    (row) =>
-      typeof row.arguments?.[0] === "string" && row.arguments[0].includes("persistence-worker"),
-  );
-  assert.equal(workers.length, 1);
-  assert.equal(
-    run.workerTimeline.filter((row) => row.worker === workers[0].worker && row.event === "exit")
-      .length,
-    1,
-  );
-  assert.equal(run.identity.packaged, true);
-  assert.equal(run.identity.userData, run.profile);
-  assert.equal(run.probeBeforeReady, true);
-  assert.ok(run.observedPids.includes(run.pid));
-  assert.ok(secondary.observedPids.includes(secondary.pid));
-  assert.ok(
-    run.forks.some(
-      (fork) =>
-        fork.pid ===
-          observation.before.forks.find(
-            (f) => f.serviceName === "Kobrixa plugin kobrixa.motor-test",
-          ).pid && fork.exited,
-    ),
-  );
-  for (const state of [observation.before.state, observation.after.state]) {
-    requiredCompilers(state);
-    assert.equal(state.plugins.find((plugin) => plugin.id === motorId)?.running, true);
-  }
-  for (const phase of ["before", "after"]) {
-    assert.equal(observation.hashes[phase].asar, report.artifact.appAsarSha256);
-    assert.match(observation.hashes[phase].executable, /^[a-f0-9]{64}$/);
-  }
-  assert.deepEqual(observation.hashes.before, observation.hashes.after);
-  for (const code of Object.values(run.isolation)) assert.ok(["EPERM", "EACCES"].includes(code));
-  assert.ok(Object.keys(run.isolation).length >= 3);
+  assertInstalledPrimary(report);
 }
-
 async function observeSingleInstance(client, config, run, binding) {
   const { main, renderer, state, forks } = client;
   const observation = (run.singleInstance = { secondary: { forcedCleanup: false }, hashes: {} });
@@ -1144,6 +1226,15 @@ async function observeSingleInstance(client, config, run, binding) {
     ...(await main.js(
       `(() => { const p=__singleInstanceProbe; return {pid:process.pid, profile:p.app.getPath('userData'), windowId:p.window.id, focused:p.window.isFocused(), at:performance.now(), workerStarts:__installedProbe.workers.timeline.filter(row=>row.event==='construct')}; })()`,
     )),
+    ...(config.recording
+      ? {
+          lab: await observeRecordingItem(config.recording, "active Lab snapshot", () =>
+            renderer.js(
+              `window.kobrixa.plugins.ui.snapshot({binding:${JSON.stringify(config.recording.binding)}}).then(r=>{if(!r.ok)throw Error(JSON.stringify(r));return {binding:r.value.binding,reservation:r.value.data.reservation}})`,
+            ),
+          ),
+        }
+      : {}),
     state: await state(),
     forks: await forks(),
     binding: (
@@ -1160,6 +1251,7 @@ async function observeSingleInstance(client, config, run, binding) {
     exit,
     closed,
     secondaryInspector,
+    offResumed,
     ended = false,
     failure;
   const known = new Map();
@@ -1196,6 +1288,10 @@ async function observeSingleInstance(client, config, run, binding) {
       secondary.marker,
     ];
     const launch = installedLaunchCommand(config, secondary.argv);
+    if (config.recording) {
+      secondary.beforeSpawn = monotonic();
+      run.debuggerEvents.push({ event: "before-spawn", at: secondary.beforeSpawn });
+    }
     child = spawn(launch.file, launch.args, {
       cwd: config.cwd,
       env: config.env,
@@ -1218,7 +1314,12 @@ async function observeSingleInstance(client, config, run, binding) {
       });
       child.once("exit", (code, signal) => {
         ended = true;
-        secondary.exit = { code, signal, at: Date.now() };
+        secondary.exit = {
+          code,
+          signal,
+          at: Date.now(),
+          ...(config.recording ? { monotonic: monotonic() } : {}),
+        };
         resolve();
       });
     });
@@ -1233,12 +1334,26 @@ async function observeSingleInstance(client, config, run, binding) {
         return output.match(/Debugger listening on (ws:\/\/[^\s]+)/)?.[1];
       }, "secondary inspector readiness");
       secondaryInspector = await connect(url);
+      if (config.recording)
+        offResumed = secondaryInspector.on("Debugger.resumed", () => {
+          if (secondary.resumeRequested !== undefined) {
+            secondary.resumeConfirmed = monotonic();
+            run.debuggerEvents.push({
+              event: "secondary-resumed",
+              pid: secondary.pid,
+              at: secondary.resumeConfirmed,
+            });
+          }
+        });
       secondary.startup = await observeSecondaryStartup(
         secondaryInspector,
         child.pid,
         config.executable,
         known,
+        processTable,
+        config.recording && secondary,
       );
+      offResumed?.();
       secondaryInspector.close();
     }
     await until(
@@ -1260,6 +1375,16 @@ async function observeSingleInstance(client, config, run, binding) {
         ),
       "original second-instance and focus",
     );
+    if (config.recording) {
+      config.recording.postExitSequence = await observeRecordingItem(
+        config.recording,
+        "post-exit frames",
+        async () => {
+          const baseline = await waitRecordingFrames(main, -1, 1);
+          return waitRecordingFrames(main, baseline, 2);
+        },
+      );
+    }
     observation.events = await main.js("__singleInstanceProbe.events");
     observation.after = await snapshot();
     observation.hashes.after = await hashes();
@@ -1267,6 +1392,7 @@ async function observeSingleInstance(client, config, run, binding) {
     failure = error;
     secondary.error = errorRecord(error);
   } finally {
+    offResumed?.();
     secondaryInspector?.close();
     try {
       observation.listenersRemoved = await main.js(
@@ -1522,9 +1648,17 @@ async function freshProfile(directory, name) {
 }
 
 export async function main() {
+  const verifyOnly = process.argv[2] === "--verify-recording";
+  const singleInstance = process.argv.includes("--single-instance");
+  const continuity =
+    singleInstance || verifyOnly ? await import("./ev3-uhid-continuity.mjs") : undefined;
+  if (verifyOnly) {
+    const result = await continuity.verifyContinuity(process.argv[3]);
+    console.log(JSON.stringify(result));
+    return;
+  }
   const requestedIsolation = process.argv.includes("--isolated");
   const { isolated, blockers } = installedPlatformPolicy(process.platform, requestedIsolation);
-  const singleInstance = process.argv.includes("--single-instance");
   assert.ok(
     !singleInstance || requestedIsolation,
     "Single-instance partial evidence requires --isolated",
@@ -1565,6 +1699,21 @@ export async function main() {
   };
   for (const blocker of blockers)
     console.error(`${blocker.status}: ${blocker.checks.join(", ")}: ${blocker.reason}`);
+  const recording =
+    singleInstance && isolated && process.platform === "linux"
+      ? {
+          criterion: RECORDING_CRITERION,
+          name: "P4-" + randomUUID(),
+          missing: [],
+          unexpectedPauses: [],
+          profileWriteAttribution: PROFILE_ATTRIBUTION,
+          trace: path.join(tmpdir(), "kobrixa-recording-peer", "trace.log"),
+        }
+      : null;
+  if (recording) {
+    report.recording = recording;
+    report.kind = "installed-single-instance-recording";
+  }
   const runFailures = [];
   let server, archive, originalArchive, sourceArchive, originalExecutable, executable, failure;
   const save = () => writeFile(output, JSON.stringify(report, null, 2));
@@ -1589,6 +1738,24 @@ export async function main() {
     const leaf = path.join(`${archive}.unpacked`, ".vite/build/plugins/motor-test");
     assert.equal(await realpath(leaf), leaf, "Installed motor leaf must not escape the copied app");
     const index = await verifyLeaf(leaf, motorId);
+    const verifyRecordingPayloads = async () => {
+      for (const slug of ["sensor-lab", "device-ev3"]) {
+        const suffix = path.join(".vite/build/plugins", slug);
+        const sourceIndex = await verifyRecordingLeaf(
+          path.join(sourceArchive + ".unpacked", suffix),
+          "kobrixa." + slug,
+        );
+        const copyIndex = await verifyRecordingLeaf(
+          path.join(archive + ".unpacked", suffix),
+          "kobrixa." + slug,
+        );
+        assert.deepEqual(copyIndex, sourceIndex);
+        recording.payloads ??= {};
+        if (recording.payloads[slug]) assert.deepEqual(copyIndex, recording.payloads[slug]);
+        else recording.payloads[slug] = copyIndex;
+      }
+    };
+    if (recording) await verifyRecordingPayloads();
     const manifest = JSON.parse(await readFile(path.join(leaf, "kobrixa-plugin.json"), "utf8"));
     assert.deepEqual(manifest.activationEvents, ["onPanel:kobrixa.motor-test.panel"]);
     assert.deepEqual(
@@ -1754,6 +1921,7 @@ export async function main() {
             probes,
             deniedRoots,
             singleInstance,
+            recording,
           },
           receipt,
           (client) => check(client, receipt),
@@ -1824,30 +1992,119 @@ export async function main() {
       receipt.lazyState = state;
     };
     if (singleInstance) {
-      await execute(
-        "single-instance",
-        await freshProfile(directory, "single-instance-profile"),
-        async (client, receipt) => {
+      const profile = await freshProfile(directory, "single-instance-profile");
+      const collect = async () => {
+        await execute("single-instance", profile, async (client, receipt) => {
           await lazy(client, receipt);
           const snapshot = await openMotor(client, manifest, receipt);
-          await observeSingleInstance(
-            client,
-            {
-              directory,
-              executable,
-              archive,
-              cwd,
-              env,
-              profile: receipt.profile,
-              isolationProfile,
-              isolated,
-              deniedRoots,
-            },
-            receipt,
-            snapshot.binding,
+          let remove;
+          try {
+            if (recording) {
+              try {
+                remove = await observeRelease(
+                  client.main,
+                  archive,
+                  openInstalledArchive(archive).extract(".vite/build/main.cjs").toString(),
+                );
+              } catch (error) {
+                recording.releaseObservationError = error.message;
+                recording.missing.push("host broker release observation — " + error.message);
+              }
+              await observeRecordingItem(
+                recording,
+                "device, Lab binding and pre-launch frames",
+                async () => {
+                  const { connection, offset } = await connectUhidPanel(
+                    client.renderer,
+                    recording.trace,
+                  );
+                  recording.device = { connection, offset };
+                  recording.binding = await startLab(client, recording.name);
+                },
+              );
+            }
+            await observeSingleInstance(
+              client,
+              {
+                directory,
+                executable,
+                archive,
+                cwd,
+                env,
+                profile: receipt.profile,
+                recording: recording?.binding ? recording : null,
+                isolationProfile,
+                isolated,
+                deniedRoots,
+              },
+              receipt,
+              snapshot.binding,
+            );
+            if (recording?.postExitSequence) {
+              await observeRecordingItem(recording, "Lab Stop and final commit", async () => {
+                recording.stopAt = monotonic();
+                await labClick(client.renderer, "stop");
+                await until(
+                  () =>
+                    client.main.js(
+                      '__installedProbe.wire.some(q=>q.direction==="host-plugin" && q.message.method==="storage/drain" && __installedProbe.wire.some(r=>r.direction==="plugin-host" && !r.message.method && r.message.id===q.message.id && r.message.result?.value?.status==="submitted"))',
+                    ),
+                  "final recording commit",
+                );
+                recording.finalObserved = true;
+              });
+            }
+          } finally {
+            await remove?.();
+          }
+        });
+        if (recording?.finalObserved) {
+          await execute("recording-history", report.runs[0].profile, (client) =>
+            observeRecordingItem(recording, "same-profile public history readback", async () => {
+              await openLab(client.renderer);
+              await labClick(client.renderer, "refresh");
+              await waitLabCommand(client.main, "refresh");
+              await labClick(client.renderer, "history", recording.name);
+              await waitLabCommand(client.main, "view-record");
+              const rows = await client.main.js("__installedProbe.wire");
+              const view = rows.find(
+                (row) => row.message.params?.command === "kobrixa.sensor-lab.view-record",
+              );
+              const opened = rows.find(
+                (row) => row.at >= view.at && row.message.method === "storage/openRead",
+              );
+              const response = (request) =>
+                rows.find(
+                  (row) =>
+                    row.at >= request.at &&
+                    row.direction !== request.direction &&
+                    !row.message.method &&
+                    row.message.id === request.message.id,
+                ).message.result.value;
+              const handle = response(opened).read;
+              const chunks = rows.filter(
+                (row) =>
+                  row.message.method === "storage/readChunk" && row.message.params.read === handle,
+              );
+              const bytes = Buffer.concat(
+                chunks.map((chunk) => Buffer.from(response(chunk).data, "base64")),
+              );
+              await writeFile(path.join(directory, "recording-history.json"), bytes, {
+                flag: "wx",
+              });
+            }),
           );
-        },
-      );
+        }
+      };
+      if (recording)
+        await observeProfileWrites(
+          profile,
+          directory,
+          "p4-" + recording.name.slice(3, 27),
+          collect,
+          (message) => recording.missing.push(message),
+        );
+      else await collect();
     } else {
       const profile = await freshProfile(directory, "healthy-profile");
       await execute("healthy", profile, async (client, receipt) => {
@@ -1945,6 +2202,7 @@ export async function main() {
       }
     }
     await verifyLeaf(leaf, motorId);
+    if (recording) await verifyRecordingPayloads();
     const sourceLeaf = path.join(`${sourceArchive}.unpacked`, ".vite/build/plugins/motor-test");
     assert.deepEqual(await verifyLeaf(sourceLeaf, motorId), index);
     report.originalPayloadIntact = true;
@@ -2011,6 +2269,34 @@ export async function main() {
     await save();
     console.log(`Real installed product receipt: ${output}`);
   }
+  if (recording) {
+    const { measureResumeWindow, verifyContinuity } = continuity;
+    try {
+      try {
+        const trace = await readFile(recording.trace);
+        recording.traceSha256 = sha256(trace);
+        await writeFile(path.join(directory, "peer-trace.log"), trace, { flag: "wx" });
+      } finally {
+        report.resumeWindow = await measureResumeWindow(directory, report.runs[0], recording);
+        await save();
+      }
+      if (failure) throw failure;
+      if (recording.missing.length) throw Error(recording.missing[0]);
+      const result = await verifyContinuity(output);
+      Object.assign(report, result);
+    } catch (error) {
+      report.status = failure ? "failed" : "partial";
+      report.unrun = [
+        ...new Set([
+          ...SINGLE_INSTANCE_UNRUN,
+          ...recording.missing,
+          ...(failure ? [failure.message] : []),
+          error.message,
+        ]),
+      ];
+    }
+    await save();
+  }
   if (failure) throw failure;
   if (blockers.length)
     throw new Error(
@@ -2020,7 +2306,8 @@ export async function main() {
     );
   try {
     if (singleInstance) {
-      assertSingleInstanceReceipt(report);
+      if (!recording) assertSingleInstanceReceipt(report);
+      if (recording && report.status !== "passed") throw Error(report.unrun.join(", "));
       const secondary = report.runs[0].singleInstance.secondary;
       assert.equal(sha256(await readFile(secondary.log)), secondary.logSha256);
     }
@@ -2049,7 +2336,16 @@ export async function main() {
     await save();
     console.log(result.stdout);
   } catch (error) {
-    report.status = "failed";
+    if (report.status !== "partial" || !recording) report.status = "failed";
+    if (recording) {
+      delete report.primaryRecordingInterrupted;
+      delete report.phases;
+      if (report.status === "failed")
+        report.unrun = [
+          ...SINGLE_INSTANCE_UNRUN,
+          "independent receipt validation — " + error.message,
+        ];
+    }
     report.receiptValidation = errorRecord(error);
     await save();
     throw error;
