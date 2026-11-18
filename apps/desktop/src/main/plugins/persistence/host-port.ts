@@ -373,6 +373,15 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
           id: w.record.id,
           state: w.state as "receiving" | "sealed",
         })),
+    pendingPublication: (o) =>
+      records
+        .admittedWrites(o)
+        .some(
+          (w) =>
+            w.state === "publishing" &&
+            !discardedTicket(o, w.ticket.id) &&
+            !backend.evidence.confirmedAbort?.(w.ticket),
+        ),
     pendingSettings: (o) =>
       [...captured.values()].some(
         (t) =>
@@ -392,7 +401,13 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
         const projection = records.admittedWrites().find((w) => w.ticket.id === id);
         if (projection) await projection.pending.catch(() => {});
         const ticket = captured.get(id) ?? projection?.ticket;
-        if (ticket) {
+        if (ticket && backend.evidence.confirmedAbort?.(ticket)) {
+          if (captured.has(id)) settledAt.set(id, settledAt.get(id) ?? now());
+          continue;
+        }
+        // Reconciliation can revoke an unpublished ticket. A receiving write
+        // remains the owner's incomplete work until cleanup is actually requested.
+        if (ticket && projection?.state !== "receiving") {
           try {
             const disposition = (await backend.engine.reconcile(ticket)).disposition;
             outcomes.set(id, disposition);

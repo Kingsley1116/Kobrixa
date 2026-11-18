@@ -60,6 +60,7 @@ function fixture() {
     fence: ownerFence,
     fenceTarget: targetFence,
     pendingWrites: () => [],
+    pendingPublication: () => false,
     pendingSettings: () => false,
     settle: async () => {},
     evidence: evidenceDouble(),

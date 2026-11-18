@@ -56,6 +56,7 @@ function recoveryBackendDouble(): PersistenceBackend {
       register: fail,
       map: fail,
       appendMapped: fail,
+      releasePreferences: fail,
       releaseMapped: fail,
       inventory: fail,
       read: fail,

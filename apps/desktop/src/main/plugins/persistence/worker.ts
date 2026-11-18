@@ -84,7 +84,12 @@ export type WorkerOperations = Qualified<
 > &
   Qualified<PersistenceBackend["reads"], "reads"> &
   Qualified<
-    Required<Omit<PersistenceBackend["evidence"], "capture" | "captureDrain" | "tickets">>,
+    Required<
+      Omit<
+        PersistenceBackend["evidence"],
+        "capture" | "captureDrain" | "tickets" | "confirmedAbort"
+      >
+    >,
     "evidence"
   > &
   Qualified<PersistenceBackend["imports"], "imports"> &
@@ -209,6 +214,7 @@ const args = {
   "sources.appendMapped": z.tuple([
     z.strictObject({ mapped: handle, ticket, offset: count, maxBytes: count.min(1).max(262144) }),
   ]),
+  "sources.releasePreferences": z.tuple([owner, text, handle]),
   "sources.releaseMapped": z.tuple([handle]),
   "sources.inventory": z.tuple([text]),
   "sources.read": z.tuple([text, text, count, count.min(1).max(262144)]),
@@ -255,6 +261,7 @@ export const PersistenceWorkerResponse = z.union([
     id: count.min(1),
     ok: z.literal(true),
     value: z.unknown(),
+    confirmedAbort: z.literal(true).optional(),
     settled: settledMarkers.optional(),
   }),
   z.strictObject({
@@ -274,6 +281,7 @@ export type PersistenceWorkerResponse<K extends Operation = Operation> =
       id: Counter;
       ok: true;
       value: Awaited<ReturnType<WorkerOperations[K]>>;
+      confirmedAbort?: true;
       settled?: readonly { id: Handle; disposition: "committed" | "not-committed" | "aborted" }[];
     }
   | {
@@ -406,6 +414,7 @@ export async function startPersistenceWorker(input: {
         slot: number;
         settledAt: number | null;
         unadmittedClean: boolean;
+        confirmedAbort: boolean;
       }
     >(),
     freeSlots = Array.from({ length: 1024 }, (_, i) => 1023 - i);
@@ -428,7 +437,12 @@ export async function startPersistenceWorker(input: {
     targets = new Set<string>(),
     barriers = new Map<
       string,
-      { barrier: PersistenceBarrier; tickets: readonly PublicationTicket[]; expires: number }
+      {
+        barrier: PersistenceBarrier;
+        tickets: readonly PublicationTicket[];
+        expires: number;
+        drain: boolean;
+      }
     >();
   function pruneBarriers() {
     for (const [id, e] of barriers) if (e.expires <= input.now()) barriers.delete(id);
@@ -441,7 +455,7 @@ export async function startPersistenceWorker(input: {
   const pending = new Map<
     number,
     {
-      resolve: (v: unknown) => void;
+      resolve: (v: unknown, confirmedAbort?: boolean) => void;
       reject: (e: unknown) => void;
       operation: Operation;
       ticketId?: string;
@@ -463,18 +477,24 @@ export async function startPersistenceWorker(input: {
       p = pending.get(r.id);
     if (!p) return;
     pending.delete(r.id);
+    // A record abort needs its own timely confirmation before it can age out.
+    // The worker can attach an incidental cleanup marker to any response.
     for (const marker of r.settled ?? []) {
       const settled = ledger.get(marker.id);
-      if (settled) settled.settledAt ??= input.now();
+      if (
+        settled &&
+        (marker.disposition === "committed" || settled.ticket.target.kind !== "record")
+      )
+        settled.settledAt ??= input.now();
     }
     // Only the reserve response can prove this attempt never became a write.
-    // An error alone (lost response / failed cleanup) is not proof; a later abort
-    // of admitted work must keep its lifecycle obligation. The store emits this
-    // marker on reserve rejection only after no Entry or failed reserve remains.
+    // Failed cleanup remains unresolved until a separate terminal response.
     if (!r.ok && (p.operation === "engine.reserve" || p.operation === "engine.reserveFinal")) {
       const e = p.ticketId ? ledger.get(p.ticketId) : undefined;
-      if (e && r.settled?.some((m) => m.id === p.ticketId && m.disposition === "aborted"))
+      if (e && r.settled?.some((m) => m.id === p.ticketId && m.disposition === "aborted")) {
         e.unadmittedClean = true;
+        e.settledAt ??= input.now();
+      }
     }
     if (!r.ok) {
       p.reject(storageFault(r.error.message, p.operation) ?? new Error(r.error.message));
@@ -483,11 +503,12 @@ export async function startPersistenceWorker(input: {
     const e = p.ticketId ? ledger.get(p.ticketId) : undefined;
     if (
       e &&
+      !e.confirmedAbort &&
       ((r.value as { disposition?: string } | null)?.disposition === "unknown" ||
         r.value === "unknown")
     )
       e.settledAt = null;
-    p.resolve(r.value);
+    p.resolve(r.value, r.confirmedAbort);
   });
   if (channel) {
     const trace: Array<{ point: PersistenceFaultPoint; time: number; ticket: string | null }> = [],
@@ -586,8 +607,22 @@ export async function startPersistenceWorker(input: {
               ...(gate ? { gate } : {}),
             });
             const ticketId = (parameters[0] as { id?: string } | undefined)?.id;
+            const entry = ticketId ? ledger.get(ticketId) : undefined;
             pending.set(id, {
-              resolve: resolve as (v: unknown) => void,
+              resolve(value, confirmedAbort) {
+                // A timeout fences the request. Its late transport reply cannot
+                // change the evidence used by a subsequent drain.
+                if (
+                  !cancelled &&
+                  confirmedAbort &&
+                  entry?.ticket.target.kind === "record" &&
+                  JSON.stringify(entry.ticket) === JSON.stringify(parameters[0])
+                ) {
+                  entry.confirmedAbort = true;
+                  entry.settledAt ??= input.now();
+                }
+                resolve(value as Awaited<ReturnType<WorkerOperations[K]>>);
+              },
               reject,
               operation,
               ...(ticketId ? { ticketId } : {}),
@@ -683,6 +718,7 @@ export async function startPersistenceWorker(input: {
       slot,
       settledAt: null,
       unadmittedClean: false,
+      confirmedAbort: false,
     });
     let posted = false;
     try {
@@ -772,13 +808,14 @@ export async function startPersistenceWorker(input: {
     });
     barriers.set(barrier.id, {
       barrier,
+      drain: retain,
       expires: retain ? input.now() + 120000 : deadline,
       tickets: [...ledger.values()]
         .filter(
           (e) =>
             e.sequence <= barrier.through &&
             matches(scope, e.ticket) &&
-            (!retain || !e.unadmittedClean),
+            (!retain || (!e.unadmittedClean && !e.confirmedAbort)),
         )
         .map((e) => e.ticket),
     });
@@ -795,6 +832,10 @@ export async function startPersistenceWorker(input: {
       close: (o, p) => send("reads.close", [o, p]),
     },
     evidence: {
+      confirmedAbort(ticket) {
+        const entry = ledger.get(ticket.id);
+        return !!entry?.confirmedAbort && JSON.stringify(entry.ticket) === JSON.stringify(ticket);
+      },
       saveCheckpoint: (o, v) => send("evidence.saveCheckpoint", [o, v]),
       retainSealed: (t) => send("evidence.retainSealed", [t]),
       capture: (scope, deadline) => captureBarrier(scope, deadline, false),
@@ -808,7 +849,18 @@ export async function startPersistenceWorker(input: {
       async flush(b) {
         const tickets = backend.evidence.tickets(b);
         try {
-          return await send("evidence.flush", [b, tickets]);
+          // Keep the frozen membership. A terminal reply observed since capture can
+          // settle an admitted write, but cannot rewrite a failed reserve snapshot.
+          const outstanding = barriers.get(b.id)?.drain
+            ? tickets.filter((ticket) => {
+                const entry = ledger.get(ticket.id);
+                return entry?.unadmittedClean || !backend.evidence.confirmedAbort!(ticket);
+              })
+            : tickets;
+          const result = await send("evidence.flush", [b, outstanding]);
+          return outstanding.length === tickets.length
+            ? result
+            : { ...result, accepted: tickets.map((t) => t.id) };
         } finally {
           barriers.delete(b.id);
           pruneBarriers();
@@ -862,6 +914,7 @@ export async function startPersistenceWorker(input: {
       register: (i) => send("sources.register", [i]),
       map: (d, k) => send("sources.map", [d, k]),
       appendMapped: (i) => send("sources.appendMapped", [i]),
+      releasePreferences: (o, id, barrier) => send("sources.releasePreferences", [o, id, barrier]),
       releaseMapped: (m) => send("sources.releaseMapped", [m]),
       inventory: (d) => send("sources.inventory", [d]),
       read: (d, k, o, n) => send("sources.read", [d, k, o, n]),
@@ -1094,6 +1147,7 @@ export function runPersistenceWorker(input: {
       "sources.register": sources.register.bind(sources),
       "sources.map": sources.map.bind(sources),
       "sources.appendMapped": sources.appendMapped.bind(sources),
+      "sources.releasePreferences": sources.releasePreferences.bind(sources),
       "sources.releaseMapped": sources.releaseMapped.bind(sources),
       "sources.inventory": sources.inventory.bind(sources),
       "sources.read": sources.read.bind(sources),
@@ -1182,6 +1236,7 @@ export function runPersistenceWorker(input: {
           },
         )
         .then(async (value) => {
+          let confirmedAbort = r.operation === "engine.abort" && value === "aborted";
           const disposition =
             typeof value === "string" ? value : (value as { disposition?: string })?.disposition;
           if (
@@ -1190,10 +1245,22 @@ export function runPersistenceWorker(input: {
           ) {
             // A pre-dispatch observation becomes terminal only after revocation and cleanup.
             const original = publicationTicketSchema.parse(r.args[0]);
-            if (!store.retainedSealed(original)) await store.abort(original);
+            if (!store.retainedSealed(original)) {
+              const result = await store.abort(original);
+              confirmedAbort = result === "aborted";
+              if (result === "unknown") value = { disposition: "unknown" };
+              if (result === "committed") value = await store.reconcile(original);
+            }
           }
           const settled = collectSettled();
-          port.postMessage({ version: 1, id: r.id, ok: true, value, settled });
+          port.postMessage({
+            version: 1,
+            id: r.id,
+            ok: true,
+            value,
+            settled,
+            ...(confirmedAbort ? { confirmedAbort: true } : {}),
+          });
         })
         .catch((error) => {
           if (r.operation === "engine.reserve" || r.operation === "engine.reserveFinal")
@@ -1242,13 +1309,25 @@ export function runShippedPersistenceWorker(): void {
 // The shipped CJS footer invokes runShippedPersistenceWorker; test entries retain explicit inventories.
 // The module itself has no auto-start side effect, so T7's wrapper can call the runner once.
 
-import { parseNonceDocument, snapshotBytes, importIdFor } from "./import-sources.js";
+import {
+  parseNonceDocument,
+  parseBarrierDocument,
+  barrierKeyFor,
+  snapshotBytes,
+  importIdFor,
+} from "./import-sources.js";
 import { devicePreferencesEvidenceBytes, sameImportValue, sameImportAttempt } from "./namespace.js";
 import type {
   DevicePreferencesEvidence,
   ImportSettingsAuthority,
   LegacyPreferencesEvidenceRef,
 } from "./engine-port.js";
+type PreferenceIdentity = {
+  owner: PersistenceOwner;
+  evidence: LegacyPreferencesEvidenceRef;
+  settings?: ImportSettingsAuthority;
+  admissionRevision?: number;
+};
 type SourceBinding =
   | { kind: "file"; descriptor: LegacyImportDescriptor; fs: NodePersistenceFs }
   | {
@@ -1257,14 +1336,13 @@ type SourceBinding =
       fs?: NodePersistenceFs;
       combined?: DevicePreferencesEvidence;
       combinedCharged?: boolean;
-      resolved: null | {
-        owner: PersistenceOwner;
-        evidence: LegacyPreferencesEvidenceRef;
-        bytes: Uint8Array;
-        charge: string;
-        settings?: ImportSettingsAuthority;
-        admissionRevision?: number;
-      };
+      released?: PreferenceIdentity;
+      resolved:
+        | null
+        | (PreferenceIdentity & {
+            bytes: Uint8Array;
+            charge: string;
+          });
     };
 export class WorkerSources implements LegacySourceResolver {
   private readonly registered = new Map<string, SourceBinding>();
@@ -1350,6 +1428,45 @@ export class WorkerSources implements LegacySourceResolver {
     if (!s) throw new Error("stale");
     return s;
   }
+  async releasePreferences(owner: PersistenceOwner, id: string, barrier: Handle): Promise<void> {
+    const binding = this.registered.get(id);
+    if (!binding || binding.kind !== "renderer" || !binding.resolved) return;
+    const capture = binding.resolved;
+    if (
+      owner.hostEpoch !== this.store.fs.profile.hostEpoch ||
+      owner.sourceKey !== capture.owner.sourceKey ||
+      owner.pluginId !== capture.owner.pluginId
+    )
+      throw new Error("stale");
+    const saved = await this.store.loadImport(owner, importIdFor(id, owner.sourceKey));
+    const bytes = await this.store.auxiliary(owner, "import", barrierKeyFor(id));
+    const document = bytes && parseBarrierDocument(bytes);
+    if (
+      !saved?.complete ||
+      !sameImportValue(saved.plan.preferencesEvidence, capture.evidence) ||
+      document?.state !== "complete" ||
+      document.barrier !== barrier ||
+      document.sourceKey !== owner.sourceKey ||
+      document.descriptorId !== id
+    )
+      throw new Error("incomplete");
+    if (binding.resolved !== capture) throw new Error("stale");
+    this.store.quota.releaseTemporary(owner.sourceKey, capture.charge);
+    if (binding.combinedCharged)
+      this.store.quota.releaseTemporary(owner.sourceKey, capture.charge + "/combined");
+    // Keep the authority floor across release. Rehydration verifies the nonce and plan again.
+    binding.released = {
+      owner: capture.owner,
+      evidence: capture.evidence,
+      ...(capture.settings ? { settings: capture.settings } : {}),
+      ...(capture.admissionRevision !== undefined
+        ? { admissionRevision: capture.admissionRevision }
+        : {}),
+    };
+    binding.resolved = null;
+    delete binding.combined;
+    delete binding.combinedCharged;
+  }
   async resolvePreferences(
     input: Parameters<LegacySourceResolver["resolvePreferences"]>[0],
   ): Promise<void> {
@@ -1360,7 +1477,7 @@ export class WorkerSources implements LegacySourceResolver {
       input.owner.hostEpoch !== this.store.fs.profile.hostEpoch
     )
       throw new Error("stale");
-    const previous = binding.resolved;
+    const previous = binding.resolved ?? binding.released;
     if (
       binding.descriptor.combinedSource &&
       !sameImportValue(input.settings, deviceImportSettingsAuthority)
@@ -1383,7 +1500,7 @@ export class WorkerSources implements LegacySourceResolver {
     );
     if (binding.descriptor.combinedSource && plan && !plan.plan.devicePreferencesEvidence)
       throw new Error("missing-combined-evidence");
-    if (plan && !plan.complete && !sameImportValue(plan.plan.preferencesEvidence, input.evidence))
+    if (plan && !sameImportValue(plan.plan.preferencesEvidence, input.evidence))
       throw new Error("input-changed");
     if (previous) {
       if (
@@ -1457,7 +1574,10 @@ export class WorkerSources implements LegacySourceResolver {
     // strictly newer same-namespace generation may continue it; original tickets
     // remain in the durable plan and are reconciled/admitted separately.
     // An older in-flight resolution must not replace a newer completed binding.
-    if (binding.descriptor.combinedSource && binding.resolved !== previous)
+    if (
+      (binding.resolved ?? binding.released) !== previous &&
+      (binding.descriptor.combinedSource || !binding.resolved)
+    )
       throw new Error("stale");
     const retained = binding.resolved;
     if (retained) {

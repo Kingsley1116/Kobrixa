@@ -264,6 +264,7 @@ async function barrierFixture(root?: string, writers?: LegacyWriterPort[]) {
       read: unavailable,
       map: unavailable,
       appendMapped: unavailable,
+      releasePreferences: unavailable,
       releaseMapped: unavailable,
     },
     output: {

@@ -94,6 +94,7 @@ type Entry = {
   tag?: ImportTag;
   retained?: SealedPayloadPin;
   recoveryGate?: PublicationGate;
+  abortRequested?: boolean;
 };
 type Pin = {
   owner: string;
@@ -107,6 +108,7 @@ type Pin = {
   busy: Promise<unknown>;
   ticket?: string;
   expires?: number;
+  closing?: Promise<void>;
 };
 type Page = {
   owner: string;
@@ -512,21 +514,30 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       expiresMonotonicMs = Math.min(e.created + 120000, e.progress + 30000);
     if (
       e.state !== "sealed" ||
+      e.abortRequested ||
       e.busy ||
       e.gate.dispatched ||
       e.received !== e.size ||
       this.fs.now() >= expiresMonotonicMs
     )
       throw new Error("incomplete");
-    if (e.retained && this.pins.has(e.retained.pin)) return { ...e.retained };
+    const retainedPin = e.retained && this.pins.get(e.retained.pin);
+    if (e.retained && retainedPin) {
+      if (retainedPin.closing) throw new Error("stale");
+      return { ...e.retained };
+    }
     if ([...this.pins.values()].filter((p) => p.source === ticket.owner.sourceKey).length >= 4)
       throw new Error("quota");
     e.busy = true;
     try {
       const path = e.object ?? e.temp,
-        fd = await this.fs.open(path, "read"),
+        key = this.fs.name(path),
         pin = randomUUID();
-      this.quota.holdTemporary(ticket.owner.sourceKey, this.fs.name(path), e.size);
+      this.quota.holdTemporary(ticket.owner.sourceKey, key, e.size);
+      const fd = await this.fs.open(path, "read").catch((error) => {
+        this.quota.releaseTemporary(ticket.owner.sourceKey, key);
+        throw error;
+      });
       this.pins.set(pin, {
         owner: ownerKey(ticket.owner),
         source: ticket.owner.sourceKey,
@@ -548,11 +559,12 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
   }
   retainedSealed(ticket: PublicationTicket): boolean {
     const e = this.entries.get(ticket.id);
+    const pin = e?.retained && this.pins.get(e.retained.pin);
     return (
-      !!e &&
+      !!e?.retained &&
       e.signature === JSON.stringify(ticket) &&
-      !!e.retained &&
-      this.pins.has(e.retained.pin) &&
+      !!pin &&
+      !pin.closing &&
       this.fs.now() < e.retained.expiresMonotonicMs &&
       e.state === "sealed" &&
       !e.gate.dispatched &&
@@ -571,6 +583,8 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       p.ticket !== ticket.id ||
       p.owner !== ownerKey(ticket.owner) ||
       e.retained?.pin !== pin ||
+      e.recoveryGate ||
+      e.abortRequested ||
       !this.retainedSealed(ticket) ||
       e.busy
     )
@@ -578,13 +592,16 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     const gate = new PublicationGate(
       Math.min(deadline, this.fs.now() + 10000, e.retained.expiresMonotonicMs),
     );
+    e.recoveryGate = gate;
     const previous = this.publication.get(ticket.owner.sourceKey) ?? Promise.resolve();
     const run = previous
       .catch(() => {})
       .then(() => {
         if (!this.retainedSealed(ticket) || e.busy) throw new Error("stale");
-        e.recoveryGate = gate;
         return this.publishOne(e, gate);
+      })
+      .finally(() => {
+        if (!gate.dispatched) delete e.recoveryGate;
       });
     this.publication.set(ticket.owner.sourceKey, run);
     return run;
@@ -980,6 +997,20 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     if (e.busy && (e.gate.dispatched || e.recoveryGate?.dispatched))
       return { disposition: "unknown" };
     if (!(e.gate.dispatched || e.recoveryGate?.dispatched)) return { disposition: "not-committed" };
+    return this.settleUnpublished(e);
+  }
+  private settleUnpublished(e: Entry): Promise<Outcome> {
+    const source = e.ticket.owner.sourceKey;
+    const prior = this.publication.get(source) ?? Promise.resolve();
+    const outcome = prior.catch(() => {}).then(() => this.checkAndClean(e));
+    this.publication.set(source, outcome);
+    return outcome;
+  }
+  private async checkAndClean(e: Entry): Promise<Outcome> {
+    if (e.state === "committed") return { disposition: "committed", receipt: e.head!.receipt };
+    if (e.state === "aborted") return { disposition: "not-committed" };
+    if (e.busy) return { disposition: "unknown" };
+    const dispatched = e.gate.dispatched || e.recoveryGate?.dispatched;
     try {
       const current = await e.ns.head(e.location);
       if (current && e.head && current.receipt.commitId === e.head.receipt.commitId) {
@@ -988,18 +1019,26 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
         this.confirm(e);
         return { disposition: "committed", receipt: current.receipt };
       }
-      if ((current?.receipt.commitId ?? null) === (e.old?.receipt.commitId ?? null)) {
+      if (dispatched) {
+        if ((current?.receipt.commitId ?? null) !== (e.old?.receipt.commitId ?? null))
+          throw new Error("publish-uncertain");
         if (current) await e.ns.verify(e.location, current);
-        this.uncertain.delete(e.ticket.owner.sourceKey);
-        e.state = "sealed";
-        await this.abortKnownUnpublished(e);
-        return { disposition: "not-committed" };
       }
-    } catch {
-      /* Evidence remains fenced. Permission failures are not corruption repair. */
+      if (
+        current?.object &&
+        e.object &&
+        this.fs.name(e.object) === this.fs.name(e.ns.object(e.location, current))
+      )
+        return { disposition: "unknown" };
+      await this.removeUnpublished(e, current);
+      if (this.uncertain.get(e.ticket.owner.sourceKey) === e.ticket.id)
+        this.uncertain.delete(e.ticket.owner.sourceKey);
+      return { disposition: "not-committed" };
+    } catch (error) {
+      if (!dispatched) throw error;
+      this.uncertain.set(e.ticket.owner.sourceKey, e.ticket.id);
+      return { disposition: "unknown" };
     }
-    this.uncertain.set(ticket.owner.sourceKey, ticket.id);
-    return { disposition: "unknown" };
   }
   async abort(ticket: PublicationTicket): Promise<"aborted" | "committed" | "unknown"> {
     this.fs.profile.assertHeld();
@@ -1046,24 +1085,16 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     const e = this.entry(ticket);
     if (e.state === "committed" && !e.busy) return "committed";
     if (e.state === "aborted") return "aborted";
+    e.abortRequested = true;
     e.gate.shorten(this.fs.now(), this.fs.now());
     e.recoveryGate?.shorten(this.fs.now(), this.fs.now());
     if (e.busy) return "unknown";
-    if (e.gate.dispatched || e.recoveryGate?.dispatched) {
-      const result = await this.reconcile(ticket);
-      if (result.disposition === "committed") return "committed";
-      if (result.disposition === "unknown") return "unknown";
-    }
-    await this.abortKnownUnpublished(e);
-    return "aborted";
+    const outcome = await this.settleUnpublished(e);
+    return outcome.disposition === "not-committed" ? "aborted" : outcome.disposition;
   }
-  private async abortKnownUnpublished(e: Entry): Promise<void> {
-    const prior = this.publication.get(e.ticket.owner.sourceKey) ?? Promise.resolve();
-    const cleanup = prior.catch(() => {}).then(() => this.removeUnpublished(e));
-    this.publication.set(e.ticket.owner.sourceKey, cleanup);
-    await cleanup;
-  }
-  private async removeUnpublished(e: Entry): Promise<void> {
+  private async removeUnpublished(e: Entry, current: DiskHead | null): Promise<void> {
+    const pin = e.retained && this.pins.get(e.retained.pin);
+    if (pin && e.retained) await this.closePin(e.retained.pin, pin);
     if (e.fd) {
       await this.fs.close(e.fd);
       e.fd = null;
@@ -1083,7 +1114,6 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       e.ns.path("staging", e.ticket.id, "intent.json"),
     ])
       if (p && (await this.fs.exists(p))) await this.fs.unlink(p);
-    const current = await e.ns.head(e.location);
     if (
       current?.receipt.commitId === e.old?.receipt.commitId &&
       (await this.fs.exists(e.location.previous))
@@ -1253,7 +1283,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
   ): Promise<Uint8Array> {
     await this.prune();
     const p = this.pins.get(pin);
-    if (!p || p.owner !== ownerKey(owner)) throw new Error("stale");
+    if (!p || p.closing || p.owner !== ownerKey(owner)) throw new Error("stale");
     if (
       !Number.isSafeInteger(offset) ||
       offset < 0 ||
@@ -1275,9 +1305,18 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     return work;
   }
   private async closePin(id: string, p: Pin): Promise<void> {
-    this.pins.delete(id);
+    if (p.closing) return p.closing;
+    p.closing = this.finishClosePin(id, p);
+    try {
+      await p.closing;
+    } finally {
+      delete p.closing;
+    }
+  }
+  private async finishClosePin(id: string, p: Pin): Promise<void> {
     await p.busy.catch(() => {});
     await this.fs.close(p.fd);
+    this.pins.delete(id);
     const key = this.fs.name(p.path);
     this.quota.releaseTemporary(p.source, key);
     if (

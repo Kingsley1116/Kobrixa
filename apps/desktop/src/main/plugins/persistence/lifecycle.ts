@@ -45,6 +45,7 @@ export type LifecycleDependencies = {
   fence(owner: ResourceOwner, deadline: number): readonly string[];
   fenceTarget(owner: ResourceOwner, id: string, deadline: number): readonly string[];
   pendingWrites(owner: ResourceOwner): DrainRequest["writes"];
+  pendingPublication(owner: ResourceOwner): boolean;
   pendingSettings(owner: ResourceOwner): boolean;
   settle(tickets: readonly string[], deadline: number): Promise<void>;
   evidence: PersistenceEvidencePort;
@@ -88,6 +89,7 @@ type Group = {
   revision: number;
   control: AbortController;
   rearm?: () => void;
+  lostReadDeadline?: number;
   callbackAllowed: boolean;
   barriers: PersistenceBarrier[];
 };
@@ -486,6 +488,7 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
     uncertain ||= outcomes.some(
       (result) => result.unknown.length > 0 || result.state === "unknown",
     );
+    uncertain ||= value.retired && deps.pendingPublication(value.owner);
     const saved = !uncertain && !pendingSettings && records.every((r) => r.final) && flushed;
     const state: DrainReport["state"] = saved
       ? "saved"
@@ -556,7 +559,7 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
     };
     try {
       await Promise.race([work().catch(() => undefined), timeout]);
-      return await report(value);
+      return await report(value, value.lostReadDeadline);
     } finally {
       clearTimeout(timer);
       delete value.rearm;
@@ -705,6 +708,8 @@ export function createPersistenceLifecycle(deps: LifecycleDependencies) {
       }
       value.callbackAllowed = false;
       value.control.abort();
+      // Publication was fenced at owner loss. Give the evidence reads their own bounded budget.
+      value.lostReadDeadline ??= deps.now() + 10000;
       return start(value);
     },
     recoverySnapshot: () => deps.recovery.recoverySnapshot(),

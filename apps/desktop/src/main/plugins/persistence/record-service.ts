@@ -179,11 +179,25 @@ export function createRecordService(
     targets.delete(targetKey(write.owner, write.record.id));
     deps.checkpoint.committed(write.owner, write.input, write.record);
   }
+  function aborted(write: Write) {
+    releaseRetained(write);
+    write.state = "aborted";
+    write.terminal ??= deps.now();
+    const key = targetKey(write.owner, write.record.id);
+    if (targets.get(key) === write.ticket.id) targets.delete(key);
+  }
   async function reconcile(write: Write) {
+    if (!terminal(write) && deps.evidence.confirmedAbort?.(write.ticket)) {
+      aborted(write);
+      return;
+    }
     if (write.state !== "publishing") return;
     const outcome = await deps.engine.reconcile(write.ticket);
     if (outcome.disposition === "committed" && outcome.receipt) committed(write, outcome.receipt);
-    else if (outcome.disposition === "not-committed") write.state = "sealed";
+    else if (outcome.disposition === "not-committed") {
+      if (deps.evidence.confirmedAbort?.(write.ticket)) aborted(write);
+      else write.state = "sealed";
+    }
   }
   function unknown(): never {
     const error = new PersistenceFault("PLUGIN_E_STORAGE_IO", "publish-uncertain");
@@ -337,10 +351,8 @@ export function createRecordService(
           offset += count;
         }
       } catch (error) {
-        await deps.engine.abort(write.ticket);
-        write.state = "aborted";
-        write.terminal = deps.now();
-        targets.delete(targetKey(owner, write.record.id));
+        write.state = "publishing";
+        if ((await deps.engine.abort(write.ticket)) === "aborted") aborted(write);
         throw error;
       }
       write.received += bytes.length;
@@ -397,7 +409,8 @@ export function createRecordService(
         const result = await deps.engine.publish(write.ticket);
         if (result.disposition === "unknown") unknown();
         if (result.disposition === "not-committed" || !result.receipt) {
-          write.state = "sealed";
+          if (deps.evidence.confirmedAbort?.(write.ticket)) aborted(write);
+          else write.state = "sealed";
           const failure = new PersistenceFault("PLUGIN_E_STORAGE_IO", "io");
           write.error = failure.result.error;
           throw failure;
@@ -438,12 +451,8 @@ export function createRecordService(
       if (write.receipt)
         return { ok: true, value: { disposition: "committed", receipt: write.receipt } };
       const disposition = await deps.engine.abort(write.ticket);
-      if (disposition === "aborted") {
-        releaseRetained(write);
-        write.state = "aborted";
-        write.terminal = deps.now();
-        targets.delete(targetKey(owner, write.record.id));
-      } else write.state = "publishing";
+      if (disposition === "aborted") aborted(write);
+      else write.state = "publishing";
       return { ok: true, value: { disposition } };
     },
     "storage/stat": async (owner, p) => ({
@@ -750,10 +759,12 @@ export function createRecordService(
         const write = writes.get(id);
         if (!write) continue;
         await write.pending.catch(() => {});
-        if (write.state === "sealed") {
+        if (deps.evidence.confirmedAbort?.(write.ticket) && !terminal(write)) aborted(write);
+        else if (write.state === "sealed") {
           const result = await deps.engine.reconcile(write.ticket);
           if (result.disposition === "committed" && result.receipt)
             committed(write, result.receipt);
+          else if (deps.evidence.confirmedAbort?.(write.ticket)) aborted(write);
         } else await reconcile(write);
       }
     },

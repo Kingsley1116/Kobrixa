@@ -154,6 +154,9 @@ async function fixture(
       );
       return { nextOffset: pin.offset, done: pin.offset === pin.bytes.length };
     },
+    async releasePreferences() {
+      renderer = null;
+    },
     async releaseMapped(id) {
       const pin = pins.get(id);
       if (pin?.ticket && store.unresolvedTicket(pin.ticket.id))

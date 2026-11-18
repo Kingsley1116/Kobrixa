@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "vite";
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import {
   startPersistenceWorker,
   PersistenceWorkerRequest,
@@ -33,6 +33,25 @@ beforeAll(async () => {
       import {existsSync,unlinkSync} from "node:fs";
       // Test-only fault injection: remove an enumerated child on real disk. All source
       // collection, messages, codecs, journals and subsequent reads remain native.
+      // Hold one actual terminal reply after cleanup to exercise transport timeout.
+      const delayed=${JSON.stringify(path.join(directory, "delay-abort.trigger"))};
+      import {parentPort, workerData} from "node:worker_threads";
+      const post=parentPort.postMessage.bind(parentPort);
+      parentPort.postMessage=(frame, ...args) => {
+        if (frame.value !== "aborted" || !existsSync(delayed)) return post(frame,...args);
+        unlinkSync(delayed);
+        const clockFile = delayed + ".clock";
+        const now = performance.now.bind(performance);
+        performance.now = () => now() + (existsSync(clockFile) ? 120001 : 0);
+        workerData.faultPort.postMessage({point:"cleanup",time:performance.now(),ticket:null});
+        const release = m => {
+          if (m.kind !== "release" || m.point !== "cleanup") return;
+          workerData.faultPort.off("message",release);
+          post(frame,...args);
+          workerData.faultPort.postMessage({point:"receipt-send",time:performance.now(),ticket:null});
+        };
+        workerData.faultPort.on("message",release);
+      };
       const entries=NodePersistenceFs.prototype.entries;
       NodePersistenceFs.prototype.entries=async function(...args) {
         const result=await entries.apply(this,args);
@@ -893,6 +912,60 @@ it("T5 private continuations require original ticket, exact grant and a bound re
 import { createLegacyImportCoordinator } from "./import-coordinator.js";
 import { createLegacyWriterBarrier, importIdFor } from "./import-sources.js";
 import { syntheticImportDescriptor } from "./import-fixtures.js";
+it("releases authenticated synthetic captures after finalizing the barrier, including repeat completion", async () => {
+  const { syntheticPreferencesImportDescriptor: d } = await import("./import-fixtures.js");
+  const env = await launch(path.join(directory, randomUUID()));
+  const owner = {
+    ...ownerFor(env.profile.hostEpoch),
+    sourceKey: d.targetSourceKey,
+    pluginId: d.id,
+  };
+  const scope = { hostEpoch: owner.hostEpoch, workbenchInstance: randomUUID() };
+  const barrier = createLegacyWriterBarrier({
+    backend: env.backend,
+    descriptors: [d],
+    writers: [],
+    importOwner: () => owner,
+  });
+  const coordinator = createLegacyImportCoordinator({
+    backend: env.backend,
+    sources: env.backend.sources,
+    barrier,
+    descriptors: [d],
+    currentScope: () => true,
+    currentSource: () => true,
+    importOwner: () => owner,
+  });
+  const run = () => coordinator.run(d, new AbortController().signal);
+  try {
+    const { nonce } = await coordinator.issuePreferences({ descriptorId: d.id, scope });
+    const raw = { nonce, scope, entries: [{ key: "test.preference", raw: null }] };
+    await coordinator.acceptPreferencesEvidence(raw);
+    vi.spyOn(barrier, "complete").mockRejectedValueOnce(new Error("interrupted finalization"));
+    expect((await run()).state).toBe("blocked");
+    const bytes = snapshotBytes(raw, d.rendererKeyAllowlist!);
+    expect(await env.backend.evidence.quota(owner)).toMatchObject({
+      value: { pinnedBytes: bytes.length },
+    });
+    for (let i = 0; i < 2; i++) {
+      expect((await run()).state).toBe("complete");
+      expect(await env.backend.evidence.quota(owner)).toMatchObject({
+        value: { pinnedBytes: 0, temporaryBytes: 0, reservedCreates: 0, reservedBytes: 0 },
+      });
+      if (i === 0) {
+        expect((await env.backend.sources.inventory(d.id)).state).toBe("blocked");
+        await env.backend.sources.resolvePreferences({
+          owner,
+          descriptorId: d.id,
+          evidence: { nonce, digest: hash(bytes) },
+        });
+        expect(await env.backend.sources.read(d.id, "preferences", 0, 262144)).toEqual(bytes);
+      }
+    }
+  } finally {
+    await env.backend.dispose();
+  }
+});
 it("T6 fix round1 child ENOENT blocks actual-worker import and retry imports the survivor", async () => {
   const sourceRoot = path.join(directory, "legacy", "sensor-lab"),
     survivor = "11111111-1111-4111-8111-111111111111.json",
@@ -1154,10 +1227,11 @@ it("preserves denied admission errors and cleanup through the real worker after 
     expect(begun.ok).toBe(true);
     for (const write of service.admittedWrites(owner))
       expect(await env.backend.engine.abort(write.ticket)).toBe("aborted");
-    const incomplete = env.backend.evidence.captureDrain!(scope, performance.now() + 10000);
-    expect(await env.backend.evidence.flush(incomplete)).toMatchObject({
-      state: "failed",
-      incomplete: expect.arrayContaining(service.admittedWrites(owner).map((w) => w.ticket.id)),
+    const drained = env.backend.evidence.captureDrain!(scope, performance.now() + 10000);
+    expect(await env.backend.evidence.flush(drained)).toMatchObject({
+      state: "saved",
+      incomplete: [],
+      unknown: [],
     });
   } finally {
     await env.backend.engine.reconcile(t);
@@ -1167,7 +1241,15 @@ it("preserves denied admission errors and cleanup through the real worker after 
 });
 
 import { createPersistenceHost } from "./host-port.js";
-async function hostFor(env: Awaited<ReturnType<typeof launch>>, owner: PublicationTicket["owner"]) {
+async function hostFor(
+  env: Awaited<ReturnType<typeof launch>>,
+  owner: PublicationTicket["owner"],
+  coreActions: Parameters<typeof createPersistenceHost>[0]["coreActions"] = {
+    claim: () => false,
+    isClaimed: () => false,
+    complete: () => {},
+  },
+) {
   const fail = () => {
     throw new Error("Unexpected I/O");
   };
@@ -1207,7 +1289,7 @@ async function hostFor(env: Awaited<ReturnType<typeof launch>>, owner: Publicati
     reservations: { validate: () => null, onEnded: fail },
     actions: { claim: fail },
     actionAdapter: { chooseDestination: async () => null, copyText: async () => {} },
-    coreActions: { claim: () => false, isClaimed: () => false, complete: () => {} },
+    coreActions,
   });
   return { host, dispatchDrain };
 }
@@ -1256,7 +1338,515 @@ it("real host drains rejected-clean attempts without source recovery after recon
   }
   expect(persistenceWorkerCount(reopened.backend)).toBe(0);
 });
-it("drain keeps unknown publication and unconfirmed abort, then admitted aborted work", async () => {
+async function beginByte(
+  host: Awaited<ReturnType<typeof hostFor>>["host"],
+  owner: PublicationTicket["owner"],
+) {
+  const principal = { kind: "plugin" as const, owner, authorityContext: null };
+  const signal = new AbortController().signal;
+  const result = await host.request(
+    principal,
+    "storage/beginWrite",
+    {
+      target: { mode: "create" },
+      kind: "test",
+      schemaVersion: 1,
+      label: "byte",
+      mediaType: "application/octet-stream",
+      byteLength: 1,
+      sha256: hash(Buffer.from("x")),
+    },
+    signal,
+  );
+  if (!result.ok) throw Error(JSON.stringify(result));
+  const { write, id } = result.value;
+  const chunk = () =>
+    host.request(principal, "storage/writeChunk", { write, offset: 0, data: "eA==" }, signal);
+  return {
+    write,
+    id,
+    chunk,
+    async seal() {
+      expect(await chunk()).toMatchObject({ ok: true });
+      expect(await host.request(principal, "storage/sealWrite", { write }, signal)).toMatchObject({
+        ok: true,
+      });
+    },
+    abort: () => host.request(principal, "storage/abortWrite", { write }, signal),
+    status: () => host.request(principal, "storage/writeStatus", { write }, signal),
+    commit: () => host.request(principal, "storage/commitWrite", { write }, signal),
+  };
+}
+
+it.each(["disable", "ownerLost"] as const)(
+  "confirmed aborts retire through %s and reopen without recovery",
+  async (reason) => {
+    const userData = path.join(directory, randomUUID());
+    const env = await launch(userData),
+      owner = ownerFor(env.profile.hostEpoch);
+    const { host, dispatchDrain } = await hostFor(env, owner);
+    let committed;
+    try {
+      const write = await beginByte(host, owner);
+      await write.seal();
+      const saved = await write.commit();
+      if (!saved.ok) throw Error(JSON.stringify(saved));
+      committed = saved.value.record;
+      for (let i = 0; i < (reason === "disable" ? 17 : 1); i++) {
+        const stage = await beginByte(host, owner);
+        await stage.seal();
+        expect(await stage.abort()).toEqual({ ok: true, value: { disposition: "aborted" } });
+      }
+      const report =
+        reason === "ownerLost"
+          ? await host.participant.ownerLost(owner)
+          : await host.participant.drain(
+              host.participant.freeze(owner, "disable", performance.now() + 10000),
+              dispatchDrain,
+            );
+      expect(report).toMatchObject({ state: "saved", blocker: false, records: [] });
+
+      expect(host.recovery.snapshot().items).toEqual([]);
+      expect((await env.backend.evidence.recoveryPage()).items).toEqual([]);
+      await env.control.terminate();
+    } finally {
+      if (persistenceWorkerCount(env.backend)) await host.dispose();
+    }
+    const reopened = await launch(userData),
+      nextOwner = ownerFor(reopened.profile.hostEpoch);
+    const next = await hostFor(reopened, nextOwner);
+    try {
+      expect(reopened.profile.hostEpoch).not.toBe(env.profile.hostEpoch);
+      expect(next.host.recovery.snapshot().items).toEqual([]);
+      expect((await reopened.backend.evidence.recoveryPage()).items).toEqual([]);
+      expect(await reopened.backend.reads.stat(nextOwner, committed.id)).toEqual(committed);
+    } finally {
+      await next.host.dispose();
+    }
+  },
+);
+
+it("manager disable collects the exited owner after worker-confirmed cleanup", async () => {
+  const { PluginManager, unavailableUi150, retireStage3Owner } =
+    await import("../../../../../../packages/plugin-runtime/src/index.js");
+  const { memoryPlugin } =
+    await import("../../../../../../packages/plugin-runtime/src/test-process.js");
+  const { diagnosticsFor } =
+    await import("../../../../../../packages/plugin-runtime/src/ui-lifecycle.js");
+  const userData = path.join(directory, randomUUID()),
+    env = await launch(userData);
+  const { host, dispatchDrain } = await hostFor(env, ownerFor(env.profile.hostEpoch));
+  const stopped = { stopConfirmed: true, faultIds: [], journalCommitted: true };
+  const stage3 = {
+    device: {
+      retire: () => ({ drain: null, settled: Promise.resolve(stopped) }),
+      retireProvider: async () => stopped,
+      beginShutdown: async () => stopped,
+    },
+    persistence: host.participant,
+    ui: unavailableUi150(),
+  };
+  const pluginId = "kobrixa.fixture",
+    sourceKey = "builtin:" + pluginId;
+  const manager = await PluginManager.create({
+    sources: [
+      {
+        kind: "builtin",
+        policy: "optional",
+        resources: {},
+        manifest: {
+          id: pluginId,
+          version: "1.0.0",
+          apiVersion: "^1.7.0",
+          runtime: { kind: "node", entry: "main.cjs" },
+          contributes: { commands: [{ id: pluginId + ".run", title: { en: "Run" } }] },
+        },
+        launch: {
+          sourceKey,
+          pluginId,
+          policy: "optional",
+          runtime: "node",
+          packageRoot: userData,
+          entry: "main.cjs",
+          manifest: "kobrixa-plugin.json",
+          resourceIndex: "resource-index.json",
+        },
+      },
+    ],
+    store: {
+      load: async () => ({ disabled: new Set(), legacyDisabledIds: new Set() }),
+      save: async () => {},
+    },
+    launcher: async () =>
+      memoryPlugin((peer, control) => {
+        peer.handle("initialize", () => ({
+          apiVersion: "1.7.0",
+          sdk: { name: "fixture", version: "1" },
+        }));
+        peer.handle("shutdown", () => null);
+        peer.onNotification("exit", () => control.exit());
+      }).process,
+    safeMode: false,
+    locale: "en",
+    stage3,
+    stage3Host: {
+      hostEpoch: env.profile.hostEpoch,
+      principal: (owner) => ({ kind: "plugin", owner, authorityContext: null }),
+      hasPermission: () => true,
+      requirements: () => [],
+      bindChannel: () => ({ initialized: async () => {}, ready: async () => {}, dispose() {} }),
+      retireResources: async (owner, reason) => {
+        await retireStage3Owner(stage3, owner, reason, () => performance.now(), dispatchDrain);
+      },
+    },
+  });
+  try {
+    const runtime = manager.stage3Runtime(),
+      diagnostics = diagnosticsFor(runtime);
+    const signal = new AbortController().signal;
+    expect(diagnostics.snapshot().owners).toBe(0);
+    const context = await runtime.activateInitialized(sourceKey, signal);
+    await runtime.ready(context.owner, signal);
+    expect(diagnostics.snapshot().owners).toBe(1);
+    const write = await beginByte(host, context.owner);
+    expect(await write.abort()).toEqual({ ok: true, value: { disposition: "aborted" } });
+    expect(await manager.setEnabled(sourceKey, false)).toMatchObject({ ok: true });
+    expect(context.peer.closed).toBe(true);
+    expect(diagnostics.snapshot().owners).toBe(0);
+    expect(host.participant.recoverySnapshot().items).toEqual([]);
+    expect(await env.backend.evidence.recoveryPage()).toEqual({ items: [], nextCursor: null });
+  } finally {
+    await manager.shutdown();
+    await host.dispose();
+  }
+  const reopened = await launch(userData);
+  try {
+    expect(await reopened.backend.evidence.recoveryPage()).toEqual({ items: [], nextCursor: null });
+  } finally {
+    await reopened.backend.dispose();
+  }
+});
+it("busy failed-chunk cleanup needs a terminal worker reply before a fresh drain omits it", async () => {
+  const userData = path.join(directory, randomUUID());
+  const env = await launch(userData),
+    owner = ownerFor(env.profile.hostEpoch);
+  const { host, dispatchDrain } = await hostFor(env, owner);
+  const scope = { kind: "namespace" as const, owner };
+  let busy;
+  try {
+    const write = await beginByte(host, owner);
+    const initial = env.backend.evidence.captureDrain!(scope, performance.now() + 10000);
+    const [ticket] = env.backend.evidence.tickets(initial);
+    env.control.arm("chunk-write", "pause");
+    const reached = env.control.reached("chunk-write");
+    busy = env.backend.engine.append(ticket!, 0, Buffer.from("x"));
+    await reached;
+    expect(await write.chunk()).toMatchObject({ ok: false });
+    expect(await write.status()).toMatchObject({ ok: true, value: { state: "publishing" } });
+    const expired = env.backend.evidence.captureDrain!(scope, performance.now());
+    expect(await env.backend.evidence.flush(expired)).toMatchObject({
+      state: "unknown",
+      unknown: [write.write],
+    });
+    env.control.release("chunk-write");
+    await busy;
+    // A separate reconcile now observes the worker's successful follow-up abort.
+    expect(await write.status()).toMatchObject({ ok: true, value: { state: "aborted" } });
+    expect(env.backend.evidence.tickets(initial)).toEqual([ticket]);
+    expect(await env.backend.evidence.flush(initial)).toEqual({
+      state: "saved",
+      accepted: [write.write],
+      unknown: [],
+      incomplete: [],
+    });
+    const offer = host.participant.freeze(owner, "disable", performance.now() + 10000);
+    expect(await host.participant.drain(offer, dispatchDrain)).toMatchObject({
+      state: "saved",
+      blocker: false,
+    });
+    expect((await env.backend.evidence.recoveryPage()).items).toEqual([]);
+  } finally {
+    env.control.release("chunk-write");
+    await busy;
+    await host.dispose();
+  }
+  const reopened = await launch(userData);
+  try {
+    expect((await reopened.backend.evidence.recoveryPage()).items).toEqual([]);
+  } finally {
+    await reopened.backend.dispose();
+  }
+});
+it("an ownerLost blocker survives late abort confirmation and worker death until core accepts it", async () => {
+  const userData = path.join(directory, randomUUID());
+  const env = await launch(userData),
+    owner = ownerFor(env.profile.hostEpoch);
+  const { host } = await hostFor(env, owner);
+  const scope = { kind: "namespace" as const, owner };
+  let busy;
+  let recoveryId, recordId;
+  try {
+    const write = await beginByte(host, owner);
+    recordId = write.id;
+    const initial = env.backend.evidence.captureDrain!(scope, performance.now() + 10000);
+    const [ticket] = env.backend.evidence.tickets(initial);
+    env.control.arm("chunk-write", "pause");
+    const reached = env.control.reached("chunk-write");
+    busy = env.backend.engine.append(ticket!, 0, Buffer.from("x"));
+    await reached;
+    expect(await write.chunk()).toMatchObject({ ok: false });
+    const report = await host.participant.ownerLost(owner);
+    expect(report).toMatchObject({
+      state: "uncertain",
+      blocker: true,
+      records: [{ id: write.id, final: false }],
+    });
+    recoveryId = report.recovery!;
+    expect(
+      (await env.backend.evidence.recoveryPage()).items.map((row) => [row.id, row.ticket?.id]),
+    ).toEqual([[recoveryId, write.write]]);
+    env.control.release("chunk-write");
+    await busy;
+    expect(await env.backend.engine.abort(ticket!)).toBe("aborted");
+    const after = env.backend.evidence.captureDrain!(scope, performance.now());
+    expect(env.backend.evidence.tickets(after)).toEqual([]);
+    expect(await env.backend.evidence.flush(after)).toMatchObject({ state: "saved" });
+    expect(host.recovery.snapshot().items.map((row) => row.id)).toEqual([recoveryId]);
+    await env.control.terminate();
+  } finally {
+    env.control.release("chunk-write");
+    await busy;
+    if (persistenceWorkerCount(env.backend)) await host.dispose();
+  }
+  const reopened = await launch(userData),
+    current = ownerFor(reopened.profile.hostEpoch);
+  const { createCoreActionLedger } = await import("../core-recovery.js");
+  const coreScope = { hostEpoch: current.hostEpoch, workbenchInstance: randomUUID() };
+  const ledger = createCoreActionLedger({
+    now: () => performance.now(),
+    current: (s) =>
+      s.hostEpoch === coreScope.hostEpoch && s.workbenchInstance === coreScope.workbenchInstance,
+  });
+  const next = await hostFor(reopened, current, ledger);
+  try {
+    expect((await reopened.backend.evidence.recoveryPage()).items.map((row) => row.id)).toEqual([
+      recoveryId,
+    ]);
+    expect(next.host.recovery.snapshot().items).toMatchObject([
+      { id: recoveryId, recordId, state: "checkpoint-only", actions: [{ kind: "discard" }] },
+    ]);
+    const action = ledger.mint(coreScope, { kind: "persistence-discard", recovery: recoveryId });
+    expect(await next.host.participant.discard(recoveryId, action)).toMatchObject({
+      blocker: false,
+    });
+    await expect(next.host.participant.discard(recoveryId, action)).rejects.toThrow();
+    expect((await reopened.backend.evidence.recoveryPage()).items).toEqual([]);
+  } finally {
+    await next.host.dispose();
+  }
+  const final = await launch(userData);
+  try {
+    expect((await final.backend.evidence.recoveryPage()).items).toEqual([]);
+  } finally {
+    await final.backend.dispose();
+  }
+});
+it("a timed-out abort reply delivered after barrier settlement needs a fresh confirmation", async () => {
+  const userData = path.join(directory, randomUUID()),
+    env = await launch(userData);
+  const owner = ownerFor(env.profile.hostEpoch),
+    ticket = make(owner, Buffer.from("x"));
+  const scope = { kind: "namespace" as const, owner };
+  const capture = () => env.backend.evidence.captureDrain!(scope, performance.now());
+  const trigger = path.join(directory, "delay-abort.trigger");
+  try {
+    await env.backend.engine.reserve(ticket, 1);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await writeFile(trigger, "");
+    const held = env.control.reached("cleanup");
+    const abort = env.backend.engine.abort(ticket).catch((error) => error);
+    await held;
+    expect(await env.backend.evidence.flush(capture())).toEqual({
+      accepted: [ticket.id],
+      unknown: [ticket.id],
+      incomplete: [],
+      state: "unknown",
+    });
+    await vi.advanceTimersByTimeAsync(10001);
+    expect(await abort).toEqual(new Error("timeout"));
+    const delivered = env.control.reached("receipt-send");
+    env.control.release("cleanup");
+    await delivered;
+    // The quota reply follows the late frame on the same worker message port.
+    await env.backend.evidence.quota(owner);
+    expect(env.backend.evidence.tickets(capture())).toEqual([ticket]);
+    expect(await env.backend.engine.abort(ticket)).toBe("aborted");
+    expect(await env.backend.evidence.flush(capture())).toEqual({
+      accepted: [],
+      unknown: [],
+      incomplete: [],
+      state: "saved",
+    });
+  } finally {
+    vi.useRealTimers();
+    env.control.release("cleanup");
+    await rm(trigger, { force: true });
+    await env.backend.dispose();
+  }
+  const reopened = await launch(userData);
+  try {
+    expect(await reopened.backend.evidence.recoveryPage()).toEqual({ items: [], nextCursor: null });
+  } finally {
+    await reopened.backend.dispose();
+  }
+});
+it("a late failed-chunk abort survives retention and unrelated admission at host retirement", async () => {
+  const env = await launch(path.join(directory, randomUUID()));
+  const owner = ownerFor(env.profile.hostEpoch);
+  const { host } = await hostFor(env, owner);
+  const trigger = path.join(directory, "delay-abort.trigger");
+  const clock = trigger + ".clock";
+  try {
+    const write = await beginByte(host, owner);
+    env.control.arm("chunk-write", "fail");
+    await writeFile(trigger, "");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const held = env.control.reached("cleanup");
+    const chunk = write.chunk();
+    await held;
+    await vi.advanceTimersByTimeAsync(10001);
+    expect(await chunk).toMatchObject({ ok: false });
+    vi.useRealTimers();
+    const delivered = env.control.reached("receipt-send");
+    env.control.release("cleanup");
+    await delivered;
+    await env.backend.evidence.quota(owner);
+    const originalNow = performance.now.bind(performance);
+    vi.spyOn(performance, "now").mockImplementation(() => originalNow() + 120001);
+    await writeFile(clock, "");
+    const unrelated = make(ownerFor(env.profile.hostEpoch), Buffer.from("y"));
+    await env.backend.engine.reserve(unrelated, 1);
+    const report = await host.participant.ownerLost(owner);
+    expect(report).toMatchObject({ blocker: true, records: [{ id: write.id, final: false }] });
+    expect(report.state).not.toBe("saved");
+    expect(
+      env.backend.evidence
+        .tickets(
+          env.backend.evidence.captureDrain!({ kind: "namespace", owner }, performance.now()),
+        )
+        .map((t) => t.id),
+    ).toEqual([write.write]);
+  } finally {
+    vi.useRealTimers();
+    env.control.release("cleanup");
+    await host.dispose();
+    vi.restoreAllMocks();
+    await Promise.all([rm(trigger, { force: true }), rm(clock, { force: true })]);
+  }
+});
+
+it.each(["publish-first", "abort-first"] as const)(
+  "serializes retained seal %s behind a same-source publication",
+  async (order) => {
+    const userData = path.join(directory, randomUUID());
+    const env = await launch(userData);
+    const owner = ownerFor(env.profile.hostEpoch);
+    const firstBytes = Buffer.from("installed sibling");
+    const oldBytes = Buffer.from("installed predecessor");
+    const nextBytes = Buffer.from("replacement");
+    const sibling = make(owner, firstBytes),
+      old = make(owner, oldBytes),
+      next = make(owner, nextBytes);
+    if (old.metadata.kind !== "record" || next.metadata.kind !== "record")
+      throw Error("record required");
+    const winnerBytes = Buffer.from("installed recovery payload");
+    const winner = make(owner, winnerBytes);
+    const oldRecord = old.metadata.record;
+    const replacement = {
+      ...next,
+      target: { kind: "record" as const, id: oldRecord.id, expectedRevision: oldRecord.revision },
+      metadata: { ...next.metadata, record: { ...next.metadata.record, id: oldRecord.id } },
+    };
+    try {
+      await stage(env.backend, old, oldBytes);
+      expect((await env.backend.engine.publish(old)).disposition).toBe("committed");
+      await stage(env.backend, sibling, firstBytes);
+      await stage(env.backend, replacement, nextBytes);
+      const retained = await env.backend.evidence.retainSealed!(replacement);
+      env.control.arm("before-publish", "pause");
+      const reached = env.control.reached("before-publish");
+      const first = env.backend.engine.publish(sibling);
+      await reached;
+      const publish = () =>
+        env.backend.engine.publishRecovery!(replacement, retained.pin, performance.now() + 10000);
+      const abort = () => env.backend.engine.abort(replacement);
+      let publication, cleanup;
+      if (order === "publish-first") {
+        publication = publish();
+        cleanup = abort();
+      } else {
+        cleanup = abort();
+        publication = publish();
+      }
+      const observed = Promise.allSettled([publication]);
+      // The quota response proves both earlier frames entered the worker before releasing the sibling.
+      await env.backend.evidence.quota(owner);
+      env.control.release("before-publish");
+      expect((await first).disposition).toBe("committed");
+      expect(await cleanup).toBe("aborted");
+      if (order === "publish-first")
+        expect(await observed).toEqual([
+          { status: "fulfilled", value: { disposition: "not-committed" } },
+        ]);
+      else expect(await observed).toEqual([{ status: "rejected", reason: new Error("stale") }]);
+      expect(await env.backend.evidence.quota(owner)).toMatchObject({
+        ok: true,
+        value: {
+          reservedCreates: 0,
+          reservedBytes: 0,
+          writeSlotsAvailable: 2,
+          pinnedBytes: 0,
+          temporaryBytes: 0,
+        },
+      });
+      // Once the swap has happened, a lost publication receipt must reconcile as committed.
+      await stage(env.backend, winner, winnerBytes);
+      const won = await env.backend.evidence.retainSealed!(winner);
+      env.control.arm("after-publish", "fail");
+      expect(
+        await env.backend.engine.publishRecovery!(winner, won.pin, performance.now() + 10000),
+      ).toMatchObject({ disposition: "unknown" });
+      expect(await env.backend.engine.abort(winner)).toBe("committed");
+      expect(await env.backend.engine.reconcile(winner)).toMatchObject({
+        disposition: "committed",
+      });
+      await env.backend.reads.close(owner, won.pin);
+    } finally {
+      env.control.release("before-publish");
+      await env.backend.dispose();
+    }
+    const reopened = await launch(userData);
+    try {
+      expect(reopened.profile.hostEpoch).not.toBe(owner.hostEpoch);
+      const current = ownerFor(reopened.profile.hostEpoch);
+      for (const [ticket, bytes] of [
+        [old, oldBytes],
+        [sibling, firstBytes],
+        [winner, winnerBytes],
+      ] as const) {
+        if (ticket.metadata.kind !== "record") throw Error("record required");
+        const record = ticket.metadata.record;
+        expect(await reopened.backend.reads.stat(current, record.id)).toEqual(record);
+        const pin = await reopened.backend.reads.open(current, record.id, record.revision);
+        expect(Buffer.from(await reopened.backend.reads.read(current, pin, 0, 256))).toEqual(bytes);
+        await reopened.backend.reads.close(current, pin);
+      }
+    } finally {
+      await reopened.backend.dispose();
+    }
+  },
+);
+it("drain keeps unknown publication and unconfirmed abort, until reconciliation confirms publication and a different abort", async () => {
   const env = await launch(path.join(directory, randomUUID())),
     owner = ownerFor(env.profile.hostEpoch),
     bytes = Buffer.from("payload"),
@@ -1287,8 +1877,10 @@ it("drain keeps unknown publication and unconfirmed abort, then admitted aborted
       performance.now() + 10000,
     );
     expect(await env.backend.evidence.flush(next)).toMatchObject({
-      state: "failed",
-      incomplete: [aborted.id],
+      state: "saved",
+      accepted: [t.id],
+      incomplete: [],
+      unknown: [],
     });
   } finally {
     env.control.release("after-publish");
@@ -1377,11 +1969,13 @@ it("failed reserve cleanup and wrong-owner abort cannot clear a drain obligation
     });
     await rm(trigger);
     expect(await env.backend.engine.abort(t)).toBe("aborted");
-    // A later settlement is not retroactively classified as a clean reserve rejection.
+    // Only the fresh drain sees the subsequent terminal cleanup reply.
     const settled = env.backend.evidence.captureDrain!(scope, performance.now() + 10000);
     expect(await env.backend.evidence.flush(settled)).toMatchObject({
-      state: "failed",
-      incomplete: [t.id],
+      state: "saved",
+      accepted: [],
+      incomplete: [],
+      unknown: [],
     });
   } finally {
     await rm(trigger, { force: true });
@@ -2228,7 +2822,10 @@ it.each(negativeCases)(
           negativeValue(await c.request("storage/stat", { id: seeds[index]!.id })).record,
         ).toEqual(seeds[index]);
       if (read) negativeValue(await request("storage/closeRead", { read }));
-      if (write) negativeValue(await request("storage/abortWrite", { write }));
+      if (write)
+        expect(negativeValue(await request("storage/abortWrite", { write }))).toEqual({
+          disposition: "aborted",
+        });
       if (cursor) negativeValue(await request("storage/list", { limit: 1, cursor }));
       first.events.unsubscribe(first.a, watch.subscriptionId);
       const cleaned = await first.snapshot();
@@ -2283,20 +2880,8 @@ it.each(negativeCases)(
       }
       const reopened = await next.snapshot();
       journal({ phase: "reopened", snapshot: reopened });
-      expect(reopened.quota).toEqual(cleaned.quota); // An admitted/aborted attempt remains an honest shutdown obligation; it is
-      // not a live write/pin and must never be projected as publishable data.
-      if (write) {
-        expect(reopened.core.items).toHaveLength(1);
-        expect(reopened.core.items[0]).toMatchObject({
-          sourceKey: first.a.sourceKey,
-          pluginId: first.a.pluginId,
-          state: "checkpoint-only",
-          payload: "none",
-          recordId: null,
-          committedRevision: null,
-        });
-        expect(reopened.core.items[0]!.actions.map((a) => a.kind)).toEqual(["discard"]);
-      } else expect(reopened.core.items).toEqual([]);
+      expect(reopened.quota).toEqual(cleaned.quota);
+      expect(reopened.core.items).toEqual([]);
       await next.close();
       f = undefined;
       success = true;

@@ -392,6 +392,8 @@ export function createLegacyImportCoordinator(input: {
         if (saved?.complete) {
           const handle = await barrier.enter(descriptor.targetSourceKey, descriptor.id);
           await barrier.complete(handle);
+          if (descriptor.sourceKind === "renderer-preferences")
+            await backend.sources.releasePreferences(owner, descriptor.id, handle);
           return progress(saved.plan.items.length ? "complete" : "complete-empty");
         }
         if (!input.currentSource(descriptor.targetSourceKey)) return progress("pending");
@@ -701,6 +703,8 @@ export function createLegacyImportCoordinator(input: {
         ) {
           check();
           await barrier.complete(handle);
+          if (descriptor.sourceKind === "renderer-preferences")
+            await backend.sources.releasePreferences(owner, descriptor.id, handle);
           check();
           return progress(saved.plan.items.length ? "complete" : "complete-empty");
         }

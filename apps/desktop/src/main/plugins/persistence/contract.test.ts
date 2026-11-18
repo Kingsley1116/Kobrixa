@@ -162,6 +162,7 @@ it("typed backend doubles supply admission and durable preference resolution", a
         throw new Error("unused");
       },
       appendMapped: async () => ({ nextOffset: 0, done: true }),
+      releasePreferences: async () => {},
       releaseMapped: async () => {},
       inventory: async () => ({ state: "blocked", entries: [] }),
       read: async () => new Uint8Array(),

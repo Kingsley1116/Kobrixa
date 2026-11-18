@@ -523,12 +523,28 @@ it("resumes a pristine planned import after source generation changes in the sam
     .spyOn(f.backend.imports, "admit")
     .mockRejectedValueOnce(new Error("pause before publication"));
   expect((await f.run()).state).toBe("blocked");
+  const pendingQuota = await f.backend.evidence.quota(f.owner);
+  if (!pendingQuota.ok) throw Error("quota unavailable");
+  expect(pendingQuota.value.pinnedBytes).toBeGreaterThan(0);
   const original = (await f.saved())!.plan;
   expect(await f.backend.reads.settings(f.owner)).toBeNull();
   admit.mockRestore();
   f.setOwner();
   expect((await f.run()).state).toBe("complete");
   expect((await f.saved())!.plan).toEqual(original);
+  const released = {
+    ok: true,
+    value: {
+      pinnedBytes: 0,
+      temporaryBytes: 0,
+      reservedBytes: 0,
+      reservedCreates: 0,
+      writeSlotsAvailable: 2,
+    },
+  };
+  expect(await f.backend.evidence.quota(f.owner)).toMatchObject(released);
+  expect((await f.run()).state).toBe("complete");
+  expect(await f.backend.evidence.quota(f.owner)).toMatchObject(released);
 });
 
 it("requires explicit schema authority and rejects generation change during its await", async () => {

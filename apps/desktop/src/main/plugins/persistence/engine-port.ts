@@ -239,6 +239,8 @@ export type CheckpointRegistration = Readonly<{
   state: "open" | "final" | "interrupted";
 }>;
 export interface PersistenceEvidencePort {
+  /** A successful worker reply confirmed cleanup of this exact record write. */
+  confirmedAbort?(ticket: PublicationTicket): boolean;
   /** Preserve the captured identities for bounded drain reconciliation, without extending its deadline. */
   captureDrain?(scope: PersistenceScope, deadlineMonotonicMs: number): PersistenceBarrier;
   saveCheckpoint?(owner: PersistenceOwner, value: CheckpointRegistration): Promise<void>;

@@ -70,6 +70,7 @@ export type LegacyMappedItem = Readonly<
 >;
 
 export interface LegacySourceResolver {
+  releasePreferences(owner: PersistenceOwner, descriptorId: string, barrier: Handle): Promise<void>;
   resolvePreferences(input: {
     descriptorId: string;
     owner: PersistenceOwner;
