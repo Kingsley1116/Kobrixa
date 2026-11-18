@@ -1517,9 +1517,16 @@ test("restart refresh requires the focused hit target and a ready command view",
     focused = true,
     current = true;
   const view = { view: { generation: 3 }, busy: false };
+  let scalarPresentation = 0;
+  let datasetPresentation = 0;
+  const revisions = new Map();
+  const datasets = {
+    getSnapshot: () => ({ presentation: datasetPresentation }),
+    revision: (id) => revisions.get(id),
+  };
   const state = {
     form: () => ({ binding: { panelInstance: "current" } }),
-    getSnapshot: () => ({}),
+    getSnapshot: () => ({ snapshot: { data: { presentation: scalarPresentation } } }),
     actionEnabled: () => true,
     formCurrent: () => true,
     derivedCurrent: () => current,
@@ -1528,7 +1535,7 @@ test("restart refresh requires the focused hit target and a ready command view",
   const session = {
     catalog: { getSnapshot: () => ({ entries: [panel] }) },
     select() {},
-    record: () => ({ state, interactions: { getSnapshot: () => view } }),
+    record: () => ({ state, datasets, interactions: { getSnapshot: () => view } }),
   };
   const window = { addEventListener() {} };
   const modules = {
@@ -1552,7 +1559,17 @@ test("restart refresh requires the focused hit target and a ready command view",
   });
   const id = window.labNativeTargetId(button);
   const ready = () => window.labRefreshTarget(50, 30, id).ready;
+  assert.equal(ready(), false);
+  scalarPresentation = 1;
+  assert.equal(ready(), false);
+  datasetPresentation = 1;
+  revisions.set("history", 1);
+  assert.equal(ready(), false);
+  revisions.set("profiles", 1);
   assert.equal(ready(), true);
+  scalarPresentation = 2;
+  assert.equal(ready(), false);
+  scalarPresentation = 1;
   hit = { closest: () => null };
   assert.equal(ready(), false);
   hit = button;

@@ -95,6 +95,16 @@ Object.assign(window, {
     const record = panel && owner.session.record(panel);
     const state = record?.state;
     const interaction = record?.interactions?.getSnapshot();
+    const datasets = record?.datasets;
+    const presentation = datasets?.getSnapshot().presentation;
+    // Presentation zero precedes the first panel publication. Both libraries
+    // must be readable in the scalar presentation that this click will use.
+    const librariesPublished =
+      presentation !== undefined &&
+      presentation > 0 &&
+      state?.getSnapshot().snapshot.data.presentation === presentation &&
+      datasets?.revision("history") !== undefined &&
+      datasets?.revision("profiles") !== undefined;
     const button = document.querySelector<HTMLButtonElement>(
       '[role="tabpanel"] [data-ui-node="refresh"] button',
     );
@@ -110,6 +120,7 @@ Object.assign(window, {
         state?.actionEnabled("refresh") &&
         state.formCurrent() &&
         state.derivedCurrent() &&
+        librariesPublished &&
         interaction?.view &&
         !interaction.busy
       ),
@@ -125,7 +136,8 @@ Object.assign(window, {
       x,
       y,
       binding: state?.form().binding,
-      presentation: record?.datasets?.getSnapshot().presentation,
+      presentation,
+      librariesPublished,
       viewGeneration: interaction?.view?.generation,
       problem: interaction?.problem ?? state?.getSnapshot().problem,
     };
