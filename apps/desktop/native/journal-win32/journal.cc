@@ -450,7 +450,8 @@ struct PinnedDirectory {
 
 // FILE_RENAME_INFO and the NT FILE_RENAME_INFORMATION Ex layout have the same
 // ULONG flags union, naturally aligned HANDLE, byte length and WCHAR tail.
-// Do not count the placeholder WCHAR, trailing struct padding or a terminator.
+// FileNameLength excludes the placeholder WCHAR, struct padding and terminator.
+static_assert(sizeof(WCHAR) == 2);
 static_assert(offsetof(FILE_RENAME_INFO, Flags) == 0);
 static_assert(offsetof(FILE_RENAME_INFO, RootDirectory) == sizeof(void*));
 static_assert(offsetof(FILE_RENAME_INFO, FileNameLength) == 2 * sizeof(void*));
@@ -460,6 +461,28 @@ constexpr DWORD directoryAccess = GENERIC_READ | GENERIC_WRITE; // Includes FILE
 constexpr DWORD directoryShare = FILE_SHARE_READ | FILE_SHARE_WRITE; // Never DELETE.
 constexpr DWORD renameFlags = FILE_RENAME_FLAG_REPLACE_IF_EXISTS | FILE_RENAME_FLAG_POSIX_SEMANTICS;
 
+// Serialize the fixed prefix separately from the variable-length tail. The
+// Win32 path wrapper can scan for NUL even with FileNameLength set. Direct NT
+// takes a counted name. Keep the two legacy probes' extra zero padding.
+std::vector<unsigned char> RenameBuffer(HANDLE parent, const std::wstring& target,
+                                        DWORD flags, bool win32, bool legacySize) {
+  constexpr size_t prefix = offsetof(FILE_RENAME_INFO, FileName);
+  const size_t trailing = legacySize ? sizeof(FILE_RENAME_INFO) - prefix :
+                          win32 ? sizeof(WCHAR) : 0;
+  static_assert(sizeof(FILE_RENAME_INFO) - prefix >= sizeof(WCHAR));
+  if (target.size() > (MAXDWORD - prefix - trailing) / sizeof(WCHAR))
+    throw Failure{"EINVAL", "rename buffer too long"};
+  const DWORD nameBytes = static_cast<DWORD>(target.size() * sizeof(WCHAR));
+  // Write each field at its asserted offset so alignment padding stays zero.
+  std::vector<unsigned char> storage(prefix + nameBytes + trailing, 0);
+  std::memcpy(storage.data() + offsetof(FILE_RENAME_INFO, Flags), &flags, sizeof flags);
+  std::memcpy(storage.data() + offsetof(FILE_RENAME_INFO, RootDirectory), &parent, sizeof parent);
+  std::memcpy(storage.data() + offsetof(FILE_RENAME_INFO, FileNameLength), &nameBytes,
+              sizeof nameBytes);
+  std::memcpy(storage.data() + prefix, target.data(), nameBytes);
+  return storage;
+}
+
 std::string RenameHeldSource(HANDLE staging, HANDLE parent, const std::wstring& target,
                       DWORD sourceAccess, DWORD rootAccess, DWORD rootShare,
                       HANDLE oldTarget, int variant = 0) {
@@ -467,30 +490,24 @@ std::string RenameHeldSource(HANDLE staging, HANDLE parent, const std::wstring& 
   auto setInformation = reinterpret_cast<SetInformation>(GetProcAddress(module, "NtSetInformationFile"));
   auto mapError = reinterpret_cast<MapError>(GetProcAddress(module, "RtlNtStatusToDosError"));
   if (!setInformation || !mapError) throw Failure{"ENOTSUP", "NT rename API unavailable"};
-  const DWORD nameBytes = static_cast<DWORD>(target.size() * sizeof(wchar_t));
-  DWORD renameBytes = static_cast<DWORD>(offsetof(FILE_RENAME_INFO, FileName)) + nameBytes;
   DWORD flags = renameFlags;
-  bool win32 = false;
+  bool win32 = false, legacySize = false;
 #ifdef JOURNAL_TEST_HOOKS
   win32 = variant == 1 || variant == 2 || variant == 8;
-  if (variant == 2 || variant == 3) renameBytes = sizeof(FILE_RENAME_INFO) + nameBytes;
+  legacySize = variant == 2 || variant == 3;
   if (variant == 9) flags |= 0x80000000; // Deliberately invalid; must remain EINVAL.
 #endif
-  std::vector<unsigned char> storage(renameBytes, 0);
-  auto rename = reinterpret_cast<FILE_RENAME_INFO*>(storage.data());
-  rename->Flags = flags;
-  rename->RootDirectory = parent;
-  rename->FileNameLength = nameBytes;
-  std::memcpy(rename->FileName, target.data(), nameBytes);
+  auto storage = RenameBuffer(parent, target, flags, win32, legacySize);
+  const auto renameBytes = static_cast<DWORD>(storage.size());
   const auto context = HandleContext(staging, sourceAccess | SYNCHRONIZE, FILE_SHARE_READ,
       flags, parent) + " rootAccess=" + std::to_string(rootAccess) +
-      " rootShare=" + std::to_string(rootShare) + " nameBytes=" + std::to_string(nameBytes) +
+      " rootShare=" + std::to_string(rootShare) + " nameBytes=" + std::to_string(target.size() * sizeof(WCHAR)) +
       " bufferBytes=" + std::to_string(renameBytes) +
       (win32 ? " class=FileRenameInfoEx" : " class=65") + " variant=" + std::to_string(variant) +
       " oldTarget:" + HandleContext(oldTarget, GENERIC_READ | SYNCHRONIZE,
                                     FILE_SHARE_READ | FILE_SHARE_DELETE);
   if (win32) {
-    if (!SetFileInformationByHandle(staging, FileRenameInfoEx, rename, renameBytes)) {
+    if (!SetFileInformationByHandle(staging, FileRenameInfoEx, storage.data(), renameBytes)) {
       const DWORD code = GetLastError();
       const auto status = ThreadNtStatus();
       WinError("SetFileInformationByHandle(FileRenameInfoEx)", code, context,
@@ -501,7 +518,7 @@ std::string RenameHeldSource(HANDLE staging, HANDLE parent, const std::wstring& 
   IO_STATUS_BLOCK io{};
   // Call the NT API directly: preserve the pinned RootDirectory and obtain the
   // syscall status instead of relying on the Win32 wrapper's path conversion.
-  auto status = setInformation(staging, &io, rename, renameBytes,
+  auto status = setInformation(staging, &io, storage.data(), renameBytes,
                               static_cast<FILE_INFORMATION_CLASS>(65));
   if (status != 0) {
     const auto native = mapError(status);
