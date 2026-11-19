@@ -7,6 +7,18 @@ export const syntheticImportDescriptor: LegacyImportDescriptor = {
   sourceKind: "sensor-lab",
   sourceFormatVersions: [1],
   targetRecordSchemaVersions: [1],
+  identityRecord(source) {
+    if (this.sourceKind !== "sensor-lab" || source.byteLength > 8388608)
+      throw new Error("invalid-resource");
+    return {
+      kind: "test.synthetic",
+      schemaVersion: 1,
+      label: "Synthetic import fixture",
+      mediaType: "application/octet-stream",
+      byteLength: source.byteLength,
+      sha256: source.sha256,
+    };
+  },
   validate(input) {
     return input.sourceKind === "sensor-lab" && input.bytes.byteLength <= 8388608;
   },

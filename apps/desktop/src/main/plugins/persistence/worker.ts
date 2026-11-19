@@ -1,3 +1,5 @@
+import { projectImportItem } from "./import-journal.js";
+import { JsonFormatReader } from "./stream-json.js";
 import { ReserveNotAdmittedError } from "./engine-port.js";
 import {
   Worker,
@@ -32,6 +34,8 @@ import {
   NodePersistenceFs,
   NativeOutput,
   storeRootPath,
+  type StoreFd,
+  type SourceIdentity,
   type StoreRoot,
   type PersistenceFaultPoint,
 } from "./filesystem.js";
@@ -85,7 +89,7 @@ export type WorkerOperations = Qualified<
   Required<Omit<PersistenceBackend["engine"], "fence" | "fenceTarget">>,
   "engine"
 > &
-  Qualified<PersistenceBackend["reads"], "reads"> &
+  Qualified<Required<PersistenceBackend["reads"]>, "reads"> &
   Qualified<
     Required<
       Omit<
@@ -95,10 +99,20 @@ export type WorkerOperations = Qualified<
     >,
     "evidence"
   > &
-  Qualified<PersistenceBackend["imports"], "imports"> &
+  Qualified<Required<PersistenceBackend["imports"]>, "imports"> &
   Qualified<PersistenceBackend["output"], "output"> &
   Qualified<PersistenceBackend["destinations"], "destinations"> &
-  Qualified<PersistenceBackend["sources"], "sources">;
+  Qualified<Omit<PersistenceBackend["sources"], "inventory">, "sources"> & {
+    "sources.inventory": WorkerSources["inventoryPage"];
+  };
+type Inventory = Awaited<ReturnType<LegacySourceResolver["inventory"]>>;
+async function collectInventory(
+  page: (cursor?: string) => Promise<Inventory | { cursor: string }>,
+) {
+  let result = await page();
+  while ("cursor" in result) result = await page(result.cursor);
+  return result;
+}
 type Operation = keyof WorkerOperations;
 const count = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
   handle = z.string().uuid(),
@@ -153,7 +167,9 @@ const args = {
       cursor: handle.optional(),
     }),
   ]),
+  "reads.openRecord": z.tuple([owner, handle, revision, count.min(1).max(2147483647)]),
   "reads.open": z.tuple([owner, handle, revision]),
+  "reads.readEncoded": z.tuple([owner, handle, count, count.min(1).max(262144)]),
   "reads.read": z.tuple([owner, handle, count, count.min(1).max(262144)]),
   "reads.close": z.tuple([owner, handle]),
   "evidence.flush": z.tuple([persistenceBarrierSchema, z.array(ticket).max(1024)]),
@@ -166,6 +182,7 @@ const args = {
   "evidence.saveRecovery": z.tuple([storedRecoverySchema]),
   "evidence.removeRecovery": z.tuple([handle]),
   "imports.admit": z.tuple([owner, text, text]),
+  "imports.loadItem": z.tuple([owner, text, text, digest.nullable()]),
   "imports.load": z.tuple([owner, text]),
   "imports.plan": z.tuple([owner, importPlanSchema]),
   "imports.tagImport": z.tuple([ticket, importTagSchema]),
@@ -219,9 +236,21 @@ const args = {
   ]),
   "sources.releasePreferences": z.tuple([owner, text, handle]),
   "sources.releaseMapped": z.tuple([handle]),
-  "sources.inventory": z.tuple([text]),
+  "sources.inventory": z.union([z.tuple([text]), z.tuple([text, handle])]),
   "sources.read": z.tuple([text, text, count, count.min(1).max(262144)]),
 } satisfies Record<Operation, z.ZodType>;
+const cancelRequest = z.strictObject({
+  version: z.literal(1),
+  kind: z.literal("cancel"),
+  id: count.min(1),
+});
+const closeRequest = z.strictObject({ version: z.literal(1), kind: z.literal("close") });
+const releaseSlotRequest = z.strictObject({
+  version: z.literal(1),
+  kind: z.literal("release-slot"),
+  slot: count.max(1023),
+  sequence: count.min(1),
+});
 const gateBinding = z.strictObject({
   slot: count.max(1023),
   sequence: count.min(1),
@@ -398,6 +427,10 @@ export async function startPersistenceWorker(input: {
   Atomics.store(new Int32Array(held), 0, 1);
   const channel = input.testControl ? new MessageChannel() : null;
   const worker = new Worker(input.workerEntry, {
+    // W16R7, 50 × 8 MiB: identity peak RSS delta measured 94.73 MiB at default,
+    // 4.17 at 4 MiB, ~19.5 at 8 and ~22 at 16. At 4 MiB minor GC cost an extra
+    // 129 ms (identity) and 265 ms (Sensor Lab). Native trials decide acceptance.
+    resourceLimits: { maxYoungGenerationSizeMb: 4 },
     workerData: channel ? { faultPort: channel.port2 } : {},
     transferList: channel ? [channel.port2] : [],
   });
@@ -656,8 +689,13 @@ export async function startPersistenceWorker(input: {
         cancelled = true;
         const t = parameters[0] as PublicationTicket | undefined;
         if (t?.id) ledger.get(t.id)?.gate.shorten(input.now(), input.now());
-        if (requestId !== undefined)
+        if (requestId !== undefined) {
           worker.postMessage({ version: 1, kind: "cancel", id: requestId });
+          if (operation === "sources.map") {
+            pending.get(requestId)?.reject(new Error("timeout"));
+            pending.delete(requestId);
+          }
+        }
         reject(new Error("timeout"));
       }, 10000);
     });
@@ -841,7 +879,9 @@ export async function startPersistenceWorker(input: {
       settings: (o) => send("reads.settings", [o]),
       stat: (o, id) => send("reads.stat", [o, id]),
       list: (o, p) => send("reads.list", [o, p]),
+      openRecord: (o, id, r, v) => send("reads.openRecord", [o, id, r, v]),
       open: (o, id, r) => send("reads.open", [o, id, r]),
+      readEncoded: (o, p, n, m) => send("reads.readEncoded", [o, p, n, m]),
       read: (o, p, n, m) => send("reads.read", [o, p, n, m]),
       close: (o, p) => send("reads.close", [o, p]),
     },
@@ -892,6 +932,7 @@ export async function startPersistenceWorker(input: {
     imports: {
       admit: (o, id, k) => send("imports.admit", [o, id, k]),
       load: (o, id) => send("imports.load", [o, id]),
+      loadItem: (o, id, key, digest) => send("imports.loadItem", [o, id, key, digest]),
       plan: (o, p) => send("imports.plan", [o, p]),
       tagImport: (t, tag) => send("imports.tagImport", [t, tag]),
       importReceipts: (o, id) => send("imports.importReceipts", [o, id]),
@@ -930,7 +971,8 @@ export async function startPersistenceWorker(input: {
       appendMapped: (i) => send("sources.appendMapped", [i]),
       releasePreferences: (o, id, barrier) => send("sources.releasePreferences", [o, id, barrier]),
       releaseMapped: (m) => send("sources.releaseMapped", [m]),
-      inventory: (d) => send("sources.inventory", [d]),
+      inventory: (d) =>
+        collectInventory((cursor) => send("sources.inventory", cursor ? [d, cursor] : [d])),
       read: (d, k, o, n) => send("sources.read", [d, k, o, n]),
     },
     dispose() {
@@ -1061,6 +1103,8 @@ export function runPersistenceWorker(input: {
       destinations = new Map<string, ExportDestination>();
     let closed = false;
     const requests = new Map<number, z.infer<typeof PersistenceWorkerRequest>>();
+    const cancelledMaps = new Set<number>();
+    const releasingMaps = new Set<Promise<void>>();
     function collectSettled() {
       const settled: Array<{ id: string; disposition: "committed" | "aborted" }> = [];
       // Admission and historical reconciliation may settle a different, actual attempt.
@@ -1122,7 +1166,9 @@ export function runPersistenceWorker(input: {
       "reads.stat": store.stat.bind(store),
       "reads.list": store.list.bind(store),
       "reads.open": store.open.bind(store),
+      "reads.openRecord": store.openRecord.bind(store),
       "reads.read": store.read.bind(store),
+      "reads.readEncoded": store.readEncoded.bind(store),
       "reads.close": store.close.bind(store),
       "evidence.flush": async (b: PersistenceBarrier, tickets: PublicationTicket[]) => {
         const members = tickets.filter((t) => matches(b.scope, t));
@@ -1148,6 +1194,12 @@ export function runPersistenceWorker(input: {
       "evidence.removeRecovery": store.removeRecovery.bind(store),
       "imports.admit": store.admitImport.bind(store),
       "imports.load": store.loadImport.bind(store),
+      "imports.loadItem": async (
+        owner: PersistenceOwner,
+        id: string,
+        key: string,
+        digest: string | null,
+      ) => projectImportItem(await store.loadImport(owner, id), key, digest),
       "imports.plan": store.planImport.bind(store),
       "imports.tagImport": store.tagImport.bind(store),
       "imports.importReceipts": store.importReceipts.bind(store),
@@ -1187,19 +1239,12 @@ export function runPersistenceWorker(input: {
       "sources.appendMapped": sources.appendMapped.bind(sources),
       "sources.releasePreferences": sources.releasePreferences.bind(sources),
       "sources.releaseMapped": sources.releaseMapped.bind(sources),
-      "sources.inventory": sources.inventory.bind(sources),
+      "sources.inventory": sources.inventoryPage.bind(sources),
       "sources.read": sources.read.bind(sources),
     };
     port.on("message", (raw) => {
       if (raw?.kind === "release-slot") {
-        const release = z
-          .strictObject({
-            version: z.literal(1),
-            kind: z.literal("release-slot"),
-            slot: count.max(1023),
-            sequence: count.min(1),
-          })
-          .safeParse(raw);
+        const release = releaseSlotRequest.safeParse(raw);
         if (release.success) {
           const { slot, sequence } = release.data;
           const admission = accepted.get(slot);
@@ -1207,24 +1252,36 @@ export function runPersistenceWorker(input: {
         }
         return;
       }
-      const cancel = z
-        .strictObject({ version: z.literal(1), kind: z.literal("cancel"), id: count.min(1) })
-        .safeParse(raw);
-      if (cancel.success) {
+      if (raw?.kind === "cancel") {
+        const cancel = cancelRequest.safeParse(raw);
+        if (!cancel.success) return;
         const original = requests.get(cancel.data.id);
+        if (original?.operation === "sources.map") cancelledMaps.add(cancel.data.id);
+        const release = sources.cancelMap(cancel.data.id).catch(() => {
+          /* close failure quarantines the source */
+        });
+        releasingMaps.add(release);
+        void release.then(() => releasingMaps.delete(release));
         const t = original?.args[0];
-        const parsed = publicationTicketSchema.safeParse(t);
+        const parsed = publicationTicketSchema.safeParse(
+          original?.operation === "sources.appendMapped"
+            ? (t as { ticket: PublicationTicket }).ticket
+            : t,
+        );
         if (parsed.success) store.fenceTargetOrTicket(parsed.data);
         return;
       }
-      if (
-        z.strictObject({ version: z.literal(1), kind: z.literal("close") }).safeParse(raw).success
-      ) {
+      if (raw?.kind === "close" && closeRequest.safeParse(raw).success) {
         closed = true;
         void (async () => {
           while (queue.pending) await new Promise((r) => setTimeout(r, 1));
-          await store.dispose();
-          for (const d of destinations.values()) await output.release(d);
+          await Promise.all(releasingMaps);
+          const cleanup = await Promise.allSettled([
+            store.dispose(),
+            sources.dispose(),
+            ...Array.from(destinations.values(), (d) => output.release(d)),
+          ]);
+          for (const result of cleanup) if (result.status === "rejected") throw result.reason;
           output.assertSettled();
           faultPort?.close();
           port.close();
@@ -1247,6 +1304,7 @@ export function runPersistenceWorker(input: {
           "evidence.auxiliary",
           "evidence.auxiliaryKeys",
           "imports.load",
+          "imports.loadItem",
           "imports.importReceipts",
           "imports.reconcile",
         ].includes(r.operation)
@@ -1284,6 +1342,15 @@ export function runPersistenceWorker(input: {
           performance.now() + 10000,
           async () => {
             profile.assertHeld();
+            if (r.operation === "sources.map") {
+              if (cancelledMaps.has(r.id)) throw new Error("timeout");
+              const mapped = await sources.map(r.args[0] as string, r.args[1] as string, r.id);
+              if (cancelledMaps.has(r.id)) {
+                await sources.cancelMap(r.id);
+                throw new Error("timeout");
+              }
+              return mapped;
+            }
             const fn = api[r.operation] as (...parameters: unknown[]) => Promise<unknown>;
             return activeTicket.run(first?.owner ? (first.id ?? null) : null, () => fn(...r.args));
           },
@@ -1306,14 +1373,21 @@ export function runPersistenceWorker(input: {
             }
           }
           const settled = collectSettled();
-          port.postMessage({
-            version: 1,
-            id: r.id,
-            ok: true,
-            value,
-            settled,
-            ...(confirmedAbort ? { confirmedAbort: true } : {}),
-          });
+          port.postMessage(
+            {
+              version: 1,
+              id: r.id,
+              ok: true,
+              value,
+              settled,
+              ...(confirmedAbort ? { confirmedAbort: true } : {}),
+            },
+            r.operation === "reads.read" &&
+              value instanceof Uint8Array &&
+              value.buffer instanceof ArrayBuffer
+              ? [value.buffer]
+              : [],
+          );
         })
         .catch((error) => {
           if (r.operation === "engine.reserve" || r.operation === "engine.reserveFinal")
@@ -1326,7 +1400,10 @@ export function runPersistenceWorker(input: {
             settled: collectSettled(),
           });
         })
-        .finally(() => requests.delete(r.id));
+        .finally(() => {
+          requests.delete(r.id);
+          cancelledMaps.delete(r.id);
+        });
     });
     port.postMessage({ version: 1, kind: "ready", recovery });
   });
@@ -1369,7 +1446,7 @@ import {
   snapshotBytes,
   importIdFor,
 } from "./import-sources.js";
-import { devicePreferencesEvidenceBytes, sameImportValue, sameImportAttempt } from "./namespace.js";
+import { devicePreferencesEvidenceBytes, sameImportValue } from "./namespace.js";
 import type {
   DevicePreferencesEvidence,
   ImportSettingsAuthority,
@@ -1397,12 +1474,34 @@ type SourceBinding =
             charge: string;
           });
     };
+type IdentityFile = SourceIdentity & {
+  fs: NodePersistenceFs;
+  fd: StoreFd;
+  scratch?: Uint8Array;
+};
 export class WorkerSources implements LegacySourceResolver {
+  private transformBusy = false;
+  private beginTransform() {
+    if (this.transformBusy) throw new Error("quota");
+    this.transformBusy = true;
+  }
   private readonly registered = new Map<string, SourceBinding>();
+  private readonly inventories = new Map<
+    string,
+    Map<string, { item: LegacySourceItem; stamp: string }>
+  >();
   private readonly mapped = new Map<
     string,
     {
-      bytes: Uint8Array;
+      key: string;
+      sourceKey: string;
+      bytes?: Uint8Array;
+      requestId?: number;
+      closeFailed?: true;
+      file?: IdentityFile;
+      busy?: boolean;
+      transform?: boolean;
+      original?: SourceIdentity;
       sourceSha256: string;
       mappedSha256: string;
       metadata: LegacyMappedItem;
@@ -1463,7 +1562,7 @@ export class WorkerSources implements LegacySourceResolver {
         descriptor,
         resolved: null,
         ...(descriptor.combinedSource
-          ? { fs: new NodePersistenceFs(root!, this.store.fs.profile) }
+          ? { fs: this.sourceFs(root!, descriptor.targetSourceKey) }
           : {}),
       });
       return;
@@ -1473,12 +1572,22 @@ export class WorkerSources implements LegacySourceResolver {
     this.registered.set(input.descriptorId, {
       kind: "file",
       descriptor,
-      fs: new NodePersistenceFs(sourceRoot, this.store.fs.profile),
+      fs: this.sourceFs(sourceRoot, descriptor.targetSourceKey),
+    });
+  }
+  private readonly failedDescriptors = new Set<StoreFd>();
+  private sourceFs(root: string, sourceKey: string) {
+    return new NodePersistenceFs(root, this.store.fs.profile, {
+      onCloseFailure: (fd, id) => {
+        this.failedDescriptors.add(fd);
+        this.store.quarantineClose(sourceKey, id ?? randomUUID());
+      },
     });
   }
   private source(id: string) {
     const s = this.registered.get(id);
     if (!s) throw new Error("stale");
+    this.store.assertSourceAvailable(s.descriptor.targetSourceKey);
     return s;
   }
   async releasePreferences(owner: PersistenceOwner, id: string, barrier: Handle): Promise<void> {
@@ -1767,7 +1876,58 @@ export class WorkerSources implements LegacySourceResolver {
     }
     return bytes;
   }
-  async inventory(id: string): ReturnType<LegacySourceResolver["inventory"]> {
+  private async inspectIdentity(
+    fs: NodePersistenceFs,
+    path: SourceIdentity["path"],
+    fd: StoreFd,
+    descriptor: LegacyImportDescriptor,
+    key: string,
+    scratch: Uint8Array,
+  ) {
+    if (!descriptor.identityRecord) throw new Error("invalid-mapper");
+    const stamp = await fs.fileStamp(fd, path);
+    if (stamp.size > 8388608) throw new Error("size-limit");
+    const digest = createHash("sha256"),
+      reader = new JsonFormatReader(
+        descriptor.fileFormat?.startsWith("sensor-lab-") ? "schemaVersion" : "formatVersion",
+      );
+    let offset = 0;
+    while (offset < stamp.size) {
+      const chunk = await fs.readInto(
+        fd,
+        offset,
+        scratch.subarray(0, Math.min(scratch.length, stamp.size - offset)),
+      );
+      if (!chunk.length) throw new Error("input-changed");
+      digest.update(chunk);
+      reader.update(chunk);
+      offset += chunk.length;
+    }
+    const format = reader.finish();
+    if (format === undefined || !descriptor.sourceFormatVersions.includes(format))
+      throw new Error("unsupported-format");
+    if ((await fs.fileStamp(fd, path)).identity !== stamp.identity)
+      throw new Error("input-changed");
+    const item = { key, format, byteLength: offset, sha256: digest.digest("hex") };
+    return {
+      item: { ...item, plannedRecord: descriptor.identityRecord(item) },
+      stamp: stamp.identity,
+    };
+  }
+  private readonly scans = new Map<
+    string,
+    {
+      cursor: string;
+      names: Awaited<ReturnType<NodePersistenceFs["entries"]>>;
+      offset: number;
+      inventory: Map<string, { item: LegacySourceItem; stamp: string }>;
+      items: LegacySourceItem[];
+    }
+  >();
+  inventory(id: string): Promise<Inventory> {
+    return collectInventory((cursor) => this.inventoryPage(id, cursor));
+  }
+  async inventoryPage(id: string, cursor?: string): Promise<Inventory | { cursor: string }> {
     const binding = this.source(id),
       { descriptor } = binding;
     if (binding.kind === "renderer") {
@@ -1794,6 +1954,22 @@ export class WorkerSources implements LegacySourceResolver {
       }
     }
     const { fs } = binding;
+    const previous = this.scans.get(id);
+    if (cursor && previous?.cursor !== cursor) throw new Error("stale");
+    // Consume continuations once. Only the current generation can install an inventory.
+    const scan = cursor
+      ? previous!
+      : {
+          cursor: randomUUID(),
+          names: [],
+          offset: 0,
+          inventory: new Map<string, { item: LegacySourceItem; stamp: string }>(),
+          items: [],
+        };
+    scan.cursor = randomUUID();
+    this.scans.set(id, scan);
+    if (!cursor) this.inventories.delete(id);
+    const { inventory, items } = scan;
     // Only the fixed root's initial check can establish absence. Once collection
     // starts, ENOENT is incomplete inventory (for example a disappearing child).
     try {
@@ -1803,21 +1979,66 @@ export class WorkerSources implements LegacySourceResolver {
         anchored = new NodePersistenceFs(anchor, fs.profile);
       await anchored.check(anchored.path(...path.relative(anchor, fs.root).split(path.sep)));
     } catch (e) {
+      if (this.scans.get(id) === scan) this.scans.delete(id);
       return {
-        state: (e as NodeJS.ErrnoException).code === "ENOENT" ? "absent" : "blocked",
+        state: !cursor && (e as NodeJS.ErrnoException).code === "ENOENT" ? "absent" : "blocked",
         entries: [],
       };
     }
     try {
-      const entries = await fs.entries(fs.path(), 4096),
-        items: LegacySourceItem[] = [];
-      if (entries.length > 512) throw new Error("size-limit");
-      for (let start = 0; start < entries.length; start += 64)
-        for (const entry of entries.slice(start, start + 64)) {
+      if (descriptor.checkedFileRecord) this.beginTransform();
+      try {
+        if (!cursor) scan.names = await fs.entries(fs.path(), 512);
+        const entries = scan.names;
+        let scratch: Uint8Array | undefined;
+        // At most four originals (32 MiB) per worker request.
+        const end = Math.min(scan.offset + 4, entries.length);
+        for (; scan.offset < end; scan.offset++) {
+          const entry = entries[scan.offset]!;
           if (entry.directory || Buffer.byteLength(entry.name) > 128 || entry.bytes > 8388608)
             throw new Error("invalid-resource");
-          const bytes = await fs.bytes(fs.path(entry.name), 8388608),
-            sha256 = createHash("sha256").update(bytes).digest("hex");
+          if (descriptor.identityRecord) {
+            const path = fs.path(entry.name),
+              fd = await fs.openOwned(path, "read");
+            try {
+              const source = await this.inspectIdentity(
+                fs,
+                path,
+                fd,
+                descriptor,
+                entry.name,
+                (scratch ??= new Uint8Array(262144)),
+              );
+              if (source.item.byteLength !== entry.bytes) throw new Error("input-changed");
+              inventory.set(entry.name, source);
+              items.push(source.item);
+            } finally {
+              await fs.closeOwned(fd);
+            }
+            continue;
+          }
+          const { bytes, original } = await fs.sourceBytes(fs.path(entry.name), 8388608);
+          if (bytes.length !== entry.bytes) throw new Error("input-changed");
+          const sha256 = createHash("sha256").update(bytes).digest("hex");
+          if (descriptor.checkedFileRecord) {
+            const record = descriptor.checkedFileRecord({
+              bytes,
+              sha256,
+              sourceKind: descriptor.sourceKind,
+              file: { basename: entry.name },
+            });
+            if (descriptor.sourceFormatVersions.length !== 1) throw new Error("invalid-mapper");
+            const item = {
+              key: entry.name,
+              format: descriptor.sourceFormatVersions[0]!,
+              byteLength: bytes.length,
+              sha256,
+              plannedRecord: record.metadata,
+            };
+            inventory.set(entry.name, { item, stamp: original.stamp });
+            items.push(item);
+            continue;
+          }
           const raw = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
           const format =
             descriptor.fileFormat === "sensor-lab-recording-v1" ||
@@ -1836,10 +2057,29 @@ export class WorkerSources implements LegacySourceResolver {
             })
           )
             throw new Error("unsupported-format");
-          items.push({ key: entry.name, format, byteLength: bytes.length, sha256 });
+          const item = { key: entry.name, format, byteLength: bytes.length, sha256 };
+          inventory.set(entry.name, { item, stamp: original.stamp });
+          items.push(item);
         }
-      return { state: "present", entries: items };
+        if (this.scans.get(id) !== scan) throw new Error("stale");
+        if (scan.offset < entries.length) return { cursor: scan.cursor };
+        // Re-observe the bounded directory after hashing the final page. Enumeration
+        // order may vary, but a changed member invalidates the whole capture.
+        const current = await fs.entries(fs.path(), 512);
+        if (
+          current.length !== inventory.size ||
+          current.some((entry) => entry.directory || !inventory.has(entry.name))
+        )
+          throw new Error("input-changed");
+        if (this.scans.get(id) !== scan) throw new Error("stale");
+        this.scans.delete(id);
+        this.inventories.set(id, inventory);
+        return { state: "present", entries: items };
+      } finally {
+        if (descriptor.checkedFileRecord) this.transformBusy = false;
+      }
     } catch {
+      if (this.scans.get(id) === scan) this.scans.delete(id);
       return { state: "blocked", entries: [] };
     }
   }
@@ -1861,11 +2101,11 @@ export class WorkerSources implements LegacySourceResolver {
     }
     const { fs } = binding;
     if (Buffer.byteLength(key) > 128) throw new Error("size-limit");
-    const fd = await fs.open(fs.path(key), "read");
+    const fd = await fs.openOwned(fs.path(key), "read");
     try {
       return await fs.read(fd, offset, maxBytes);
     } finally {
-      await fs.close(fd);
+      await fs.closeOwned(fd);
     }
   }
   private async settingsValidationDigest(descriptor: LegacyImportDescriptor): Promise<string> {
@@ -1883,59 +2123,130 @@ export class WorkerSources implements LegacySourceResolver {
     // before import planning; mapping never invents a resource validation digest.
     throw new Error("schema-mismatch");
   }
-  async map(id: string, key: string): Promise<LegacyMappedItem> {
+  async map(id: string, key: string, requestId?: number): Promise<LegacyMappedItem> {
     const binding = this.source(id),
       { descriptor } = binding;
     if (binding.kind === "renderer" && key !== "preferences") throw new Error("stale");
-    const bytes =
-      binding.kind === "renderer"
-        ? await this.preferences(binding)
-        : await binding.fs.bytes(binding.fs.path(key), 8388608);
-    const sourceSha256 = createHash("sha256").update(bytes).digest("hex");
-    const input = {
-      sourceKind: descriptor.sourceKind,
-      bytes,
-      sha256: sourceSha256,
-      ...(binding.kind === "file" ? { file: { basename: key } } : {}),
-    };
-    if (!descriptor.validate(input)) throw new Error("invalid-resource");
-    const item = descriptor.map(input);
-    const mappedBytes =
-      item.kind === "record"
-        ? item.bytes
-        : Buffer.from(
-            JSON.stringify({
-              formatVersion: 1,
-              schemaVersion: item.schemaVersion,
-              values: item.values,
-              validationDigest:
-                binding.kind === "renderer" && binding.descriptor.combinedSource
-                  ? binding.resolved!.settings!.validationDigest
-                  : await this.settingsValidationDigest(descriptor),
-            }),
-          );
-    if (mappedBytes.length > 8388608 || this.mapped.size >= 4) throw new Error("quota");
-    const mapped = randomUUID(),
-      mappedSha256 = createHash("sha256").update(mappedBytes).digest("hex");
-    this.store.quota.holdTemporary(descriptor.targetSourceKey, mapped, mappedBytes.length);
-    const metadata: LegacyMappedItem = {
-      mapped,
-      sourceSha256,
-      mappedSha256,
-      byteLength: mappedBytes.length,
-      ...(item.kind === "record"
-        ? { kind: "record", metadata: item.metadata }
-        : { kind: "settings", schemaVersion: item.schemaVersion }),
-    };
-    this.mapped.set(mapped, {
-      bytes: mappedBytes,
-      sourceSha256,
-      mappedSha256,
-      metadata,
-      offset: 0,
-      ticket: null,
-    });
-    return metadata;
+    if (binding.kind === "file" && descriptor.identityRecord) {
+      const cached = this.inventories.get(id)?.get(key);
+      if (this.mapped.size >= 4) throw new Error("quota");
+      const fs = binding.fs,
+        path = fs.path(key),
+        fd = await fs.openOwned(path, "read").catch((error) => {
+          if (
+            cached &&
+            ((error as NodeJS.ErrnoException).code === "ENOENT" || error.message === "unsafe-path")
+          )
+            throw new Error("input-changed");
+          throw error;
+        });
+      try {
+        const source =
+          cached ??
+          (await this.inspectIdentity(fs, path, fd, descriptor, key, new Uint8Array(262144)));
+        if ((await fs.fileStamp(fd, path)).identity !== source.stamp)
+          throw new Error("input-changed");
+        const mapped = randomUUID(),
+          { sha256, byteLength } = source.item;
+        const metadata: LegacyMappedItem = {
+          mapped,
+          kind: "record",
+          metadata: source.item.plannedRecord!,
+          sourceSha256: sha256,
+          mappedSha256: sha256,
+          byteLength,
+        };
+        if (this.mapped.size >= 4) throw new Error("quota");
+        this.store.quota.holdTemporary(descriptor.targetSourceKey, mapped, byteLength);
+        this.mapped.set(mapped, {
+          ...(requestId === undefined ? {} : { requestId }),
+          key,
+          sourceKey: descriptor.targetSourceKey,
+          file: { fs, path, fd, stamp: source.stamp },
+          sourceSha256: sha256,
+          mappedSha256: sha256,
+          metadata,
+          offset: 0,
+          ticket: null,
+        });
+        return metadata;
+      } catch (error) {
+        await fs.closeOwned(fd);
+        throw error;
+      }
+    }
+    const transform = binding.kind === "file" && !!descriptor.checkedFileRecord;
+    if (transform) this.beginTransform();
+    try {
+      const cached = this.inventories.get(id)?.get(key);
+      const { bytes, original } =
+        binding.kind === "file"
+          ? await binding.fs.sourceBytes(binding.fs.path(key), 8388608, cached?.stamp)
+          : { bytes: await this.preferences(binding), original: undefined };
+      const sourceSha256 = createHash("sha256").update(bytes).digest("hex");
+      if (cached && cached.item.sha256 !== sourceSha256) throw new Error("input-changed");
+      const input = {
+        sourceKind: descriptor.sourceKind,
+        bytes,
+        sha256: sourceSha256,
+        ...(binding.kind === "file" ? { file: { basename: key } } : {}),
+      };
+      const item = (() => {
+        if (binding.kind === "file" && descriptor.checkedFileRecord) {
+          try {
+            return descriptor.checkedFileRecord(input);
+          } catch {
+            throw new Error("invalid-resource");
+          }
+        }
+        if (!descriptor.validate(input)) throw new Error("invalid-resource");
+        return descriptor.map(input);
+      })();
+      const mappedBytes =
+        item.kind === "record"
+          ? item.bytes
+          : Buffer.from(
+              JSON.stringify({
+                formatVersion: 1,
+                schemaVersion: item.schemaVersion,
+                values: item.values,
+                validationDigest:
+                  binding.kind === "renderer" && binding.descriptor.combinedSource
+                    ? binding.resolved!.settings!.validationDigest
+                    : await this.settingsValidationDigest(descriptor),
+              }),
+            );
+      if (mappedBytes.length > 8388608 || this.mapped.size >= 4) throw new Error("quota");
+      const mapped = randomUUID(),
+        mappedSha256 = createHash("sha256").update(mappedBytes).digest("hex");
+      this.store.quota.holdTemporary(descriptor.targetSourceKey, mapped, mappedBytes.length);
+      const metadata: LegacyMappedItem = {
+        mapped,
+        sourceSha256,
+        mappedSha256,
+        byteLength: mappedBytes.length,
+        ...(item.kind === "record"
+          ? { kind: "record", metadata: item.metadata }
+          : { kind: "settings", schemaVersion: item.schemaVersion }),
+      };
+      this.mapped.set(mapped, {
+        ...(requestId === undefined ? {} : { requestId }),
+        key,
+        sourceKey: descriptor.targetSourceKey,
+        bytes: mappedBytes,
+        ...(original ? { original } : {}),
+        transform,
+        sourceSha256,
+        mappedSha256,
+        metadata,
+        offset: 0,
+        ticket: null,
+      });
+      return metadata;
+    } catch (error) {
+      if (transform) this.transformBusy = false;
+      throw error;
+    }
   }
   async appendMapped(
     input: Parameters<LegacySourceResolver["appendMapped"]>[0],
@@ -1943,60 +2254,96 @@ export class WorkerSources implements LegacySourceResolver {
     const p = this.mapped.get(input.mapped);
     if (
       !p ||
+      p.busy ||
       input.offset !== p.offset ||
       input.maxBytes < 1 ||
       input.maxBytes > 262144 ||
       (p.ticket !== null && p.ticket !== input.ticket.id)
     )
       throw new Error("stale");
-    const planKeys = await this.store.auxiliaryKeys(input.ticket.owner, "import");
-    let cursor = planKeys.nextCursor,
-      keys = [...planKeys.keys],
-      matched = false;
-    for (;;) {
-      for (const key of keys) {
-        if (!key.startsWith("import/")) continue;
-        const plan = await this.store.loadImport(input.ticket.owner, key);
+    p.busy = true;
+    try {
+      const item = await this.store.verifiedImportItem(input.ticket);
+      if (
+        !item ||
+        item.key !== p.key ||
+        input.ticket.owner.sourceKey !== p.sourceKey ||
+        item.byteLength !== p.metadata.byteLength ||
+        item.mappedSha256 !== p.mappedSha256 ||
+        item.sourceSha256 !== p.sourceSha256 ||
+        (p.metadata.kind === "settings"
+          ? input.ticket.metadata.kind !== "settings" ||
+            p.metadata.schemaVersion !== input.ticket.metadata.schemaVersion
+          : input.ticket.metadata.kind !== "record" ||
+            p.metadata.metadata.kind !== input.ticket.metadata.record.kind ||
+            p.metadata.metadata.schemaVersion !== input.ticket.metadata.record.schemaVersion)
+      )
+        throw new Error("input-changed");
+      const original = p.file ?? p.original;
+      if (p.ticket && p.offset === p.metadata.byteLength)
+        return { nextOffset: p.offset, done: true };
+      if (!p.offset && original) this.store.bindImportSource(input.ticket, original);
+      p.ticket = input.ticket.id;
+      const end = Math.min(p.metadata.byteLength, p.offset + input.maxBytes);
+      let chunk: Uint8Array;
+      if (p.file) {
+        const f = p.file;
+        f.scratch ??= new Uint8Array(262144);
+        chunk = await f.fs.readInto(f.fd, p.offset, f.scratch.subarray(0, end - p.offset), true);
         if (
-          plan?.plan.items.some(
-            (i) =>
-              this.store.taggedImport(input.ticket, i.tag) &&
-              sameImportValue(
-                plan.items.find((e) => e.key === i.key)?.publicationTicket,
-                input.ticket,
-              ) &&
-              sameImportAttempt(i.ticket, input.ticket) &&
-              i.byteLength === p.bytes.length &&
-              i.mappedSha256 === p.mappedSha256 &&
-              i.sourceSha256 === p.sourceSha256 &&
-              (p.metadata.kind === "settings"
-                ? input.ticket.metadata.kind === "settings" &&
-                  p.metadata.schemaVersion === input.ticket.metadata.schemaVersion
-                : input.ticket.metadata.kind === "record" &&
-                  p.metadata.metadata.kind === input.ticket.metadata.record.kind &&
-                  p.metadata.metadata.schemaVersion === input.ticket.metadata.record.schemaVersion),
-          )
+          !chunk.length ||
+          (end === p.metadata.byteLength &&
+            (await f.fs.fileStamp(f.fd, f.path, true)).identity !== f.stamp)
         )
-          matched = true;
+          throw new Error("input-changed");
+      } else chunk = p.bytes!.subarray(p.offset, end);
+      // AtomicStore hashes exactly the bytes written and checks that digest at seal.
+      if (chunk.length) p.offset = await this.store.append(input.ticket, p.offset, chunk);
+      const done = p.offset === p.metadata.byteLength;
+      if (done && p.transform) {
+        // The stage owns every transformed byte. Reconciliation needs only its ticket and digest.
+        delete p.bytes;
+        p.transform = false;
+        this.transformBusy = false;
       }
-      if (!cursor) break;
-      const next = await this.store.auxiliaryKeys(input.ticket.owner, "import", cursor);
-      keys = [...next.keys];
-      cursor = next.nextCursor;
+      return { nextOffset: p.offset, done };
+    } finally {
+      p.busy = false;
     }
-    if (!matched) throw new Error("input-changed");
-    p.ticket = input.ticket.id;
-    const chunk = p.bytes.subarray(p.offset, p.offset + input.maxBytes);
-    if (chunk.length) p.offset = await this.store.append(input.ticket, p.offset, chunk);
-    return { nextOffset: p.offset, done: p.offset === p.bytes.length };
+  }
+  async cancelMap(requestId: number) {
+    for (const [mapped, p] of this.mapped)
+      if (p.requestId === requestId && !p.ticket && !p.busy) await this.releaseMapped(mapped);
+  }
+  async dispose() {
+    const closes = await Promise.allSettled(
+      Array.from(this.mapped, async ([id, p]) => {
+        if (p.file && !p.closeFailed) await p.file.fs.closeOwned(p.file.fd, id);
+      }),
+    );
+    for (const result of closes) if (result.status === "rejected") throw result.reason;
+    if (this.failedDescriptors.size) throw new Error("recovery-blocked");
+    this.mapped.clear();
+    this.inventories.clear();
   }
   async releaseMapped(mapped: string): Promise<void> {
     const p = this.mapped.get(mapped);
     if (!p) return;
     // Unknown publications keep their scratch evidence until original-ticket reconciliation.
-    if (p.ticket && this.store.unresolvedTicket(p.ticket)) throw new Error("publish-uncertain");
-    for (const { descriptor } of this.registered.values())
-      this.store.quota.releaseTemporary(descriptor.targetSourceKey, mapped);
+    if (p.closeFailed) throw new Error("recovery-blocked");
+    if (p.busy || (p.ticket && this.store.unresolvedTicket(p.ticket)))
+      throw new Error("publish-uncertain");
+    p.busy = true;
+    if (p.file) {
+      try {
+        await p.file.fs.closeOwned(p.file.fd, mapped);
+      } catch (error) {
+        p.closeFailed = true;
+        throw error;
+      }
+    }
+    this.store.quota.releaseTemporary(p.sourceKey, mapped);
     this.mapped.delete(mapped);
+    if (p.transform) this.transformBusy = false;
   }
 }

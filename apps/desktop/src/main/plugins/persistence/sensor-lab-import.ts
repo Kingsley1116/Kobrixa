@@ -13,7 +13,7 @@ import {
 const filename =
   /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)\.json$/;
 function descriptor(profile: boolean): LegacyImportDescriptor {
-  function map(input: LegacyImportInput): LegacyImportItem {
+  function map(input: LegacyImportInput): Extract<LegacyImportItem, { kind: "record" }> {
     const match = filename.exec(input.file?.basename ?? "");
     if (
       input.sourceKind !== "sensor-lab" ||
@@ -57,6 +57,7 @@ function descriptor(profile: boolean): LegacyImportDescriptor {
         return false;
       }
     },
+    checkedFileRecord: map,
     map,
   });
 }

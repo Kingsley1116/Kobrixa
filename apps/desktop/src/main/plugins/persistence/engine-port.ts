@@ -80,7 +80,19 @@ export interface PersistenceReadPort {
     input: { kind?: string; limit: number; cursor?: Handle },
   ): Promise<{ entries: RecordMeta[]; nextCursor?: Handle }>;
   open(owner: PersistenceOwner, id: RecordId, revision: RecordRevision): Promise<Handle>;
+  openRecord?(
+    owner: PersistenceOwner,
+    id: RecordId,
+    revision: RecordRevision,
+    schemaVersion: number,
+  ): Promise<{ pin: Handle; record: RecordMeta }>;
   read(owner: PersistenceOwner, pin: Handle, offset: number, maxBytes: number): Promise<Uint8Array>;
+  readEncoded?(
+    owner: PersistenceOwner,
+    pin: Handle,
+    offset: number,
+    maxBytes: number,
+  ): Promise<{ data: string; length: number }>;
   close(owner: PersistenceOwner, pin: Handle): Promise<void>;
 }
 
@@ -152,6 +164,18 @@ export type ImportItemEvidence = {
 };
 
 export interface DurableImportPort {
+  /** Project one row from a validated journal. A supplied digest binds the entire immutable plan. */
+  loadItem?(
+    owner: PersistenceOwner,
+    id: string,
+    key: string,
+    planDigest: string | null,
+  ): Promise<{
+    ticket: PublicationTicket;
+    prior: ImportItemEvidence;
+    complete: boolean;
+    completedItems: number;
+  }>;
   load(
     owner: PersistenceOwner,
     id: string,

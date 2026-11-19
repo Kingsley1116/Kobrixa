@@ -26,6 +26,8 @@ receipt 證明已提交的 head。unknown 表示必須對帳，不能解讀成 r
 
 Legacy import 是 host allowlist 管理的一次性作業。原始檔保留不變；plan、逐項 receipt 與 complete marker 持久化，重啟沿用原先配置的目標 IDs。缺 renderer evidence 時維持 pending。完成後使用者刪掉新 record，不會再次匯入。真正 Lab 記錄／校正與九個 device preferences 已有產品 mapper 及局部 worker／restart 觀察，不能取代備份後的使用者原檔人工驗收。
 
+將舊版檔案匯入為 record 時，主程式會在擷取期間檢查開啟的檔案及其路徑，並在發布前再次比對原檔的識別資訊、大小、修改時間與狀態變更時間。匯入日誌記錄快照的雜湊值。最後一次路徑檢查只能觀察當下的中繼資料。其他程序仍可在檢查後寫入，包括在目的端安裝新版 head 之前，檔案系統也可能稍後才顯示時間戳記的變更。收據識別的是已驗證的目的端快照。
+
 JavaScript method 使用 camelCase；Python method 使用 snake_case，但 params dict 的 wire keys 保留 camelCase。兩者保留相同 ok／value／error business envelope，transport／numeric protocol failure 才拋 RpcError。1.4、1.5、1.6 consumers 維持相容，不收到 persistence drain 或 settings events。UI resource v2 已在 API 1.8 實作；API、resource、套件發行版與應用資料版本分開計算。
 
 SDK 的選用 watch callback 接收本機通知：實際設定失效事件為 `{type:"event", event}`；遇到事件缺口或 resync 後，SDK 重新讀取的快照為 `{type:"snapshot", snapshot}`。JavaScript 使用 `settings.watch(params, signal?, listener?)`；Python 使用 `settings.watch(params, listener=None)`，字典形狀相同。初始快照仍由 watch 結果回傳；snapshot 通知不是合成的 wire event。同步或非同步 callback 都沿用共用有界事件佇列串行執行；解除訂閱或關閉通道後，遲到的讀取不會通知呼叫端。

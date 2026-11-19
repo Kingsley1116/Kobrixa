@@ -4,6 +4,7 @@ export declare const storePathBrand: unique symbol;
 export declare const storeFdBrand: unique symbol;
 export type StorePath = { readonly [storePathBrand]: true };
 export type StoreFd = { readonly [storeFdBrand]: true };
+export type SourceIdentity = { fs: NodePersistenceFs; path: StorePath; stamp: string };
 export type PersistenceFaultPoint =
   | "reserve"
   | "open-temp"
@@ -37,7 +38,7 @@ export interface PersistenceFsPort {
 }
 
 import { createStorePath, storePathName } from "./namespace.js";
-import { constants } from "node:fs";
+import { constants, type Dir } from "node:fs";
 import {
   open,
   mkdir,
@@ -54,7 +55,10 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 import type { Durability } from "@kobrixa/plugin-protocol";
 import type { ProfileWriterLock } from "@kobrixa/plugin-runtime";
+type OpenMode = "read" | "create-exclusive" | "directory-sync" | "directory-list";
+type CloseFailure = (fd: StoreFd, id?: string) => void;
 export type FsOptions = {
+  onCloseFailure?: CloseFailure;
   now?: () => number;
   fault?: (point: PersistenceFaultPoint, edge: "before" | "after") => Promise<void>;
   directorySyncSupported?: boolean;
@@ -84,6 +88,7 @@ export async function writeAll(
 export class NodePersistenceFs implements PersistenceFsPort {
   readonly durability: Durability;
   private readonly descriptors = new WeakMap<StoreFd, FileHandle>();
+  private readonly directories = new WeakMap<StoreFd, Dir>();
   private readonly closing = new WeakMap<StoreFd, Promise<void>>();
   constructor(
     readonly root: string,
@@ -131,7 +136,18 @@ export class NodePersistenceFs implements PersistenceFsPort {
         throw new Error("unsafe-path");
     }
   }
-  async open(p: StorePath, mode: "read" | "create-exclusive"): Promise<StoreFd> {
+  async open(
+    p: StorePath,
+    mode: OpenMode,
+    closeOnInvalid?: (fd: StoreFd) => Promise<void>,
+  ): Promise<StoreFd> {
+    const token = Object.freeze({}) as StoreFd;
+    if (mode === "directory-sync" || mode === "directory-list") {
+      this.profile.assertHeld();
+      if (mode === "directory-list") this.directories.set(token, await opendir(this.name(p)));
+      else this.descriptors.set(token, await open(this.name(p), constants.O_RDONLY));
+      return token;
+    }
     await this.check(p, mode === "create-exclusive");
     const name = this.name(p),
       nofollow = constants.O_NOFOLLOW ?? 0;
@@ -143,18 +159,47 @@ export class NodePersistenceFs implements PersistenceFsPort {
         : constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL) | nofollow,
       0o600,
     );
+    this.descriptors.set(token, fd);
     try {
       const a = await fd.stat(),
         b = await lstat(name);
       if (!a.isFile() || a.nlink !== 1 || a.dev !== b.dev || a.ino !== b.ino || b.isSymbolicLink())
         throw new Error("unsafe-path");
       await this.check(p);
-      const token = Object.freeze({}) as StoreFd;
-      this.descriptors.set(token, fd);
       return token;
     } catch (e) {
-      await fd.close();
+      if (closeOnInvalid) await closeOnInvalid(token);
+      else await this.close(token);
       throw e;
+    }
+  }
+  private readonly pathOwners = new WeakMap<StorePath, CloseFailure>();
+  private readonly descriptorOwners = new WeakMap<StoreFd, CloseFailure>();
+  private readonly failedCloses = new WeakMap<StoreFd, Error>();
+  ownedPath(p: StorePath, owner?: CloseFailure): StorePath {
+    if (owner) this.pathOwners.set(p, owner);
+    return p;
+  }
+  async openOwned(p: StorePath, mode: OpenMode): Promise<StoreFd> {
+    const owner = this.pathOwners.get(p) ?? this.options.onCloseFailure;
+    const register = (fd: StoreFd) => {
+      if (owner) this.descriptorOwners.set(fd, owner);
+      return fd;
+    };
+    return register(await this.open(p, mode, (fd) => this.closeOwned(register(fd))));
+  }
+  async closeOwned(fd: StoreFd, id?: string): Promise<void> {
+    const failed = this.failedCloses.get(fd);
+    if (failed) throw failed;
+    try {
+      await this.close(fd);
+    } catch (cause) {
+      const owner = this.descriptorOwners.get(fd);
+      if (!owner) throw cause;
+      owner(fd, id);
+      const error = new Error("recovery-blocked", { cause });
+      this.failedCloses.set(fd, error);
+      throw error;
     }
   }
   private fd(token: StoreFd): FileHandle {
@@ -163,19 +208,50 @@ export class NodePersistenceFs implements PersistenceFsPort {
     return fd;
   }
   async read(fd: StoreFd, offset: number, maxBytes: number): Promise<Uint8Array> {
-    if (
-      !Number.isSafeInteger(offset) ||
-      offset < 0 ||
-      !Number.isSafeInteger(maxBytes) ||
-      maxBytes < 1 ||
-      maxBytes > 262144
-    )
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 262144)
       throw new Error("invalid-range");
+    // Public read replies transfer this entire backing store across the worker port.
+    const buffer = Buffer.alloc(maxBytes);
+    return this.readInto(fd, offset, buffer);
+  }
+  async fileStat(fd: StoreFd, boundSource = false) {
     this.profile.assertHeld();
-    const identity = await this.fd(fd).stat();
-    if (!identity.isFile() || identity.nlink !== 1) throw new Error("unsafe-path");
-    const buffer = Buffer.allocUnsafe(maxBytes);
-    const { bytesRead } = await this.fd(fd).read(buffer, 0, maxBytes, offset);
+    const stat = await this.fd(fd).stat({ bigint: true });
+    if (boundSource && stat.nlink === 0n) throw new Error("input-changed");
+    if (!stat.isFile() || stat.nlink !== 1n) throw new Error("unsafe-path");
+    return stat;
+  }
+  async pathStamp(path: StorePath) {
+    this.profile.assertHeld();
+    const name = this.name(path);
+    if ((await realpath(name)) !== name) throw new Error("unsafe-path");
+    const st = await lstat(name, { bigint: true });
+    if (!st.isFile() || st.nlink !== 1n) throw new Error("unsafe-path");
+    return [st.dev, st.ino, st.size, st.mtimeNs, st.ctimeNs].join("/");
+  }
+  async fileStamp(fd: StoreFd, p: StorePath, boundSource = false) {
+    const st = await this.fileStat(fd, boundSource);
+    const identity = [st.dev, st.ino, st.size, st.mtimeNs, st.ctimeNs].join("/");
+    const current = await this.pathStamp(p).catch((error) => {
+      if (boundSource && error.code === "ENOENT") throw new Error("input-changed");
+      throw error;
+    });
+    if (current !== identity) throw new Error("input-changed");
+    return {
+      size: Number(st.size),
+      identity,
+    };
+  }
+  async readInto(
+    fd: StoreFd,
+    offset: number,
+    buffer: Uint8Array,
+    boundSource = false,
+  ): Promise<Uint8Array> {
+    if (!Number.isSafeInteger(offset) || offset < 0 || !buffer.length || buffer.length > 262144)
+      throw new Error("invalid-range");
+    await this.fileStat(fd, boundSource);
+    const { bytesRead } = await this.fd(fd).read(buffer, 0, buffer.length, offset);
     return buffer.subarray(0, bytesRead);
   }
   async write(fd: StoreFd, offset: number, bytes: Uint8Array): Promise<number> {
@@ -194,31 +270,35 @@ export class NodePersistenceFs implements PersistenceFsPort {
     if (pending) return pending;
     // A native close rejection is definitive for this handle. Retrying a raw
     // descriptor can race descriptor reuse or appear successful after an I/O error.
-    const close = this.fd(token)
-      .close()
-      .then(() => {
-        this.descriptors.delete(token);
-        this.closing.delete(token);
-      });
+    const close = (this.directories.get(token) ?? this.fd(token)).close().then(() => {
+      this.directories.delete(token);
+      this.descriptors.delete(token);
+      this.closing.delete(token);
+    });
     this.closing.set(token, close);
     return close;
   }
-  async directorySync(name: string): Promise<void> {
+  async directorySync(name: string, ownerPath?: StorePath): Promise<void> {
     this.profile.assertHeld();
     // Apply the initialized adapter policy even to direct internal callers. Receipts
     // retain file-sync-only; actual sync failures on supported platforms still throw.
     if (this.durability === "file-sync-only") return;
-    const fd = await open(name, constants.O_RDONLY);
+    const parts = path.relative(this.root, name);
+    const p = this.path(...(parts ? parts.split(path.sep) : []));
+    const fd = await this.openOwned(
+      this.ownedPath(p, ownerPath && this.pathOwners.get(ownerPath)),
+      "directory-sync",
+    );
     try {
       this.profile.assertHeld();
-      await fd.sync();
+      await this.sync(fd);
     } finally {
-      await fd.close();
+      await this.closeOwned(fd);
     }
   }
   async syncDirectory(p: StorePath): Promise<void> {
     await this.check(p);
-    if (this.durability === "file-and-directory-sync") await this.directorySync(this.name(p));
+    if (this.durability === "file-and-directory-sync") await this.directorySync(this.name(p), p);
   }
   async atomicReplace(from: StorePath, to: StorePath): Promise<void> {
     await this.check(from);
@@ -239,7 +319,7 @@ export class NodePersistenceFs implements PersistenceFsPort {
     await this.check(p);
     if (!(await lstat(this.name(p))).isDirectory()) throw new Error("unsafe-path");
     if (this.durability === "file-and-directory-sync")
-      await this.directorySync(path.dirname(this.name(p)));
+      await this.directorySync(path.dirname(this.name(p)), p);
   }
   async statfs(p: StorePath): Promise<{ availableBytes: number }> {
     await this.check(p);
@@ -263,7 +343,7 @@ export class NodePersistenceFs implements PersistenceFsPort {
     this.profile.assertHeld();
     await rmdir(this.name(p));
     if (this.durability === "file-and-directory-sync")
-      await this.directorySync(path.dirname(this.name(p)));
+      await this.directorySync(path.dirname(this.name(p)), p);
   }
   async fault(point: PersistenceFaultPoint): Promise<void> {
     await this.at(point, async () => {});
@@ -292,40 +372,76 @@ export class NodePersistenceFs implements PersistenceFsPort {
     maximum: number,
   ): Promise<Array<{ name: string; directory: boolean; bytes: number }>> {
     await this.check(p);
-    const dir = await opendir(this.name(p)),
+    const fd = await this.openOwned(p, "directory-list"),
+      dir = this.directories.get(fd)!,
       entries: Array<{ name: string; directory: boolean; bytes: number }> = [];
-    for await (const entry of dir) {
-      if (entries.length === maximum) throw new Error("scan-limit");
-      const name = path.join(this.name(p), entry.name),
-        st = await lstat(name);
-      if (
-        st.isSymbolicLink() ||
-        (!st.isFile() && !st.isDirectory()) ||
-        (st.isFile() && st.nlink !== 1) ||
-        (await realpath(name)) !== name
-      )
-        throw new Error("unsafe-path");
-      entries.push({ name: entry.name, directory: st.isDirectory(), bytes: st.size });
+    try {
+      for (let entry; (entry = await dir.read());) {
+        if (entries.length === maximum) throw new Error("scan-limit");
+        const name = path.join(this.name(p), entry.name),
+          st = await lstat(name);
+        if (
+          st.isSymbolicLink() ||
+          (!st.isFile() && !st.isDirectory()) ||
+          (st.isFile() && st.nlink !== 1) ||
+          (await realpath(name)) !== name
+        )
+          throw new Error("unsafe-path");
+        entries.push({ name: entry.name, directory: st.isDirectory(), bytes: st.size });
+      }
+      return entries;
+    } finally {
+      await this.closeOwned(fd);
     }
-    return entries;
+  }
+  private async readBytes(fd: StoreFd, size: number, maximum: number): Promise<Uint8Array> {
+    if (size > maximum) throw new Error("size-limit");
+    const result = new Uint8Array(size);
+    let offset = 0;
+    while (offset < size) {
+      const b = await this.readInto(fd, offset, result.subarray(offset, offset + 262144));
+      if (!b.length) throw new Error("corrupt");
+      offset += b.length;
+    }
+    return result;
+  }
+  async sourceBytes(
+    path: StorePath,
+    maximum: number,
+    expectedStamp?: string,
+  ): Promise<{
+    bytes: Uint8Array;
+    original: SourceIdentity;
+  }> {
+    const fd = await this.openOwned(path, "read").catch((error) => {
+      if (
+        expectedStamp !== undefined &&
+        (error.code === "ENOENT" || error.message === "unsafe-path")
+      )
+        throw new Error("input-changed");
+      throw error;
+    });
+    try {
+      const { size, identity } = await this.fileStamp(fd, path, expectedStamp !== undefined);
+      if (expectedStamp !== undefined && expectedStamp !== identity)
+        throw new Error("input-changed");
+      const bytes = await this.readBytes(fd, size, maximum);
+      if ((await this.fileStamp(fd, path, expectedStamp !== undefined)).identity !== identity)
+        throw new Error("input-changed");
+      return { bytes, original: { fs: this, path, stamp: identity } };
+    } finally {
+      await this.closeOwned(fd);
+    }
   }
   async bytes(p: StorePath, maximum: number): Promise<Uint8Array> {
-    const fd = await this.open(p, "read");
+    const fd = await this.openOwned(p, "read");
     try {
       const size = (await this.fd(fd).stat()).size;
-      if (size > maximum) throw new Error("size-limit");
-      const result = new Uint8Array(size);
-      let offset = 0;
-      while (offset < size) {
-        const b = await this.read(fd, offset, Math.min(262144, size - offset));
-        if (!b.length) throw new Error("corrupt");
-        result.set(b, offset);
-        offset += b.length;
-      }
+      const result = await this.readBytes(fd, size, maximum);
       if ((await this.fd(fd).stat()).size !== size) throw new Error("input-changed");
       return result;
     } finally {
-      await this.close(fd);
+      await this.closeOwned(fd);
     }
   }
 }

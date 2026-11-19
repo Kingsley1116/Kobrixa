@@ -272,6 +272,21 @@ it("publishes one null-target nine-field receipt from both originals, and comple
     hash(devicePreferencesEvidenceBytes(saved.plan.devicePreferencesEvidence)),
   );
   const settings = (await f.backend.reads.settings(f.owner))!;
+  // Canonical nine-field document produced by the 7e9050a mapper for these originals.
+  const expectedHash = "ea9ba35953df0e84014b2f1bd32252f16aad17d2cfafc72563bc54d55d40cadb";
+  expect(item.mappedSha256).toBe(expectedHash);
+  const settingsDirectory = path.join(
+    f.userData,
+    "plugins",
+    "persistence-v1",
+    "namespaces",
+    hash(Buffer.from(f.owner.sourceKey)),
+    "settings",
+  );
+  const head = JSON.parse(await readFile(path.join(settingsDirectory, "head.json"), "utf8"));
+  expect(hash(await readFile(path.join(settingsDirectory, "objects", head.object)))).toBe(
+    expectedHash,
+  );
   expect(settings.values).toHaveLength(9);
   expect(settings.values).toContainEqual({ key: "lastWifiAddress", value: "" });
   expect(settings.values).toContainEqual({ key: "usbRetryLimit", value: 5 });

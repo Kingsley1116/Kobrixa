@@ -10,6 +10,7 @@ import {
   createNodePersistenceFs,
   NodePersistenceFs,
   type PersistenceFaultPoint,
+  type StoreFd,
 } from "./filesystem.js";
 const owner: PersistenceOwner = {
   sourceKey: "builtin:kobrixa.lab",
@@ -85,6 +86,93 @@ async function stage(s: AtomicStore, t: PublicationTicket, bytes: Uint8Array) {
     await s.append(t, offset, bytes.subarray(offset, offset + 262144));
   await s.seal(t, bytes.length, hash(bytes));
 }
+it("retains a verification descriptor when open validation and cleanup both fail", async () => {
+  const env = await setup();
+  const bytes = Buffer.from("payload");
+  const t = ticket(bytes);
+  try {
+    await stage(env.store, t, bytes);
+    expect((await env.store.publish(t)).disposition).toBe("committed");
+    const ns = await Namespace.open(env.fs, owner.sourceKey);
+    const loc = await ns.location(t.target);
+    const head = (await ns.head(loc))!;
+    const name = env.fs.name(ns.object(loc, head));
+    const check = env.fs.check.bind(env.fs);
+    let validations = 0;
+    vi.spyOn(env.fs, "check").mockImplementation(async (p, missing) => {
+      await check(p, missing);
+      if (env.fs.name(p) === name && ++validations === 2) throw Error("validation-fault");
+    });
+    const close = env.fs.close.bind(env.fs);
+    let failed: StoreFd | undefined;
+    vi.spyOn(env.fs, "close").mockImplementation(async (fd) => {
+      if (validations === 2 && !failed) {
+        failed = fd;
+        throw Error("close-fault");
+      }
+      await close(fd);
+    });
+    if (t.metadata.kind !== "record") throw Error("record expected");
+    try {
+      await expect(env.store.stat(owner, t.metadata.record.id)).rejects.toThrow("recovery-blocked");
+      expect(failed).toBeDefined();
+      expect(() => env.store.assertSourceAvailable(owner.sourceKey)).toThrow("recovery-blocked");
+      await expect(env.store.dispose()).rejects.toThrow("recovery-blocked");
+    } finally {
+      if (failed) await close(failed);
+    }
+  } finally {
+    await rm(env.root, { recursive: true, force: true });
+  }
+});
+it.each(["read", "readEncoded"] as const)(
+  "rejects premature EOF on a pinned %s",
+  async (method) => {
+    const env = await setup();
+    try {
+      const bytes = Buffer.from("payload");
+      const t = ticket(bytes);
+      await stage(env.store, t, bytes);
+      expect((await env.store.publish(t)).disposition).toBe("committed");
+      if (t.metadata.kind !== "record") throw Error("record expected");
+      const { id, revision } = t.metadata.record;
+      const pin = await env.store.open(owner, id, revision);
+      const ns = env.fs.path(
+        "namespaces",
+        hash(Buffer.from(owner.sourceKey)),
+        "records",
+        id,
+        "objects",
+        revision + ".bin",
+      );
+      await writeFile(env.fs.name(ns), "");
+      await expect(env.store[method](owner, pin, 0, 4)).rejects.toThrow("corrupt");
+    } finally {
+      await env.close();
+    }
+  },
+);
+
+it.each(["sealed", "before-publish", "after-publish"] as const)(
+  "quarantine fences only undispatched publication at %s",
+  async (phase) => {
+    const blocker = randomUUID();
+    const env = await setup(async (point) => {
+      if (point === phase) env.store.quarantineClose(owner.sourceKey, blocker);
+    });
+    try {
+      const bytes = Buffer.from("payload");
+      const t = ticket(bytes);
+      await stage(env.store, t, bytes);
+      if (phase === "sealed") env.store.quarantineClose(owner.sourceKey, blocker);
+      const result = await env.store.publish(t);
+      expect(result.disposition).toBe(phase === "after-publish" ? "committed" : "not-committed");
+      expect((await env.store.reconcile(t)).disposition).toBe(result.disposition);
+    } finally {
+      await env.close();
+    }
+  },
+);
 it("quarantines a sealed descriptor whose native close fails while another source admits and reads", async () => {
   const env = await setup();
   const bytes = Buffer.from("payload");
@@ -1953,3 +2041,32 @@ for (const mode of [
     }
   });
 }
+
+it("encodes only bytes returned by a short read into reused scratch", async () => {
+  const env = await setup();
+  const bytes = Buffer.from("abcdef"),
+    t = ticket(bytes);
+  try {
+    await stage(env.store, t, bytes);
+    const receipt = await env.store.publish(t);
+    expect(receipt.disposition).toBe("committed");
+    if (t.target.kind !== "record") throw Error("expected record");
+    const pin = await env.store.open(owner, t.target.id, receipt.receipt!.revision);
+    expect(await env.store.readEncoded(owner, pin, 0, 6)).toEqual({
+      length: 6,
+      data: bytes.toString("base64"),
+    });
+    const read = env.fs.readInto.bind(env.fs);
+    vi.spyOn(env.fs, "readInto").mockImplementationOnce((fd, offset, dest) =>
+      read(fd, offset, dest.subarray(0, 1)),
+    );
+    expect(await env.store.readEncoded(owner, pin, 1, 5)).toEqual({
+      length: 1,
+      data: bytes.toString("base64", 1, 2),
+    });
+    expect(await env.store.readEncoded(owner, pin, 6, 5)).toEqual({ length: 0, data: "" });
+    await env.store.close(owner, pin);
+  } finally {
+    await env.close();
+  }
+});

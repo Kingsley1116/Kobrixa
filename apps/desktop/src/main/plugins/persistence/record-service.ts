@@ -572,13 +572,15 @@ export function createRecordService(
         limit("storage-read");
       opening.set(owner.sourceKey, (opening.get(owner.sourceKey) ?? 0) + 1);
       try {
-        const record = await publicRecordAccess("storage-read", () => deps.read.stat(owner, p.id));
-        if (record.revision !== p.expectedRevision) conflict("revision-mismatch");
-        if (record.schemaVersion !== p.schemaVersion)
-          throw new PersistenceFault("PLUGIN_E_STORAGE_VERSION", "schema-mismatch");
-        const pin = await publicRecordAccess("storage-read", () =>
-          deps.read.open(owner, p.id, p.expectedRevision),
-        );
+        const { record, pin } = await publicRecordAccess("storage-read", async () => {
+          if (deps.read.openRecord)
+            return deps.read.openRecord(owner, p.id, p.expectedRevision, p.schemaVersion);
+          const record = await deps.read.stat(owner, p.id);
+          if (record.revision !== p.expectedRevision) conflict("revision-mismatch");
+          if (record.schemaVersion !== p.schemaVersion)
+            throw new PersistenceFault("PLUGIN_E_STORAGE_VERSION", "schema-mismatch");
+          return { record, pin: await deps.read.open(owner, p.id, p.expectedRevision) };
+        });
         const handle = randomUUID(),
           now = deps.now();
         reads.set(handle, {
@@ -599,19 +601,20 @@ export function createRecordService(
       if (!read || read.closed || ownerKey(read.owner) !== ownerKey(owner)) stale("storage-read");
       if (p.offset > read.record.byteLength)
         throw new RpcError(RPC_ERRORS.invalidParams, "Offset exceeds record.");
-      const bytes = await deps.read.read(
-        owner,
-        read.pin,
-        p.offset,
-        Math.min(p.maxBytes, read.record.byteLength - p.offset),
-      );
+      const size = Math.min(p.maxBytes, Math.max(1, read.record.byteLength - p.offset));
+      const chunk = deps.read.readEncoded
+        ? await deps.read.readEncoded(owner, read.pin, p.offset, size)
+        : await deps.read.read(owner, read.pin, p.offset, size).then((bytes) => ({
+            length: bytes.length,
+            data: Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("base64"),
+          }));
       read.progress = deps.now();
-      const nextOffset = p.offset + bytes.length;
+      const nextOffset = p.offset + chunk.length;
       return {
         ok: true,
         value: {
           offset: p.offset,
-          data: Buffer.from(bytes).toString("base64"),
+          data: chunk.data,
           nextOffset,
           eof: nextOffset === read.record.byteLength,
         },

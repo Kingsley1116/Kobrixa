@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { RecordMeta, Receipt, RecordRevision } from "@kobrixa/plugin-protocol";
 import type { PublicationTicket, ImportTag } from "./engine-port.js";
 import type { NodePersistenceFs } from "./filesystem.js";
-import { writeAll, type StorePath } from "./filesystem.js";
+import { writeAll, type StorePath, type StoreFd } from "./filesystem.js";
 import { persistenceErrorSchema } from "../../../../../../packages/plugin-protocol/src/persistence-validation.js";
 import path from "node:path";
 const scopedPaths = new WeakMap<NodePersistenceFs, WeakMap<StorePath, string>>();
@@ -51,12 +51,12 @@ const record = z.strictObject({
   checkpoint: z.enum(["none", "open", "final"]),
   interrupted: z.boolean(),
 });
-const metadata = z.union([
+const metadata = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("settings"), schemaVersion: v, validationDigest: hash }),
   z.strictObject({ kind: z.literal("record"), record, deleted: z.boolean() }),
   z.strictObject({ kind: z.enum(["import", "recovery"]), key }),
 ]);
-const target = z.union([
+const target = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("settings"), expectedRevision: r.nullable() }),
   z.strictObject({ kind: z.literal("record"), id: h, expectedRevision: r.nullable() }),
   z.strictObject({ kind: z.enum(["import", "recovery"]), key }),
@@ -89,15 +89,15 @@ export function sameImportValue(a: unknown, b: unknown): boolean {
       a.length === b.length &&
       a.every((value, index) => sameImportValue(value, b[index]))
     );
-  const left = Object.entries(a),
-    right = Object.entries(b);
-  return (
-    left.length === right.length &&
-    left.every(
-      ([key, value]) =>
-        Object.prototype.hasOwnProperty.call(b, key) && sameImportValue(value, Reflect.get(b, key)),
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  for (const key of keys)
+    if (
+      !Object.prototype.hasOwnProperty.call(b, key) ||
+      !sameImportValue(Reflect.get(a, key), Reflect.get(b, key))
     )
-  );
+      return false;
+  return true;
 }
 export function sameImportAttempt(
   original: PublicationTicket,
@@ -406,21 +406,27 @@ export type Location = {
   parts: string[];
   name: string;
 };
+const verifyScratch = new WeakMap<NodePersistenceFs, Uint8Array>();
 export class Namespace {
   readonly hash: string;
   private constructor(
     readonly fs: NodePersistenceFs,
     readonly sourceKey: string,
+    private readonly onCloseFailure?: (fd: StoreFd) => void,
   ) {
     this.hash = createHash("sha256").update(sourceKey).digest("hex");
   }
   path(...parts: string[]): StorePath {
-    return this.fs.path("namespaces", this.hash, ...parts);
+    return this.fs.ownedPath(this.fs.path("namespaces", this.hash, ...parts), this.onCloseFailure);
   }
-  static async open(fs: NodePersistenceFs, sourceKey: string): Promise<Namespace> {
+  static async open(
+    fs: NodePersistenceFs,
+    sourceKey: string,
+    onCloseFailure?: (fd: StoreFd) => void,
+  ): Promise<Namespace> {
     if (!sourceKey || sourceKey.length > 160 || sourceKey.includes("\0"))
       throw new Error("identity-mismatch");
-    const ns = new Namespace(fs, sourceKey),
+    const ns = new Namespace(fs, sourceKey, onCloseFailure),
       identity = ns.path("identity.json");
     const exists = await fs.exists(ns.path());
     if (!exists) {
@@ -443,12 +449,12 @@ export class Namespace {
   }
   async writeNew(p: StorePath, value: unknown): Promise<void> {
     const bytes = Buffer.from(JSON.stringify(value));
-    const fd = await this.fs.open(p, "create-exclusive");
+    const fd = await this.fs.openOwned(p, "create-exclusive");
     try {
       await writeAll(this.fs, fd, 0, bytes);
       await this.fs.sync(fd);
     } finally {
-      await this.fs.close(fd);
+      await this.fs.closeOwned(fd);
     }
   }
   async location(t: PublicationTicket["target"], create = false): Promise<Location> {
@@ -492,21 +498,41 @@ export class Namespace {
       if (head.metadata.kind !== "record" || !head.metadata.deleted) throw new Error("corrupt");
       return;
     }
-    const object = this.object(location, head),
-      fd = await this.fs.open(object, "read"),
-      digest = createHash("sha256");
-    let offset = 0;
+    await this.verifyObject(this.object(location, head), head);
+  }
+  async verifyObject(path: StorePath, head: DiskHead): Promise<void> {
+    const fd = await this.fs.openOwned(path, "read");
     try {
-      if ((await this.fs.size(object)) !== head.byteLength) throw new Error("corrupt");
+      await this.verifyFd(fd, head);
+    } finally {
+      await this.fs.closeOwned(fd);
+    }
+  }
+  async verifyFd(fd: StoreFd, head: DiskHead) {
+    if ((await this.fs.fileStat(fd)).size !== BigInt(head.byteLength)) throw new Error("corrupt");
+    const digest = createHash("sha256");
+    // Concurrent hashes never share a live buffer. Keep at most one idle chunk per filesystem.
+    const scratch = verifyScratch.get(this.fs) ?? new Uint8Array(262144);
+    verifyScratch.delete(this.fs);
+    try {
+      let offset = 0;
       while (offset < head.byteLength) {
-        const bytes = await this.fs.read(fd, offset, Math.min(262144, head.byteLength - offset));
+        const bytes = await this.fs.readInto(
+          fd,
+          offset,
+          scratch.subarray(0, Math.min(scratch.length, head.byteLength - offset)),
+        );
         if (!bytes.length) throw new Error("corrupt");
         digest.update(bytes);
         offset += bytes.length;
       }
-      if (digest.digest("hex") !== head.sha256) throw new Error("corrupt");
+      if (
+        digest.digest("hex") !== head.sha256 ||
+        (await this.fs.fileStat(fd)).size !== BigInt(head.byteLength)
+      )
+        throw new Error("corrupt");
     } finally {
-      await this.fs.close(fd);
+      verifyScratch.set(this.fs, scratch);
     }
   }
   async locations(): Promise<Location[]> {

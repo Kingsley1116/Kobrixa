@@ -51,6 +51,46 @@ async function persistResolution(
   await ns.fs.atomicReplace(temp, ns.path("staging", id, "resolved.json"));
   await ns.fs.syncDirectory(ns.path("staging", id));
 }
+// Compare bounded chunks from both open files and authenticate their common contents.
+async function verifyDuplicate(
+  ns: Namespace,
+  staged: StorePath,
+  installed: StorePath,
+  head: DiskHead,
+) {
+  const fs = ns.fs;
+  const left = await fs.openOwned(staged, "read");
+  try {
+    const right = await fs.openOwned(installed, "read");
+    try {
+      const a = await fs.fileStamp(left, staged),
+        b = await fs.fileStamp(right, installed);
+      if (a.size !== head.byteLength || b.size !== a.size) throw new Error("corrupt");
+      const digest = createHash("sha256");
+      const first = Buffer.allocUnsafe(262144),
+        second = Buffer.allocUnsafe(262144);
+      for (let offset = 0; offset < a.size;) {
+        const length = Math.min(first.length, a.size - offset);
+        const x = await fs.readInto(left, offset, first.subarray(0, length));
+        if (!x.length) throw new Error("corrupt");
+        const y = await fs.readInto(right, offset, second.subarray(0, x.length));
+        if (!y.length || !first.subarray(0, y.length).equals(y)) throw new Error("corrupt");
+        digest.update(y);
+        offset += y.length;
+      }
+      if (
+        digest.digest("hex") !== head.sha256 ||
+        (await fs.fileStamp(left, staged)).identity !== a.identity ||
+        (await fs.fileStamp(right, installed)).identity !== b.identity
+      )
+        throw new Error("corrupt");
+    } finally {
+      await fs.closeOwned(right);
+    }
+  } finally {
+    await fs.closeOwned(left);
+  }
+}
 // A first imported record can have its immutable object and temporary head on disk
 // before the head rename. Only the durable pending journal can authorize classifying
 // that exact candidate as uncommitted; never promote it or infer an empty default.
@@ -128,25 +168,38 @@ async function quarantinePendingImportCandidate(
   const objectEvidence = ns.path("quarantine", `${candidate.receipt.commitId}.prepublish.bin`);
   const headEvidence = ns.path("quarantine", `${candidate.receipt.commitId}.prepublish-head`);
   if (await fs.exists(headEvidence)) throw new Error("corrupt");
-  if (objects.length === 0) {
-    // Resume only the half-move authorized by this exact still-pending journal.
-    // Never treat an arbitrary quarantine file as a resumable write or overwrite it.
-    if (!(await fs.exists(objectEvidence))) return false;
-    if ((await fs.size(objectEvidence)) !== candidate.byteLength) throw new Error("corrupt");
-    const fd = await fs.open(objectEvidence, "read"),
-      hash = createHash("sha256");
-    let offset = 0;
-    try {
-      while (offset < candidate.byteLength) {
-        const bytes = await fs.read(fd, offset, Math.min(262144, candidate.byteLength - offset));
-        if (!bytes.length) throw new Error("corrupt");
-        hash.update(bytes);
-        offset += bytes.length;
-      }
-      if (hash.digest("hex") !== candidate.sha256) throw new Error("corrupt");
-    } finally {
-      await fs.close(fd);
+  const staged = ns.path("staging", attempt.id, "payload.tmp");
+  if (await fs.exists(staged)) {
+    if (await fs.exists(objectEvidence)) throw new Error("corrupt");
+    if (!objects.length) {
+      await ns.verifyObject(staged, candidate);
+      await fs.unlink(ns.path(...loc.parts, candidates[0]!.name));
+      await fs.syncDirectory(loc.directory);
+      return true;
     }
+    // The journal identifies the candidate. Also bind the staged bytes to that exact
+    // ticket, seal and tag before discarding the redundant pre-rename name.
+    for (const [name, expected] of [
+      [
+        "intent.json",
+        { formatVersion: 1, ticket: attempt, byteLength: item.byteLength, predecessor: null },
+      ],
+      ["sealed.json", { formatVersion: 1, byteLength: item.byteLength, sha256: item.mappedSha256 }],
+      ["import-tag.json", { formatVersion: 1, tag: item.tag }],
+    ] as const) {
+      const actual = JSON.parse(
+        Buffer.from(await fs.bytes(ns.path("staging", attempt.id, name), 32768)).toString("utf8"),
+      );
+      if (!sameImportValue(actual, expected)) throw new Error("corrupt");
+    }
+    await verifyDuplicate(ns, staged, ns.object(loc, candidate), candidate);
+    await fs.unlink(staged);
+    await fs.syncDirectory(ns.path("staging", attempt.id));
+  }
+  if (objects.length === 0) {
+    // Interrupted after the quarantine move. Never overwrite existing evidence.
+    if (!(await fs.exists(objectEvidence))) return false;
+    await ns.verifyObject(objectEvidence, candidate);
   } else {
     if (await fs.exists(objectEvidence)) throw new Error("corrupt");
     await ns.verify(loc, candidate);

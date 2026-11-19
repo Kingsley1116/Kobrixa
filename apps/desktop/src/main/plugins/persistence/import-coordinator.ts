@@ -24,6 +24,8 @@ import type {
 import { snapshotBytes, parseNonceDocument, importIdFor } from "./import-sources.js";
 import {
   loadImport,
+  loadImportItem,
+  importPlanDigest,
   planImport,
   recordImport,
   reconcileImport,
@@ -259,10 +261,13 @@ export function createLegacyImportCoordinator(input: {
     const descriptor: LegacyImportDescriptor = registered;
     return serial(descriptor.id, async () => {
       let saved: Awaited<ReturnType<typeof loadImport>> = null;
+      let verifiedItemCount: number | undefined;
       const progress = (state: Awaited<ReturnType<LegacyImportHostPort["run"]>>["state"]) => ({
         state,
         completedItems:
-          saved?.items.filter((e) => e.state === "committed" || e.state === "skipped").length ?? 0,
+          verifiedItemCount ??
+          saved?.items.filter((e) => e.state === "committed" || e.state === "skipped").length ??
+          0,
         totalItems: saved?.plan.items.length ?? 0,
       });
       let admittedOwner: PersistenceOwner | undefined;
@@ -389,6 +394,16 @@ export function createLegacyImportCoordinator(input: {
         const owner = structuredClone(input.importOwner(descriptor.targetSourceKey));
         admittedOwner = owner;
         saved = await loadImport(imports, owner, descriptor);
+        if (saved) {
+          for (const [key, pin] of retainedPins) {
+            if (!key.startsWith(saved.plan.id + "/")) continue;
+            check();
+            const settled = await imports.reconcile(pin.ticket);
+            if (settled.disposition === "unknown") return progress("blocked");
+            await sources.releaseMapped(pin.mapped);
+            retainedPins.delete(key);
+          }
+        }
         if (saved?.complete) {
           const handle = await barrier.enter(descriptor.targetSourceKey, descriptor.id);
           await barrier.complete(handle);
@@ -491,7 +506,16 @@ export function createLegacyImportCoordinator(input: {
           for (let start = 0; start < inventory.entries.length; start += 64)
             for (const source of inventory.entries.slice(start, start + 64)) {
               check();
-              const mapped = await sources.map(descriptor.id, source.key);
+              const pin = source.plannedRecord
+                ? undefined
+                : await sources.map(descriptor.id, source.key);
+              const mapped = pin ?? {
+                kind: "record" as const,
+                metadata: source.plannedRecord!,
+                sourceSha256: source.sha256,
+                mappedSha256: source.plannedRecord!.sha256,
+                byteLength: source.plannedRecord!.byteLength,
+              };
               try {
                 check();
                 if (mapped.sourceSha256 !== source.sha256) throw new Error("input-changed");
@@ -554,7 +578,7 @@ export function createLegacyImportCoordinator(input: {
                   tag: { importId: id, itemKey: source.key, sourceSha256: source.sha256 },
                 });
               } finally {
-                await sources.releaseMapped(mapped.mapped);
+                if (pin) await sources.releaseMapped(pin.mapped);
               }
             }
           const plan: ImportPlan = {
@@ -589,20 +613,30 @@ export function createLegacyImportCoordinator(input: {
           saved = await loadImport(imports, owner, descriptor);
         }
         if (!saved) throw new Error("missing-import-plan");
+        const planDigest = importPlanDigest(saved.plan);
         for (const item of saved.plan.items) {
-          saved = await loadImport(imports, owner, descriptor);
-          if (!saved) throw new Error("missing-import-plan");
-          const prior = saved.items.find((e) => e.key === item.key)!;
-          const pin = retainedPins.get(saved.plan.id + "/" + item.key);
-          if (pin) {
-            const settled = await imports.reconcile(pin.ticket);
-            if (settled.disposition === "unknown") return progress("blocked");
-            await sources.releaseMapped(pin.mapped);
-            retainedPins.delete(saved.plan.id + "/" + item.key);
-          }
+          const { prior, completedItems } = await loadImportItem(
+            imports,
+            owner,
+            saved.plan.id,
+            item.key,
+            planDigest,
+          );
+          verifiedItemCount = completedItems;
           if (prior.state === "committed" || prior.state === "skipped") continue;
           check();
-          const mapped = await sources.map(descriptor.id, item.key);
+          let mapped: LegacyMappedItem;
+          try {
+            mapped = await sources.map(descriptor.id, item.key);
+          } catch (error) {
+            if (
+              descriptor.sourceKind === "sensor-lab" &&
+              error instanceof Error &&
+              error.message === "input-changed"
+            )
+              continue;
+            throw error;
+          }
           let attempt: PublicationTicket | undefined;
           let release = true;
           try {
@@ -680,12 +714,20 @@ export function createLegacyImportCoordinator(input: {
                 retainedPins.delete(saved.plan.id + "/" + item.key);
               }
             }
+            if (
+              release &&
+              descriptor.sourceKind === "sensor-lab" &&
+              error instanceof Error &&
+              error.message === "input-changed"
+            )
+              continue;
             throw error;
           } finally {
             if (release) await sources.releaseMapped(mapped.mapped);
           }
         }
         saved = await loadImport(imports, owner, descriptor);
+        verifiedItemCount = undefined;
         if (!saved) throw new Error("missing-import-plan");
         check();
         if (descriptor.combinedSource) {
@@ -718,6 +760,7 @@ export function createLegacyImportCoordinator(input: {
             input.importOwner(descriptor.targetSourceKey),
             descriptor,
           );
+          verifiedItemCount = undefined;
         } catch {
           /* retain last verified progress */
         }

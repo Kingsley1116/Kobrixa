@@ -751,7 +751,7 @@ async function mappedSetup(options: { hash?: string; schema?: number; large?: bo
     mapperId: descriptor.id,
     sourceKind: descriptor.sourceKind,
   });
-  const mapped = await sources.map(descriptor.id, "item"),
+  const mapped = await sources.map(descriptor.id, "item", 97),
     id = "import/" + hash(Buffer.from(JSON.stringify([descriptor.id, owner.sourceKey]))),
     tag = { importId: id, itemKey: "item", sourceSha256: mapped.sourceSha256 };
   const plan: ImportPlan = {
@@ -848,15 +848,67 @@ it("file mapping binds attempt, sequential offset, bounded chunks and unresolved
     const publish = env.store.publish(env.attempt);
     await reached;
     try {
+      await env.sources.cancelMap(97);
       await expect(env.sources.releaseMapped(env.mapped.mapped)).rejects.toThrow(
         "publish-uncertain",
       );
     } finally {
       resume();
+      await publish;
     }
     expect((await publish).disposition).toBe("committed");
     await env.sources.releaseMapped(env.mapped.mapped);
     await expect(env.sources.appendMapped(input)).rejects.toThrow("stale");
+  } finally {
+    await env.close();
+  }
+});
+it("requires the journal digest and the digest of the staged bytes to agree at seal", async () => {
+  const env = await mappedSetup();
+  try {
+    await env.store.tagImport(env.attempt, env.tag);
+    // Simulate a mapper buffer changing after its metadata was captured.
+    env.payload[0] = 0;
+    await env.sources.appendMapped({
+      mapped: env.mapped.mapped,
+      ticket: env.attempt,
+      offset: 0,
+      maxBytes: 262144,
+    });
+    for (const digest of [env.mapped.mappedSha256, hash(env.payload)])
+      await expect(env.store.seal(env.attempt, env.payload.length, digest)).rejects.toThrow(
+        "checksum-mismatch",
+      );
+    expect(await env.store.publish(env.attempt)).toEqual({ disposition: "not-committed" });
+  } finally {
+    await env.close();
+  }
+});
+it("invalidates a bound append if the verified journal object changes between chunks", async () => {
+  const env = await mappedSetup({ large: true });
+  try {
+    const loads = vi.spyOn(env.store, "loadImport");
+    await env.store.tagImport(env.attempt, env.tag);
+    const afterTag = loads.mock.calls.length;
+    const input = { mapped: env.mapped.mapped, ticket: env.attempt, offset: 0, maxBytes: 262144 };
+    expect(await env.sources.appendMapped(input)).toEqual({ nextOffset: 262144, done: false });
+    expect(loads).toHaveBeenCalledTimes(afterTag);
+    const dir = path.join(
+      env.store.fs.root,
+      "namespaces",
+      hash(Buffer.from(env.attempt.owner.sourceKey)),
+      "imports",
+    );
+    const head = JSON.parse(
+      await readFile(path.join(dir, hash(Buffer.from(env.tag.importId)) + ".json"), "utf8"),
+    );
+    await writeFile(path.join(dir, "objects", head.object), "{}");
+    await expect(env.sources.appendMapped({ ...input, offset: 262144 })).rejects.toThrow(
+      "input-changed",
+    );
+    await expect(
+      env.store.seal(env.attempt, env.payload.length, hash(env.payload)),
+    ).rejects.toThrow("incomplete");
   } finally {
     await env.close();
   }
@@ -2520,6 +2572,11 @@ async function negativeHost(userData: string, journal: (row: unknown) => void) {
             expect(typeof value).toBe("string");
             pins.add(value as string);
           }
+          if (group === "reads" && key === "openRecord") {
+            const pin = (value as { pin: string }).pin;
+            expect(typeof pin).toBe("string");
+            pins.add(pin);
+          }
           if (group === "reads" && key === "close") pins.delete(args[1] as string);
           journal({
             operation: `${group}.${key}`,
@@ -3473,3 +3530,67 @@ it.each([
     }
   },
 );
+
+it("rejects a one-byte change to payload.tmp before installing the imported head", async () => {
+  const env = await mappedSetup();
+  try {
+    const { attempt } = env;
+    await env.store.tagImport(attempt, env.tag);
+    await env.sources.appendMapped({
+      mapped: env.mapped.mapped,
+      ticket: attempt,
+      offset: 0,
+      maxBytes: 262144,
+    });
+    const staged = path.join(
+      env.store.fs.root,
+      "namespaces",
+      hash(Buffer.from(attempt.owner.sourceKey)),
+      "staging",
+      attempt.id,
+      "payload.tmp",
+    );
+    const changed = Uint8Array.from(env.payload);
+    changed[1] = changed[1]! ^ 1;
+    await writeFile(staged, changed);
+    await env.store.seal(attempt, env.payload.length, hash(env.payload));
+    await expect(env.store.publish(attempt)).rejects.toThrow("corrupt");
+    expect(await env.store.reconcile(attempt)).toMatchObject({ disposition: "not-committed" });
+  } finally {
+    await env.close();
+  }
+});
+
+it("bounds each inventory request on 32 numeric-array files and returns their full hashes", async () => {
+  const { syntheticImportDescriptor: d } = await import("./import-fixtures.js");
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), "numeric-inventory-")));
+  try {
+    const fs = await createNodePersistenceFs(root, { hostEpoch: randomUUID(), assertHeld() {} });
+    const legacy = path.join(root, "legacy");
+    await mkdir(legacy);
+    const bytes = Buffer.from('{"formatVersion":1,"x":[' + "0,".repeat(2_000_000) + "0]}");
+    const digest = hash(bytes);
+    for (let i = 0; i < 32; i++) await writeFile(path.join(legacy, String(i)), bytes);
+    const sources = new WorkerSources(
+      fs.root,
+      new AtomicStore(fs),
+      new Map([[d.id, d]]),
+      new Map([[d.id, legacy]]),
+    );
+    await sources.register({ descriptorId: d.id, mapperId: d.id, sourceKind: d.sourceKind });
+    let pages = 1,
+      result = await sources.inventoryPage(d.id);
+    while ("cursor" in result) {
+      result = await sources.inventoryPage(d.id, result.cursor);
+      pages++;
+    }
+    expect(pages).toBeGreaterThanOrEqual(8);
+    expect(result.state).toBe("present");
+    expect(result.entries).toHaveLength(32);
+    expect(result.entries.every((e) => e.sha256 === digest && e.byteLength === 4_000_027)).toBe(
+      true,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

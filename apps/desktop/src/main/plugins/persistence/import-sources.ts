@@ -32,6 +32,13 @@ export interface LegacyImportDescriptor {
   combinedSource?: "device-preferences-v1";
   targetRecordSchemaVersions: readonly Version[];
   rendererKeyAllowlist?: readonly string[];
+  /** Atomic validation and conversion for a descriptor with one supported legacy format. */
+  checkedFileRecord?(input: LegacyImportInput): Extract<LegacyImportItem, { kind: "record" }>;
+  /** Complete descriptor-specific admission and record metadata for byte-preserving files.
+   * The worker separately verifies UTF-8, JSON grammar, format version and source identity. */
+  identityRecord?(
+    source: LegacySourceItem,
+  ): Extract<LegacyImportItem, { kind: "record" }>["metadata"];
   validate(input: LegacyImportInput): boolean;
   map(input: LegacyImportInput): LegacyImportItem;
 }
@@ -58,6 +65,7 @@ import type {
 export type LegacySourceItem = Readonly<{
   key: string;
   format: Version;
+  plannedRecord?: Extract<LegacyImportItem, { kind: "record" }>["metadata"];
   byteLength: number;
   sha256: Sha256;
 }>;

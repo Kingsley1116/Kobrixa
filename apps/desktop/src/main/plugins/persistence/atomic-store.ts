@@ -36,7 +36,13 @@ import {
   type PersistenceReadPort,
   type ImportTag,
 } from "./engine-port.js";
-import { type NodePersistenceFs, writeAll, type StoreFd, type StorePath } from "./filesystem.js";
+import {
+  type NodePersistenceFs,
+  writeAll,
+  type StoreFd,
+  type StorePath,
+  type SourceIdentity,
+} from "./filesystem.js";
 import {
   Namespace,
   assertDiskFormat,
@@ -93,6 +99,14 @@ type Entry = {
   oldHeld: boolean;
   cleaned: boolean;
   tag?: ImportTag;
+  original?: SourceIdentity;
+  verifiedItem?: {
+    item: ImportPlan["items"][number];
+    head: StorePath;
+    object: StorePath;
+    revision: string;
+    digest: string;
+  };
   retained?: SealedPayloadPin;
   recoveryGate?: PublicationGate;
   abortRequested?: boolean;
@@ -149,6 +163,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
   private readonly uncertain = new Map<string, string>();
   private readonly publication = new Map<string, Promise<unknown>>();
   private readonly pins = new Map<string, Pin>();
+  private readonly failedDescriptorCloses = new Set<StoreFd>();
   private readonly quarantinedSources = new Map<string, Handle>();
   private readonly closed = new Map<string, { owner: string; until: number }>();
   private readonly pages = new Set<Page>();
@@ -175,7 +190,10 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
   private ns(source: string): Promise<Namespace> {
     let pending = this.namespaces.get(source);
     if (!pending) {
-      pending = Namespace.open(this.fs, source).then(async (ns) => {
+      pending = Namespace.open(this.fs, source, (fd) => {
+        this.failedDescriptorCloses.add(fd);
+        this.quarantineClose(source, randomUUID());
+      }).then(async (ns) => {
         try {
           const scanned = await scanNamespace(ns, this.fs.profile.hostEpoch);
           this.quota.restore(source, scanned.totals);
@@ -288,6 +306,9 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     if (!terminal) throw new Error("stale");
     this.terminalDeletes.set(t.id, structuredClone(t));
   }
+  private quarantined(t: PublicationTicket): boolean {
+    return !this.recoveryDocuments.has(t.id) && this.quarantinedSources.has(t.owner.sourceKey);
+  }
   private admitted(t: PublicationTicket): void {
     this.fs.profile.assertHeld();
     if (
@@ -300,8 +321,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
             !sameImportValue(this.terminalDeletes.get(t.id), t))))
     )
       throw new Error("stale");
-    if (!this.recoveryDocuments.has(t.id) && this.quarantinedSources.has(t.owner.sourceKey))
-      throw new Error("recovery-blocked");
+    if (this.quarantined(t)) throw new Error("recovery-blocked");
     if (this.blockedSources.has(t.owner.sourceKey))
       throw this.blockedSources.get(t.owner.sourceKey);
     if (this.uncertain.has(t.owner.sourceKey)) throw new Error("publish-uncertain");
@@ -714,7 +734,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       });
       const temp = ns.path("staging", ticket.id, "payload.tmp");
       await this.fs.at("open-temp", async () => {
-        opened = await this.fs.open(temp, "create-exclusive");
+        opened = await this.fs.openOwned(temp, "create-exclusive");
       });
       const fd = opened;
       const frozen = structuredClone(ticket);
@@ -743,7 +763,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
         cleaned: false,
       });
     } catch (e) {
-      if (opened) await this.fs.close(opened).catch(() => {});
+      if (opened) await this.fs.closeOwned(opened).catch(() => {});
       let clean = true;
       if (allocated)
         for (const name of [
@@ -791,7 +811,10 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       await this.fs.at("chunk-write", () => writeAll(this.fs, e.fd!, offset, bytes));
       e.hash.update(bytes);
       e.received += bytes.length;
-      e.last = { offset, bytes: Uint8Array.from(bytes) };
+      if (e.last?.bytes.length === bytes.length) {
+        e.last.offset = offset;
+        e.last.bytes.set(bytes);
+      } else e.last = { offset, bytes: Uint8Array.from(bytes) };
       e.progress = this.fs.now();
       return e.received;
     } finally {
@@ -808,11 +831,17 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     }
     if (e.state !== "receiving" || e.busy) throw new Error("sealed");
     if (byteLength !== e.size || e.received !== e.size) throw new Error("incomplete");
+    if (
+      e.tag &&
+      (e.verifiedItem?.item.mappedSha256 !== sha256 ||
+        e.verifiedItem.item.byteLength !== byteLength)
+    )
+      throw new Error("checksum-mismatch");
     if (e.hash.copy().digest("hex") !== sha256) throw new Error("checksum-mismatch");
     e.busy = true;
     try {
       await this.fs.at("seal-sync", () => this.fs.sync(e.fd!));
-      await this.fs.close(e.fd!);
+      await this.fs.closeOwned(e.fd!);
       e.fd = null;
       e.state = "sealed";
       await e.ns.writeNew(e.ns.path("staging", ticket.id, "sealed.json"), {
@@ -871,7 +900,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     return run;
   }
   private async publishOne(e: Entry, gate = e.gate): Promise<Outcome> {
-    if (e.state !== "sealed") return { disposition: "not-committed" };
+    if (e.state !== "sealed" || this.quarantined(e.ticket)) return { disposition: "not-committed" };
     try {
       this.live(e, gate);
     } catch {
@@ -902,10 +931,29 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
           ...(e.tag ? { importTag: e.tag } : {}),
         };
       parseHead(Buffer.from(JSON.stringify(e.head)));
+      const headTemp = ns.path(
+        ...loc.parts,
+        `${loc.name === "head.json" ? "head" : loc.name}.${t.id}.tmp`,
+      );
+      const firstImport = e.tag && t.target.kind === "record" && t.target.expectedRevision === null;
       if (!deleted && !e.object) {
         this.live(e, gate);
         const destination = ns.object(loc, e.head);
         if (await this.fs.exists(destination)) throw new Error("revision-mismatch");
+        if (firstImport) {
+          // Publish a complete candidate name before moving the only payload. Recovery
+          // authenticates it against the pending attempt and never installs it as head.
+          if (await this.fs.exists(headTemp)) {
+            if (!sameImportValue(parseHead(await this.fs.bytes(headTemp, 8192)), e.head))
+              throw new Error("corrupt");
+          } else {
+            const staging = ns.path("staging", t.id, "publication.json");
+            if (await this.fs.exists(staging)) await this.fs.unlink(staging);
+            await this.fs.at("head-write", () => ns.writeNew(staging, e.head));
+            await this.fs.atomicReplace(staging, headTemp);
+          }
+          await this.fs.syncDirectory(loc.directory);
+        }
         await this.fs.at("object-rename", async () => {
           await this.fs.atomicReplace(e.temp, destination);
           e.object = destination;
@@ -934,12 +982,10 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
           await this.fs.syncDirectory(loc.directory);
         });
       }
-      const headTemp = ns.path(
-        ...loc.parts,
-        `${loc.name === "head.json" ? "head" : loc.name}.${t.id}.tmp`,
-      );
-      if (await this.fs.exists(headTemp)) await this.fs.unlink(headTemp);
-      await this.fs.at("head-write", () => ns.writeNew(headTemp, e.head));
+      if (!firstImport) {
+        if (await this.fs.exists(headTemp)) await this.fs.unlink(headTemp);
+        await this.fs.at("head-write", () => ns.writeNew(headTemp, e.head));
+      }
       if (t.target.kind === "import") {
         const candidate = ns.path("staging", t.id, "publication.json");
         if (!(await this.fs.exists(candidate))) await ns.writeNew(candidate, e.head);
@@ -948,10 +994,38 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
         await this.fs.syncDirectory(ns.path("staging", t.id));
       }
       await this.fs.fault("before-publish");
+      if (e.tag) {
+        const binding = e.verifiedItem;
+        if (!binding) throw new Error("input-changed");
+        // Verify the installed payload itself before the new head can name it.
+        if (e.head.sha256 !== binding.item.mappedSha256) throw new Error("checksum-mismatch");
+        await ns.verify(loc, e.head);
+        if (firstImport && !sameImportValue(parseHead(await this.fs.bytes(headTemp, 8192)), e.head))
+          throw new Error("corrupt");
+        const journal = await ns.location({ kind: "import", key: e.tag.importId });
+        const head = await ns.head(journal);
+        if (!head || head.sha256 !== binding.digest) throw new Error("input-changed");
+        await ns.verify(journal, head);
+        if ((await this.journalRevision(binding.head, binding.object)) !== binding.revision)
+          throw new Error("input-changed");
+      }
       this.live(e, gate);
       this.cas(t, await ns.head(loc));
+      // Last observation of the original. External writers may change it after this check.
+      if (e.original) {
+        const { fs, path, stamp } = e.original;
+        if (
+          (await fs.pathStamp(path).catch((error) => {
+            if (error.code === "ENOENT" || error.message === "unsafe-path")
+              throw new Error("input-changed");
+            throw error;
+          })) !== stamp
+        )
+          throw new Error("input-changed");
+      }
       this.fs.profile.assertHeld();
-      if (!gate.dispatch(this.fs.now())) return { disposition: "not-committed" };
+      if (this.quarantined(t) || !gate.dispatch(this.fs.now()))
+        return { disposition: "not-committed" };
       e.state = "publishing";
       this.uncertain.set(t.owner.sourceKey, t.id);
       if (t.metadata.kind === "import")
@@ -999,6 +1073,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       }
       e.accounted = true;
     }
+    delete e.original;
     e.state = "committed";
     e.finished ??= this.fs.now();
     this.uncertain.delete(e.ticket.owner.sourceKey);
@@ -1111,7 +1186,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     const pin = e.retained && this.pins.get(e.retained.pin);
     if (pin && e.retained) await this.closePin(e.retained.pin, pin);
     if (e.fd) {
-      await this.fs.close(e.fd);
+      await this.fs.closeOwned(e.fd);
       e.fd = null;
     }
     // Release reservations only after bytes have been removed; an unlink failure keeps the slot.
@@ -1140,6 +1215,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     await this.fs.removeEmpty(e.ns.path("staging", e.ticket.id));
     this.quota.release(e.ticket.id);
     this.releaseOld(e);
+    delete e.original;
     e.state = "aborted";
     e.finished ??= this.fs.now();
     this.releaseTarget(e.ticket);
@@ -1259,43 +1335,79 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     return structuredClone(record);
   }
   async open(owner: PersistenceOwner, id: RecordId, revision: RecordRevision): Promise<Handle> {
+    return (await this.openRecord(owner, id, revision)).pin;
+  }
+  async openRecord(
+    owner: PersistenceOwner,
+    id: RecordId,
+    revision: RecordRevision,
+    schemaVersion?: number,
+  ) {
     const ns = await this.settled(owner);
     if ([...this.pins.values()].filter((p) => p.source === owner.sourceKey).length >= 4)
       throw new Error("quota");
     const loc = await ns.location({ kind: "record", id, expectedRevision: revision }),
       head = await ns.head(loc);
-    if (!liveRecord(head) || !head) throw new Error("not-found");
+    const record = liveRecord(head);
+    if (!record || !head) throw new Error("not-found");
     if (head.receipt.revision !== revision) throw new Error("revision-mismatch");
-    await ns.verify(loc, head);
+    if (schemaVersion !== undefined && record.schemaVersion !== schemaVersion)
+      throw new Error("schema-mismatch");
     const p = ns.object(loc, head),
       key = this.fs.name(p);
     this.quota.holdTemporary(owner.sourceKey, key, head.byteLength);
-    try {
-      const fd = await this.fs.open(p, "read"),
-        pin = randomUUID();
-      this.pins.set(pin, {
-        owner: ownerKey(owner),
-        source: owner.sourceKey,
-        ns,
-        path: p,
-        fd,
-        length: head.byteLength,
-        created: this.fs.now(),
-        used: this.fs.now(),
-        busy: Promise.resolve(),
-      });
-      return pin;
-    } catch (e) {
+    const fd = await this.fs.open(p, "read").catch((error) => {
       this.quota.releaseTemporary(owner.sourceKey, key);
-      throw e;
+      throw error;
+    });
+    const pin = randomUUID();
+    const opened: Pin = {
+      owner: ownerKey(owner),
+      source: owner.sourceKey,
+      ns,
+      path: p,
+      fd,
+      length: head.byteLength,
+      created: this.fs.now(),
+      used: this.fs.now(),
+      busy: ns.verifyFd(fd, head),
+    };
+    this.pins.set(pin, opened);
+    try {
+      await opened.busy;
+      if (opened.closing) throw new Error("stale");
+      return { pin, record };
+    } catch (error) {
+      await this.closePin(pin, opened);
+      throw error;
     }
   }
-  async read(
+  read(owner: PersistenceOwner, pin: Handle, offset: number, maxBytes: number) {
+    return this.readPin(owner, pin, offset, maxBytes, (fd, length) =>
+      length ? this.fs.read(fd, offset, length) : Promise.resolve(new Uint8Array()),
+    );
+  }
+  private encodedScratch?: Buffer;
+  readEncoded(owner: PersistenceOwner, pin: Handle, offset: number, maxBytes: number) {
+    return this.readPin(owner, pin, offset, maxBytes, async (fd, length) => {
+      if (!length) return { data: "", length: 0 };
+      const scratch = this.encodedScratch ?? Buffer.alloc(262144);
+      delete this.encodedScratch;
+      try {
+        const bytes = await this.fs.readInto(fd, offset, scratch.subarray(0, length));
+        return { data: scratch.toString("base64", 0, bytes.length), length: bytes.length };
+      } finally {
+        this.encodedScratch = scratch;
+      }
+    });
+  }
+  private async readPin<T extends { length: number }>(
     owner: PersistenceOwner,
     pin: Handle,
     offset: number,
     maxBytes: number,
-  ): Promise<Uint8Array> {
+    read: (fd: StoreFd, length: number) => Promise<T>,
+  ): Promise<T> {
     await this.prune();
     const p = this.pins.get(pin);
     if (!p || p.closing || p.owner !== ownerKey(owner)) throw new Error("stale");
@@ -1312,9 +1424,10 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       .catch(() => {})
       .then(async () => {
         p.used = this.fs.now();
-        return offset === p.length
-          ? new Uint8Array()
-          : this.fs.read(p.fd, offset, Math.min(maxBytes, p.length - offset));
+        const length = Math.min(maxBytes, p.length - offset);
+        const result = await read(p.fd, length);
+        if (length && !result.length) throw new Error("corrupt");
+        return result;
       });
     p.busy = work;
     return work;
@@ -1322,13 +1435,19 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
   private closePin(id: string, p: Pin): Promise<void> {
     return (p.closing ??= this.finishClosePin(id, p));
   }
+  quarantineClose(source: string, id: Handle): void {
+    if (!this.quarantinedSources.has(source)) this.quarantinedSources.set(source, id);
+  }
+  assertSourceAvailable(source: string): void {
+    if (this.quarantinedSources.has(source)) throw new Error("recovery-blocked");
+  }
   private async finishClosePin(id: string, p: Pin): Promise<void> {
     await p.busy.catch(() => {});
     await this.fs.close(p.fd).catch((cause) => {
       // Keep the descriptor, candidate and quota until worker teardown. Only
       // this source needs recovery; global pruning can continue past this pin.
       p.closeFailed = true;
-      if (!this.quarantinedSources.has(p.source)) this.quarantinedSources.set(p.source, id);
+      this.quarantineClose(p.source, id);
       throw new Error("recovery-blocked", { cause });
     });
     this.pins.delete(id);
@@ -1441,11 +1560,18 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     e.busy = true;
     try {
       const parsed = importTagSchema.parse(tag);
-      const saved = await this.loadImport(ticket.owner, parsed.importId);
+      const loc = await e.ns.location({ kind: "import", key: parsed.importId });
+      const head = await e.ns.head(loc);
+      if (!head) throw new Error("input-changed");
+      const object = e.ns.object(loc, head);
+      const revision = await this.journalRevision(loc.head, object);
+      if (!sameImportValue(await e.ns.head(loc), head)) throw new Error("input-changed");
+      const saved = await this.readImport(e.ns, loc, head, parsed.importId);
       const item = saved?.plan.items.find((i) => i.key === parsed.itemKey);
       const attempt = saved?.items.find((i) => i.key === parsed.itemKey)?.publicationTicket;
       if (
         !item ||
+        (await this.journalRevision(loc.head, object)) !== revision ||
         !attempt ||
         !sameImportValue(attempt, ticket) ||
         !sameImportAttempt(item.ticket, ticket) ||
@@ -1459,6 +1585,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       });
       await this.fs.syncDirectory(e.ns.path("staging", ticket.id));
       e.tag = parsed;
+      e.verifiedItem = { item, head: loc.head, object, revision, digest: head.sha256 };
     } finally {
       e.busy = false;
     }
@@ -1656,7 +1783,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
           live.gate.shorten(this.fs.now(), this.fs.now());
         if ((await this.abort(old)) === "unknown") throw new Error("publish-uncertain");
       }
-      const outcome = await this.reconcileImport(item.ticket);
+      const outcome = await this.reconcileImport(item.ticket, id);
       if (outcome.disposition === "committed") {
         if (!old || !outcome.receipt) throw new Error("unverified-receipt");
         await this.recordImportOne(owner, id, {
@@ -1702,16 +1829,47 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       return structuredClone(attempt);
     });
   }
-  async loadImport(owner: PersistenceOwner, id: string): ReturnType<DurableImportPort["load"]> {
-    if (Buffer.byteLength(id) > 128 || !id.startsWith("import/")) throw new Error("size-limit");
-    const bytes = await this.auxiliary(owner, "import", id);
-    if (!bytes) return null;
+  // A single small decoded journal may be reused by concurrent integrity checks. A
+  // cache hit still hashes the live object. Returned graphs belong to their caller.
+  private lastImport?: {
+    digest: string;
+    value: NonNullable<Awaited<ReturnType<DurableImportPort["load"]>>>;
+  };
+  private async readImport(ns: Namespace, loc: Location, head: DiskHead, id: string) {
+    if (head.target.kind !== "import" || head.target.key !== id || !head.object)
+      throw new Error("corrupt");
+    const cached = this.lastImport;
+    if (
+      cached?.digest === head.sha256 &&
+      cached.value.plan.id === id &&
+      cached.value.plan.targetSourceKey === ns.sourceKey
+    ) {
+      await ns.verify(loc, head);
+      return structuredClone(cached.value);
+    }
+    const bytes = await this.fs.bytes(ns.object(loc, head), 2097152);
+    if (
+      head.byteLength !== bytes.length ||
+      createHash("sha256").update(bytes).digest("hex") !== head.sha256
+    )
+      throw new Error("corrupt");
     const raw = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
     assertDiskFormat(raw);
-    const saved = importDocumentSchema.parse(raw);
-    if (saved.plan.id !== id || saved.plan.targetSourceKey !== owner.sourceKey)
-      throw new Error("input-changed");
-    return { plan: saved.plan, items: saved.items, complete: saved.complete };
+    const { plan, items, complete } = importDocumentSchema.parse(raw);
+    if (plan.id !== id || plan.targetSourceKey !== ns.sourceKey) throw new Error("input-changed");
+    const value = { plan, items, complete };
+    if (bytes.length <= 131072)
+      this.lastImport = { digest: head.sha256, value: structuredClone(value) };
+    return value;
+  }
+  async loadImport(owner: PersistenceOwner, id: string): ReturnType<DurableImportPort["load"]> {
+    if (Buffer.byteLength(id) > 128 || !id.startsWith("import/")) throw new Error("size-limit");
+    this.fs.profile.assertHeld();
+    if (owner.hostEpoch !== this.fs.profile.hostEpoch) throw new Error("stale");
+    const ns = await this.ns(owner.sourceKey),
+      loc = await ns.location({ kind: "import", key: id }),
+      head = await ns.head(loc);
+    return head ? this.readImport(ns, loc, head, id) : null;
   }
   private async planImportOne(owner: PersistenceOwner, plan: ImportPlan): Promise<void> {
     importPlanSchema.parse(plan);
@@ -1781,11 +1939,14 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     items[index] = evidence;
     await this.writeDocument(owner, "import", id, { formatVersion: 1, ...saved, items });
   }
-  async reconcileImport(ticket: PublicationTicket): ReturnType<PersistenceEnginePort["reconcile"]> {
+  async reconcileImport(
+    ticket: PublicationTicket,
+    knownPlan?: string,
+  ): ReturnType<PersistenceEnginePort["reconcile"]> {
     publicationTicketSchema.parse(ticket);
     this.fs.profile.assertHeld();
     try {
-      return await this.reconcileImportEvidence(ticket);
+      return await this.reconcileImportEvidence(ticket, knownPlan);
     } catch (error) {
       if (error instanceof Error && ["stale", "not-primary"].includes(error.message)) throw error;
       return { disposition: "unknown" };
@@ -1793,6 +1954,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
   }
   private async reconcileImportEvidence(
     ticket: PublicationTicket,
+    knownPlan?: string,
   ): ReturnType<PersistenceEnginePort["reconcile"]> {
     const ns = await this.ns(ticket.owner.sourceKey);
     if (ticket.target.kind === "import") {
@@ -1861,19 +2023,28 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
         ? { disposition: "not-committed" }
         : { disposition: "unknown" };
     }
-    for (const loc of await ns.locations()) {
+    // A live tag identifies the journal without walking every unrelated record. A
+    // reopened worker still discovers historical tickets from the durable namespace.
+    if (!knownPlan) {
+      for (const entry of this.entries.values()) {
+        if (
+          entry.verifiedItem &&
+          (sameImportValue(entry.ticket, ticket) ||
+            sameImportValue(entry.verifiedItem.item.ticket, ticket))
+        ) {
+          knownPlan = entry.verifiedItem.item.tag.importId;
+          break;
+        }
+      }
+    }
+    const locations = knownPlan
+      ? [await ns.location({ kind: "import", key: knownPlan })]
+      : await ns.locations();
+    for (const loc of locations) {
       const head = await ns.head(loc);
       if (head?.target.kind !== "import" || !head.target.key.startsWith("import/")) continue;
-      await ns.verify(loc, head);
-      const saved = importDocumentSchema.parse(
-        JSON.parse(
-          new TextDecoder("utf-8", { fatal: true }).decode(
-            await this.fs.bytes(ns.object(loc, head), 2097152),
-          ),
-        ),
-      );
-      if (saved.plan.targetSourceKey !== ns.sourceKey || saved.plan.id !== head.target.key)
-        throw new Error("input-changed");
+      if (knownPlan && head.target.key !== knownPlan) throw new Error("input-changed");
+      const saved = await this.readImport(ns, loc, head, head.target.key);
       const index = saved.plan.items.findIndex(
         (item, i) =>
           sameImportValue(item.ticket, ticket) ||
@@ -2234,12 +2405,6 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
         if ((await this.reconcile(t)).disposition !== "committed") unknown.push(t.id);
       } else if (e.state !== "committed") incomplete.push(t.id);
     }
-    // A failed descriptor close remains an independent cleanup obligation even
-    // when main has already received a publication receipt for the record.
-    const restartBlocker = this.quarantinedSources.get(barrier.scope.owner.sourceKey);
-    if (restartBlocker)
-      for (const [id, pin] of this.pins)
-        if (pin.closeFailed && pin.source === barrier.scope.owner.sourceKey) unknown.push(id);
     const ns = await this.ns(barrier.scope.owner.sourceKey);
     for (const loc of await ns.locations()) {
       const record = liveRecord(await ns.head(loc));
@@ -2249,6 +2414,13 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       )
         incomplete.push(record.id);
     }
+    // A failed descriptor close remains an independent cleanup obligation even
+    // when main has already received a publication receipt for the record.
+    const restartBlocker = this.quarantinedSources.get(barrier.scope.owner.sourceKey);
+    if (restartBlocker)
+      for (const [id, pin] of this.pins)
+        if (pin.closeFailed && pin.source === barrier.scope.owner.sourceKey) unknown.push(id);
+    if (restartBlocker && !unknown.includes(restartBlocker)) unknown.push(restartBlocker);
     return {
       ...(restartBlocker ? { restartBlocker } : {}),
       state: unknown.length ? "unknown" : incomplete.length ? "failed" : "saved",
@@ -2283,9 +2455,25 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       ? saved.settlement
       : null;
   }
-  taggedImport(ticket: PublicationTicket, tag: ImportTag): boolean {
-    const e = this.entries.get(ticket.id);
-    return !!e && sameImportValue(e.ticket, ticket) && sameImportValue(e.tag, tag);
+  private async journalRevision(head: StorePath, object: StorePath) {
+    return (await this.fs.pathStamp(head)) + ":" + (await this.fs.pathStamp(object));
+  }
+  bindImportSource(ticket: PublicationTicket, source: SourceIdentity) {
+    const e = this.entry(ticket);
+    if (!e.verifiedItem || e.received || e.state !== "receiving") throw new Error("stale");
+    e.original = { fs: source.fs, path: source.path, stamp: source.stamp };
+  }
+  async verifiedImportItem(ticket: PublicationTicket) {
+    const e = this.entry(ticket);
+    this.live(e);
+    const binding = e.verifiedItem;
+    if (!binding || e.state !== "receiving" || !sameImportValue(e.tag, binding.item.tag))
+      throw new Error("input-changed");
+    if ((await this.journalRevision(binding.head, binding.object)) !== binding.revision) {
+      delete e.verifiedItem;
+      throw new Error("input-changed");
+    }
+    return binding.item;
   }
   unresolvedTicket(id: string): boolean {
     const e = this.entries.get(id);
@@ -2310,12 +2498,19 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     for (const e of this.entries.values())
       if (e.state !== "committed" && e.state !== "aborted")
         e.gate.shorten(this.fs.now(), this.fs.now());
-    for (const [id, pin] of this.pins) await this.closePin(id, pin);
+    const failures: unknown[] = [];
+    for (const [id, pin] of this.pins) await this.closePin(id, pin).catch((e) => failures.push(e));
     for (const e of this.entries.values())
       if (e.fd && !e.busy) {
-        await this.fs.close(e.fd);
-        e.fd = null;
+        try {
+          await this.fs.closeOwned(e.fd);
+          e.fd = null;
+        } catch (error) {
+          failures.push(error);
+        }
       }
+    if (failures.length) throw failures[0];
+    if (this.failedDescriptorCloses.size) throw new Error("recovery-blocked");
     if (
       this.failedReserves.size ||
       [...this.entries.values()].some((e) => e.busy || e.state === "unknown")

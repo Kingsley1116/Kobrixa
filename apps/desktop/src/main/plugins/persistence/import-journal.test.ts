@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { finishImport } from "./import-journal.js";
+import { finishImport, importPlanDigest, loadImportItem } from "./import-journal.js";
 import type {
   DurableImportPort,
   ImportPlan,
@@ -137,6 +137,27 @@ describe("durable completion", () => {
     await rm(directory, { recursive: true, force: true });
   });
   completionCases(owner, plan, typedImports);
+  it("binds a projected journal row to the whole plan and observes the latest admission", async () => {
+    const saved = await typedImports.load(owner, id);
+    const digest = importPlanDigest(saved!.plan);
+    const read = () => loadImportItem(typedImports, owner, id, "one", digest);
+    expect((await read()).prior.publicationTicket).toBeNull();
+    const attempt = await typedImports.admit(owner, id, "one");
+    expect(await read()).toMatchObject({
+      prior: { publicationTicket: attempt },
+      completedItems: 0,
+      complete: false,
+    });
+    await expect(
+      loadImportItem(
+        typedImports,
+        owner,
+        id,
+        "one",
+        importPlanDigest({ ...saved!.plan, mappingVersion: 2 }),
+      ),
+    ).rejects.toThrow("input-changed");
+  });
   it("stores admission before reserve and rejects attempts installed through record", async () => {
     const original = await typedImports.load(owner, id);
     expect(original?.items[0]?.publicationTicket).toBeNull();

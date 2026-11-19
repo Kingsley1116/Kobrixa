@@ -4,11 +4,14 @@ import {
   symlink,
   link,
   writeFile,
+  truncate,
   lstat,
   readFile,
+  readdir,
   rename,
   realpath,
 } from "node:fs/promises";
+import type { Node } from "typescript";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -52,6 +55,18 @@ it("rejects fabricated paths, symlinks, hardlinks and traversal", async () => {
   await expect(fs.open(fs.path("alias"), "read")).rejects.toThrow("unsafe-path");
   await link(outside, path.join(fs.root, "hard"));
   await expect(fs.open(fs.path("hard"), "read")).rejects.toThrow("unsafe-path");
+});
+it("rejects a source truncated after its first chunk", async () => {
+  const { fs } = await setup();
+  const p = fs.path("original");
+  await writeFile(fs.name(p), Buffer.alloc(262145));
+  const read = fs.readInto.bind(fs);
+  fs.readInto = async (fd, offset, buffer) => {
+    const bytes = await read(fd, offset, buffer);
+    if (!offset) await truncate(fs.name(p), bytes.length);
+    return bytes;
+  };
+  await expect(fs.sourceBytes(p, 8388608)).rejects.toThrow("corrupt");
 });
 it("loops short writes, rejects zero progress and never unlinks before replace", async () => {
   const { fs } = await setup(),
@@ -245,3 +260,77 @@ for (const code of ["ENOTSUP", "EIO"] as const) {
     }
   });
 }
+
+it("keeps raw descriptor acquisition and release inside their reviewed owners", async () => {
+  const ts = await import("typescript");
+  const directory = import.meta.dirname;
+  const sites: string[] = [];
+  // RPC/MessagePort and service methods with the same spelling.
+  const unrelated = new Set([
+    "Namespace.open",
+    "backend.reads.open",
+    "backend.reads.close",
+    "deps.backend.reads.close",
+    "deps.read.open",
+    "deps.read.close",
+    "deps.checkpoint.open",
+    "records.close",
+    "channel?.port1.close",
+    "channel?.port2.close",
+    "faultPort?.close",
+    "port.close",
+  ]);
+  for (const name of await readdir(directory, { recursive: true })) {
+    if (!name.endsWith(".ts") || name.endsWith(".test.ts")) continue;
+    const source = ts.createSourceFile(
+      name,
+      await readFile(path.join(directory, name), "utf8"),
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    function visit(node: Node, method: string) {
+      if ((ts.isMethodDeclaration(node) || ts.isFunctionDeclaration(node)) && node.name)
+        method = node.name.getText(source);
+      if (ts.isCallExpression(node)) {
+        const call = node.expression.getText(source).replace(/\s+/g, "");
+        if (
+          /(?:^|\.)(open|close|opendir)$/.test(call) &&
+          !unrelated.has(call) &&
+          !(name === "settings-service.ts" && call === "close")
+        )
+          sites.push(name + " " + method + " " + call);
+      }
+      ts.forEachChild(node, (child) => visit(child, method));
+    }
+    visit(source, "");
+  }
+  expect(sites.sort()).toEqual(
+    [
+      // Public retained/read pins predate streaming. BL1 High 2a tracks the pre-registration gap.
+      "atomic-store.ts retainSealed this.fs.open",
+      "atomic-store.ts openRecord this.fs.open",
+      "atomic-store.ts finishClosePin this.fs.close",
+      // Adapter implementation, including the raw open's validation failure path.
+      "filesystem.ts open opendir",
+      "filesystem.ts open open",
+      "filesystem.ts open open",
+      "filesystem.ts open this.close",
+      "filesystem.ts openOwned this.open",
+      "filesystem.ts closeOwned this.close",
+      "filesystem.ts close (this.directories.get(token)??this.fd(token)).close",
+      // Root bootstrap and native export have separate lifetimes.
+      "filesystem.ts createNodePersistenceFs open",
+      "filesystem.ts createNodePersistenceFs fd.close",
+      "filesystem.ts begin open",
+      "filesystem.ts commit open",
+      "filesystem.ts commit dir.close",
+      "filesystem.ts commit j.fd.close",
+      "filesystem.ts reconcile open",
+      "filesystem.ts reconcile open",
+      "filesystem.ts reconcile dir.close",
+      "filesystem.ts reconcile j.fd.close",
+      "filesystem.ts reconcile current.close",
+      "filesystem.ts abort j.fd.close",
+    ].sort(),
+  );
+});

@@ -51,6 +51,10 @@ function checkDescriptor(
       throw new Error("schema-mismatch");
   }
 }
+function checkedJournal(saved: NonNullable<Awaited<ReturnType<DurableImportPort["load"]>>>) {
+  const { plan, items, complete } = importDocumentSchema.parse({ formatVersion: 1, ...saved });
+  return { plan, items, complete };
+}
 export async function loadImport(
   imports: DurableImportPort,
   owner: PersistenceOwner,
@@ -58,9 +62,9 @@ export async function loadImport(
 ): ReturnType<DurableImportPort["load"]> {
   const saved = await imports.load(owner, importIdFor(descriptor.id, descriptor.targetSourceKey));
   if (!saved) return null;
-  const checked = importDocumentSchema.parse({ formatVersion: 1, ...saved });
+  const checked = checkedJournal(saved);
   checkDescriptor(checked.plan, owner, descriptor, checked.complete);
-  return structuredClone({ plan: checked.plan, items: checked.items, complete: checked.complete });
+  return checked;
 }
 export async function planImport(
   imports: DurableImportPort,
@@ -83,7 +87,43 @@ export async function planImport(
     complete: false,
   };
   importDocumentSchema.parse(initial);
-  await imports.plan(owner, structuredClone(checked));
+  await imports.plan(owner, checked);
+}
+export function importPlanDigest(plan: ImportPlan) {
+  return createHash("sha256").update(JSON.stringify(plan)).digest("hex");
+}
+// A real worker has already parsed the complete document and verified its disk digest.
+export function projectImportItem(
+  saved: Awaited<ReturnType<DurableImportPort["load"]>>,
+  key: string,
+  planDigest: string | null,
+) {
+  if (!saved) throw new Error("missing-import-plan");
+  if (planDigest !== null && importPlanDigest(saved.plan) !== planDigest)
+    throw new Error("input-changed");
+  const item = saved.plan.items.find((item) => item.key === key);
+  const prior = saved.items.find((item) => item.key === key);
+  if (!item || !prior) throw new Error("input-changed");
+  let completedItems = 0;
+  for (const row of saved.items)
+    if (row.state === "committed" || row.state === "skipped") completedItems++;
+  return { ticket: item.ticket, prior, complete: saved.complete, completedItems };
+}
+export async function loadImportItem(
+  imports: DurableImportPort,
+  owner: PersistenceOwner,
+  id: string,
+  key: string,
+  planDigest: string | null,
+) {
+  if (imports.loadItem) return imports.loadItem(owner, id, key, planDigest);
+  const saved = await imports.load(owner, id);
+  if (!saved) throw new Error("missing-import-plan");
+  return projectImportItem(
+    importDocumentSchema.parse({ formatVersion: 1, ...saved }),
+    key,
+    planDigest,
+  );
 }
 export async function recordImport(
   imports: DurableImportPort,
@@ -92,30 +132,23 @@ export async function recordImport(
   evidence: ImportItemEvidence,
 ): Promise<void> {
   const next = importItemEvidenceSchema.parse(evidence),
-    saved = await imports.load(owner, id);
-  if (!saved) throw new Error("missing-import-plan");
-  importDocumentSchema.parse({ formatVersion: 1, ...saved });
-  const item = saved.plan.items.find((item) => item.key === next.key),
-    prior = saved.items.find((item) => item.key === next.key);
-  if (!item || !prior || !sameImportValue(prior.publicationTicket, next.publicationTicket))
+    { prior, ticket, complete } = await loadImportItem(imports, owner, id, next.key, null);
+  if (!sameImportValue(prior.publicationTicket, next.publicationTicket))
     throw new Error("input-changed");
   if (prior.state === "committed" || prior.state === "skipped") {
     if (!sameImportValue(prior, next)) throw new Error("input-changed");
     return;
   }
-  if (saved.complete) throw new Error("stale");
+  if (complete) throw new Error("stale");
   if (next.state === "committed") {
-    const verified = await imports.reconcile(item.ticket);
+    const verified = await imports.reconcile(ticket);
     if (verified.disposition !== "committed" || !sameImportValue(verified.receipt, next.receipt))
       throw new Error("unverified-receipt");
   }
   // AtomicStore.recordImport revokes/settles the actual attempt before admitting a trusted skip.
-  if (
-    next.state === "skipped" &&
-    (await imports.reconcile(item.ticket)).disposition !== "not-committed"
-  )
+  if (next.state === "skipped" && (await imports.reconcile(ticket)).disposition !== "not-committed")
     throw new Error("publish-uncertain");
-  await imports.record(owner, id, structuredClone(next));
+  await imports.record(owner, id, next);
 }
 export async function reconcileImport(
   imports: DurableImportPort,
@@ -124,9 +157,9 @@ export async function reconcileImport(
 ): ReturnType<DurableImportPort["load"]> {
   let saved = await imports.load(owner, plan.id);
   if (!saved) throw new Error("missing-import-plan");
-  importDocumentSchema.parse({ formatVersion: 1, ...saved });
+  saved = checkedJournal(saved);
   if (!sameImportValue(saved.plan, plan)) throw new Error("input-changed");
-  if (saved.complete) return structuredClone(saved);
+  if (saved.complete) return saved;
   for (const item of saved.plan.items) {
     const prior = saved.items.find((e) => e.key === item.key)!;
     if (prior.state === "committed" || prior.state === "skipped") continue;
@@ -144,8 +177,7 @@ export async function reconcileImport(
   }
   saved = await imports.load(owner, plan.id);
   if (!saved) throw new Error("missing-import-plan");
-  importDocumentSchema.parse({ formatVersion: 1, ...saved });
-  return structuredClone(saved);
+  return checkedJournal(saved);
 }
 export async function publishImportDocument(
   backend: PersistenceBackend,

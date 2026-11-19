@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, it } from "vitest";
@@ -84,6 +84,12 @@ it("inventories and revalidates actual schemaVersion files through WorkerSources
       expect(mapped.kind).toBe("record");
       await sources.releaseMapped(mapped.mapped);
     }
+    const replacement = path.join(root, "replacement.json");
+    await writeFile(replacement, bytes(recording));
+    await rename(replacement, path.join(folders[0]!, `${id}.json`));
+    await expect(sources.map(sensorLabImportDescriptors[0]!.id, `${id}.json`)).rejects.toThrow(
+      "input-changed",
+    );
     await writeFile(
       path.join(folders[0]!, `${id}.json`),
       bytes({ ...recording, id: randomUUID() }),
