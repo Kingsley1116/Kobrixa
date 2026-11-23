@@ -141,7 +141,7 @@ jobs:
       - name: Request SignPath signing (manual approval, up to 60 minutes)
         id: signpath
         if: matrix.platform == 'win32' && fromJSON(needs.validate.outputs.signing).windows
-        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3
+        uses: signpath/github-action-submit-signing-request@4a84eb4ad763290f059275786f2deed97c2c672b # v3
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
@@ -184,7 +184,7 @@ jobs:
           retention-days: 1
       - name: Sign final Windows installer
         if: matrix.platform == 'win32' && fromJSON(needs.validate.outputs.signing).windows
-        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3
+        uses: signpath/github-action-submit-signing-request@4a84eb4ad763290f059275786f2deed97c2c672b # v3
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
