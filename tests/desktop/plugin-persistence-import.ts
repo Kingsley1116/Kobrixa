@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { createReadStream, appendFileSync } from "node:fs";
-import { readdir, readFile, writeFile, rename } from "node:fs/promises";
+import {
+  createReadStream,
+  appendFileSync,
+  writeFileSync,
+  openSync,
+  closeSync,
+  writeSync,
+} from "node:fs";
+import { open, readdir, readFile, writeFile, rename } from "node:fs/promises";
 import path from "node:path";
 import type { PluginProcess } from "@kobrixa/plugin-runtime";
 import type { PersistenceBackend } from "../../apps/desktop/src/main/plugins/persistence/engine-port.js";
@@ -235,83 +242,143 @@ export async function originalFiles(root: string) {
   assert.ok(rows.every((r) => r.bytes === 8388608));
   return rows;
 }
-export function importObserver(file: string) {
-  const rows: Wire[] = [];
-  const processes: Wire[] = [];
+function importRowDecoder() {
   const pending = new Map<string, Wire>();
   const reads = new Map<
     string,
     { hash: ReturnType<typeof createHash>; offset: number; id: string }
   >();
+  return (row: Wire, text: string) => {
+    const m = JSON.parse(text),
+      { direction } = row;
+    row.message = m;
+    const rpcId = JSON.stringify([row.owner.sourceKey, row.owner.processEpoch, m.id]);
+    if (direction === "plugin" && m.method?.startsWith("storage/")) {
+      assert.ok(pending.size < 32);
+      pending.set(rpcId, structuredClone(m));
+    }
+    if (direction === "host" && m.id !== undefined && pending.has(rpcId)) {
+      const request = pending.get(rpcId)!;
+      pending.delete(rpcId);
+      row.requestId = request.id;
+      row.method = request.method;
+      row.params = request.params;
+      // Preserve JSON-RPC's business envelope. Failed business results remain
+      // on the wire and are forwarded unchanged; only successful values decode.
+      const value = m.result?.ok === true ? m.result.value : undefined;
+      if (value && request.method === "storage/openRead")
+        reads.set(value.read, {
+          hash: createHash("sha256"),
+          offset: 0,
+          id: value.record.id,
+        });
+      if (value && request.method === "storage/readChunk") {
+        const bytes = Buffer.from(value.data, "base64"),
+          r = reads.get(request.params.read);
+        assert.ok(r);
+        assert.equal(request.params.offset, r.offset);
+        assert.equal(value.offset, r.offset);
+        assert.equal(value.nextOffset, r.offset + bytes.length);
+        r.hash.update(bytes);
+        r.offset += bytes.length;
+        row.chunk = {
+          offset: request.params.offset,
+          bytes: bytes.length,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+          recordId: r.id,
+          eof: value.eof,
+        };
+        if (value.eof) row.chunk.recordSha256 = r.hash.digest("hex");
+        row.message = { ...m, result: { ...m.result, value: { ...value, data: undefined } } };
+      }
+      if (value && request.method === "storage/closeRead") reads.delete(request.params.read);
+    }
+    return row;
+  };
+}
+// Avoid a second frame-sized UTF-8 allocation in main for each base64 reply.
+// encodeInto consumes complete code points; a short file write must be retried.
+function frameSpool(file: string) {
+  const encoder = new TextEncoder();
+  let scratch: Buffer | undefined;
+  return (text: string) => {
+    scratch ??= Buffer.allocUnsafe(32 * 1024);
+    const fd = openSync(file, "a");
+    let length = 0;
+    try {
+      for (let offset = 0; offset < text.length;) {
+        const { read, written } = encoder.encodeInto(text.slice(offset), scratch);
+        for (let start = 0; start < written;) {
+          const bytes = writeSync(fd, scratch, start, written - start);
+          assert.ok(bytes > 0);
+          start += bytes;
+        }
+        offset += read;
+        length += written;
+      }
+    } finally {
+      closeSync(fd);
+    }
+    return length;
+  };
+}
+export function importObserver(file: string, rssClock = false) {
+  const rows: Wire[] = [];
+  const processes: Wire[] = [];
+  const decode = rssClock ? undefined : importRowDecoder();
+  const writeFrame = rssClock ? frameSpool(file + ".frames") : undefined;
+  const bootOwners: ResourceOwner[] = [];
+  if (rssClock)
+    for (const suffix of [".frames", ".index", ".processes", ".receipt", ".ipc"])
+      writeFileSync(file + suffix, "", { flag: "wx" });
+  const processEvent = (row: Wire) => {
+    if (rssClock) appendFileSync(file + ".processes", JSON.stringify(row) + "\n");
+    else processes.push(row);
+  };
   let sequence = 0;
   return {
     rows,
+    get count() {
+      return sequence;
+    },
     processes,
+    bootOwners,
+    saveEvidence(key: string, value: unknown) {
+      assert.ok(rssClock);
+      appendFileSync(file + ".receipt", JSON.stringify({ key, value }) + "\n");
+    },
     output(owner: ResourceOwner, line: string) {
       const index = line.indexOf("IMPORT_BOOT:");
       if (index < 0) return;
       const boot = JSON.parse(line.slice(index + 12));
       assert.ok(Number.isSafeInteger(boot.pid) && boot.pid > 0);
       assert.equal(boot.pluginId, owner.pluginId);
-      processes.push({ kind: "boot", owner: structuredClone(owner), ...boot, at: Date.now() });
+      if (rssClock) bootOwners.push(structuredClone(owner));
+      processEvent({ kind: "boot", owner: structuredClone(owner), ...boot, at: Date.now() });
     },
     attach(owner: ResourceOwner, child: PluginProcess): PluginProcess {
       const observe = (direction: string, text: string) => {
-        const m = JSON.parse(text);
+        assert.ok(sequence < 10000, "bounded per-phase trace");
         const row: Wire = {
           sequence: ++sequence,
           at: Date.now(),
-          owner: structuredClone(owner),
+          ...(rssClock ? { monotonicMs: Number(process.hrtime.bigint()) / 1e6 } : {}),
+          owner: rssClock ? owner : structuredClone(owner),
           direction,
-          message: m,
         };
-        if (direction === "plugin" && m.method?.startsWith("storage/")) {
-          assert.ok(pending.size < 32);
-          pending.set(String(m.id), structuredClone(m));
+        if (writeFrame) {
+          const length = writeFrame(text);
+          appendFileSync(file + ".index", JSON.stringify({ ...row, length }) + "\n");
+          return;
         }
-        if (direction === "host" && m.id !== undefined && pending.has(String(m.id))) {
-          const request = pending.get(String(m.id))!;
-          pending.delete(String(m.id));
-          row.requestId = request.id;
-          row.method = request.method;
-          row.params = request.params;
-          // Preserve JSON-RPC's business envelope. Failed business results remain
-          // on the wire and are forwarded unchanged; only successful values decode.
-          const value = m.result?.ok === true ? m.result.value : undefined;
-          if (value && request.method === "storage/openRead")
-            reads.set(value.read, {
-              hash: createHash("sha256"),
-              offset: 0,
-              id: value.record.id,
-            });
-          if (value && request.method === "storage/readChunk") {
-            const bytes = Buffer.from(value.data, "base64"),
-              r = reads.get(request.params.read);
-            assert.ok(r);
-            assert.equal(request.params.offset, r.offset);
-            assert.equal(value.offset, r.offset);
-            assert.equal(value.nextOffset, r.offset + bytes.length);
-            r.hash.update(bytes);
-            r.offset += bytes.length;
-            row.chunk = {
-              offset: request.params.offset,
-              bytes: bytes.length,
-              sha256: createHash("sha256").update(bytes).digest("hex"),
-              recordId: r.id,
-              eof: value.eof,
-            };
-            if (value.eof) row.chunk.recordSha256 = r.hash.digest("hex");
-            row.message = { ...m, result: { ...m.result, value: { ...value, data: undefined } } };
-          }
-          if (value && request.method === "storage/closeRead") reads.delete(request.params.read);
-        }
+        decode!(row, text);
         assert.ok(rows.length < 10000, "bounded per-phase trace");
         appendFileSync(file, JSON.stringify(row) + "\n");
         rows.push(row);
       };
       const off = child.onMessage((text) => observe("plugin", text));
       child.onExit((exit) => {
-        processes.push({ kind: "exit", owner: structuredClone(owner), exit, at: Date.now() });
+        processEvent({ kind: "exit", owner: structuredClone(owner), exit, at: Date.now() });
         off();
       });
       return {
@@ -323,6 +390,90 @@ export function importObserver(file: string) {
       };
     },
   };
+}
+// Scope the probe to the synthetic import. Forward the original call and count
+// only successful committed-item writes, never an admission or a failed write.
+export async function withImportCheckpoints<T>(
+  imports: PersistenceBackend["imports"],
+  source: string,
+  checkpoint: (label: string, count: number) => void,
+  run: () => Promise<T>,
+) {
+  const record = imports.record;
+  let count = 0;
+  imports.record = async (owner, plan, evidence) => {
+    await record.call(imports, owner, plan, evidence);
+    if (owner.sourceKey === source && evidence.state === "committed" && ++count % 10 === 0)
+      checkpoint("import-committed", count);
+  };
+  try {
+    return await run();
+  } finally {
+    imports.record = record;
+  }
+}
+
+export async function readImportReceipt(file: string) {
+  const lines = async (suffix: string): Promise<Wire[]> => {
+    const raw = await readFile(file + suffix, "utf8");
+    assert.ok(raw.endsWith("\n"));
+    return raw
+      .trimEnd()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+  };
+  const receipt: Wire = { processes: await lines(".processes") };
+  const fields = [
+    "deviceCapture",
+    "deviceSettings",
+    "capture",
+    "preferences",
+    "progress",
+    "quotas",
+    "deviceOriginal",
+  ];
+  for (const { key, value } of await lines(".receipt")) {
+    assert.ok(fields.includes(key));
+    assert.ok(!Object.hasOwn(receipt, key) && value !== undefined);
+    receipt[key] = value;
+  }
+  assert.ok(
+    fields.every((key) => Object.hasOwn(receipt, key)),
+    "Incomplete import receipt spool",
+  );
+  return receipt;
+}
+
+/** Controller-only. Read one original RPC at a time after the measured PID exits. */
+export async function reconstructImportWire(file: string, count: number) {
+  assert.ok(Number.isSafeInteger(count) && count > 0 && count <= 10000);
+  const index = (await readFile(file + ".index", "utf8")).trimEnd().split("\n");
+  assert.equal(index.length, count);
+  const frames = await open(file + ".frames", "r"),
+    decode = importRowDecoder();
+  const rows: Wire[] = [];
+  try {
+    let offset = 0;
+    for (const line of index) {
+      const { length, ...row } = JSON.parse(line);
+      assert.equal(row.sequence, rows.length + 1);
+      assert.ok(Number.isSafeInteger(length) && length > 0 && length <= 8 * 1024 * 1024);
+      const bytes = Buffer.allocUnsafe(length);
+      let done = 0;
+      while (done < length) {
+        const read = await frames.read(bytes, done, length - done, offset + done);
+        assert.ok(read.bytesRead > 0, "truncated RPC");
+        done += read.bytesRead;
+      }
+      rows.push(decode(row, bytes.toString("utf8")));
+      offset += length;
+    }
+    assert.equal((await frames.stat()).size, offset);
+    await writeFile(file, rows.map((row) => JSON.stringify(row) + "\n").join(""), { flag: "wx" });
+    return rows;
+  } finally {
+    await frames.close();
+  }
 }
 /** Observe the coordinator's own admitted owner; historical tickets are not read authority. */
 export async function observeImportJournal<T>(

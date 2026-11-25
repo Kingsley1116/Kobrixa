@@ -17,10 +17,10 @@ import {
   verifyPublicNegative,
   PUBLIC_NEGATIVE_PROBES,
 } from "./plugin-persistence-public-interop.ts";
-import { assertPreferencePhase } from "./import-preferences.ts";
+import { assertPreferenceStorage, assertPreferencePhase } from "./import-preferences.ts";
 import { SEMANTIC_IMPORT_BOUNDARIES, assertSemanticPhase } from "./import-boundaries.ts";
 import { assertPressurePartial } from "./plugin-persistence-pressure.ts";
-import { assertImportPhase } from "./plugin-persistence-import.ts";
+import { assertImportStorage, assertImportPhase } from "./plugin-persistence-import.ts";
 import { assertOptionalEvidence, assertOptionalPhase } from "./plugin-persistence-optional-off.ts";
 import { assertRendererLossEvidence } from "./plugin-persistence-renderer-loss.ts";
 export { assertRendererLossEvidence };
@@ -351,12 +351,19 @@ export function statistics(samples) {
   const sorted = [...samples].sort((a, b) => a - b);
   return { count: 30, p50: sorted[14], p95: sorted[28], max: sorted[29] };
 }
+// Archived separate-process contract. Current acceptance enters via verifyCurrentLoad.
 export function verifyLoad(report) {
+  verifyLoadWorkload(report);
+  integer(report.load.peakMainAddedRss, "peakMainAddedRss");
+  integer(report.load.peakWorkerAddedRss, "peakWorkerAddedRss");
+  assert.ok(report.load.peakMainAddedRss <= 33554432);
+  assert.ok(report.load.peakWorkerAddedRss <= 67108864);
+  assert.equal(report.load.rssMethod, "separate-process-baseline-and-peak");
+}
+export function verifyLoadWorkload(report) {
   realReport(report);
   const load = report.load;
   for (const key of [
-    "peakMainAddedRss",
-    "peakWorkerAddedRss",
     "pendingJobs",
     "pendingSerializedBytes",
     "sourcePendingSerializedBytes",
@@ -399,9 +406,6 @@ export function verifyLoad(report) {
   assert.ok(statistics(load.mainSyncSegmentMs).max <= 16);
   assert.ok(statistics(load.commitMs).max <= 10000);
   assert.ok(statistics(load.flushMs).max <= 10000);
-  assert.ok(load.peakMainAddedRss <= 33554432);
-  assert.ok(load.peakWorkerAddedRss <= 67108864);
-  assert.equal(load.rssMethod, "separate-process-baseline-and-peak");
   assert.equal(load.coldWarmSeparated, true);
   assert.ok(load.pendingJobs <= 32 && load.pendingSerializedBytes <= 8388608);
   assert.ok(load.sourcePendingSerializedBytes <= 1048576);
@@ -663,7 +667,54 @@ export function assertDisconnectEvidence(evidence) {
   });
 }
 export function verifyRunReceipt(r, expected = {}) {
-  if (r.case === "import-restart" && r.evidence?.importPreferences)
+  if (r.case === "rss-import") {
+    const o = r.evidence.rssImport;
+    assert.equal(o.pid, r.pid);
+    assert.equal(o.hostEpoch, r.hostEpoch);
+    assert.equal(o.progress.state, "complete");
+    assert.equal(o.preferences.progress.state, "complete");
+    assert.equal(o.deviceSettings.state, "ready");
+    assert.equal(o.deviceSettings.origin, "committed");
+    assert.ok(["accepted", "reconciled"].includes(o.deviceCapture.result.state));
+    const expected = {
+      skipUnchangedAssets: false,
+      usbAutoReconnect: false,
+      usbRetryInterval: 2000,
+      usbRetryLimit: 5,
+      wifiConnectTimeout: 10000,
+      wifiHandshakeTimeout: 5000,
+    };
+    assert.deepEqual(o.deviceOriginal, expected);
+    assert.deepEqual(o.deviceSettings.values, {
+      ...expected,
+      connectionMode: "wifi",
+      rememberWifiAddress: true,
+      lastWifiAddress: "192.0.2.9",
+    });
+    assert.deepEqual(
+      Object.fromEntries(o.deviceCapture.snapshot.entries.map((e) => [e.key, e.raw])),
+      {
+        "kobrixa.connectionMode": "wifi",
+        "kobrixa.rememberWifiAddress": "true",
+        "kobrixa.lastWifiAddress": "192.0.2.9",
+      },
+    );
+    assert.equal(o.originals.length, 50);
+    assert.equal(new Set(o.originals.map((item) => item.sha256)).size, 50);
+    assert.ok(o.originals.every((item) => item.bytes === 8388608));
+    assert.deepEqual(o.baseline, o.final);
+    assert.ok(Object.values(o.final).every((n) => n === 0));
+    const partition = (sourceKey) => ({
+      ...o,
+      wire: o.wire.filter((r) => r.owner.sourceKey === sourceKey),
+      processes: o.processes.filter((r) => r.owner.sourceKey === sourceKey),
+    });
+    assertImportStorage(partition("builtin:test.synthetic"), 50);
+    const doc = o.preferences.documents.find((r) => r.document.raw)?.document;
+    assert.ok(doc);
+    assert.deepEqual(doc.raw, o.capture.snapshot);
+    assertPreferenceStorage(partition("builtin:test.preferences"), doc, o.preferences.journal);
+  } else if (r.case === "import-restart" && r.evidence?.importPreferences)
     assertPreferencePhase(r.evidence.importPreferences);
   else if (r.case === "import-restart" && r.evidence?.importSlice) {
     if (SEMANTIC_IMPORT_BOUNDARIES.includes(r.evidence.importSlice.slice))

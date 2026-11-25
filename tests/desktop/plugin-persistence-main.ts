@@ -1,3 +1,6 @@
+import { startPrimary } from "../../apps/desktop/src/main/plugins/profile-writer-lock.js";
+import { runRssPressure } from "./b2-process-rss-pressure.js";
+import { startRss } from "./b2-process-rss-observer.js";
 import { storageTree } from "./plugin-persistence-negative-storage.js";
 import { producePublicationKill } from "./plugin-persistence-kill.js";
 import {
@@ -37,6 +40,7 @@ import { observeWorkQueue } from "./plugin-persistence-pressure-observer.js";
 import { WorkQueue } from "../../apps/desktop/src/main/plugins/persistence/quota.js";
 import {
   importObserver,
+  withImportCheckpoints,
   produceImportSlice,
   assertImportPhase,
   observeImportRestart,
@@ -74,6 +78,7 @@ export type FoundationCase =
   | "unknown-publication"
   | "all-optional-off"
   | "action-replay"
+  | "rss-import"
   | "import-restart"
   | "storage-ui-pressure"
   | "compatibility"
@@ -89,6 +94,7 @@ export type CaseEvidence = {
   publicInterop?: CompatibilityWire;
   negative?: PublicNegativeEvidence;
   pressure?: PressureRow;
+  rssImport?: Wire;
   importSlice?: CompatibilityWire;
   compatibility?: CompatibilityWire;
   optionalPhase?: OptionalWire;
@@ -979,6 +985,7 @@ let factoryAttempted = false;
 /** Reference panels are not part of the zero-panel pressure baseline. */
 export function foundationBuiltinRoles(caseId: string): readonly string[] {
   if (["public-interop", "negative-matrix"].includes(caseId)) return [];
+  if (caseId === "rss-import") return ["import"];
   if (caseId === "storage-ui-pressure") return ["pressure-a", "pressure-b"];
   return ["recording", "settings", ...(caseId === "import-restart" ? ["import"] : [])];
 }
@@ -1023,6 +1030,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
       "renderer-loss",
       "all-optional-off",
       "compatibility",
+      "rss-import",
       "import-restart",
       "storage-ui-pressure",
       "public-interop",
@@ -1044,105 +1052,110 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
     config.profile,
     "Controller must set profile before factory",
   );
-  const { startPrimary } =
-    await import("../../apps/desktop/src/main/plugins/profile-writer-lock.js");
-  const { AuthorityContexts } =
-    await import("../../apps/desktop/src/main/device-broker/authority-context.js");
-  const { createJournal } = await import("../../apps/desktop/src/main/device-broker/journal.js");
-  const { createJournalFilesystem } =
-    await import("../../apps/desktop/src/main/device-broker/journal-filesystem.js");
-  const { createDesktopFoundation } =
-    await import("../../apps/desktop/src/main/device-broker/lifecycle-coordinator.js");
-  const { createFakeDeviceProvider } =
-    await import("../../apps/desktop/src/main/device-broker/fake-provider.js");
-  const { createCoreActionLedger, CoreRecovery } =
-    await import("../../apps/desktop/src/main/plugins/core-recovery.js");
-  const {
-    composeDesktopMain,
-    desktopUi,
-    desktopLifecycle,
-    trustedDeviceActions,
-    desktopFoundationTestHandles,
-    desktopDeviceAccess,
-    createWindowRetirementHandler,
-  } = await import("../../apps/desktop/src/main/plugins/controller.js");
-  const { registerCoreRecoveryIpc, registerSettingsIpc170 } =
-    await import("../../apps/desktop/src/main/plugins/ipc.js");
-  const { registerPersistenceWindow170 } = await import("../../apps/desktop/src/main/ipc.js");
-  const { BUILTIN_PLUGIN_SOURCES } = await import("../../apps/desktop/src/main/plugins/builtin.js");
-  const { validateBuiltinLeaf } =
-    await import("../../apps/desktop/src/main/plugins/builtin-launch.js");
-  const { readSource } = await import("@kobrixa/plugin-runtime");
-  const {
-    registerUiIpc,
-    registerUiEventIpc,
-    diagnosticsFor: bridgeDiagnostics,
-  } = await import("../../apps/desktop/src/main/plugins/ui-bridge.js");
-  const { diagnosticsFor: stateDiagnostics } =
-    await import("../../packages/plugin-runtime/src/ui-state.js");
-  const { diagnosticsFor: runtimeDiagnostics } =
-    await import("../../packages/plugin-runtime/src/ui-lifecycle.js");
-  const { diagnosticsFor: workerDiagnostics, persistenceWorkerCount } =
-    await import("../../apps/desktop/src/main/plugins/persistence/worker.js");
-  const { produceContention, registerContentionCheckpoint } =
-    await import("./plugin-persistence-contention.js");
-  const { produceDisconnectRetry } = await import("./plugin-persistence-disconnect.js");
-  const { produceSuspendWake } = await import("./plugin-persistence-suspend.js");
-  const { produceSealedTtl } = await import("./plugin-persistence-sealed-ttl.js");
-  const { produceUnknownPublication } = await import("./plugin-persistence-unknown.js");
-  const { produceActionReplay, nativeActionControl } =
-    await import("./plugin-persistence-action-replay.js");
-  const { produceRendererLoss } = await import("./plugin-persistence-renderer-loss.js");
-  const { createDesktopLauncher } =
-    await import("../../apps/desktop/src/main/plugins/launchers.js");
-  const optional =
-    config.case === "all-optional-off"
-      ? optionalStartup(
-          config,
-          (await import("../../apps/desktop/src/main/plugins/user-persistence-actions.js"))
-            .UserPersistenceActions.prototype,
-        )
-      : undefined;
-  const { syntheticImportDescriptor, syntheticPreferencesImportDescriptor } =
-    await import("../../apps/desktop/src/main/plugins/persistence/import-fixtures.js");
-  const imported = config.case === "import-restart" ? importObserver(config.importWire) : undefined;
-  const preferenceImport =
-    !!imported && (PREFERENCE_CUTS as readonly string[]).includes(config.importTrial);
-  const semanticImport =
-    !!imported && (SEMANTIC_IMPORT_BOUNDARIES as readonly string[]).includes(config.importTrial);
-  const importWriters = imported
-    ? [syntheticImportDescriptor, syntheticPreferencesImportDescriptor].map((descriptor, index) =>
-        createImportWriter(
-          descriptor.targetSourceKey,
-          `${config.profile}/legacy-writer-${index}.txt`,
-        ),
-      )
-    : [];
-  for (const [index] of importWriters.entries()) {
-    const destination = `${config.profile}/legacy-writer-${index}.txt`;
-    if (config.importPhase === "kill")
-      await writeFile(destination, "original legacy writer sentinel", { flag: "wx" });
-    else assert.equal(await readFile(destination, "utf8"), "original legacy writer sentinel");
-  }
-  const importWitness = importWriters[0];
-  const interop = ["public-interop", "negative-matrix"].includes(config.case)
-    ? publicInteropObserver()
-    : undefined;
-  const compatibility = config.case === "compatibility" ? compatibilityObserver() : undefined;
-  const pressure =
-    config.case === "storage-ui-pressure"
-      ? pressureTransport((row) =>
-          appendFileSync(config.pressure.rpcTrace, JSON.stringify(row) + "\n"),
-        )
-      : undefined;
-  const pressureQueue = pressure ? observeWorkQueue(WorkQueue) : undefined;
-  let pressureFolder = 0;
-  let optionalPolicy: OptionalWire | undefined;
   let window: InstanceType<typeof BrowserWindow> | undefined;
   let fixture: FoundationFixture | undefined;
   const primary = startPrimary(
     app,
     async (profile: ProfileWriterLock) => {
+      const { AuthorityContexts } =
+        await import("../../apps/desktop/src/main/device-broker/authority-context.js");
+      const { createJournal } =
+        await import("../../apps/desktop/src/main/device-broker/journal.js");
+      const { createJournalFilesystem } =
+        await import("../../apps/desktop/src/main/device-broker/journal-filesystem.js");
+      const { createDesktopFoundation } =
+        await import("../../apps/desktop/src/main/device-broker/lifecycle-coordinator.js");
+      const { createFakeDeviceProvider } =
+        await import("../../apps/desktop/src/main/device-broker/fake-provider.js");
+      const { createCoreActionLedger, CoreRecovery } =
+        await import("../../apps/desktop/src/main/plugins/core-recovery.js");
+      const {
+        composeDesktopMain,
+        desktopUi,
+        desktopLifecycle,
+        trustedDeviceActions,
+        desktopFoundationTestHandles,
+        desktopDeviceSettings,
+        desktopDeviceAccess,
+        createWindowRetirementHandler,
+      } = await import("../../apps/desktop/src/main/plugins/controller.js");
+      const { registerCoreRecoveryIpc, registerSettingsIpc170 } =
+        await import("../../apps/desktop/src/main/plugins/ipc.js");
+      const { registerPersistenceWindow170 } = await import("../../apps/desktop/src/main/ipc.js");
+      const { BUILTIN_PLUGIN_SOURCES } =
+        await import("../../apps/desktop/src/main/plugins/builtin.js");
+      const { validateBuiltinLeaf } =
+        await import("../../apps/desktop/src/main/plugins/builtin-launch.js");
+      const { readSource } = await import("@kobrixa/plugin-runtime");
+      const {
+        registerUiIpc,
+        registerUiEventIpc,
+        diagnosticsFor: bridgeDiagnostics,
+      } = await import("../../apps/desktop/src/main/plugins/ui-bridge.js");
+      const { diagnosticsFor: stateDiagnostics } =
+        await import("../../packages/plugin-runtime/src/ui-state.js");
+      const { diagnosticsFor: runtimeDiagnostics } =
+        await import("../../packages/plugin-runtime/src/ui-lifecycle.js");
+      const { diagnosticsFor: workerDiagnostics, persistenceWorkerCount } =
+        await import("../../apps/desktop/src/main/plugins/persistence/worker.js");
+      const { produceContention, registerContentionCheckpoint } =
+        await import("./plugin-persistence-contention.js");
+      const { produceDisconnectRetry } = await import("./plugin-persistence-disconnect.js");
+      const { produceSuspendWake } = await import("./plugin-persistence-suspend.js");
+      const { produceSealedTtl } = await import("./plugin-persistence-sealed-ttl.js");
+      const { produceUnknownPublication } = await import("./plugin-persistence-unknown.js");
+      const { produceActionReplay, nativeActionControl } =
+        await import("./plugin-persistence-action-replay.js");
+      const { produceRendererLoss } = await import("./plugin-persistence-renderer-loss.js");
+      const { createDesktopLauncher } =
+        await import("../../apps/desktop/src/main/plugins/launchers.js");
+      const optional =
+        config.case === "all-optional-off"
+          ? optionalStartup(
+              config,
+              (await import("../../apps/desktop/src/main/plugins/user-persistence-actions.js"))
+                .UserPersistenceActions.prototype,
+            )
+          : undefined;
+      const { syntheticImportDescriptor, syntheticPreferencesImportDescriptor } =
+        await import("../../apps/desktop/src/main/plugins/persistence/import-fixtures.js");
+      const imported = ["rss-import", "import-restart"].includes(config.case)
+        ? importObserver(config.importWire, config.case === "rss-import")
+        : undefined;
+      const preferenceImport =
+        !!imported && (PREFERENCE_CUTS as readonly string[]).includes(config.importTrial);
+      const semanticImport =
+        !!imported &&
+        (SEMANTIC_IMPORT_BOUNDARIES as readonly string[]).includes(config.importTrial);
+      const importWriters = imported
+        ? [syntheticImportDescriptor, syntheticPreferencesImportDescriptor].map(
+            (descriptor, index) =>
+              createImportWriter(
+                descriptor.targetSourceKey,
+                `${config.profile}/legacy-writer-${index}.txt`,
+              ),
+          )
+        : [];
+      for (const [index] of importWriters.entries()) {
+        const destination = `${config.profile}/legacy-writer-${index}.txt`;
+        if (config.importPhase === "kill" || config.case === "rss-import")
+          await writeFile(destination, "original legacy writer sentinel", { flag: "wx" });
+        else assert.equal(await readFile(destination, "utf8"), "original legacy writer sentinel");
+      }
+      const importWitness = importWriters[0];
+      const interop = ["public-interop", "negative-matrix"].includes(config.case)
+        ? publicInteropObserver()
+        : undefined;
+      const compatibility = config.case === "compatibility" ? compatibilityObserver() : undefined;
+      const pressure =
+        config.case === "storage-ui-pressure"
+          ? pressureTransport((row) =>
+              appendFileSync(config.pressure.rpcTrace, JSON.stringify(row) + "\n"),
+            )
+          : undefined;
+      const pressureQueue = pressure ? observeWorkQueue(WorkQueue) : undefined;
+      let pressureFolder = 0;
+      let optionalPolicy: OptionalWire | undefined;
       const now = () => performance.now(),
         userData = app.getPath("userData");
       const win = new BrowserWindow({
@@ -1158,7 +1171,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
       });
       window = win;
       const second =
-        config.case === "contention"
+        config.case === "contention" || (config.rss && config.case === "storage-ui-pressure")
           ? new BrowserWindow({
               show: false,
               width: 1000,
@@ -1337,6 +1350,45 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         }
 
         const builtins = [...BUILTIN_PLUGIN_SOURCES];
+        let deviceWriter;
+        if (config.case === "rss-import") {
+          const { loadDevicePreferences } =
+            await import("../../apps/desktop/src/main/device/preferences.js");
+          const legacy = await loadDevicePreferences(userData);
+          legacy.freezeAdmission();
+          deviceWriter = {
+            sourceKey: "builtin:kobrixa.device-ev3",
+            freezeAdmission: () => legacy.freezeAdmission(),
+            settled: () => legacy.settleMigration(),
+          };
+          const { filePluginStateStore } =
+            await import("../../apps/desktop/src/main/plugins/state-store.js");
+          const store = filePluginStateStore(userData);
+          await store.load();
+          await store.update((state) => ({ ...state, disabled: ["builtin:kobrixa.device-ev3"] }));
+          const index = builtins.findIndex(
+            (s) =>
+              s.kind === "builtin" && (s.manifest as { id: string }).id === "kobrixa.device-ev3",
+          );
+          assert.ok(index >= 0);
+          const payload = await validateBuiltinLeaf(config.devicePayload, "kobrixa.device-ev3");
+          builtins[index] = {
+            kind: "builtin",
+            policy: "optional",
+            manifest: payload.manifest,
+            resources: payload.resources,
+            launch: {
+              packageRoot: payload.root,
+              pluginId: "kobrixa.device-ev3",
+              sourceKey: "builtin:kobrixa.device-ev3",
+              policy: "optional",
+              runtime: "node",
+              manifest: "kobrixa-plugin.json",
+              resourceIndex: "resource-index.json",
+              entry: "main.cjs",
+            },
+          };
+        }
         for (const role of [
           ...foundationBuiltinRoles(config.case),
           ...(imported ? ["preferences"] : []),
@@ -1424,6 +1476,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             }
         }
         const compositionInput: DesktopMainCompositionInput = {
+          ...(deviceWriter ? { legacyDeviceWriter: deviceWriter } : {}),
           createFoundation: acceptanceFoundation,
           foundationOptions: {
             profile,
@@ -1485,7 +1538,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                   owner: plugin.channelOwner,
                   sourceKey: plugin.sourceKey,
                 });
-                if (plugin.channelOwner)
+                if (config.case !== "rss-import" && plugin.channelOwner)
                   rendererLaunches.push({ owner: structuredClone(plugin.channelOwner), at: now() });
                 const row =
                   compatibility && plugin.id.startsWith("acceptance.compat-") && plugin.channelOwner
@@ -1498,6 +1551,12 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                         plugin.id.endsWith("python") ? "stdio" : "message-port",
                       )
                     : undefined;
+                if (pressure && plugin.id.startsWith("acceptance.ui-pressure-")) {
+                  assert.ok(
+                    !pressure.owners.some((owner) => owner.pluginId === plugin.id),
+                    "Pressure command attempted to launch a replacement for " + plugin.id,
+                  );
+                }
                 const child = await launch(plugin);
                 if (interopRow) return interop!.attach(interopRow, child);
                 if (
@@ -1580,12 +1639,16 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
         });
         assert.ok(composition);
         for (const writer of importWriters) writer.composed();
-        if (imported)
-          config.importWriterProofs = await Promise.all(importWriters.map((w) => w.attempt()));
+        if (imported) {
+          const proofs = await Promise.all(importWriters.map((w) => w.attempt()));
+          if (config.case === "rss-import")
+            await writeFile(config.importWire + ".writers", JSON.stringify(proofs), { flag: "wx" });
+          else config.importWriterProofs = proofs;
+        }
         const live = composition,
           handles = desktopFoundationTestHandles(live),
           ui = desktopUi(live);
-        if (!optional || config.optionalPhase === "seed") {
+        if (config.case !== "rss-import" && (!optional || config.optionalPhase === "seed")) {
           assert.ok(fake, "Missing actual provider callback");
           assert.ok(provider, "Missing actual provider instance");
         }
@@ -1653,8 +1716,16 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           assert.equal(handles.profile, profile);
           // No document is loaded on restart: the real host/worker and public plugin
           // channel operate without a renderer capture or private fixture handlers.
-          const capturePhase = ["kill", "capture"].includes(config.importPhase);
+          const capturePhase =
+            config.case === "rss-import" || ["kill", "capture"].includes(config.importPhase);
           const preferenceIpc: Wire[] = [];
+          let ipcCount = 0;
+          const observeIpc = (row: Wire) => {
+            if (config.case === "rss-import")
+              appendFileSync(config.importWire + ".ipc", JSON.stringify(row) + "\n");
+            else preferenceIpc.push(row);
+            ipcCount++;
+          };
           let retirePreferences = () => {};
           if (capturePhase) {
             const facets = live.plugins.persistence170!;
@@ -1683,11 +1754,11 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                     senderId: event.sender.id,
                     frame: `${event.senderFrame?.processId}:${event.senderFrame?.routingId}`,
                   };
-                  preferenceIpc.push({ ...identity, stage: "request", at: Date.now() });
-                  assert.ok(preferenceIpc.length <= 64);
+                  observeIpc({ ...identity, stage: "request", at: Date.now() });
+                  assert.ok(ipcCount <= 64);
                   try {
                     const result = await Reflect.apply(action, undefined, [event, ...args]);
-                    preferenceIpc.push({
+                    observeIpc({
                       ...identity,
                       stage: "reply",
                       at: Date.now(),
@@ -1695,7 +1766,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                     });
                     return result;
                   } catch (error) {
-                    preferenceIpc.push({
+                    observeIpc({
                       ...identity,
                       stage: "error",
                       at: Date.now(),
@@ -1711,8 +1782,12 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
               await win.webContents.executeJavaScript("typeof window.importPreferences?.capture"),
               "function",
             );
-            if (config.importPhase === "kill")
+            if (config.importPhase === "kill" || config.case === "rss-import")
               await win.webContents.executeJavaScript("window.importPreferences.seed()");
+            if (config.case === "rss-import")
+              await win.webContents.executeJavaScript(
+                `for(const [key,value] of Object.entries({connectionMode:"wifi",rememberWifiAddress:"true",lastWifiAddress:"192.0.2.9"}))localStorage.setItem("kobrixa."+key,value)`,
+              );
           }
           let closed: Promise<void> | undefined;
           fixture = {
@@ -1740,10 +1815,88 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
               filesystem: config.filesystem,
               node: process.versions.node,
               electron: process.versions.electron ?? "",
-              memoryMethod: "not-measured-partial-import",
+              memoryMethod: config.rss ? "b2-process-rss/v1" : "not-measured-partial-import",
               warmCold: "cold",
             },
             async runCase(id) {
+              if (id === "rss-import") {
+                assert.equal(persistenceWorkerCount(handles.backend), 1);
+                const counters = () => workerDiagnostics(handles.backend).snapshot();
+                const baseline = counters();
+                const clock = await startRss(config.rss);
+                assert.ok((await live.plugins.setEnabled("builtin:kobrixa.device-ev3", true)).ok);
+                imported.saveEvidence(
+                  "deviceCapture",
+                  await win.webContents.executeJavaScript(`(async()=>{
+                  const api=window.kobrixa.plugins.legacyPreferences;
+                  const c=await api.challenge("kobrixa.device-preferences");
+                  const snapshot={scope:c.scope,nonce:c.nonce,entries:c.keys.map(key=>({key,raw:localStorage.getItem(key)}))};
+                  return {snapshot,result:await api.submit(snapshot)};
+                })()`),
+                );
+                const deviceSettings = await desktopDeviceSettings(live).refresh();
+                assert.equal(deviceSettings.state, "ready");
+                imported.saveEvidence("deviceSettings", deviceSettings);
+                imported.saveEvidence(
+                  "capture",
+                  await win.webContents.executeJavaScript("window.importPreferences.capture()"),
+                );
+                imported.saveEvidence("preferences", await readPreferenceState(live));
+                const progress = await withImportCheckpoints(
+                  handles.backend.imports,
+                  syntheticImportDescriptor.targetSourceKey,
+                  clock.checkpoint,
+                  () =>
+                    live.plugins.persistence170!.imports.run(
+                      syntheticImportDescriptor,
+                      new AbortController().signal,
+                    ),
+                );
+                assert.equal(progress.state, "complete");
+                imported.saveEvidence("progress", progress);
+                for (let i = 0; i < 50; i++) {
+                  assert.ok((await live.plugins.execute("test.synthetic.inspect")).ok);
+                  if ((i + 1) % 10 === 0) clock.checkpoint("public-readback", i + 1);
+                }
+                assert.ok((await live.plugins.execute("test.preferences.inspect")).ok);
+                await clock.cleanup();
+                const quotas = [];
+                const owners = [deviceSettings.namespace.owner, ...imported.bootOwners];
+                for (const owner of owners) {
+                  const quota = await handles.backend.evidence.quota(owner);
+                  assert.ok(quota.ok);
+                  quotas.push({ source: owner.sourceKey, quota: quota.value });
+                }
+                imported.saveEvidence("quotas", quotas);
+                for (const key of ["builtin:test.synthetic", "builtin:test.preferences"]) {
+                  assert.ok((await live.plugins.setEnabled(key, false)).ok);
+                  assert.ok((await live.plugins.setEnabled(key, true)).ok);
+                }
+                assert.ok((await live.plugins.setEnabled("builtin:kobrixa.device-ev3", false)).ok);
+                const deviceOriginal = JSON.parse(
+                  await readFile(path.join(config.profile, "device-settings.json"), "utf8"),
+                );
+                assert.deepEqual(deviceOriginal, config.deviceOriginal);
+                imported.saveEvidence("deviceOriginal", deviceOriginal);
+                const final = counters();
+                assert.deepEqual(final, baseline);
+                assert.equal(persistenceWorkerCount(handles.backend), 1);
+                await clock.idle();
+                return {
+                  checks: {},
+                  events: [],
+                  samples: {},
+                  rssImport: {
+                    pid: process.pid,
+                    hostEpoch: handles.profile.hostEpoch,
+                    get wireCount() {
+                      return imported.count;
+                    },
+                    baseline,
+                    final,
+                  },
+                };
+              }
               assert.equal(id, "import-restart");
               const restart = observeImportRestart(handles.backend);
               if (!preferenceImport && config.importPhase === "kill") {
@@ -2272,6 +2425,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                 if (win.webContents.debugger.isAttached()) win.webContents.debugger.detach();
                 win.destroy();
               } finally {
+                if (second && !second.isDestroyed()) second.destroy();
                 clearInterval(timer);
                 observer.restore();
                 flush();
@@ -2302,7 +2456,9 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
               filesystem: config.filesystem,
               node: process.versions.node,
               electron: process.versions.electron ?? "",
-              memoryMethod: "shared-process-rss-and-isolate-statistics; separate-RSS-unavailable",
+              memoryMethod: config.rss
+                ? "b2-process-rss/v1"
+                : "shared-process-rss-and-isolate-statistics; separate-RSS-unavailable",
               warmCold: "cold-and-warm",
             },
             close,
@@ -2330,9 +2486,49 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
               let sessionId: string | undefined,
                 channelIds: string[] = [];
               const principal = () => authority.core(win.webContents.id, "monitor");
-              const uiReport = await guardPressure(
+              let stagesReleased = false;
+              const drive = config.rss
+                ? (input: Parameters<typeof runUiLoad>[0]) =>
+                    runRssPressure(
+                      input,
+                      config,
+                      snapshots,
+                      () => command(ids[0]!, "settings"),
+                      second!,
+                      (pluginId) => {
+                        const stage = p.steps
+                          .at(-1)
+                          .phases.restoredStaging.find(
+                            (row: PressureRow) => row.pluginId === pluginId,
+                          );
+                        assert.ok(stage, "Missing final stage for " + pluginId);
+                        const owner = pressure.owners.find((owner) => owner.pluginId === pluginId);
+                        assert.ok(owner);
+                        const exits = pressure
+                          .snapshot()
+                          .exits.filter((row) => row.owner.pluginId === pluginId);
+                        assert.deepEqual(
+                          exits.map((row) => row.owner),
+                          [owner],
+                          "Original pressure process exit required",
+                        );
+                        const write = stage.result.write;
+                        assert.equal(typeof write, "string");
+                        const aborts = pressure.outputs.filter(
+                          (row) =>
+                            row.pluginId === pluginId &&
+                            row.operation === "abort" &&
+                            row.result.write === write,
+                        );
+                        assert.equal(aborts.length, 1);
+                        assert.equal(aborts[0]!.result.disposition, "aborted");
+                        return write;
+                      },
+                    )
+                : runUiLoad;
+              const uiReport = await guardPressure<PressureRow>(
                 () =>
-                  runUiLoad({
+                  drive({
                     window: win,
                     composition: live,
                     runtime: runtimeDiagnostics(handles.runtime),
@@ -2450,6 +2646,8 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                       async finish() {
                         p.finishedAt = performance.now();
                         p.finishCleanup = await finishPressure(both, p.steps.at(-1).phases);
+                        stagesReleased = true;
+                        if (config.rss) p.finalQuotas = await both("quota");
                         if (sessionId)
                           accepted(
                             await live.foundation.broker.request(
@@ -2462,7 +2660,9 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
                       },
                     },
                   }),
-                () => both("cleanup"),
+                async () => {
+                  if (!stagesReleased) await both("cleanup");
+                },
               );
               p.ui = uiReport;
               p.sdkTimings = pressure.outputs.filter(
@@ -2475,6 +2675,7 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
             async finishObservation(result) {
               assert.equal(result, evidence);
               const p = result.pressure!;
+              if (config.rss) p.ui.final = snapshots().map((counters, id) => ({ id, counters }));
               const bytes = await readFile(config.pressure.workerTrace);
               const rows = bytes
                 .toString("utf8")
@@ -2753,7 +2954,10 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
           assert.equal(input.host.recovery.snapshot().items.length, 0);
         };
         const producers: Record<
-          Exclude<FoundationCase, "public-interop" | "negative-matrix" | "publication-kill">,
+          Exclude<
+            FoundationCase,
+            "public-interop" | "negative-matrix" | "publication-kill" | "rss-import"
+          >,
           () => Promise<CaseEvidence>
         > = {
           retirement: () => produceRetirement(input),
@@ -3175,11 +3379,12 @@ export async function createFoundationFixture(): Promise<FoundationFixture> {
               assert.notEqual(id, "public-interop");
               assert.notEqual(id, "negative-matrix");
               assert.notEqual(id, "publication-kill");
+              assert.notEqual(id, "rss-import");
               evidence =
                 await producers[
                   id as Exclude<
                     FoundationCase,
-                    "public-interop" | "negative-matrix" | "publication-kill"
+                    "public-interop" | "negative-matrix" | "publication-kill" | "rss-import"
                   >
                 ]();
             } catch (error) {

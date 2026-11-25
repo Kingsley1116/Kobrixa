@@ -27,8 +27,8 @@ export async function buildFoundationRenderer(directory) {
   );
   const sourceHashes = new Map();
   async function recordSource(source) {
-    if (source.includes("/node_modules/") || source.startsWith("\0")) return;
-    const file = source.split("?", 1)[0];
+    if (source.replaceAll("\\", "/").includes("/node_modules/") || source.startsWith("\0")) return;
+    const file = path.resolve(source.split("?", 1)[0]);
     assert.ok(file.startsWith(root), `Renderer source escaped checkout: ${source}`);
     sourceHashes.set(path.relative(root, file), digest(await readFile(file)));
   }
@@ -58,7 +58,7 @@ export async function buildFoundationRenderer(directory) {
         name: "persistence-production-renderer-shell",
         async generateBundle() {
           for (const input of this.getModuleIds())
-            if (input.startsWith("/")) await recordSource(input);
+            if (path.isAbsolute(input)) await recordSource(input);
         },
         transformIndexHtml: {
           order: "pre",
@@ -66,7 +66,7 @@ export async function buildFoundationRenderer(directory) {
             assert.ok(html.includes('src="/src/renderer/index.tsx"'));
             return html.replace(
               'src="/src/renderer/index.tsx"',
-              `src="/@fs/${path.join(root, "tests/desktop/plugin-persistence-renderer.tsx")}"`,
+              `src="/@fs/${path.join(root, "tests/desktop/plugin-persistence-renderer.tsx").replaceAll("\\", "/")}"`,
             );
           },
         },
@@ -78,7 +78,7 @@ export async function buildFoundationRenderer(directory) {
     "preload.cjs",
     ...(await readdir(path.join(directory, "renderer"), { recursive: true }))
       .filter((file) => /\.(html|js|css)$/.test(file))
-      .map((file) => `renderer/${file}`),
+      .map((file) => `renderer/${file.split(path.sep).join("/")}`),
   ].sort();
   const sha256 = Object.fromEntries(
     await Promise.all(
@@ -115,8 +115,10 @@ export async function readFoundationRenderer(receipt) {
     ),
   );
   for (const [relative, hash] of Object.entries(artifact.sha256)) {
-    assert.ok(!path.isAbsolute(relative) && path.normalize(relative) === relative);
-    assert.ok(!relative.split(path.sep).includes(".."));
+    assert.ok(
+      !path.isAbsolute(relative) && path.normalize(relative).split(path.sep).join("/") === relative,
+    );
+    assert.ok(!relative.split("/").includes(".."));
     assert.match(hash, /^[a-f0-9]{64}$/);
     assert.equal(
       digest(await readFile(path.join(artifact.root, relative))),

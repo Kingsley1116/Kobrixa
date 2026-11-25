@@ -73,6 +73,9 @@ import {
   assertImportPhase,
   assertImportSlice,
   importObserver,
+  reconstructImportWire,
+  withImportCheckpoints,
+  readImportReceipt,
   IMPORT_SLICE,
   assertImportRestartReport,
   joinImportRestart,
@@ -215,75 +218,143 @@ test("slice aggregate rejects missing trial/reopens and fake death", () => {
   }));
   assert.throws(() => assertImportSlice(reports));
 });
-test("slice observer hashes actual response bytes and discards payload from memory/disk", async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), "import-observer-"));
-  try {
-    let receive;
-    const sent = [];
-    const child = {
-      onMessage(fn) {
-        receive = fn;
-        return () => {};
-      },
-      onExit() {
-        return () => {};
-      },
-      send(text) {
-        sent.push(text);
-      },
-    };
-    const file = path.join(dir, "trace.jsonl"),
-      observer = importObserver(file),
-      owner = {
-        sourceKey: "builtin:test.synthetic",
-        pluginId: "test.synthetic",
-        generation: 1,
-        hostEpoch: randomUUID(),
-        processEpoch: randomUUID(),
-      };
-    const wrapped = observer.attach(owner, child);
-    receive(
-      JSON.stringify({
-        id: 1,
-        method: "storage/openRead",
-        params: { id: "record", expectedRevision: "r", schemaVersion: 1 },
-      }),
-    );
-    wrapped.send(
-      JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        result: { ok: true, value: { read: "read", record: { id: "record" }, expiresAt: 120000 } },
-      }),
-    );
-    receive(
-      JSON.stringify({
-        id: 2,
-        method: "storage/readChunk",
-        params: { read: "read", offset: 0, maxBytes: 262144 },
-      }),
-    );
-    const bytes = Buffer.from("actual public response bytes"),
-      message = JSON.stringify({
-        jsonrpc: "2.0",
-        id: 2,
-        result: {
-          ok: true,
-          value: { offset: 0, data: bytes.toString("base64"), nextOffset: bytes.length, eof: true },
+for (const external of [false, true])
+  test("import observer verifies actual response bytes; external=" + external, async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "import-observer-"));
+    try {
+      let receive;
+      const sent = [];
+      const child = {
+        onMessage(fn) {
+          receive = fn;
+          return () => {};
         },
-      });
-    wrapped.send(message);
-    assert.equal(sent.at(-1), message);
-    const row = observer.rows.at(-1);
-    assert.equal(row.chunk.sha256, createHash("sha256").update(bytes).digest("hex"));
-    assert.equal(row.chunk.recordSha256, row.chunk.sha256);
-    assert.equal(row.message.result.ok, true);
-    assert.equal(row.message.result.value.nextOffset, bytes.length);
-    assert.equal(row.message.result.value.data, undefined);
-    assert.equal((await readFile(file, "utf8")).includes(bytes.toString("base64")), false);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+        onExit() {
+          return () => {};
+        },
+        send(text) {
+          sent.push(text);
+        },
+      };
+      const file = path.join(dir, "trace.jsonl"),
+        observer = importObserver(file, external),
+        owner = {
+          sourceKey: "builtin:test.synthetic",
+          pluginId: "test.synthetic",
+          generation: 1,
+          hostEpoch: randomUUID(),
+          processEpoch: randomUUID(),
+        };
+      const wrapped = observer.attach(owner, child);
+      if (external) {
+        observer.output(owner, 'IMPORT_BOOT:{"pluginId":"test.synthetic","pid":21}');
+        observer.saveEvidence("capture", { observed: true });
+        await assert.rejects(readImportReceipt(file), /Incomplete import receipt spool/);
+        for (const key of [
+          "deviceCapture",
+          "deviceSettings",
+          "preferences",
+          "progress",
+          "quotas",
+          "deviceOriginal",
+        ])
+          observer.saveEvidence(key, { key });
+        const receipt = await readImportReceipt(file);
+        assert.equal(receipt.processes[0].pid, 21);
+        assert.deepEqual(receipt.capture, { observed: true });
+        assert.deepEqual(observer.processes, []);
+      }
+      receive(
+        JSON.stringify({
+          id: 1,
+          method: "storage/openRead",
+          params: { id: "record", expectedRevision: "r", schemaVersion: 1 },
+        }),
+      );
+      wrapped.send(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          result: {
+            ok: true,
+            value: { read: "read", record: { id: "record" }, expiresAt: 120000 },
+          },
+        }),
+      );
+      receive(
+        JSON.stringify({
+          id: 2,
+          method: "storage/readChunk",
+          params: { read: "read", offset: 0, maxBytes: 262144 },
+        }),
+      );
+      const bytes = Buffer.alloc(262144, 231),
+        message = JSON.stringify({
+          jsonrpc: "2.0",
+          id: 2,
+          result: {
+            ok: true,
+            value: {
+              offset: 0,
+              data: bytes.toString("base64"),
+              nextOffset: bytes.length,
+              eof: true,
+            },
+          },
+        });
+      wrapped.send(message);
+      assert.equal(sent.at(-1), message);
+      if (external) {
+        assert.deepEqual(observer.rows, []);
+        await assert.rejects(reconstructImportWire(file, observer.count + 1));
+      }
+      const rows = external ? await reconstructImportWire(file, observer.count) : observer.rows;
+      assert.deepEqual(
+        rows.map((r) => r.sequence),
+        [1, 2, 3, 4],
+      );
+      const row = rows.at(-1);
+      assert.equal(row.chunk.sha256, createHash("sha256").update(bytes).digest("hex"));
+      assert.equal(row.chunk.recordSha256, row.chunk.sha256);
+      assert.equal(row.message.result.ok, true);
+      assert.equal(row.message.result.value.nextOffset, bytes.length);
+      assert.equal(row.message.result.value.data, undefined);
+      assert.equal((await readFile(file, "utf8")).includes(bytes.toString("base64")), false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+test("import milestones follow successful original commits and restore the port on failure", async () => {
+  const calls = [],
+    points = [];
+  const record = async (...args) => {
+    calls.push(args);
+    if (args[1] === "failed") throw Error("write failed");
+  };
+  const imports = { record };
+  await assert.rejects(
+    withImportCheckpoints(
+      imports,
+      "source",
+      (...args) => points.push(args),
+      async () => {
+        for (let i = 0; i < 25; i++)
+          await imports.record({ sourceKey: "source" }, "plan", { state: "committed" });
+        for (let i = 0; i < 5; i++)
+          await imports.record({ sourceKey: "other" }, "plan", { state: "committed" });
+        for (let i = 0; i < 4; i++)
+          await imports.record({ sourceKey: "source" }, "plan", { state: "skipped" });
+        await imports.record({ sourceKey: "source" }, "failed", { state: "committed" });
+      },
+    ),
+    /write failed/,
+  );
+  assert.equal(imports.record, record);
+  assert.equal(calls.length, 35);
+  assert.deepEqual(points, [
+    ["import-committed", 10],
+    ["import-committed", 20],
+  ]);
 });
 test("slice cannot satisfy full foundation acceptance", async () => {
   const { verifyFoundationReports } = await import("./plugin-persistence-harness.mjs");

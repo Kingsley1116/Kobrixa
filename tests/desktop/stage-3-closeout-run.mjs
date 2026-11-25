@@ -48,6 +48,28 @@ export const gates = {
       [t("builtin-process-installed.mjs"), "--isolated", "--single-instance"],
     ],
   },
+  "b2-rss": {
+    inputs: ["Idle named host with a verifiable local SSD and space for six fresh profiles"],
+    commands: [
+      [
+        "--experimental-transform-types",
+        "--import",
+        "./tests/desktop/persistence-source-loader.mjs",
+        "--test",
+        t("b2-process-rss-startup.test.mjs"),
+        t("b2-process-rss.test.mjs"),
+        t("b2-process-rss-verify.test.mjs"),
+      ],
+      [
+        "--experimental-transform-types",
+        "--import",
+        "./tests/desktop/persistence-source-loader.mjs",
+        "--import",
+        "./tools/release/journal-harness.mjs",
+        t("b2-process-rss-run.mjs"),
+      ],
+    ],
+  },
   b2: {
     inputs: [
       "PERSISTENCE_EVIDENCE: absolute complete aggregate report",

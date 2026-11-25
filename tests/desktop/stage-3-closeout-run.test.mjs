@@ -26,7 +26,7 @@ test("inventory exposes exact native producers and report inputs without a pass 
   const rows = inventory();
   assert.deepEqual(
     rows.map((r) => r.gate),
-    ["motor", "lab", "device", "installed", "b2"],
+    ["motor", "lab", "device", "installed", "b2-rss", "b2"],
   );
   for (const row of rows) {
     assert.match(row.status, /NOT RUN/);
@@ -43,6 +43,12 @@ test("inventory exposes exact native producers and report inputs without a pass 
     gates.installed.commands.map((c) => c.slice(1)),
     [["--isolated"], ["--isolated", "--single-instance"]],
   );
+  assert.deepEqual(gates["b2-rss"].commands[0].slice(-3), [
+    "tests/desktop/b2-process-rss-startup.test.mjs",
+    "tests/desktop/b2-process-rss.test.mjs",
+    "tests/desktop/b2-process-rss-verify.test.mjs",
+  ]);
+  assert.equal(gates["b2-rss"].commands[1].at(-1), "tests/desktop/b2-process-rss-run.mjs");
   assert.equal(gates.b2.commands[0].filter((p) => p.endsWith(".test.mjs")).length, 5);
   assert.throws(() => inventory("typo"), /Unknown gate/);
 });
@@ -153,6 +159,7 @@ test("slow native jobs are separately required on every platform; B2 consumes su
   assert.match(ci.jobs.result.steps.at(-1).run, /n.stage3.result !== expected/);
   assert.equal(ci.jobs.stage3.uses, "./.github/workflows/stage-3-acceptance.yml");
   const native = acceptance.jobs.native;
+  // b2-rss requires a named idle SSD host (B2 design §12.2); hosted runners do not qualify.
   assert.deepEqual(native.strategy.matrix.gate, ["motor", "lab", "device", "installed"]);
   assert.deepEqual(native.strategy.matrix.os, ["ubuntu-24.04", "windows-2022", "macos-26"]);
   const step = native.steps.find((s) => s.name === "Execute required native gate");

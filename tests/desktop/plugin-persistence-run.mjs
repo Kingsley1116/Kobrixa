@@ -1,3 +1,4 @@
+import { rssSettingsResource } from "./b2-process-rss-settings.ts";
 import { buildProduction } from "../../tools/release/production-vite.mjs";
 import {
   processTable as installedProcessTable,
@@ -36,6 +37,8 @@ import {
   assertImportTrials,
   assertImportPause,
   originalFiles,
+  reconstructImportWire,
+  readImportReceipt,
   IMPORT_SLICE,
   IMPORT_PUBLICATION_TRIALS,
   IMPORT_SIX,
@@ -711,6 +714,15 @@ async function launchCase(electron, entry, configFile, reportFile, config) {
       async start() {
         const env = { ...process.env };
         delete env.ELECTRON_RUN_AS_NODE;
+        if (config.rss) {
+          for (const name of [
+            "NODE_OPTIONS",
+            "ELECTRON_EXTRA_LAUNCH_ARGS",
+            "KOBRIXA_UI_LOAD_DIAGNOSE",
+          ])
+            delete env[name];
+          env.NODE_ENV = "production";
+        }
         delete env.PERSISTENCE_KILL_PROBE;
         if (config.case === "publication-kill")
           env.PERSISTENCE_KILL_PROBE = config.publicationProbe;
@@ -800,7 +812,15 @@ async function launchCase(electron, entry, configFile, reportFile, config) {
           // A partial candidate must not mask the entry's already-recorded original error.
           return { entryFailure };
         }
-        return { candidate: await read(reportFile) };
+        const candidate = await read(reportFile);
+        if (candidate && config.case === "rss-import") {
+          const observation = candidate.evidence.rssImport;
+          Object.assign(observation, await readImportReceipt(config.importWire), {
+            originals: config.originals,
+          });
+          observation.wire = await reconstructImportWire(config.importWire, observation.wireCount);
+        }
+        return { candidate };
       },
       writeFailure: (failure) =>
         writeFile(`${reportFile}.controller-failure.json`, JSON.stringify(failure, null, 2), {
@@ -808,7 +828,7 @@ async function launchCase(electron, entry, configFile, reportFile, config) {
         }),
       reportFailure: (failure) => console.error(JSON.stringify(failure)),
     },
-    config.case === "import-restart"
+    ["import-restart", "rss-import"].includes(config.case)
       ? { timeoutMs: 300000 }
       : config.case === "storage-ui-pressure"
         ? { timeoutMs: 1200000 }
@@ -1066,6 +1086,7 @@ export async function runFoundationEvidence({
   caseId,
   importTrial,
   interop: interopMode = false,
+  rssTrial,
   evidencePath = process.env.PERSISTENCE_EVIDENCE,
 } = {}) {
   if (!referencesOnly && !caseId && !interopMode) {
@@ -1076,19 +1097,44 @@ export async function runFoundationEvidence({
     );
     const report = await readEvidenceForAggregate(input);
     verifyB2Aggregate(report);
+    const { verifyCurrentLoad } = await import("./b2-process-rss-verify.mjs");
+    await verifyCurrentLoad(report, input);
     const output = evidencePath;
     assert.ok(output && path.isAbsolute(output), "PERSISTENCE_EVIDENCE must be absolute");
+    const evidenceDirectory = path.resolve(path.dirname(input), report.load.rssDirectory);
+    const relative = path.relative(path.dirname(output), evidenceDirectory);
+    assert.ok(
+      relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative),
+      "Aggregate output must contain its RSS evidence subtree",
+    );
+    report.load.rssDirectory = relative || ".";
     await writeFile(output, JSON.stringify(report, null, 2), { flag: "wx" });
     return report;
   }
   if (caseId === "import-restart") selectImportTrials(importTrial);
-  const selectedCases =
-    selectInteropMode({ interop: interopMode, referencesOnly, caseId, importTrial }) ??
-    selectFoundationCases({ referencesOnly, caseId });
+  if (rssTrial)
+    assert.ok(
+      ["storage-ui-pressure", "rss-import"].includes(caseId) &&
+        !referencesOnly &&
+        !interopMode &&
+        !importTrial,
+    );
+  const selectedCases = rssTrial
+    ? [caseId]
+    : (selectInteropMode({ interop: interopMode, referencesOnly, caseId, importTrial }) ??
+      selectFoundationCases({ referencesOnly, caseId }));
   // The shared RF1 oracle also requires an executed foundation receipt. Run
   // the unchanged retirement reference on these same bundled bytes, never a fixture.
   if (caseId === "publication-kill") selectedCases.push("retirement");
-  const handoffs = await preflight();
+  // The independent memory gate builds and verifies its own production renderer.
+  // Supplied full B2 acceptance still requires the original owner handoffs.
+  const handoffs = rssTrial
+    ? {
+        ...rssTrial.renderer,
+        rendererArtifact: rssTrial.rendererReceipt,
+        filesystem: rssTrial.host.filesystem,
+      }
+    : await preflight();
   const renderer = await readFoundationRenderer(handoffs.rendererArtifact);
   const output = evidencePath;
   assert.ok(
@@ -1186,6 +1232,10 @@ export async function runFoundationEvidence({
   const bundle = async (entry, outfile) => {
     const result = await build({
       entryPoints: [entry],
+      define: {
+        "process.env.KOBRIXA_B2_RSS_SETTINGS": JSON.stringify(rssTrial ? "1" : "0"),
+        ...(rssTrial ? { "process.env.NODE_ENV": JSON.stringify("production") } : {}),
+      },
       outfile,
       bundle: true,
       metafile: true,
@@ -1219,7 +1269,7 @@ export async function runFoundationEvidence({
   let pressure;
   if (selectedCases.includes("storage-ui-pressure")) {
     const { materialize } = await import("./declarative-ui-harness.mjs");
-    const uiDirectory = path.join(directory, "pressure-ui");
+    const uiDirectory = path.join(rssTrial?.directory ?? directory, "pressure-ui");
     await mkdir(uiDirectory);
     const uiFolders = await materialize(uiDirectory, { sources: 8, maximum: true });
     for (const folder of uiFolders)
@@ -1247,18 +1297,33 @@ export async function runFoundationEvidence({
         "quota",
         "cleanup",
       ];
+      const maxSettings = rssTrial && role === "pressure-a";
+      if (maxSettings) names.push("settings");
       const manifest = {
         id,
         version: "1.0.0",
         apiVersion: "^1.7.0",
         runtime: { kind: "node", entry: "main.cjs" },
         activationEvents: names.map((n) => `onCommand:${id}.${n}`),
-        permissions: ["storage.read", "storage.write"],
-        contributes: { commands: names.map((n) => ({ id: `${id}.${n}`, title: { en: n } })) },
+        permissions: [
+          "storage.read",
+          "storage.write",
+          ...(maxSettings ? ["settings.read", "settings.write"] : []),
+        ],
+        contributes: {
+          ...(maxSettings ? { settings: { version: 1, path: "settings.json" } } : {}),
+          commands: names.map((n) => ({ id: `${id}.${n}`, title: { en: n } })),
+        },
       };
       await writeFile(path.join(leaf, "kobrixa-plugin.json"), JSON.stringify(manifest));
       const files = [];
-      for (const file of ["kobrixa-plugin.json", "main.cjs"]) {
+      if (maxSettings)
+        await writeFile(path.join(leaf, "settings.json"), JSON.stringify(rssSettingsResource()));
+      for (const file of [
+        "kobrixa-plugin.json",
+        "main.cjs",
+        ...(maxSettings ? ["settings.json"] : []),
+      ]) {
         const bytes = await readFile(path.join(leaf, file));
         files.push({ path: file, bytes: bytes.length, sha256: digest(bytes) });
       }
@@ -1291,7 +1356,7 @@ export async function runFoundationEvidence({
             handler: (html) =>
               html.replace(
                 'src="/src/renderer/index.tsx"',
-                `src="/@fs/${path.join(root, "tests/desktop/declarative-ui-load-renderer.tsx")}"`,
+                `src="/@fs/${path.join(root, "tests/desktop/declarative-ui-load-renderer.tsx").replaceAll("\\", "/")}"`,
               ),
           },
         },
@@ -1316,15 +1381,15 @@ export async function runFoundationEvidence({
       artifacts,
       uiDirectory,
       uiFolders,
-      workerTrace: path.join(directory, "pressure-worker.jsonl"),
-      mainTrace: path.join(directory, "pressure-main.jsonl"),
-      rpcTrace: path.join(directory, "pressure-rpc.jsonl"),
+      workerTrace: path.join(rssTrial?.directory ?? directory, "pressure-worker.jsonl"),
+      mainTrace: path.join(rssTrial?.directory ?? directory, "pressure-main.jsonl"),
+      rpcTrace: path.join(rssTrial?.directory ?? directory, "pressure-rpc.jsonl"),
     };
   }
 
   const syntheticRoot = path.join(directory, "synthetic");
   await mkdir(syntheticRoot);
-  if (selectedCases.includes("import-restart")) {
+  if (selectedCases.some((id) => ["rss-import", "import-restart"].includes(id))) {
     for (let i = 0; i < 50; i++) {
       const prefix = JSON.stringify({ formatVersion: 1, item: i, payload: "" });
       const json = JSON.stringify({
@@ -1358,7 +1423,7 @@ export async function runFoundationEvidence({
     );
   }
 
-  const preferenceTrial = selectedCases.includes("import-restart");
+  const preferenceTrial = selectedCases.some((id) => ["rss-import", "import-restart"].includes(id));
   let preferenceRenderer;
   const preferenceArtifacts = [];
   if (preferenceTrial) {
@@ -1388,12 +1453,20 @@ export async function runFoundationEvidence({
       JSON.stringify({ version: 1, pluginId: "test.preferences", files }),
     );
     const rendererEntry = path.join(buildRoot, "import-preferences.js");
-    await build({
-      entryPoints: [path.join(root, "tests/desktop/import-preferences-renderer.ts")],
-      outfile: rendererEntry,
-      bundle: true,
-      platform: "browser",
-      format: "iife",
+    const require = createRequire(path.join(root, "apps/desktop/package.json"));
+    const vite = await import(pathToFileURL(require.resolve("vite")).href);
+    await buildProduction(vite.build, {
+      configFile: false,
+      build: {
+        outDir: buildRoot,
+        emptyOutDir: false,
+        lib: {
+          entry: path.join(root, "tests/desktop/import-preferences-renderer.ts"),
+          formats: ["iife"],
+          name: "importPreferencesFixture",
+          fileName: () => "import-preferences.js",
+        },
+      },
     });
     preferenceRenderer = path.join(buildRoot, "import-preferences.html");
     await writeFile(
@@ -1437,33 +1510,31 @@ runSyntheticPersistenceWorker(new Map([['test.synthetic-import',${JSON.stringify
           ? `import {runOptionalOffWorker} from ${JSON.stringify(path.join(root, "tests/desktop/fixtures/plugin-persistence/optional-off-worker.ts"))};\nrunOptionalOffWorker(new Map([['test.synthetic-import',${JSON.stringify(syntheticRoot)}]]));\n`
           : `import {runSyntheticPersistenceWorker} from ${JSON.stringify(path.join(root, "tests/desktop/fixtures/plugin-persistence/kill-worker.mjs"))};\nrunSyntheticPersistenceWorker(new Map([['test.synthetic-import',${JSON.stringify(syntheticRoot)}]]));\n`,
   );
+  if (rssTrial) {
+    if (caseId === "rss-import") {
+      await writeFile(
+        workerSource,
+        `import {runPersistenceWorker,shippedLegacySourceRoots} from ${JSON.stringify(path.join(root, "apps/desktop/src/main/plugins/persistence/worker.ts"))};
+import {deviceSettingsImportDescriptor as device} from ${JSON.stringify(path.join(root, "apps/desktop/src/main/plugins/persistence/device-settings-import.ts"))};
+import {syntheticImportDescriptor as records,syntheticPreferencesImportDescriptor as prefs} from ${JSON.stringify(path.join(root, "apps/desktop/src/main/plugins/persistence/import-fixtures.ts"))};
+import {workerData} from "node:worker_threads";
+// The RSS import never injects a fault. Close the fixture control channel before boot.
+workerData.faultPort?.close();
+delete workerData.faultPort;
+runPersistenceWorker({mappers:new Map([device,records,prefs].map(d=>[d.id,d])),sourceRootsForStore:root=>new Map([[device.id,shippedLegacySourceRoots(root).get(device.id)],[records.id,${JSON.stringify(syntheticRoot)}]])});`,
+      );
+    }
+    const code = await readFile(workerSource, "utf8");
+    await writeFile(
+      workerSource,
+      `import {observeIsolate} from ${JSON.stringify(path.join(root, "tests/desktop/b2-process-rss-observer.ts"))};
+observeIsolate(${JSON.stringify(path.join(rssTrial.directory, "worker-diagnostics.jsonl"))}, ${JSON.stringify(path.join(rssTrial.directory, "rss.jsonl"))});
+` + code,
+    );
+  }
   await bundle(workerSource, workerEntry);
-  const source = path.join(directory, "entry.ts"),
-    entry = path.join(buildRoot, "main.cjs");
-  await writeFile(
-    source,
-    `import {app} from 'electron';
-import {writeFile} from 'node:fs/promises';
-import {readFileSync} from 'node:fs';
-import {createFoundationFixture} from ${JSON.stringify(path.join(root, "tests/desktop/plugin-persistence-main.ts"))};
-import {runReferenceEntry} from ${JSON.stringify(path.join(root, "tests/desktop/plugin-persistence-harness.mjs"))};
-const config=JSON.parse(readFileSync(process.argv.find(a=>a.startsWith('--persistence-config=')).slice(21),'utf8'));
-app.setPath('userData',config.profile);
-// This supervised entry owns exit after awaited receipt I/O. Closing its last
-// test window must not implicitly terminate an in-flight observation/write.
-app.on('window-all-closed',()=>{});
-const code=await runReferenceEntry(createFoundationFixture,config,{write:writeFile,now:Date.now,pid:process.pid,
- reportFailure:failure=>console.error(JSON.stringify(failure))});
-app.exit(code);
-`,
-  );
-  // CJS build wraps the entry's awaits without changing the inert producer.
-  await writeFile(
-    source,
-    (await readFile(source, "utf8")).replace("const config=", "void (async()=>{\nconst config=") +
-      "\n})();\n",
-  );
-  await bundle(source, entry);
+  const entry = path.join(buildRoot, "main.cjs");
+  await bundle(path.join(root, "tests/desktop/plugin-persistence-main-entry.mjs"), entry);
   const sourceHashes = { ...bundledSources };
   if (preferenceTrial)
     for (const file of [
@@ -1492,11 +1563,27 @@ app.exit(code);
       await readFile(entry),
       await readFile(workerEntry),
       ...preferenceArtifacts,
+      ...(rssTrial
+        ? [
+            await readFile(path.join(root, "tests/desktop/b2-process-rss-sampler.mjs")),
+            await readFile(path.join(root, "tests/desktop/b2-process-rss-sink.mjs")),
+            ...(caseId === "rss-import"
+              ? [
+                  await readFile(
+                    path.join(
+                      root,
+                      "apps/desktop/.vite/build/plugins/device-ev3/resource-index.json",
+                    ),
+                  ),
+                ]
+              : []),
+          ]
+        : []),
       Buffer.from(renderer.receiptSha256),
       Buffer.from(JSON.stringify(compatibility ?? null)),
       ...(interop ? [Buffer.from(JSON.stringify(interop))] : []),
       ...(pressure ? [Buffer.from(JSON.stringify(pressure.artifacts))] : []),
-      ...(selectedCases.includes("import-restart")
+      ...(selectedCases.some((id) => ["rss-import", "import-restart"].includes(id))
         ? [
             await readFile(
               path.join(buildRoot, "plugins/acceptance-builtin-import/resource-index.json"),
@@ -1529,7 +1616,7 @@ app.exit(code);
   const kills = [];
   for (const id of selectedCases) {
     const profile = await mkdtemp(path.join(directory, `${id}-`)),
-      report = path.join(directory, `${id}.candidate.json`),
+      report = path.join(rssTrial?.directory ?? directory, `${id}.candidate.json`),
       configFile = path.join(directory, `${id}.json`);
     const config = {
       case: id,
@@ -1537,6 +1624,22 @@ app.exit(code);
       ...(compatibility ? { compatibility } : {}),
       ...(interop ? { interop } : {}),
       ...(pressure ? { pressure } : {}),
+      ...(rssTrial
+        ? {
+            rss: {
+              raw: path.join(rssTrial.directory, "rss.jsonl"),
+              mainDiagnostics: path.join(rssTrial.directory, "main-diagnostics.jsonl"),
+              sampler: path.join(root, "tests/desktop/b2-process-rss-sampler.mjs"),
+            },
+          }
+        : {}),
+      ...(id === "rss-import"
+        ? {
+            syntheticRoot,
+            originals: await originalFiles(syntheticRoot),
+            importWire: path.join(rssTrial.directory, "import-rpc.jsonl"),
+          }
+        : {}),
       ...(id === "import-restart" ? { importTrial, syntheticRoot } : {}),
       profile,
       profileId: randomUUID(),
@@ -1553,6 +1656,30 @@ app.exit(code);
       preload: handoffs.preload,
       filesystem: handoffs.filesystem,
     };
+    if (id === "rss-import") {
+      config.deviceOriginal = {
+        skipUnchangedAssets: false,
+        usbAutoReconnect: false,
+        usbRetryInterval: 2000,
+        usbRetryLimit: 5,
+        wifiConnectTimeout: 10000,
+        wifiHandshakeTimeout: 5000,
+      };
+      config.devicePayload = path.join(root, "apps/desktop/.vite/build/plugins/device-ev3");
+      await writeFile(
+        path.join(profile, "device-settings.json"),
+        JSON.stringify(config.deviceOriginal),
+        { flag: "wx" },
+      );
+    }
+    if (config.rss)
+      Object.assign(config.rss, {
+        trial: config.runId,
+        profile,
+        identity: path.join(rssTrial.directory, "identity.json"),
+        cold: path.join(rssTrial.directory, "cold.json"),
+        node: process.execPath,
+      });
     if (id === "publication-kill") {
       for (const point of PUBLICATION_KILL_POINTS) {
         const trialProfile = await mkdtemp(path.join(directory, `publication-${point}-`));
@@ -1786,8 +1913,31 @@ app.exit(code);
       }
       continue;
     }
-    await writeFile(configFile, JSON.stringify(config));
+    await writeFile(
+      configFile,
+      JSON.stringify(id === "rss-import" ? { ...config, originals: undefined } : config),
+    );
+    if (rssTrial)
+      await writeFile(
+        path.join(rssTrial.directory, "launch.json"),
+        JSON.stringify({
+          trial: config.runId,
+          profile,
+          profileId: config.profileId,
+          workload: id,
+          commit,
+          artifactSha256,
+          command: [electron, entry, `--persistence-config=${configFile}`],
+          controller: [process.execPath, ...process.execArgv, ...process.argv.slice(1)],
+          started: new Date().toISOString(),
+          host: rssTrial.host,
+          platform: process.platform,
+          arch: process.arch,
+        }),
+        { flag: "wx" },
+      );
     const receipt = await launchCase(electron, entry, configFile, report, config);
+    if (id === "rss-import") assert.deepEqual(await originalFiles(syntheticRoot), config.originals);
     if (compatibility) {
       const observedConfig = { ...receipt.evidence.compatibility };
       delete observedConfig.rows;
@@ -1810,6 +1960,10 @@ app.exit(code);
       hash,
       `Source changed during run: ${file}`,
     );
+  if (caseId === "rss-import") {
+    await writeFile(output, JSON.stringify(reports[0]), { flag: "wx" });
+    return reports[0];
+  }
   if (caseId === "negative-matrix") {
     assert.deepEqual(
       await readInteropIdentity(root),

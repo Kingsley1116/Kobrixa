@@ -24,6 +24,7 @@ import {
 } from "../../apps/desktop/src/renderer/plugin-ui/host-ports.js";
 import { diagnosticsFor as stateDiagnostics } from "../../apps/desktop/src/renderer/plugin-ui/state-store.js";
 import type { FoundationCounters, FoundationDiagnostics } from "@kobrixa/plugin-runtime";
+import { rssSettingsResource } from "./b2-process-rss-settings.js";
 import settingsResource from "./fixtures/plugin-persistence/settings.json?raw";
 import "../../apps/desktop/src/renderer/styles/index.css";
 
@@ -31,7 +32,9 @@ import "../../apps/desktop/src/renderer/styles/index.css";
 // renderer controls and window singleton. Exposed functions only observe/retire.
 settingsStore.set("rightPanel", "plugins");
 settingsStore.set("locale", "en");
-const owner = pluginUiWindow();
+const rssView = new URL(location.href).searchParams.get("view") === "rss-settings";
+// The secondary RSS window owns the settings form. The load window owns the catalog.
+const owner = rssView ? undefined : pluginUiWindow();
 const retained = new Map<object, FoundationDiagnostics>();
 const controls = new Set<SettingsControls>();
 const errors: string[] = [];
@@ -61,16 +64,21 @@ const frame = () => new Promise<void>((resolve) => requestAnimationFrame(() => r
 function retain(instance: object, lookup: (value: object) => FoundationDiagnostics) {
   if (!retained.has(instance)) retained.set(instance, lookup(instance));
 }
-retain(owner.host, hostDiagnostics);
-retain(owner.session.catalog, stateDiagnostics);
+if (owner) {
+  retain(owner.host, hostDiagnostics);
+  retain(owner.session.catalog, stateDiagnostics);
+}
 const observeRecoveryStore = (store: CoreRecoveryStore) => retain(store, hostDiagnostics);
 function discover() {
+  if (!owner) return;
   for (const entry of owner.session.catalog.getSnapshot().entries) {
     const record = owner.session.record(entry);
     if (record) retain(record.state, stateDiagnostics);
   }
 }
-const off = [owner.session.subscribe(discover), owner.session.catalog.subscribe(discover)];
+const off = owner
+  ? [owner.session.subscribe(discover), owner.session.catalog.subscribe(discover)]
+  : [];
 function snapshot() {
   discover();
   const snapshot: { -readonly [K in keyof FoundationCounters]: FoundationCounters[K] } = {
@@ -102,7 +110,10 @@ function snapshot() {
   };
 }
 const digest = crypto.subtle
-  .digest("SHA-256", new TextEncoder().encode(settingsResource))
+  .digest(
+    "SHA-256",
+    new TextEncoder().encode(rssView ? JSON.stringify(rssSettingsResource()) : settingsResource),
+  )
   .then((bytes) => [...new Uint8Array(bytes)].map((n) => n.toString(16).padStart(2, "0")).join(""));
 function Settings({ sourceKey, locale }: { sourceKey: string; locale: "en" | "zh-TW" }) {
   const [control] = useState(() => new SettingsControls());
@@ -139,6 +150,7 @@ function Settings({ sourceKey, locale }: { sourceKey: string; locale: "en" | "zh
 }
 const settingsOnly = new URL(location.href).searchParams.get("view") === "settings-only";
 function Shell() {
+  if (!owner) throw Error("Catalog shell requires a window owner");
   const { values } = useSettings();
   const recoveryRequest = useSyncExternalStore(
     owner.session.subscribe,
@@ -191,12 +203,14 @@ function Shell() {
   );
 }
 const root = createRoot(document.getElementById("root")!);
-root.render(<Shell />);
+root.render(
+  rssView ? <Settings sourceKey="builtin:acceptance.ui-pressure-a" locale="en" /> : <Shell />,
+);
 async function disposeFoundationRenderer() {
   if (!disposed) {
     disposed = true;
     root.unmount();
-    owner.dispose();
+    owner?.dispose();
     for (const detach of off.splice(0)) detach();
     for (const type of ["input", "keydown"]) document.removeEventListener(type, observeInput, true);
   }
@@ -209,7 +223,7 @@ async function disposeFoundationRenderer() {
 Object.assign(window, {
   declarativeAcceptance: {
     async foundationDiagnostics() {
-      await owner.ready;
+      await owner?.ready;
       await frame();
       return snapshot();
     },
