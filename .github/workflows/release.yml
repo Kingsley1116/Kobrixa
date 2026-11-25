@@ -103,6 +103,7 @@ jobs:
       - uses: ./.github/actions/setup
       - run: pnpm build:core
       - run: pnpm test:desktop
+      - run: pnpm test:persistence:stream
       - name: Import Apple certificate into a temporary keychain
         if: matrix.platform == 'darwin' && fromJSON(needs.validate.outputs.signing).macos
         run: node tools/release/macos-keychain.mjs setup

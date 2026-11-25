@@ -71,6 +71,8 @@ The **CI** workflow runs on pull requests, pushes to `main`, and manual dispatch
 - Shared packages, language frontends, assets, lockfiles, root configuration and CI tooling run both products. Unknown paths also run both. Root README/contribution/license-only changes run common checks.
 - Manual dispatch always runs both. Missing comparison history falls back to both. Renames and deletions include their original paths.
 
+Desktop changes also require a separate job on each of the same three platforms to run `pnpm test:persistence:stream`. The root `pnpm test` command includes this suite locally.
+
 `CI result` keeps the same required-check name. It accepts skipped product jobs only when the change detector explicitly marks them unaffected; failures, cancellations and unexpectedly skipped required jobs fail the gate. New commits cancel older CI runs for the same branch or pull request.
 
 Run `pnpm check:common` for common checks. For the website, run `pnpm check:web`, `pnpm test:web`, then `pnpm build:web`. For the desktop, run `pnpm check:desktop`, `pnpm build:core`, `pnpm test:desktop`, `pnpm build:desktop`, `pnpm test:desktop:packaged`, `pnpm package:installers`, `pnpm package:archive`, then `pnpm package:updates`. The archive command extracts the result into a temporary directory, verifies the complete file tree, permissions, symlinks and packaged USB modules, then writes a SHA-256 checksum. Native build dependencies remain necessary on each operating system. `pnpm check:ci` and `pnpm test:ci` remain available for full-repository local checks. Desktop tag releases use the common and desktop checks without running website builds/tests.

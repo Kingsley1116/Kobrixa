@@ -184,6 +184,7 @@ test("final gate accepts only explicitly unaffected skipped jobs", () => {
     quality: { result: "success" },
     web: { result: "success" },
     platform: { result: "skipped" },
+    persistence: { result: "skipped" },
   };
   assert.equal(requiredChecksPassed(needs), true);
   for (const state of ["failure", "cancelled", "skipped"])
@@ -209,6 +210,24 @@ test("final gate accepts only explicitly unaffected skipped jobs", () => {
     }),
     true,
   );
+});
+test("persistence must succeed for desktop changes and be skipped otherwise", () => {
+  for (const desktop of ["true", "false"]) {
+    const expected = desktop === "true" ? "success" : "skipped";
+    for (const result of ["success", "failure", "cancelled", "skipped"]) {
+      assert.equal(
+        requiredChecksPassed({
+          changes: { result: "success", outputs: { desktop, web: "false" } },
+          quality: { result: "success" },
+          web: { result: "skipped" },
+          platform: { result: expected },
+          persistence: { result },
+        }),
+        result === expected,
+        `desktop=${desktop}, persistence=${result}`,
+      );
+    }
+  }
 });
 test("dotenv credentials are ignored at every depth but example templates remain trackable", () => {
   const dir = mkdtempSync(join(tmpdir(), "kobrixa-ignore-"));

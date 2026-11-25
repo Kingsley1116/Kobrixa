@@ -71,6 +71,8 @@ sudo apt-get install -y build-essential pkg-config libusb-1.0-0-dev libudev-dev
 - 共用套件、語言前端、素材、鎖檔、根目錄設定與 CI 工具變更：兩邊都驗證。未識別路徑也會跑兩邊；只有根目錄 README、貢獻說明或授權文件變更時，只跑共通檢查。
 - 手動執行一律跑兩邊；比較歷史不可用時也跑兩邊。重新命名和刪除會計入原本路徑。
 
+桌面變更也必須在相同的三個平台各自通過獨立的 `pnpm test:persistence:stream` 工作。在本機執行根目錄的 `pnpm test` 也會執行此測試套件。
+
 `CI result` 保留原有必要檢查名稱。只有分流明確判定未受影響的產品工作可以跳過；失敗、取消，或必要工作意外跳過，都不會通過。同一分支或 pull request 有新 commit 時，會取消舊的 CI 執行。
 
 使用 `pnpm check:common` 執行共通檢查。網站依序執行 `pnpm check:web`、`pnpm test:web`、`pnpm build:web`。桌面依序執行 `pnpm check:desktop`、`pnpm build:core`、`pnpm test:desktop`、`pnpm build:desktop`、`pnpm test:desktop:packaged`、`pnpm package:installers`、`pnpm package:archive`、`pnpm package:updates`。封裝指令會在暫存目錄解壓產物，驗證完整檔案樹、權限、符號連結及 USB 模組，再寫入 SHA-256 校驗碼。各作業系統仍須安裝原生模組的建置依賴。`pnpm check:ci` 與 `pnpm test:ci` 仍保留為全倉庫本機檢查；桌面 tag 發布使用共通及桌面檢查，不執行網站建置／測試。

@@ -56,6 +56,7 @@ export function requiredChecksPassed(needs) {
   return [
     ["web", "web"],
     ["desktop", "platform"],
+    ["desktop", "persistence"],
   ].every(([output, job]) => {
     const required = needs.changes.outputs?.[output];
     return required === "true"
