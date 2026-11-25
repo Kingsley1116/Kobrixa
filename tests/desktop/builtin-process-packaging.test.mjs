@@ -504,14 +504,20 @@ test("serialized inspector probe persists early exit even when main cannot be qu
   const threads = { Worker };
   const originalFork = () => new EventEmitter();
   const electron = { app: { isReady: () => false }, utilityProcess: { fork: originalFork } };
+  const inspectOptions = { depth: 2, maxArrayLength: 100, maxStringLength: 10_000 };
+  const modules = {
+    electron,
+    "node:worker_threads": threads,
+    "node:util": { inspect: { defaultOptions: inspectOptions } },
+  };
   let output = "";
   const context = {
     URL,
     performance,
     SharedArrayBuffer,
     require: (name) => {
-      assert.ok(["electron", "node:worker_threads"].includes(name));
-      return name === "electron" ? electron : threads;
+      assert.ok(Object.hasOwn(modules, name), `Unexpected probe require: ${name}`);
+      return modules[name];
     },
     process: {
       execPath: "/installed/kobrixa",
@@ -549,6 +555,7 @@ test("serialized inspector probe persists early exit even when main cannot be qu
   assert.equal(context.__installedProbe.restore(), true);
   assert.equal(threads.Worker, Worker);
   assert.equal(electron.utilityProcess.fork, originalFork);
+  assert.deepEqual(inspectOptions, { depth: 2, maxArrayLength: 100, maxStringLength: 10_000 });
   assert.throws(() => collectWorkerTimeline("KOBRIXA_INSTALLED_WORKER {bad}"));
   assert.throws(() => collectWorkerTimeline(output, [{ ...rows[0], worker: 999 }]));
 });

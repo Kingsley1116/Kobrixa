@@ -17,6 +17,7 @@ import {
   readFile,
   readdir,
   realpath,
+  rename,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -63,12 +64,152 @@ import {
   MACOS_NESTED_SANDBOX_BLOCKED,
 } from "./builtin-installed-macos.mjs";
 
+// Electron logs the generic IPC rejection separately from the coordinator's
+// preceding structured error. Preserve each verbatim, including nested stacks.
+export function closeRefusalBlocks(output) {
+  const lines = output.split(/\r?\n/);
+  const blocks = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (
+      !/^(?:Device cleanup blocked\.(?:\s|$)|Error occurred in handler for 'workspace:finish-close':)/.test(
+        lines[i],
+      )
+    )
+      continue;
+    const start = i;
+    let next = i + 1;
+    while (next < lines.length) {
+      if (lines[next].trim() === "") {
+        next++;
+        continue;
+      }
+      if (!/^(?:[ \t]+\S|[}\]][,;]?$)/.test(lines[next])) break;
+      i = next++;
+    }
+    blocks.push(lines.slice(start, i + 1).join("\n"));
+  }
+  return blocks;
+}
+
+// The packaged requireCleanClose throws away its close report at the IPC
+// boundary. Observe only the refusal branch. reports() clones the retained
+// owner dispositions and does not run close, retire, drain, retry or recovery.
+export function closeRefusalSite(source) {
+  const pattern =
+    /async function [\w$]+\(([\w$]+),[\w$]+\)\{if\(\(await \1\.close\([\w$]+\)\)\.blocker\)(?=throw (?:new )?Error\([`'"]Device stop, journal, saved data or process exit is not confirmed\.)/g;
+  const matches = [...source.matchAll(pattern)];
+  if (matches.length !== 1) return null;
+  const [match] = matches;
+  const lines = source.slice(0, match.index + match[0].length).split("\n");
+  return {
+    lineNumber: lines.length - 1,
+    columnNumber: lines.at(-1).length,
+    condition: `(__installedProbe.closeRefusal = { at: Date.now(), owners: ${match[1]}.lifecycle.reports() }, false)`,
+  };
+}
+
+export async function observeCloseRefusal(main, site) {
+  if (!site) throw new Error("Close refusal site unavailable in the installed main script");
+  await main.send("Debugger.enable");
+  try {
+    const { locations } = await main.send("Debugger.setBreakpointByUrl", {
+      ...site,
+      urlRegex: String.raw`[/\\]app\.asar[/\\]\.vite[/\\]build[/\\]main\.cjs$`,
+    });
+    assert.equal(locations.length, 1, "Installed close refusal logpoint");
+    assert.equal(locations[0].lineNumber, site.lineNumber);
+    // V8 may bind to the Error constructor on this same throw statement.
+    assert.ok(
+      locations[0].columnNumber >= site.columnNumber &&
+        locations[0].columnNumber <= site.columnNumber + 10,
+      "Installed close refusal logpoint moved off the throw",
+    );
+  } catch (error) {
+    await main.send("Debugger.disable");
+    throw error;
+  }
+}
+
+function recordQuitDispatch(cleanup, output) {
+  const match = /^KOBRIXA_INSTALLED_QUIT_REQUEST (\d+)$/m.exec(output);
+  if (match) cleanup.quitRequestedAt = Number(match[1]);
+}
+
+export async function waitForInstalledQuit({
+  main,
+  stderr,
+  ended,
+  output,
+  cleanup,
+  persist,
+  wait = until,
+}) {
+  const logStart = output().length;
+  // Node may wait for its inspector on exit. Electron's terminal, non-cancellable
+  // quit event releases it. A refused before-quit/will-quit keeps it attached.
+  const detachOnQuit = () => {
+    if (output().includes("\nKOBRIXA_INSTALLED_QUITTING\n", logStart)) {
+      stderr.off("data", detachOnQuit);
+      main.close();
+    }
+  };
+  try {
+    cleanup.quitRequestSentAt = Date.now();
+    await main.js(`(() => {
+      const p = __installedProbe;
+      setTimeout(() => {
+        p.quitRequestedAt = Date.now();
+        try { process.stderr.write('\\nKOBRIXA_INSTALLED_QUIT_REQUEST ' + p.quitRequestedAt + '\\n'); }
+        catch { /* A diagnostic write must never prevent quit. */ }
+        p.electron.app.quit();
+      }, 0);
+      return true;
+    })()`);
+    // The terminal marker can beat the inspector's scheduling acknowledgment.
+    // Only detach once that pending evaluation finished, checking buffered data too.
+    stderr.on("data", detachOnQuit);
+    detachOnQuit();
+    await wait(ended, "graceful application quit", 12_000, async () => {
+      cleanup.deadlineAt = Date.now();
+      const log = output();
+      recordQuitDispatch(cleanup, log);
+      cleanup.snapshot = { outputTail: log.slice(-16_384), refusalBlocks: closeRefusalBlocks(log) };
+      try {
+        cleanup.snapshot.main =
+          await main.js(`({ quitRequestedAt: __installedProbe.quitRequestedAt ?? null,
+          refusal: __installedProbe.closeRefusal ?? null, forks: __installedProbe.records })`);
+      } catch (error) {
+        cleanup.snapshot.inspectorError = errorRecord(error);
+      }
+      // Persist before forced cleanup. Later product output and signal attempts
+      // cannot enter the pre-cleanup snapshot, even if the inspector failed.
+      try {
+        await persist();
+      } catch (error) {
+        cleanup.snapshotWriteError = errorRecord(error);
+      }
+    });
+  } finally {
+    stderr.off("data", detachOnQuit);
+  }
+}
+
+export function withCloseRefusal(error, output, refusal) {
+  const details = closeRefusalBlocks(output);
+  if (refusal) details.push("Owner retirement reports at refusal: " + JSON.stringify(refusal));
+  if (!details.length) return error;
+  const detailed = new Error([error.message, ...details].join("\n"), { cause: error });
+  detailed.code = error.code;
+  return detailed;
+}
+
 export function installedFailureDiagnostics(receipt, output) {
   return {
     name: receipt.name,
     exit: receipt.exit,
     error: receipt.error,
     cleanupErrors: receipt.cleanupErrors,
+    ...(receipt.closeCleanup && { closeCleanup: receipt.closeCleanup }),
     outputTail: output.slice(-16_384),
   };
 }
@@ -728,6 +869,10 @@ export const installProbe = `((require) => {
   const electron = require('electron');
   if (!electron.utilityProcess?.fork || !electron.app) throw Error('Main Electron probe unavailable');
   if (electron.app.isReady()) throw Error('Observe startup before application readiness');
+  // Only Node's rendering of values changes. The original errors, owners and
+  // blocker decisions pass through Electron and the product untouched.
+  const inspectOptions = require('node:util').inspect.defaultOptions;
+  const { depth, maxArrayLength, maxStringLength } = inspectOptions;
   const workers = (${observeInstalledWorkers.toString()})(require('node:worker_threads'),
     row => process.stderr.write('\\nKOBRIXA_INSTALLED_WORKER ' + JSON.stringify(row) + '\\n'),
     () => ({ at: Date.now(), monotonicMs: performance.now(), execArgv: [...process.execArgv], resourcesPath: process.resourcesPath }), globalThis.__recordingCapture === true);
@@ -756,8 +901,10 @@ export const installProbe = `((require) => {
     workers.restore();
     throw error;
   }
+  Object.assign(inspectOptions, { depth: 12, maxArrayLength: 200, maxStringLength: 4000 });
   let exitListener;
   function restore() {
+    Object.assign(inspectOptions, { depth, maxArrayLength, maxStringLength });
     if (exitListener) process.off('exit', exitListener);
     for (const cleanup of cleanups) cleanup();
     try {
@@ -770,6 +917,11 @@ export const installProbe = `((require) => {
   }
   globalThis.__installedProbe = { electron, require, records, workers, wire, deviceWire, releases, restore, observeExit() {
     const write = require('node:fs').writeSync;
+    const onQuit = () => {
+      try { write(2, '\\nKOBRIXA_INSTALLED_QUITTING\\n'); } catch { /* Diagnostic pipe closed. */ }
+    };
+    electron.app.once('quit', onQuit);
+    cleanups.push(() => electron.app.off('quit', onQuit));
     exitListener = () => {
       if (restore()) write(2, '\\nKOBRIXA_INSTALLED_RESTORED\\n');
     };
@@ -797,6 +949,14 @@ async function launchProduct(config, receipt, check) {
   let ended = false,
     failure,
     launchError;
+  const closeCleanup = (receipt.closeCleanup = { signals: [] });
+  const closeArtifact = path.join(directory, receipt.name + "-close-cleanup.json");
+  const saveCloseCleanup = async () => {
+    // Preserve the deadline copy if writing the completed signal record fails.
+    await writeFile(closeArtifact + ".tmp", JSON.stringify(closeCleanup, null, 2));
+    await rename(closeArtifact + ".tmp", closeArtifact);
+  };
+  const termination = { known, attempts: closeCleanup.signals };
   receipt.profile = profile;
   receipt.forcedCleanup = false;
   receipt.forks = [];
@@ -830,10 +990,10 @@ async function launchProduct(config, receipt, check) {
       stdio: ["ignore", "pipe", "pipe"],
     });
     receipt.pid = child.pid;
-    child.stdout.on("data", (chunk) => {
+    child.stdout.setEncoding("utf8").on("data", (chunk) => {
       output += chunk;
     });
-    child.stderr.on("data", (chunk) => {
+    child.stderr.setEncoding("utf8").on("data", (chunk) => {
       output += chunk;
     });
     exit = new Promise((resolve, reject) => {
@@ -1060,11 +1220,23 @@ async function launchProduct(config, receipt, check) {
     receipt.forks = await forks();
     receipt.workerTimeline = await main.js("__installedProbe.workers.timeline");
     await workerStartup.settled();
-    // Dispatch quit synchronously and let the official shutdown coordination run.
-    await main.js("setTimeout(() => __installedProbe.electron.app.quit(), 0); true");
     workerStartup.dispose();
-    main.close(); // Node inspector must detach for Electron/Node to finish quitting.
-    await until(() => ended, "graceful application quit", 12_000);
+    await main.send("NodeWorker.disable");
+    try {
+      await observeCloseRefusal(main, config.closeSite);
+      // Green runs must still prove the refusal logpoint was live.
+      closeCleanup.logpoint = "armed";
+    } catch (error) {
+      closeCleanup.logpointError = errorRecord(error);
+    }
+    await waitForInstalledQuit({
+      main,
+      stderr: child.stderr,
+      ended: () => ended,
+      output: () => output,
+      cleanup: closeCleanup,
+      persist: saveCloseCleanup,
+    });
     await exit;
     assert.equal(receipt.exit.code, 0, JSON.stringify(receipt.exit));
     receipt.gracefulQuit = true;
@@ -1094,7 +1266,7 @@ async function launchProduct(config, receipt, check) {
       if (!ended && child?.pid) {
         receipt.forcedCleanup = true;
         const signalingErrors = [];
-        await terminateProcess(-child.pid, "SIGTERM", signalingErrors, { known });
+        await terminateProcess(-child.pid, "SIGTERM", signalingErrors, termination);
         cleanupErrors.push(...signalingErrors.map(errorRecord));
         try {
           await until(() => ended, "termination", 3000);
@@ -1125,9 +1297,10 @@ async function launchProduct(config, receipt, check) {
       if (remaining.length) {
         receipt.forcedCleanup = true;
         const errors = [];
-        await terminateProcess(-child.pid, "SIGKILL", errors, { known });
+        await terminateProcess(-child.pid, "SIGKILL", errors, termination);
         // Account for observed descendants which changed process group/reparented.
-        for (const { pid } of remaining) await terminateProcess(pid, "SIGKILL", errors, { known });
+        for (const { pid } of remaining)
+          await terminateProcess(pid, "SIGKILL", errors, termination);
         cleanupErrors.push(...errors.map(errorRecord));
       }
       if (config.singleInstance && ended) {
@@ -1215,6 +1388,14 @@ async function launchProduct(config, receipt, check) {
     } catch (error) {
       cleanupErrors.push(errorRecord(error));
     }
+    recordQuitDispatch(closeCleanup, output);
+    if (failure || closeCleanup.signals.length || cleanupErrors.length) {
+      try {
+        await saveCloseCleanup();
+      } catch (error) {
+        cleanupErrors.push(errorRecord(error));
+      }
+    }
     if (cleanupErrors.length) {
       receipt.cleanupErrors = cleanupErrors;
       failure ??= new AggregateError(
@@ -1223,6 +1404,11 @@ async function launchProduct(config, receipt, check) {
       );
     }
     if (failure) {
+      const detailed = withCloseRefusal(failure, output, closeCleanup.snapshot?.main?.refusal);
+      if (detailed !== failure) {
+        receipt.error = { ...errorRecord(detailed), cause: errorRecord(failure) };
+        failure = detailed;
+      }
       // Wait for stream closure above: an exit event can precede the fatal
       // Chromium stderr. Keep full logs and print a bounded tail in CI too.
       receipt.failureDiagnostics = installedFailureDiagnostics(receipt, output);
@@ -1286,6 +1472,7 @@ async function observeSingleInstance(client, config, run, binding) {
   let stdout = "",
     stderr = "";
   const secondary = observation.secondary;
+  const termination = { known, attempts: run.closeCleanup.signals };
   await main.js(`(() => {
     const {app,BrowserWindow}=__installedProbe.electron, window=BrowserWindow.getAllWindows()[0];
     if(!window) throw Error('Missing original window');
@@ -1452,7 +1639,7 @@ async function observeSingleInstance(client, config, run, binding) {
     if (child?.pid) {
       if (!ended) {
         secondary.forcedCleanup = true;
-        await terminateProcess(-child.pid, "SIGTERM", errors, { known });
+        await terminateProcess(-child.pid, "SIGTERM", errors, termination);
       }
       try {
         await until(() => ended, "secondary reap", 3000);
@@ -1460,9 +1647,9 @@ async function observeSingleInstance(client, config, run, binding) {
         let remaining = descendants(await processTable(), child.pid, known);
         if (remaining.length) {
           secondary.forcedCleanup = true;
-          await terminateProcess(-child.pid, "SIGKILL", errors, { known });
+          await terminateProcess(-child.pid, "SIGKILL", errors, termination);
           for (const row of remaining)
-            await terminateProcess(row.pid, "SIGKILL", errors, { known });
+            await terminateProcess(row.pid, "SIGKILL", errors, termination);
           await until(
             async () => {
               remaining = descendants(await processTable(), child.pid, known);
@@ -1477,9 +1664,9 @@ async function observeSingleInstance(client, config, run, binding) {
       } catch (error) {
         errors.push(error);
         secondary.forcedCleanup = true;
-        await terminateProcess(-child.pid, "SIGKILL", errors, { known });
+        await terminateProcess(-child.pid, "SIGKILL", errors, termination);
         for (const row of descendants(await processTable(), child.pid, known))
-          await terminateProcess(row.pid, "SIGKILL", errors, { known });
+          await terminateProcess(row.pid, "SIGKILL", errors, termination);
       }
       if (closed)
         try {
@@ -1926,6 +2113,7 @@ export async function main() {
     }
     const entry = path.join(leaf, "main.cjs");
     report.entry = entry;
+    const closeSite = closeRefusalSite(installedArchive.extract(packageJson.main).toString());
     const executeOne = async (name, profile, check) => {
       if (process.platform === "darwin") {
         // Only the resource-negative copies need resealing. Nested code was
@@ -1966,6 +2154,7 @@ export async function main() {
             env,
             profile,
             isolationProfile,
+            closeSite,
             isolated,
             probes,
             deniedRoots,

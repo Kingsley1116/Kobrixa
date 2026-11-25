@@ -1,7 +1,10 @@
 import { EventEmitter } from "node:events";
 import { createRequire } from "node:module";
 import { JOURNAL_PRODUCTION_EXPORTS } from "../../tools/release/journal-win32.mjs";
-import { runInNewContext } from "node:vm";
+import { runInNewContext, runInThisContext } from "node:vm";
+import { Session } from "node:inspector/promises";
+import { format, inspect } from "node:util";
+import { terminateProcess } from "./builtin-installed-client.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import path from "node:path";
@@ -10,6 +13,11 @@ import { tmpdir } from "node:os";
 import {
   devicePreferencesExpression,
   installProbe,
+  closeRefusalBlocks,
+  closeRefusalSite,
+  observeCloseRefusal,
+  waitForInstalledQuit,
+  withCloseRefusal,
   observeInstalledWorkers,
   installedJournalExpression,
   assertWindowsJournalReady,
@@ -40,6 +48,260 @@ test("early product failure diagnostics retain the exit and final stderr without
     /FATAL: actual stderr after exit/,
   );
   assert.equal(installedFailureDiagnostics(receipt, "").outputTail, "");
+});
+
+test("first failure retains both close errors and full nested text outside the final output tail", () => {
+  const storage = [
+    "Device cleanup blocked. Error: Device or persistence disposition is incomplete.",
+    "    at retire (main.cjs:1:2) {",
+    "  storage: [",
+    "    { blocker: true, errors: [",
+    "      { code: 'PLUGIN_E_STORAGE_IO', message: 'fixture detail' }",
+    "    ] }",
+    "  ]",
+    "}",
+  ].join("\n");
+  const header = "Error occurred in handler for 'workspace:finish-close': Error: close refused";
+  const first = [
+    header,
+    "    at close (main.cjs:2:3) {",
+    "",
+    "  owner: { pluginId: 'fixture.plugin' }",
+    "}",
+  ].join("\n");
+  const second = header + "\n    at Session.<anonymous> (node:electron/js2c/browser_init:1:2)";
+  const other = "Error occurred in handler for 'workspace:open': Error: unrelated";
+  const log = [other, storage, first, "[42:ERROR] network", second, other, "x".repeat(20000)]
+    .join("\n")
+    .replaceAll("\n", "\r\n");
+  assert.deepEqual(closeRefusalBlocks(log), [storage, first, second]);
+  assert.deepEqual(closeRefusalBlocks(other), []);
+  const deadline = new Error("Deadline: graceful application quit");
+  const failure = withCloseRefusal(deadline, log);
+  assert.equal(failure.cause, deadline);
+  assert.equal(failure.message, [deadline.message, storage, first, second].join("\n"));
+  assert.equal(withCloseRefusal(deadline, other), deadline);
+});
+
+test("refusal logpoint reads original owner reports only when close actually refuses", async () => {
+  const source =
+    "(async function XF(e,t){if((await e.close(t)).blocker)throw Error(`Device stop, journal, saved data or process exit is not confirmed.`)})";
+  const file = "/installed-unit/app.asar/.vite/build/main.cjs";
+  const gate = runInThisContext(source, { filename: file });
+  const session = new Session();
+  session.connect();
+  const pauses = [];
+  session.on("Debugger.paused", (event) => pauses.push(event.params.reason));
+  const probe = (globalThis.__installedProbe = {});
+  try {
+    assert.equal(closeRefusalSite(source + source), null);
+    assert.equal(closeRefusalSite(source.replace(".blocker", ".saved")), null);
+    await observeCloseRefusal(
+      { send: (method, params) => session.post(method, params) },
+      closeRefusalSite(source),
+    );
+    const owners = [
+      {
+        owner: { pluginId: "fixture.owner" },
+        storage: { blocker: true, errors: [{ message: "fixture storage error" }] },
+      },
+    ];
+    let requests = 0,
+      reads = 0;
+    const coordinator = {
+      close: async () => ({ blocker: ++requests === 2 }),
+      lifecycle: {
+        reports: () => {
+          reads++;
+          return structuredClone(owners);
+        },
+      },
+    };
+    await gate(coordinator, "shutdown");
+    assert.equal(probe.closeRefusal, undefined);
+    await assert.rejects(
+      gate(coordinator, "shutdown"),
+      /Device stop, journal, saved data or process exit is not confirmed/,
+    );
+    assert.deepEqual(probe.closeRefusal.owners, owners);
+    assert.ok(Number.isSafeInteger(probe.closeRefusal.at));
+    assert.equal(reads, 1);
+    assert.equal(requests, 2);
+    assert.deepEqual(pauses, []);
+  } finally {
+    session.disconnect();
+    delete globalThis.__installedProbe;
+  }
+});
+
+test("quit deadline persists the still-attached snapshot before timestamped group and PID cleanup", async (t) => {
+  const stderr = new EventEmitter(),
+    app = new EventEmitter();
+  const cleanup = { signals: [] };
+  const refusal = {
+    at: 102,
+    owners: [{ owner: { pluginId: "fixture.owner" }, storage: { blocker: true } }],
+  };
+  let now = 100,
+    log = "",
+    saved,
+    quits = 0;
+  t.mock.method(Date, "now", () => now);
+  const write = (value) => {
+    log += value;
+    stderr.emit("data", value);
+  };
+  const probe = {
+    electron: { app },
+    records: [],
+    require: () => assert.fail("refused quit must stay attached"),
+  };
+  app.quit = () => {
+    quits++;
+    probe.closeRefusal = refusal;
+    write("Error occurred in handler for 'workspace:finish-close': Error: fixture refusal\n");
+  };
+  const context = {
+    __installedProbe: probe,
+    Date,
+    process: { stderr: { write } },
+    setTimeout(fn) {
+      now = 101;
+      fn();
+    },
+  };
+  const main = {
+    js: (expression) => runInNewContext(expression, context),
+    close: () => assert.fail("early detach"),
+  };
+  await assert.rejects(
+    waitForInstalledQuit({
+      main,
+      stderr,
+      cleanup,
+      output: () => log,
+      ended: () => false,
+      persist: () => {
+        saved = JSON.parse(JSON.stringify(cleanup));
+      },
+      wait: async (ended, label, budget, diagnostics) => {
+        assert.equal(label, "graceful application quit");
+        assert.equal(budget, 12000);
+        assert.equal(ended(), false);
+        now = 12101;
+        await diagnostics();
+        throw new Error("Deadline: " + label);
+      },
+    }),
+    /Deadline: graceful application quit/,
+  );
+  assert.equal(quits, 1);
+  assert.equal(stderr.listenerCount("data"), 0);
+  assert.deepEqual(saved, {
+    signals: [],
+    quitRequestSentAt: 100,
+    quitRequestedAt: 101,
+    deadlineAt: 12101,
+    snapshot: {
+      outputTail: log,
+      refusalBlocks: [
+        "Error occurred in handler for 'workspace:finish-close': Error: fixture refusal",
+      ],
+      main: { quitRequestedAt: 101, refusal, forks: [] },
+    },
+  });
+  const errors = [];
+  const kill = (pid) => {
+    assert.equal(cleanup.signals.at(-1).at, now);
+    if (pid === 8) throw Object.assign(new Error("already exited"), { code: "ESRCH" });
+    write("output from forced cleanup\n");
+  };
+  for (const [pid, signal] of [
+    [-7, "SIGTERM"],
+    [-7, "SIGKILL"],
+    [8, "SIGKILL"],
+  ]) {
+    now++;
+    await terminateProcess(pid, signal, errors, {
+      platform: "linux",
+      attempts: cleanup.signals,
+      kill,
+    });
+  }
+  assert.deepEqual(errors, []);
+  assert.deepEqual(cleanup.signals, [
+    { at: 12102, pid: -7, signal: "SIGTERM", sent: true },
+    { at: 12103, pid: -7, signal: "SIGKILL", sent: true },
+    { at: 12104, pid: 8, signal: "SIGKILL", sent: false, error: "ESRCH" },
+  ]);
+  assert.equal(saved.signals.length, 0);
+  assert.equal(cleanup.snapshot.outputTail, saved.snapshot.outputTail);
+  assert.match(withCloseRefusal(new Error("Deadline"), log, refusal).message, /fixture\.owner/);
+  assert.equal(installedFailureDiagnostics({ closeCleanup: cleanup }, log).closeCleanup, cleanup);
+});
+
+test("terminal quit before the inspector reply detaches after acknowledgment and still needs OS exit", async () => {
+  const stderr = new EventEmitter();
+  let log = "",
+    ended = false,
+    detached = 0;
+  await waitForInstalledQuit({
+    main: {
+      js() {
+        log += "\nKOBRIXA_INSTALLED_QUIT";
+        stderr.emit("data");
+        log += "TING\n";
+        stderr.emit("data");
+        assert.equal(detached, 0);
+        return true;
+      },
+      close: () => detached++,
+    },
+    stderr,
+    output: () => log,
+    ended: () => ended,
+    cleanup: {},
+    persist: () => assert.fail("no deadline"),
+    wait: (read) => {
+      assert.equal(detached, 1);
+      assert.equal(read(), false);
+      ended = true;
+      assert.equal(read(), true);
+    },
+  });
+  assert.equal(stderr.listenerCount("data"), 0);
+});
+
+test("unavailable inspector still retains the deadline and pre-signal output", async () => {
+  const cleanup = { signals: [] };
+  let calls = 0;
+  const log = "Device cleanup blocked. Error: original\n    at close (main.cjs:1:2)";
+  await assert.rejects(
+    waitForInstalledQuit({
+      main: {
+        js() {
+          if (calls++) throw new Error("inspector disconnected");
+        },
+      },
+      stderr: new EventEmitter(),
+      ended: () => false,
+      output: () => log,
+      cleanup,
+      wait: async (_read, label, _budget, diagnostics) => {
+        await diagnostics();
+        throw new Error("Deadline: " + label);
+      },
+      persist() {
+        throw new Error("write failed");
+      },
+    }),
+    /Deadline: graceful application quit/,
+  );
+  assert.equal(cleanup.snapshot.outputTail, log);
+  assert.deepEqual(cleanup.snapshot.refusalBlocks, [log]);
+  assert.equal(cleanup.snapshot.inspectorError.message, "inspector disconnected");
+  assert.equal(cleanup.snapshotWriteError.message, "write failed");
+  assert.equal(cleanup.snapshot.main, undefined);
 });
 
 test("installed platform layouts select the actual packaged executable and resources", () => {
@@ -812,16 +1074,23 @@ test("relocated release logpoint is removed and debugger disabled", async () => 
   assert.equal(listeners.size, 0);
 });
 
-test("serialized main probe acknowledges restoration after observing worker shutdown", () => {
+test("serialized main probe acknowledges restoration after observing worker shutdown", (t) => {
   class Worker extends EventEmitter {
     postMessage() {}
   }
   const threads = { Worker };
   const fork = () => new EventEmitter();
-  const electron = { app: { isReady: () => false }, utilityProcess: { fork } };
+  const electron = {
+    app: Object.assign(new EventEmitter(), { isReady: () => false }),
+    utilityProcess: { fork },
+  };
   const main = Object.assign(new EventEmitter(), { execArgv: [], stderr: { write: () => {} } });
   const writes = [];
+  const defaults = inspect.defaultOptions;
+  const originalOptions = { ...defaults };
+  t.after(() => Object.assign(defaults, originalOptions));
   const modules = {
+    "node:util": { inspect },
     electron,
     "node:worker_threads": threads,
     "node:fs": { writeSync: (fd, text) => writes.push([fd, text]) },
@@ -834,12 +1103,34 @@ test("serialized main probe acknowledges restoration after observing worker shut
     __recordingCapture: true,
   };
   assert.equal(runInNewContext(installProbe, context), true);
+  assert.deepEqual(
+    { ...defaults },
+    {
+      ...originalOptions,
+      depth: 12,
+      maxArrayLength: 200,
+      maxStringLength: 4000,
+    },
+  );
+  const nested = Object.assign(new Error("fixture"), {
+    storage: [{ blocker: true, errors: [{ detail: { owner: "fixture.owner" } }] }],
+  });
+  assert.match(format("Device cleanup blocked.", nested), /fixture\.owner/);
   const probe = context.__installedProbe;
   assert.equal(probe.observeExit(), true);
   const worker = new threads.Worker("persistence-worker");
   worker.emit("exit", 0);
+  electron.app.emit("before-quit");
+  electron.app.emit("will-quit");
+  assert.deepEqual(writes, []);
+  electron.app.emit("quit");
   main.emit("exit", 0);
-  assert.deepEqual(writes, [[2, "\nKOBRIXA_INSTALLED_RESTORED\n"]]);
+  assert.deepEqual({ ...defaults }, originalOptions);
+  assert.deepEqual(writes, [
+    [2, "\nKOBRIXA_INSTALLED_QUITTING\n"],
+    [2, "\nKOBRIXA_INSTALLED_RESTORED\n"],
+  ]);
+  assert.equal(electron.app.listenerCount("quit"), 0);
   assert.equal(probe.workers.timeline.at(-1).event, "exit");
   assert.equal(main.listenerCount("exit"), 0);
   assert.equal(threads.Worker, Worker);

@@ -757,11 +757,13 @@ test("Windows cleanup uses taskkill for trees, preserves errors and refuses reus
   const { terminateProcess } = await import("./builtin-installed-client.mjs");
   for (const outcome of ["success", "absent", "access-denied", "exit-race", "reused"]) {
     const errors = [],
-      calls = [];
+      calls = [],
+      attempts = [];
     const failure = new Error("taskkill localized failure");
     let reads = 0;
     await terminateProcess(-10, "SIGTERM", errors, {
       platform: "win32",
+      attempts,
       env: { SystemRoot: "C:\\Windows" },
       known: new Map([[10, "original"]]),
       kill: () => assert.fail("Windows must not send POSIX signals"),
@@ -781,6 +783,18 @@ test("Windows cleanup uses taskkill for trees, preserves errors and refuses reus
         ? []
         : [["C:\\Windows\\System32\\taskkill.exe", ["/PID", "10", "/T", "/F"]]],
     );
+    assert.equal(attempts.length, calls.length);
+    if (attempts.length) {
+      const [attempt] = attempts;
+      assert.ok(Number.isSafeInteger(attempt.at));
+      assert.deepEqual(attempt, {
+        at: attempt.at,
+        pid: 10,
+        command: "taskkill /T /F",
+        succeeded: outcome === "success",
+        ...(outcome === "success" ? {} : { error: failure.message }),
+      });
+    }
     if (outcome === "access-denied") assert.deepEqual(errors, [failure]);
     else if (outcome === "reused") assert.match(errors[0].message, /reused PID/);
     else assert.deepEqual(errors, []);

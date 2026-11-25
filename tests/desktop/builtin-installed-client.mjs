@@ -219,10 +219,15 @@ export async function command(file, args, options = {}) {
 
 // A vanished group is normal during exit; other failures are retained without
 // preventing cleanup of observed descendants that changed process groups.
-export function signalProcess(pid, signal, errors, kill = process.kill) {
+export function signalProcess(pid, signal, errors, kill = process.kill, attempts) {
+  const attempt = { at: Date.now(), pid, signal };
+  attempts?.push(attempt);
   try {
     kill(pid, signal);
+    attempt.sent = true;
   } catch (error) {
+    attempt.sent = false;
+    attempt.error = error.code ?? error.message;
     if (error.code !== "ESRCH") errors.push(error);
   }
 }
@@ -238,9 +243,10 @@ export async function terminateProcess(
     table = () => processTable({ platform, env }),
     known,
     kill = process.kill,
+    attempts,
   } = {},
 ) {
-  if (platform !== "win32") return signalProcess(pid, signal, errors, kill);
+  if (platform !== "win32") return signalProcess(pid, signal, errors, kill, attempts);
   const target = Math.abs(pid);
   assert.ok(Number.isSafeInteger(target) && target > 0, "Invalid Windows termination PID");
   try {
@@ -248,13 +254,19 @@ export async function terminateProcess(
     if (!before) return;
     if (known?.has(target))
       assert.equal(before.created, known.get(target), "Refusing to terminate a reused PID");
+    const tool = windowsSystemTool("taskkill.exe", env);
+    const attempt = { at: Date.now(), pid: target, command: "taskkill /T /F" };
+    attempts?.push(attempt);
     try {
       // Windows has no POSIX process groups or graceful SIGTERM. Always record
       // this as forced cleanup, and separately observe the complete tree exiting.
-      await run(windowsSystemTool("taskkill.exe", env), ["/PID", String(target), "/T", "/F"], {
+      await run(tool, ["/PID", String(target), "/T", "/F"], {
         windowsHide: true,
       });
+      attempt.succeeded = true;
     } catch (error) {
+      attempt.succeeded = false;
+      attempt.error = error.code ?? error.message;
       // Localized taskkill stderr/exit codes cannot prove a process vanished.
       if ((await table()).some((row) => row.pid === target && row.created === before.created))
         throw error;
