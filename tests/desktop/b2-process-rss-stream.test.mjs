@@ -196,9 +196,11 @@ for (const [boundary, save, order] of [
   ),
 ]) {
   test(
-    ["a source changed", boundary, save, order, "stays pending while the other item commits"]
-      .filter(Boolean)
-      .join(" "),
+    save === "rename"
+      ? `a rename save during append (${order}) commits each unchanged source`
+      : ["a source changed", boundary, save, order, "stays pending while the other item commits"]
+          .filter(Boolean)
+          .join(" "),
     async (t) => {
       const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "node-import-change-")));
       t.after(() => rm(root, { recursive: true, force: true }));
@@ -212,6 +214,7 @@ for (const [boundary, save, order] of [
       const f = await launch(root),
         changed = Buffer.from(bytes);
       changed[280000] = 98;
+      let renameOutcome;
       try {
         if (boundary === "after plan") {
           const plan = f.backend.imports.plan;
@@ -241,27 +244,45 @@ for (const [boundary, save, order] of [
             if (!result.done) {
               if (save === "rename") {
                 await writeFile(leaf + ".new", changed);
-                await rename(leaf + ".new", leaf);
+                try {
+                  await rename(leaf + ".new", leaf);
+                  renameOutcome = "replaced";
+                } catch (error) {
+                  renameOutcome = error.code;
+                  // A refused editor save leaves its temporary file in the legacy inventory.
+                  await rm(leaf + ".new");
+                }
               } else if (save === "move-away") await rename(leaf, path.join(root, "moved"));
               else await writeFile(leaf, changed);
             }
             return result;
           };
         }
-        assert.deepEqual(await f.coordinator.run(descriptor, new AbortController().signal), {
-          state: "blocked",
-          completedItems: 1,
-          totalItems: 2,
-        });
+        const progress = await f.coordinator.run(descriptor, new AbortController().signal);
+        const expectedBytes = [good];
+        if (save === "rename") {
+          assert.notEqual(renameOutcome, undefined, "expected a rename outcome during append");
+          t.diagnostic(`rename save (${order}): ${renameOutcome}`);
+        }
+        if (save === "rename" && renameOutcome !== "replaced") {
+          // Assert outside the wrapper: the coordinator converts append rejections to blocked.
+          assert.equal(process.platform, "win32", `rename refused with ${renameOutcome}`);
+          assert.ok(["EPERM", "EACCES", "EBUSY"].includes(renameOutcome), renameOutcome);
+          assert.deepEqual(await readFile(leaf), bytes);
+          assert.deepEqual(progress, { state: "complete", completedItems: 2, totalItems: 2 });
+          expectedBytes.push(bytes);
+        } else {
+          assert.deepEqual(progress, { state: "blocked", completedItems: 1, totalItems: 2 });
+        }
         const records = (await f.backend.reads.list(f.owner, { limit: 64 })).entries;
         assert.deepEqual(
-          records.map((r) => r.sha256),
-          [createHash("sha256").update(good).digest("hex")],
+          records.map((r) => r.sha256).sort(),
+          expectedBytes.map((b) => createHash("sha256").update(b).digest("hex")).sort(),
         );
       } finally {
         await f.backend.dispose();
       }
-      await writeFile(leaf, bytes);
+      if (save !== "rename" || renameOutcome === "replaced") await writeFile(leaf, bytes);
       const fresh = await launch(root);
       try {
         assert.deepEqual(await fresh.coordinator.run(descriptor, new AbortController().signal), {
