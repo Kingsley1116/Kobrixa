@@ -32,6 +32,9 @@ function Remove-Fixture {
             if ([W17]::Identity($item.pin,$item.directory) -cne $item.id) { throw 'Fixture replaced' }
         } catch {
             Add-Content -LiteralPath $log "cleanup pending path=$($item.path) reason=$($_.Exception.GetBaseException().Message)"
+            foreach ($known in $objects) {
+                if ($known.pin) { $known.pin.Dispose() }
+            }
             throw
         }
     }
@@ -41,7 +44,12 @@ function Remove-Fixture {
         $pin=$item.pin
         try {
             if ($item.directory) {
+                $listed=0
                 foreach ($remaining in [IO.Directory]::EnumerateFileSystemEntries($item.path)) {
+                    if (++$listed -gt 7) {
+                        Add-Content -LiteralPath $log "cleanup additional children retained path=$($item.path)"
+                        break
+                    }
                     Add-Content -LiteralPath $log "cleanup retained child=$remaining"
                 }
             }
@@ -64,48 +72,63 @@ $dependency = & node -e 'console.log(require.resolve("zod/package.json",{paths:[
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 $stage = [IO.Directory]::CreateTempSubdirectory('w17-preflight-').FullName
 Add-Content -LiteralPath $log "scratch=$stage"
-Remember $stage $true
-$root = Join-Path $stage 'sentinels'
-$manifest = Join-Path $stage 'snapshot.dacl'
 function New-FixtureDir($path) {
     if (![W17]::CreateDirectoryW($path,[IntPtr]::Zero)) { throw 'Fixture directory collision or creation error' }
     Remember $path $true
 }
-New-FixtureDir $root
-foreach ($label in @('checkout','worktree','dependency')) {
-    $dir=Join-Path $root $label
-    New-FixtureDir $dir
-    $source = if ($label -eq 'dependency') { $dependency } else { "$repo/package.json" }
-    $file=Join-Path $dir 'package.json'
-    [IO.File]::Copy($source,$file,$false)
-    Remember $file $false
-}
-# An unassigned SID exercises the same DACL change without creating an account.
-$random = [guid]::NewGuid().ToByteArray()
-$sid = 'S-1-5-21-{0}-{1}-{2}-1001' -f [BitConverter]::ToUInt32($random,0),[BitConverter]::ToUInt32($random,4),[BitConverter]::ToUInt32($random,8)
+$failure=0
 try {
-    $null=[Security.Principal.SecurityIdentifier]::new($sid).Translate([Security.Principal.NTAccount])
-    throw 'Generated preflight SID already maps to an account'
-} catch [Security.Principal.IdentityNotMappedException] { }
-[uint32]$count=0
-[uint32]$verified=0
-[IO.File]::Open($manifest,'CreateNew','Write','None').Dispose()
-Remember $manifest $false
-$countRef=[ref]$count
-$verifiedRef=[ref]$verified
-$rc=Invoke-Measurement 'snapshot' { [W17]::TreeSave($root,$manifest,$countRef) }
-Result 'snapshot' $rc "objects=$count"
-if ($rc) { exit $rc }
-if ($count -ne 7) { throw "Snapshot objects=$count" }
-try {
-    $apply=Invoke-Measurement 'apply' { [W17]::TreeChange($manifest,$count,$sid,0,$verifiedRef) }
-    Result 'apply' $apply "verified=$verified"
-    if ($apply) { exit $apply }
-    if ($verified -ne $count) { throw "Apply verified=$verified" }
+    Remember $stage $true
+    $root = Join-Path $stage 'sentinels'
+    $manifest = Join-Path $stage 'snapshot.dacl'
+    New-FixtureDir $root
+    foreach ($label in @('checkout','worktree','dependency')) {
+        $dir=Join-Path $root $label
+        New-FixtureDir $dir
+        $source = if ($label -eq 'dependency') { $dependency } else { "$repo/package.json" }
+        $file=Join-Path $dir 'package.json'
+        [IO.File]::Copy($source,$file,$false)
+        Remember $file $false
+    }
+    # An unassigned SID exercises the same DACL change without creating an account.
+    $random = [guid]::NewGuid().ToByteArray()
+    $sid = 'S-1-5-21-{0}-{1}-{2}-1001' -f [BitConverter]::ToUInt32($random,0),[BitConverter]::ToUInt32($random,4),[BitConverter]::ToUInt32($random,8)
+    try {
+        $null=[Security.Principal.SecurityIdentifier]::new($sid).Translate([Security.Principal.NTAccount])
+        throw 'Generated preflight SID already maps to an account'
+    } catch [Security.Principal.IdentityNotMappedException] { }
+    [uint32]$count=0
+    [uint32]$verified=0
+    [IO.File]::Open($manifest,'CreateNew','Write','None').Dispose()
+    Remember $manifest $false
+    $countRef=[ref]$count
+    $verifiedRef=[ref]$verified
+    $rc=Invoke-Measurement 'snapshot' { [W17]::TreeSaveTrace($root,$manifest,$countRef,$log) }
+    Result 'snapshot' $rc "objects=$count"
+    if ($rc) { $failure=$rc; throw 'Snapshot failed' }
+    if ($count -ne 7) { throw "Snapshot objects=$count" }
+    try {
+        $apply=Invoke-Measurement 'apply' { [W17]::TreeChangeTrace($manifest,$count,$sid,0,$verifiedRef,$log) }
+        Result 'apply' $apply "verified=$verified"
+        if ($apply) { $failure=$apply; throw 'Apply failed' }
+        if ($verified -ne $count) { throw "Apply verified=$verified" }
+    } finally {
+        $restore=Invoke-Measurement 'restore' { [W17]::TreeChangeTrace($manifest,$count,$sid,1,$verifiedRef,$log) }
+        Result 'restore' $restore "verified=$verified"
+        if ($restore) { $failure=$restore; throw 'Restore failed' }
+        if ($verified -ne $count) { throw "Restore verified=$verified" }
+    }
+} catch {
+    if (!$failure) { $failure=1 }
+    Add-Content -LiteralPath $log "fixture failure=$($_.Exception.GetBaseException().Message)"
 } finally {
-    $restore=Invoke-Measurement 'restore' { [W17]::TreeChange($manifest,$count,$sid,1,$verifiedRef) }
-    Result 'restore' $restore "verified=$verified"
-    if ($restore) { exit $restore }
-    if ($verified -ne $count) { throw "Restore verified=$verified. Retain $stage for reconciliation." }
+    try {
+        Remove-Fixture
+        if ([IO.Directory]::Exists($stage)) { throw "Stage still present" }
+        Add-Content -LiteralPath $log "cleanup removed scratch=$stage"
+    } catch {
+        Add-Content -LiteralPath $log "cleanup incomplete scratch=$stage reason=$($_.Exception.GetBaseException().Message)"
+        if (!$failure) { $failure=1 }
+    }
 }
-Remove-Fixture
+exit $failure

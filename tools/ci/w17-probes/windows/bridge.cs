@@ -150,6 +150,11 @@ public static class W17 {
   public static extern uint TreeChange(string manifest, uint count, string sid,
                                        int restore, out uint verified);
   [DllImport(@"W17_DLL", ExactSpelling = true, CharSet = CharSet.Unicode)]
+  public static extern uint TreeSaveTrace(string root, string output, out uint count, string log);
+  [DllImport(@"W17_DLL", ExactSpelling = true, CharSet = CharSet.Unicode)]
+  public static extern uint TreeChangeTrace(string manifest, uint count, string sid,
+                                            int restore, out uint verified, string log);
+  [DllImport(@"W17_DLL", ExactSpelling = true, CharSet = CharSet.Unicode)]
   public static extern uint Launch(string user, IntPtr password, string exe,
                                    StringBuilder command, IntPtr env,
                                    string cwd, string stderr, out uint pid);
