@@ -1,0 +1,86 @@
+name: W17 Windows preflight
+
+on:
+  push:
+    branches: [test/w17-preflight]
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    if: github.run_number <= 2 && github.run_attempt == 1 && true
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        id: checkout
+        with:
+          persist-credentials: false
+      - name: Compile the x64 probe and time the disposable DACL round trip
+        id: preflight
+        working-directory: ${{ runner.temp }}
+        if: always()
+        env:
+          CHECKOUT: ${{ steps.checkout.outcome }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $PSNativeCommandUseErrorActionPreference=$false
+          $build=[IO.Directory]::CreateTempSubdirectory('w17-build-').FullName
+          $log=Join-Path $build preflight.log
+          $compiler=Join-Path $build compiler.log
+          Set-Content $compiler 'compile: not attempted yet'
+          Set-Content $log "checkout=$env:CHECKOUT"
+          foreach ($op in 'vs-discovery','dev-shell','compile','dependency','fixture','descriptor','snapshot','apply','restore') {
+            Add-Content $log "$op : not attempted yet"
+          }
+          "build=$build" >> $env:GITHUB_OUTPUT
+          if ($env:CHECKOUT -ne 'success') { exit 1 }
+          $op='fixture-source'
+          $clock=[Diagnostics.Stopwatch]::StartNew()
+          function Result($rc,$detail) {
+            $status=if ($null -eq $rc) { 'completed' } else { "exit=$rc" }
+            $line="$op $status elapsedMs=$($clock.ElapsedMilliseconds) $detail"
+            Add-Content $log $line
+            if ($op -eq 'compile') { Add-Content $compiler $line }
+            if ($rc) { exit $rc }
+          }
+          try {
+            $source=(Resolve-Path -LiteralPath (Join-Path $env:GITHUB_WORKSPACE tools/ci/w17-probes/windows)).Path
+            Push-Location $build
+            $pushed=$true
+            $op='vs-discovery'; $clock.Restart()
+            $vswhere="${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+            $vs=& $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+            Result $LASTEXITCODE "found=$([bool]$vs)"
+            if (!$vs) { exit 1 }
+            $op='dev-shell'; $clock.Restart()
+            Import-Module "$vs\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
+            Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
+            Result $null
+            $op='compile'; $clock.Restart()
+            cl.exe /nologo /EHsc /std:c++17 /W4 /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /MT /LD "$source/controller.cpp" "$source/tree-acl.cpp" /link /MACHINE:X64 advapi32.lib user32.lib userenv.lib ws2_32.lib fwpuclnt.lib ole32.lib uuid.lib 2>&1 | Out-File -FilePath $compiler -Append -Encoding utf8
+            Result $LASTEXITCODE
+            $op='dependency'; $clock.Restart()
+            $tail=npm.cmd install --prefix $build --cache "$build/npm-cache" --ignore-scripts --no-audit --no-fund --no-package-lock zod@4.6.5 2>&1 | Select-Object -Last 40
+            $npmExit=$LASTEXITCODE
+            if ($npmExit) { $tail | Out-File -FilePath $log -Append -Encoding utf8 }
+            Result $npmExit
+            $env:NODE_PATH=Join-Path $build node_modules
+            $op='fixture'; $clock.Restart()
+            pwsh -NoProfile -File "$source/preflight.ps1" -ControllerDll "$build/controller.dll"
+            Result $LASTEXITCODE
+          } catch {
+            Add-Content $log "$op exception=$($_.Exception.GetType().Name) elapsedMs=$($clock.ElapsedMilliseconds)"
+            throw
+          } finally { if ($pushed) { Pop-Location } }
+      - uses: actions/upload-artifact@v7
+        if: always() && steps.preflight.outputs.build != ''
+        with:
+          name: w17-preflight-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ steps.preflight.outputs.build }}/compiler.log
+            ${{ steps.preflight.outputs.build }}/preflight.log
+          retention-days: 14
+          if-no-files-found: error
