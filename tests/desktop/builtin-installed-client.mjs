@@ -178,7 +178,20 @@ export async function processTable({
       return { pid, ppid, pgid, created: match[4] };
     });
 }
-export function descendants(table, parent, known = new Set()) {
+function windowsBirthOrder(created) {
+  // CIM emits UTC ISO timestamps. Keep all seven fractional digits rather
+  // than truncating to the millisecond precision of Date.parse().
+  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,7}))?Z$/.exec(created);
+  assert.ok(match, `Invalid Windows creation timestamp: ${created}`);
+  return match[1] + (match[2] ?? "").padEnd(7, "0");
+}
+
+export function descendants(table, parent, known = new Map()) {
+  if (!(known instanceof Map))
+    assert.ok(
+      table.every((row) => Object.hasOwn(row, "pgid")),
+      "Windows descendant observation requires a PID-to-birth map",
+    );
   const remember = (row) => {
     if (Object.hasOwn(row, "created"))
       assert.ok(row.created, `Missing creation identity for observed PID ${row.pid}`);
@@ -187,30 +200,48 @@ export function descendants(table, parent, known = new Set()) {
   };
   const matches = (row) =>
     known.has(row.pid) && (!(known instanceof Map) || known.get(row.pid) === row.created);
-  const windows = table.some((row) => Object.hasOwn(row, "created"));
+  const hasIdentity = table.some((row) => Object.hasOwn(row, "created"));
   const byPid = new Map(table.map((row) => [row.pid, row]));
   if (!known.has(parent)) {
     const row = byPid.get(parent);
     if (row) remember(row);
     else if (!(known instanceof Map)) known.add(parent);
-    else if (!windows && table.length) known.set(parent, undefined);
+    else if (table.some((entry) => Object.hasOwn(entry, "pgid"))) known.set(parent, undefined);
   }
+  const ownedParent = (row) => {
+    if (!known.has(row.ppid)) return false;
+    const current = byPid.get(row.ppid);
+    if (hasIdentity && current && !matches(current)) return false;
+    if (Object.hasOwn(row, "pgid")) return true;
+    const birth = current?.created ?? known.get(row.ppid);
+    if (!birth) return false;
+    assert.ok(row.created, `Missing creation identity for observed PID ${row.pid}`);
+    return windowsBirthOrder(row.created) >= windowsBirthOrder(birth);
+  };
   let changed = true;
   while (changed) {
     changed = false;
     for (const row of table)
       if (
-        ((known.has(row.ppid) &&
-          (!windows || !byPid.has(row.ppid) || matches(byPid.get(row.ppid)))) ||
+        !known.has(row.pid) &&
+        (ownedParent(row) ||
           (row.pgid === parent &&
-            (!(known instanceof Map) || !byPid.has(parent) || matches(byPid.get(parent))))) &&
-        !known.has(row.pid)
+            (!(known instanceof Map) || !byPid.has(parent) || matches(byPid.get(parent)))))
       ) {
         remember(row);
         changed = true;
       }
   }
   return table.filter(matches);
+}
+
+// Read the current identity immediately before each cleanup signal.
+export async function killObservedProcess(pid, known, poll, kill = process.kill) {
+  if (known instanceof Map) {
+    const row = (await poll()).find((candidate) => candidate.pid === pid);
+    if (!row || !row.created || known.get(pid) !== row.created) return;
+  }
+  kill(pid, "SIGKILL");
 }
 
 export async function command(file, args, options = {}) {

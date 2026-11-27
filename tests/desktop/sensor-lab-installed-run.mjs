@@ -620,7 +620,7 @@ export async function runInstalled(directory, options = labInstalledOptions) {
       ],
       { cwd: runRoot, env, stdio: ["ignore", "pipe", "pipe"] },
     );
-    const known = new Set();
+    const known = new Map();
     let stdout = "",
       stderr = "",
       timeout = false,
@@ -677,7 +677,7 @@ export async function runInstalled(directory, options = labInstalledOptions) {
     await writeFile(
       path.join(runRoot, "process.json"),
       JSON.stringify(
-        { result, timeout, known: [...known], survivors, monitorErrors, outputOverflow },
+        { result, timeout, known: [...known.keys()], survivors, monitorErrors, outputOverflow },
         null,
         2,
       ),

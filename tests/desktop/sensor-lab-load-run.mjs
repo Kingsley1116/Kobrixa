@@ -469,7 +469,7 @@ async function main(args) {
       detached: process.platform !== "win32",
     },
   );
-  const known = new Set(),
+  const known = new Map(),
     errors = [];
   const monitor = createProcessMonitor({
     poll: processTable,
@@ -487,7 +487,8 @@ async function main(args) {
   const timer = setTimeout(() => {
     timedOut = true;
     try {
-      process.kill(process.platform === "win32" ? child.pid : -child.pid, "SIGKILL");
+      if (process.platform === "win32") child.kill("SIGKILL");
+      else process.kill(-child.pid, "SIGKILL");
     } catch (error) {
       if (error.code !== "ESRCH") errors.push(String(error));
     }

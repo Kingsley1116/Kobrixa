@@ -729,28 +729,90 @@ test("installed ASAR lookups use host separators and keep the copied archive ide
   assert.equal(windows.extract(main).toString(), "installed main fixture");
 });
 
+const windowsBirthRows = [
+  { pid: 6692, ppid: 1, created: "2026-11-25T17:27:00.0000001Z" },
+  { pid: 6752, ppid: 6692, created: "2026-11-25T17:13:58.3625200Z" },
+  { pid: 6824, ppid: 6752, created: "2026-11-25T17:13:58.4016330Z" },
+  { pid: 7000, ppid: 6692, created: "2026-11-25T17:27:00.0000002Z" },
+];
+test("Windows birth ordering rejects stale branches with retained identities", () => {
+  const observed = descendants(windowsBirthRows, 6692, new Map());
+  assert.deepEqual(
+    observed.map((row) => row.pid),
+    [6692, 7000],
+  );
+});
+
+test("Windows orphan detection requires a birth map and finds a child first seen after parent exit", () => {
+  const [root, , , child] = windowsBirthRows;
+  assert.throws(() => descendants([root], root.pid, new Set()), /birth map/i);
+  const known = new Map();
+  assert.deepEqual(descendants([root], root.pid, known), [root]);
+  assert.deepEqual(descendants([child], root.pid, known), [child]);
+  assert.equal(known.get(child.pid), child.created);
+});
+
+test("Windows birth ordering uses the exited parent's retained identity at native precision", () => {
+  const [root, stale, grandchild, genuine] = windowsBirthRows;
+  const known = new Map();
+  descendants([root, genuine], root.pid, known);
+  const orphan = { ...genuine, ppid: 1 };
+  const equal = { pid: 7001, ppid: root.pid, created: root.created };
+  const earlier = { ...equal, pid: 7002, created: "2026-11-25T17:27:00.0000000Z" };
+  assert.deepEqual(descendants([stale, grandchild, earlier, equal, orphan], root.pid, known), [
+    equal,
+    orphan,
+  ]);
+});
+
 test("Windows ancestry retains orphan identity and excludes reused PIDs and their children", () => {
   const known = new Map();
   const rows = [
-    { pid: 10, ppid: 1, created: "original-root" },
-    { pid: 13, ppid: 12, created: "original-grandchild" },
-    { pid: 12, ppid: 10, created: "original-child" },
+    { pid: 10, ppid: 1, created: "2026-11-25T17:27:00.0000000Z" },
+    { pid: 13, ppid: 12, created: "2026-11-25T17:27:02.0000000Z" },
+    { pid: 12, ppid: 10, created: "2026-11-25T17:27:01.0000000Z" },
   ];
   assert.deepEqual(descendants(rows, 10, known), rows);
-  const orphan = { pid: 13, ppid: 1, created: "original-grandchild" };
+  const orphan = { pid: 13, ppid: 1, created: "2026-11-25T17:27:02.0000000Z" };
   const later = [
-    { pid: 10, ppid: 1, created: "reused-root" },
-    { pid: 12, ppid: 10, created: "reused-child" },
-    { pid: 14, ppid: 12, created: "unrelated-grandchild" },
+    { pid: 10, ppid: 1, created: "2026-11-25T17:27:03.0000000Z" },
+    { pid: 12, ppid: 10, created: "2026-11-25T17:27:04.0000000Z" },
+    { pid: 14, ppid: 12, created: "2026-11-25T17:27:05.0000000Z" },
     orphan,
   ];
   assert.deepEqual(descendants(later, 10, known), [orphan]);
-  assert.equal(known.get(10), "original-root");
+  assert.equal(known.get(10), "2026-11-25T17:27:00.0000000Z");
   assert.deepEqual(descendants([], 10, known), []);
   assert.throws(
     () => descendants([{ pid: 99, ppid: 1, created: null }], 99, new Map()),
     /Missing creation identity/,
   );
+});
+
+test("device cleanup rechecks retained births after a failed final poll", async () => {
+  const { finishProcessObservation } = await import("./device-ui-stdio-run.mjs");
+  const [root, stale, , genuine] = windowsBirthRows;
+  const known = new Map([
+    [root.pid, root.created],
+    [genuine.pid, genuine.created],
+  ]);
+  const failure = new Error("final poll failed");
+  let reads = 0;
+  const errors = [],
+    signals = [];
+  const survivors = await finishProcessObservation({
+    parent: root.pid,
+    known,
+    poll: async () => {
+      if (++reads === 1) throw failure;
+      return [{ ...root, created: stale.created }, genuine];
+    },
+    kill: (...args) => signals.push(args),
+    onError: (error) => errors.push(error),
+  });
+  assert.deepEqual(errors, [failure]);
+  assert.deepEqual(survivors, [{ pid: root.pid }, { pid: genuine.pid }]);
+  assert.deepEqual(signals, [[genuine.pid, "SIGKILL"]]);
 });
 
 test("Windows cleanup uses taskkill for trees, preserves errors and refuses reused PIDs", async () => {
@@ -826,12 +888,12 @@ test("POSIX ancestry still accounts for children when the original parent alread
 
 test("Windows ancestry retains a late-sampled child of an already exited observed process", () => {
   const known = new Map([
-    [10, "root"],
-    [12, "child"],
+    [10, "2026-11-25T17:27:00.0000000Z"],
+    [12, "2026-11-25T17:27:01.0000000Z"],
   ]);
-  const remaining = [{ pid: 13, ppid: 12, created: "grandchild" }];
+  const remaining = [{ pid: 13, ppid: 12, created: "2026-11-25T17:27:02.0000000Z" }];
   assert.deepEqual(descendants(remaining, 10, known), remaining);
-  assert.equal(known.get(13), "grandchild");
+  assert.equal(known.get(13), "2026-11-25T17:27:02.0000000Z");
 });
 
 test("secondary entry observer records original mutations and requires a terminal receipt", async (t) => {

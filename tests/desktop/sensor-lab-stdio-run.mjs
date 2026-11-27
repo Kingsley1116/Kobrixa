@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn, execFileSync } from "node:child_process";
 import { rawResourcePlugin } from "./raw-resource-plugin.mjs";
-import { processTable, descendants } from "./builtin-installed-client.mjs";
+import { processTable, descendants, killObservedProcess } from "./builtin-installed-client.mjs";
 const root = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
 export const hash = (b) => createHash("sha256").update(b).digest("hex");
 export const ownerId = "acceptance.lab-stdio";
@@ -544,7 +544,7 @@ async function main(args) {
     timedOut = false;
   child.stdout.on("data", (b) => (output += b));
   child.stderr.on("data", (b) => (output += b));
-  const known = new Set(),
+  const known = new Map(),
     monitorErrors = [];
   let pending = Promise.resolve();
   const monitor = setInterval(() => {
@@ -579,9 +579,9 @@ async function main(args) {
   );
   for (const row of survivors)
     try {
-      process.kill(row.pid, "SIGKILL");
-    } catch {
-      /* already exited */
+      await killObservedProcess(row.pid, known, processTable);
+    } catch (error) {
+      if (error.code !== "ESRCH") monitorErrors.push(String(error));
     }
   await assertStdioExit(directory, result, timedOut, console.error, output);
   assert.deepEqual(survivors, []);

@@ -8,7 +8,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn, execFileSync } from "node:child_process";
 import { rawResourcePlugin } from "./raw-resource-plugin.mjs";
-import { processTable, descendants } from "./builtin-installed-client.mjs";
+import { processTable, descendants, killObservedProcess } from "./builtin-installed-client.mjs";
 const root = fileURLToPath(new URL("../../", import.meta.url));
 export const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 export const ownerId = "acceptance.device-stdio";
@@ -538,11 +538,11 @@ export async function finishProcessObservation({
   } catch (error) {
     onError(error);
     // Failure cannot prove exit; attempt cleanup of all previously observed owned PIDs.
-    survivors = [...known].filter(Number.isSafeInteger).map((pid) => ({ pid }));
+    survivors = [...known.keys()].filter(Number.isSafeInteger).map((pid) => ({ pid }));
   }
   for (const row of survivors) {
     try {
-      kill(row.pid, "SIGKILL");
+      await killObservedProcess(row.pid, known, () => boundedObservation(poll, timeoutMs), kill);
     } catch (error) {
       if (error.code !== "ESRCH") onError(error);
     }
@@ -609,7 +609,7 @@ async function main(args) {
   };
   child.stdout.on("data", capture);
   child.stderr.on("data", capture);
-  const known = new Set(),
+  const known = new Map(),
     monitorErrors = [];
   const monitor = createProcessMonitor({
     poll: processTable,

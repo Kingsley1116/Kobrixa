@@ -52,12 +52,12 @@ test("one warmed helper serializes polls and freshly observes orphans after pare
   const first = observer.poll();
   assert.equal(observer.poll(), first);
   fake.reply([
-    { pid: 10, ppid: 1, created: "parent" },
-    { pid: 11, ppid: 10, created: "child" },
+    { pid: 10, ppid: 1, created: "2026-01-01T00:00:00.0000000Z" },
+    { pid: 11, ppid: 10, created: "2026-01-01T00:00:00.0000001Z" },
   ]);
   descendants(await first, 10, known);
   const final = observer.poll();
-  fake.reply([{ pid: 11, ppid: 1, created: "child" }]);
+  fake.reply([{ pid: 11, ppid: 1, created: "2026-01-01T00:00:00.0000001Z" }]);
   assert.deepEqual(
     descendants(await final, 10, known).map((row) => row.pid),
     [11],

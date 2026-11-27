@@ -1254,7 +1254,7 @@ async function runLabRestartProcess(directory, electron, env, phase) {
       detached: process.platform !== "win32",
     },
   );
-  const known = new Set(),
+  const known = new Map(),
     errors = [],
     logs = [];
   const monitor = createProcessMonitor({
@@ -1272,7 +1272,8 @@ async function runLabRestartProcess(directory, electron, env, phase) {
   const timer = setTimeout(() => {
     timedOut = true;
     try {
-      process.kill(process.platform === "win32" ? child.pid : -child.pid, "SIGKILL");
+      if (process.platform === "win32") child.kill("SIGKILL");
+      else process.kill(-child.pid, "SIGKILL");
     } catch (e) {
       if (e.code !== "ESRCH") errors.push(String(e));
     }
@@ -1404,7 +1405,8 @@ async function main(args) {
   const timer = setTimeout(() => {
     timedOut = true;
     try {
-      process.kill(process.platform === "win32" ? child.pid : -child.pid, "SIGKILL");
+      if (process.platform === "win32") child.kill("SIGKILL");
+      else process.kill(-child.pid, "SIGKILL");
     } catch (e) {
       if (e.code !== "ESRCH") throw e;
     }
