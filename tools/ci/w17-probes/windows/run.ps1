@@ -9,12 +9,6 @@ $out = $env:W17_OUT
 $expected = Join-Path $env:RUNNER_TEMP "w17-windows-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
 if (!$IsWindows -or !$out -or $out -ne $expected) { throw 'Expected run-specific Windows controller directory' }
 if ((Get-Item -LiteralPath $out).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Unexpected controller directory redirection' }
-$acl = Get-Acl -LiteralPath $out
-$allowed = @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value,'S-1-5-18')
-if (!$acl.AreAccessRulesProtected) { throw 'Controller DACL must be protected' }
-foreach ($rule in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) {
-    if ($rule.AccessControlType -eq 'Allow' -and $rule.IdentityReference.Value -notin $allowed) { throw 'Unexpected controller directory access' }
-}
 $recovery=0
 if ($Phase -eq 'cleanup') {
     & node "$PSScriptRoot/../evidence.mjs" recover
@@ -23,6 +17,10 @@ if ($Phase -eq 'cleanup') {
 & node "$PSScriptRoot\phase-log.mjs" $Phase begin
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 try {
+    $env:W17_PRIVATE=$out
+    $env:W17_ACL_VERIFY_ONLY='1'
+    if (!$env:W17_PRIVATE_ACL) { throw 'Missing private DACL verifier' }
+    & ([scriptblock]::Create($env:W17_PRIVATE_ACL))
     if ($Phase -eq 'primitives') {
         $principal=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
         $arch=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()

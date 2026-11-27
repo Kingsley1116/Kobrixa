@@ -227,3 +227,14 @@ test("Windows has its own bounded allocation and only ordinary allowlisted files
   assert.equal(steps.at(-1).if, "always()");
   assert.match(steps.at(-1).run, /windows\/verdict\.mjs/);
 });
+
+test("a denied subject cannot establish controller-only inspection with a failed or missing independent peer", () => {
+  for (const status of ["FAIL", "NOT RUN"]) {
+    const rows = Object.fromEntries(required("wfp").map((key) => [key, { status: "PASS" }]));
+    rows["W6.wfp.other"] = { status };
+    const result = decide(rows);
+    assert.equal(result.exact, false);
+    assert.equal(result.equivalent, false);
+    assert.deepEqual(result.candidates[0].missing, ["W6.wfp.other"]);
+  }
+});

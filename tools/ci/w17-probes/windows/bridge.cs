@@ -91,51 +91,81 @@ public static class W17 {
   }
 
   // No FILE_SHARE_DELETE: keep the verified root at this path through removal.
-  public static SafeFileHandle PinStage(string path) {
-    var handle = CreateFileW(path, 0x10000 | 0x80, 3, IntPtr.Zero, 3,
+  public static SafeFileHandle PinStage(string path) { return PinStage(path, false); }
+  static SafeFileHandle PinStage(string path, bool readOwner) {
+    var handle = CreateFileW(path, 0x10000u | 0x80u | (readOwner ? 0x20000u : 0u), 3, IntPtr.Zero, 3,
                              0x02000000 | 0x00200000, IntPtr.Zero);
     if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
     return handle;
   }
 
-  // The caller holds the verified parent without delete sharing while we
-  // enumerate its direct children and open each one without following links.
-  static string RemoveChildren(string path, System.Collections.IDictionary children, bool root) {
-    string pending = null;
+  [DllImport("advapi32.dll")]
+  static extern uint GetSecurityInfo(SafeFileHandle handle, int objectType, uint info,
+      out IntPtr owner, IntPtr group, IntPtr dacl, IntPtr sacl, out IntPtr descriptor);
+  [DllImport("kernel32.dll")]
+  static extern IntPtr LocalFree(IntPtr pointer);
+
+  static string PinnedOwner(SafeFileHandle pin) {
+    IntPtr owner, descriptor;
+    uint rc = GetSecurityInfo(pin, 1, 1, out owner, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, out descriptor);
+    if (rc != 0) throw new Win32Exception((int)rc);
+    try { return new System.Security.Principal.SecurityIdentifier(owner).Value; }
+    finally { LocalFree(descriptor); }
+  }
+
+  // Keep every verified parent pinned while opening children without following links.
+  // Only registered account homes admit dynamic children owned by that account.
+  static string RemoveChildren(string path, System.Collections.IDictionary children, bool root,
+                               System.Collections.IDictionary homes, string homeOwner) {
+    var pending = new StringBuilder();
+    void Record(string message) {
+      const int limit = 8192;
+      if (pending.Length >= limit) return;
+      pending.Append(message, 0, Math.Min(Math.Min(message.Length, 2048), limit - pending.Length));
+      pending.AppendLine();
+      if (pending.Length >= limit) pending.Append("[remaining diagnostics truncated]");
+    }
     foreach (var entry in new DirectoryInfo(path).GetFileSystemInfos()) {
-      if (root && entry.Name == ".w17-owner") continue;
-      string expected = children[entry.FullName] as string;
-      if (expected == null) {
-        pending = "Unconfirmed stage child: " + entry.FullName;
-        continue;
-      }
-      bool directory = (entry.Attributes & FileAttributes.Directory) != 0;
-      bool junction = (entry.Attributes & FileAttributes.ReparsePoint) != 0;
-      using (var pin = PinStage(entry.FullName)) {
-        if (ChildIdentity(pin, directory, junction) != expected) {
-          pending = "Stage child replaced: " + entry.FullName;
+      try {
+        if (root && entry.Name == ".w17-owner") continue;
+        string expected = children[entry.FullName] as string;
+        if (expected == null && (homeOwner == null || (entry.Attributes & FileAttributes.ReparsePoint) != 0)) {
+          Record("Unconfirmed stage child: " + entry.FullName);
           continue;
         }
-        if (directory && !junction) {
-          var remaining = RemoveChildren(entry.FullName, children, false);
-          if (remaining != null) {
-            pending = remaining;
+        bool directory = (entry.Attributes & FileAttributes.Directory) != 0;
+        bool junction = (entry.Attributes & FileAttributes.ReparsePoint) != 0;
+        using (var pin = PinStage(entry.FullName, expected == null)) {
+          string actual = ChildIdentity(pin, directory, junction);
+          if (expected == null ? PinnedOwner(pin) != homeOwner : actual != expected) {
+            Record("Stage child replaced: " + entry.FullName);
             continue;
           }
+          if (directory && !junction) {
+            var remaining = RemoveChildren(entry.FullName, children, false, homes, homeOwner ??
+                (expected == null ? null : homes[entry.FullName] as string));
+            if (remaining != null) {
+              Record(remaining);
+              continue;
+            }
+          }
+          DeletePinned(pin); // Nonempty directories cannot be removed.
         }
-        DeletePinned(pin); // Nonempty directories cannot be removed.
+      } catch (Exception e) when (e is IOException || e is Win32Exception || e is UnauthorizedAccessException ||
+                                  e is ArgumentException || e is NotSupportedException || e is System.Security.SecurityException) {
+        Record(entry.FullName + ": " + e.Message);
       }
     }
-    return pending;
+    return pending.Length == 0 ? null : pending.ToString();
   }
 
   public static void RemoveStage(SafeFileHandle handle, string path, string rootId,
-                                 string markerId, System.Collections.IDictionary children) {
+                                 string markerId, System.Collections.IDictionary children, System.Collections.IDictionary homes) {
     if (Identity(handle, true) != rootId) throw new IOException("Stage root replaced");
     string marker = Path.Combine(path, ".w17-owner");
     using (var pin = PinStage(marker)) {
       if (Identity(pin, false) != markerId) throw new IOException("Stage marker replaced");
-      string pending = RemoveChildren(path, children, true);
+      string pending = RemoveChildren(path, children, true, homes, null);
       if (pending != null) throw new IOException(pending);
       foreach (var entry in Directory.EnumerateFileSystemEntries(path))
         if (entry != marker) throw new IOException("Unconfirmed stage child: " + entry);
@@ -143,6 +173,8 @@ public static class W17 {
     }
     DeletePinned(handle);
   }
+  [DllImport(@"W17_DLL", ExactSpelling = true, CharSet = CharSet.Unicode)]
+  public static extern uint WriteDacl(string path, string expectedBefore, string sddl, StringBuilder observed, uint capacity);
   [DllImport(@"W17_DLL", ExactSpelling = true, CharSet = CharSet.Unicode)]
   public static extern uint ReadDacl(string path, StringBuilder buffer, uint capacity);
   [DllImport(@"W17_DLL", ExactSpelling = true, CharSet = CharSet.Unicode)]

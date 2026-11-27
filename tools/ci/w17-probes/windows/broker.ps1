@@ -102,6 +102,30 @@ function Save-StageChild($path,[bool]$directory,[bool]$junction) {
     try { $stage.children[$path]=[W17]::ChildIdentity($pin,$directory,$junction) }
     finally { $pin.Dispose() }
 }
+# The raw setter never updates existing children. Use creation receipts as
+# the bin inventory, including the copied Electron package in the package phase.
+function Grant-Container($sid) {
+    $stage=($j.entries | Where-Object kind -eq 'stage').data
+    $bin=Join-Path $j.stage bin
+    $subjectHome=$j.accounts.subject.home
+    $inherit='ContainerInherit,ObjectInherit'
+    (Ace $j.stage $sid ReadAndExecute None Allow container).id
+    (Ace (Join-Path $j.stage aliases) $sid ReadAndExecute None Allow container).id
+    foreach ($dir in 'bin','negative','plans') {
+        (Ace (Join-Path $j.stage $dir) $sid ReadAndExecute $inherit Allow container).id
+    }
+    foreach ($path in $stage.children.Keys | Sort-Object) {
+        if (!$path.StartsWith($bin+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)) { continue }
+        $kind=$stage.children[$path].Split(':')[0]
+        if ($kind -notin 'directory','file') { throw "Unexpected container input $path" }
+        $flags=if ($kind -eq 'directory') { $inherit } else { 'None' }
+        (Ace $path $sid ReadAndExecute $flags Allow container).id
+    }
+    (Ace $subjectHome $sid Modify $inherit Allow container).id
+    foreach ($dir in 'empty','Roaming','Local','Temp') {
+        (Ace (Join-Path $subjectHome $dir) $sid Modify $inherit Allow container).id
+    }
+}
 function Confirm-Stage($entry,$pin) {
     $d=$entry.data
     if (!$d.created -or !$d.birth -or !$d.marker -or $d.path -cne $j.stage) { throw 'Stage creation not confirmed' }
@@ -111,42 +135,12 @@ function Confirm-Stage($entry,$pin) {
     $marker=Get-Item -Force -LiteralPath (Join-Path $dir.FullName '.w17-owner')
     if ($marker.PSIsContainer -or ($marker.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $marker.Length -ne 32 -or [IO.File]::ReadAllText($marker.FullName) -cne $d.marker) { throw 'Stage ownership marker changed' }
 }
-function Section($path) {
-    $buffer=[Text.StringBuilder]::new(65536)
-    Check ([W17]::ReadDacl($path,$buffer,$buffer.Capacity)) 'read raw file DACL'
-    return $buffer.ToString()
-}
-function New-DaclEditor($path,$sddl) {
-    $acl=if ([IO.Directory]::Exists($path)) { [Security.AccessControl.DirectorySecurity]::new() }
-         else { [Security.AccessControl.FileSecurity]::new() }
-    $acl.SetSecurityDescriptorSddlForm($sddl,[Security.AccessControl.AccessControlSections]::Access)
-    if ($acl.GetSecurityDescriptorSddlForm('Access') -cne $sddl) { throw "Cannot edit raw DACL losslessly $path" }
-    return $acl
-}
-function Ace($path,$sid,$rights,$inherit,$type,$scope) {
-    $before=Section $path
-    $acl=New-DaclEditor $path $before
-    $entry=Intent 'acl' @{path=$path;before=$before;scope=$scope;sid=$sid;protected=$acl.AreAccessRulesProtected}
-    $ace=[Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($sid),$rights,$inherit,'None',$type)
-    $acl.AddAccessRule($ace)
-    $entry.data.installed=$acl.GetSecurityDescriptorSddlForm('Access'); Save
-    if ((Section $path) -cne $before) { throw "Conflicting initial DACL $path" }
-    Set-Acl -LiteralPath $path -AclObject $acl
-    if ((Section $path) -cne $entry.data.installed) { throw "Unexpected installed DACL $path" }
-    return @{id=$entry.id;before=$before;after=(Section $path);protected=$entry.data.protected;path=$path}
-}
-function NeedsRestore($current,$before,$installed,$resource) {
-    if ($current -ceq $before) { return $false }
-    if ($current -cne $installed) { throw "Conflicting descriptor or setting for ${resource}: current=$current installed=$installed original=$before" }
-    return $true
-}
-function RestoreAcl($e) {
-    $current=Section $e.data.path
-    if (NeedsRestore $current $e.data.before $e.data.installed $e.data.path) {
-        $acl=New-DaclEditor $e.data.path $e.data.before
-        Set-Acl -LiteralPath $e.data.path -AclObject $acl
-    }
-    if ((Section $e.data.path) -cne $e.data.before) { throw "DACL restoration mismatch $($e.data.path)" }
+. "$PSScriptRoot/raw-acl.ps1"
+# NONE (4) disables auditing. Zero on a write leaves the policy unchanged.
+function AuditBits([uint32]$value) {
+    if ($value -gt 4) { throw "Unexpected audit policy $value" }
+    if ($value -eq 4) { return 0 }
+    return $value
 }
 function DesktopSD($i) {
     $buf=[Text.StringBuilder]::new(65536)
@@ -241,11 +235,13 @@ function Unwind($selection) {
                 }
                 'audit' {
                     [uint32]$v=0; Check ([W17]::Audit(0,[ref]$v)) 'query current audit'
-                    if (NeedsRestore $v $d.before $d.installed 'audit') {
-                        $v=$d.before; Check ([W17]::Audit(1,[ref]$v)) 'restore audit'
+                    $before=AuditBits $d.before
+                    $v=AuditBits $v
+                    if (NeedsRestore $v $before $d.installed 'audit') {
+                        $v=if ($before -eq 0) { 4 } else { $before }; Check ([W17]::Audit(1,[ref]$v)) 'restore audit'
                     }
                     Check ([W17]::Audit(0,[ref]$v)) 'query restored audit'
-                    if ($v -ne $d.before) { throw 'Audit restoration mismatch' }
+                    if ((AuditBits $v) -ne $before) { throw 'Audit restoration mismatch' }
                 }
                 'firewall' {
                     $rules=@(Get-NetFirewallRule -PolicyStore PersistentStore | Where-Object Name -eq $d.name)
@@ -273,7 +269,9 @@ function Unwind($selection) {
                         }
                     }
                     $d.removalStarted=$true; Save
-                    [W17]::RemoveStage($stageHandle,$j.stage,$d.rootId,$d.markerId,$d.children)
+                    $homes=@{}
+                    foreach ($account in $j.accounts.Values) { $homes[$account.home]=$account.sid }
+                    [W17]::RemoveStage($stageHandle,$j.stage,$d.rootId,$d.markerId,$d.children,$homes)
                     $stageHandle.Dispose()
                     $stageHandle=$null
                     if (Test-Path -LiteralPath $j.stage) { throw 'Stage remains' }
@@ -382,16 +380,10 @@ function Dispatch($p) {
                 Confirm-Stage $entry $pin
                 Save
             } finally { $pin.Dispose() }
-            # Remove inherited generic Users access before creating inputs or homes.
-            $acl=Get-Acl $j.stage
-            $acl.SetAccessRuleProtection($true,$false)
-            foreach ($id in @($owner.User.Value,'S-1-5-18')) {
-                $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($id),'FullControl','ContainerInherit,ObjectInherit','None','Allow'))
-            }
-            Set-Acl $j.stage $acl
+            Protect-Stage $j.stage $owner.User.Value
+            Protect-Stage (Join-Path $j.stage '.w17-owner') $owner.User.Value -Marker
             foreach ($a in $j.accounts.Values) {
                 $null=Ace $j.stage $a.sid 'ReadAndExecute' 'None' 'Allow' 'stage'
-                $null=Ace $env:RUNNER_TEMP $a.sid 'ReadAndExecute' 'ContainerInherit,ObjectInherit' 'Deny' 'runner'
             }
             foreach ($dir in @('bin','plans','negative','aliases')) {
                 $path=Join-Path $j.stage $dir; New-OwnedDir $path
@@ -483,6 +475,7 @@ function Dispatch($p) {
             if ($checked -ne $count) { throw 'Incomplete NTFS change' }
             return @{id=$e.id;root=$root;objects=$count;snapshotMs=$snapshotMs;elapsedMs=$timer.ElapsedMilliseconds;sha256=(Get-FileHash $file).Hash}
         }
+        'container-grants' { return ,@(Grant-Container $p.sid) }
         'acl' { return Ace $p.path $p.sid $p.rights $p.inherit $p.type $p.scope }
         'section' { return Section $p.path }
         'restore' { return Unwind { param($e) $e.kind -eq $p.kind -and (!$p.scope -or $e.data.scope -eq $p.scope) } }
@@ -496,6 +489,7 @@ function Dispatch($p) {
         }
         'audit' {
             [uint32]$v=0; Check ([W17]::Audit(0,[ref]$v)) 'query audit'
+            $null=AuditBits $v
             $entry=Intent 'audit' @{before=$v;installed=(($v -band 1) -bor 2)}
             $v=($v -band 1) -bor 2; Check ([W17]::Audit(1,[ref]$v)) 'enable failure audit'
             Check ([W17]::Audit(0,[ref]$v)) 'verify audit'
@@ -560,7 +554,7 @@ function Dispatch($p) {
                 }
                 if ($e.kind -eq 'audit' -and !$checked.ContainsKey('audit')) {
                     [uint32]$value=0; Check ([W17]::Audit(0,[ref]$value)) 'query final audit setting'
-                    if ($value -ne $d.before) { throw 'Final audit setting mismatch' }; $checked.audit=$value
+                    if ((AuditBits $value) -ne (AuditBits $d.before)) { throw 'Final audit setting mismatch' }; $checked.audit=$value
                 }
                 if ($e.kind -eq 'desktop' -and !$checked.ContainsKey("desktop$($d.index)")) {
                     $sd=DesktopSD $d.index

@@ -3,7 +3,20 @@ import path from "node:path";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { ctx, src, out, actor, rpc, intent, digest, restore, note, row, rows } from "./context.mjs";
+import {
+  ctx,
+  src,
+  out,
+  actor,
+  ownedFile,
+  rpc,
+  intent,
+  digest,
+  restore,
+  note,
+  row,
+  rows,
+} from "./context.mjs";
 
 import { stagedSentinels } from "../sentinels.mjs";
 
@@ -136,7 +149,7 @@ export async function fileControls(denied, container = false, prefix) {
           {
             action: "files",
             paths: ctx.paths,
-            writable: path.join(ctx.accounts.subject.home, "Temp", "roundtrip"),
+            writable: ownedFile(),
           },
           { action: "native", child, args: ["files", ...Object.values(ctx.paths)] },
         ],

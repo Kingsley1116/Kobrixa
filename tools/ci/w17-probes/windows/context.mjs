@@ -1,4 +1,4 @@
-import { appendObservation, verifyBootstrap, writeEvidence } from "../evidence.mjs";
+import { appendObservation, phaseLedger, verifyBootstrap } from "../evidence.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -14,10 +14,8 @@ export const src = import.meta.dirname,
   phase = process.argv[2],
   ctx = {};
 if (out) verifyBootstrap(out);
-export const rows =
-  out && fs.existsSync(path.join(out, "ledger.json"))
-    ? JSON.parse(fs.readFileSync(path.join(out, "ledger.json")))
-    : initial();
+export const journalLedger = phaseLedger(out, phase, initial(), note);
+export const rows = journalLedger.rows;
 export function safe(e) {
   return String(e?.message ?? e)
     .replace(/(?:ws|http)s?:\/\/[^\s"']+/gi, "[endpoint]")
@@ -33,10 +31,10 @@ export function row(key, status, detail = {}) {
   if (rows[key]?.status === "FAIL" && status !== "FAIL") return;
   rows[key] = { status, ...detail };
   save();
-  note("row", { key, ...rows[key] });
+  note(journalLedger.refused ? "unpublished row" : "row", { key, ...rows[key] });
 }
 export function save() {
-  writeEvidence(out, "ledger.json", JSON.stringify(rows, null, 2) + "\n");
+  journalLedger.save(rows);
 }
 export async function measure(k, fn) {
   try {

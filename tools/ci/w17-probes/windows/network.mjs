@@ -392,28 +392,7 @@ export async function policy(arm) {
     const lines = await rpc("exemptions");
     note("loopback exemptions", { lines });
     assert.ok(!lines.join("\n").toLowerCase().includes(ctx.containerSid.toLowerCase()));
-    const transactions = [];
-    for (const [dir, rights] of [
-      [ctx.stage, "ReadAndExecute"],
-      [ctx.bin, "ReadAndExecute"],
-      [ctx.stage + "\\aliases", "ReadAndExecute"],
-      [ctx.stage + "\\plans", "ReadAndExecute"],
-      [ctx.accounts.subject.home, "Modify"],
-      [ctx.stage + "\\negative", "ReadAndExecute"],
-    ]) {
-      const installed = await rpc("acl", {
-        path: dir,
-        sid: ctx.containerSid,
-        rights,
-        inherit:
-          dir === ctx.stage || dir.endsWith("\\aliases")
-            ? "None"
-            : "ContainerInherit,ObjectInherit",
-        type: "Allow",
-        scope: "container",
-      });
-      transactions.push(installed.id);
-    }
+    const transactions = await rpc("container-grants", { sid: ctx.containerSid });
     const id = await native(["window"], { container: true });
     assert.equal(id.token.sid, ctx.accounts.subject.sid);
     assert.equal(id.token.container, ctx.containerSid);

@@ -1,3 +1,4 @@
+import inspectorClient from "./client.cjs";
 import { randomUUID } from "node:crypto";
 import {
   checkpointUtility,
@@ -207,6 +208,19 @@ async function negatives(arm, urls, main, renderer, pid) {
         options,
       );
       note("negative controls", { role, r });
+      // Existing CDP sessions can survive a listener failure. Challenge the
+      // same advertised endpoints with the same client from the controller.
+      const control = await inspectorClient.execute({ action: "inspect", urls });
+      note("controller inspector control", { role, outcomes: control.outcomes });
+      assert.equal(control.pid, process.pid);
+      assert.ok(
+        control.outcomes.length === 2 &&
+          control.outcomes.every(
+            (o) =>
+              o.result === "ATTACHED" && o.transport.events.some((e) => e.event === "CONNECTED"),
+          ),
+        "Controller fresh inspector handshake or TCP control failed",
+      );
       await checkLive();
       assert.ok(resources, "controller resource access unresolved");
       assert.ok(
@@ -219,6 +233,7 @@ async function negatives(arm, urls, main, renderer, pid) {
                 o.transport.code,
               ),
           ),
+        "No verified inspector denial for " + role,
       );
       return { pid: r.pid, outcomes: r.outcomes };
     });

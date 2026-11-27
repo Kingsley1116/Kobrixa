@@ -215,6 +215,21 @@ void readBefore(HANDLE handle, bool traceDirectory, Observation &o) {
     o.getSecurityInfoBefore = directoryView(handle);
 }
 
+void buildDescriptor(PSECURITY_DESCRIPTOR source, PACL acl, SECURITY_DESCRIPTOR &sd) {
+  SECURITY_DESCRIPTOR_CONTROL flags{};
+  DWORD revision;
+  check(GetSecurityDescriptorControl(source, &flags, &revision));
+  check(InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION));
+  check(SetSecurityDescriptorDacl(&sd, TRUE, acl, FALSE));
+  constexpr SECURITY_DESCRIPTOR_CONTROL mask =
+      SE_DACL_PROTECTED | SE_DACL_AUTO_INHERITED | SE_DACL_AUTO_INHERIT_REQ;
+  auto control = flags & (SE_DACL_PROTECTED | SE_DACL_AUTO_INHERITED);
+  if (control & SE_DACL_AUTO_INHERITED)
+    control |= SE_DACL_AUTO_INHERIT_REQ;
+  check(SetSecurityDescriptorControl(&sd, mask,
+                                     static_cast<SECURITY_DESCRIPTOR_CONTROL>(control)));
+}
+
 void change(Entry &e, PSID sid, bool restore, bool skipped, bool trace, Observation &o) {
   o.snapshot = sddl(e.sd.data());
   if (restore)
@@ -254,18 +269,7 @@ void change(Entry &e, PSID sid, bool restore, bool skipped, bool trace, Observat
 
   o.site = L"build-descriptor";
   SECURITY_DESCRIPTOR sd{};
-  SECURITY_DESCRIPTOR_CONTROL flags{};
-  DWORD revision;
-  check(GetSecurityDescriptorControl(e.sd.data(), &flags, &revision));
-  check(InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION));
-  check(SetSecurityDescriptorDacl(&sd, TRUE, acl, FALSE));
-  constexpr SECURITY_DESCRIPTOR_CONTROL mask =
-      SE_DACL_PROTECTED | SE_DACL_AUTO_INHERITED | SE_DACL_AUTO_INHERIT_REQ;
-  auto control = flags & (SE_DACL_PROTECTED | SE_DACL_AUTO_INHERITED);
-  if (control & SE_DACL_AUTO_INHERITED)
-    control |= SE_DACL_AUTO_INHERIT_REQ;
-  check(SetSecurityDescriptorControl(&sd, mask,
-                                     static_cast<SECURITY_DESCRIPTOR_CONTROL>(control)));
+  buildDescriptor(e.sd.data(), acl, sd);
   const auto installed = persistedSddl(sddl(&sd));
   o.expected = restore ? o.snapshot : installed;
   o.expectedBefore = restore ? installed : o.snapshot;
@@ -305,6 +309,39 @@ void collectChildren(const wstring &name, std::vector<wstring> &pending) {
   if (err != ERROR_NO_MORE_FILES)
     throw err;
 }
+// Both descriptors refer to storage owned by WriteDacl until verification ends.
+DWORD setAndVerify(HANDLE handle, SECURITY_DESCRIPTOR &install, SECURITY_DESCRIPTOR &rollback,
+                   const wstring &expected, const wstring &before, wchar_t *observed, DWORD capacity) {
+  // Application-defined return code, distinct from an NTSTATUS translated to Win32.
+  constexpr DWORD rollbackFailed = APPLICATION_ERROR_MASK | 1;
+  NTSTATUS status = NtSetSecurityObject(handle, DACL_SECURITY_INFORMATION, &install);
+  if (status < 0)
+    return RtlNtStatusToDosError(status);
+  DWORD failure = ERROR_INVALID_DATA;
+  try {
+    const auto value = sddl(dacl(handle).data());
+    if (value.size() < capacity) {
+      value.copy(observed, value.size());
+      observed[value.size()] = L'\0';
+      if (value == expected)
+        return ERROR_SUCCESS;
+    } else {
+      failure = ERROR_INSUFFICIENT_BUFFER;
+    }
+  } catch (DWORD error) {
+    failure = error;
+  } catch (...) {
+    failure = ERROR_READ_FAULT;
+  }
+  try {
+    if (NtSetSecurityObject(handle, DACL_SECURITY_INFORMATION, &rollback) < 0 ||
+        sddl(dacl(handle).data()) != before)
+      return rollbackFailed;
+  } catch (...) {
+    return rollbackFailed;
+  }
+  return failure;
+}
 } // namespace
 // Read the DACL for the broker's exact file/directory path. Use the same
 // open flags and raw SDDL representation as the tree transaction.
@@ -326,6 +363,44 @@ ReadDacl(const wchar_t *path, wchar_t *buffer, DWORD capacity) try {
   return error;
 } catch (...) {
   return ERROR_READ_FAULT;
+}
+
+// Apply a descriptor to just the opened object. As in TreeChange, request
+// auto-inheritance explicitly when preserving a persisted AI control bit.
+extern "C" __declspec(dllexport) DWORD WINAPI
+WriteDacl(const wchar_t *path, const wchar_t *expectedBefore, const wchar_t *requested,
+          wchar_t *observed, DWORD capacity) try {
+  File reader(path, FILE_READ_ATTRIBUTES | READ_CONTROL);
+  Entry entry;
+  check(GetFileInformationByHandle(reader.handle, &entry.info));
+  File file(path, FILE_READ_ATTRIBUTES | READ_CONTROL | WRITE_DAC);
+  verifyFile(file, entry);
+  PSECURITY_DESCRIPTOR parsed = nullptr;
+  check(ConvertStringSecurityDescriptorToSecurityDescriptorW(
+      requested, SDDL_REVISION_1, &parsed, nullptr));
+  std::unique_ptr<void, decltype(&LocalFree)> owned(parsed, LocalFree);
+  BOOL present, defaulted;
+  PACL acl = nullptr;
+  check(GetSecurityDescriptorDacl(parsed, &present, &acl, &defaulted));
+  if (!present || !acl)
+    return ERROR_INVALID_ACL;
+  const auto expected = persistedSddl(sddl(parsed));
+  SECURITY_DESCRIPTOR sd{};
+  buildDescriptor(parsed, acl, sd);
+  auto original = dacl(file.handle);
+  const auto before = sddl(original.data());
+  if (before != expectedBefore)
+    return ERROR_REVISION_MISMATCH;
+  check(GetSecurityDescriptorDacl(original.data(), &present, &acl, &defaulted));
+  if (!present || !acl)
+    return ERROR_INVALID_ACL;
+  SECURITY_DESCRIPTOR rollback{};
+  buildDescriptor(original.data(), acl, rollback);
+  return setAndVerify(file.handle, sd, rollback, expected, before, observed, capacity);
+} catch (DWORD error) {
+  return error;
+} catch (...) {
+  return ERROR_WRITE_FAULT;
 }
 
 // Snapshot format is private, run-local and consumed by the same compiled DLL.

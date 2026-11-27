@@ -16,6 +16,7 @@ import {
   block,
   safe,
   startBroker,
+  journalLedger,
   closeBroker,
   rpc,
   dirs,
@@ -431,8 +432,8 @@ async function cleanup() {
   assert.ok(!fs.existsSync(ctx.stage));
   return { before, final, entries: results.length, verified: await rpc("final") };
 }
-save();
 try {
+  save();
   if (phase === "primitives") row("W2.realCheckout", "NOT RUN", { reason: checkoutScope });
   startBroker();
   Object.assign(ctx, await rpc("host", { controllerPid: process.pid }));
@@ -485,6 +486,7 @@ try {
   } else throw Error("Unknown phase");
   row("phase." + phase, "PASS", { meaning: "controller completed" });
 } catch (e) {
+  process.exitCode = 1;
   const detail = { error: safe(e) };
   row("phase." + phase, "FAIL", detail);
   if (phase === "cleanup") row("cleanup", "FAIL", detail);
@@ -496,7 +498,6 @@ try {
       detail.error,
     );
   console.error(detail.error);
-  process.exitCode = 1;
 } finally {
   try {
     await stopOwned();
@@ -513,15 +514,18 @@ try {
         await restore(kind, scope);
     }
   } catch (e) {
-    row("phase." + phase, "FAIL", { error: safe(e) });
     process.exitCode = 1;
-  }
-  // Receiver sockets belong to this phase broker and close on broker exit.
-  try {
-    await closeBroker();
-  } catch (e) {
     row("phase." + phase, "FAIL", { error: safe(e) });
-    process.exitCode = 1;
+  } finally {
+    // Closing the broker and recording the exit must survive a failed row write.
+    try {
+      await closeBroker();
+    } catch (e) {
+      process.exitCode = 1;
+      row("phase." + phase, "FAIL", { error: safe(e) });
+    } finally {
+      if (journalLedger.refused) process.exitCode = 1;
+      note("phase exit", { phase, exit: process.exitCode ?? 0 });
+    }
   }
-  note("phase exit", { phase, exit: process.exitCode ?? 0 });
 }

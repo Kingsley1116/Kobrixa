@@ -132,7 +132,7 @@ export function join(events, t, pid, filter, from, to) {
   );
 }
 export function recorded(rows, observations) {
-  if (!observations.length) return false;
+  if (!observations.length || observations.some((o) => o.kind === "ledger refusal")) return false;
   return (
     Object.entries(rows).every(
       ([key, r]) =>
