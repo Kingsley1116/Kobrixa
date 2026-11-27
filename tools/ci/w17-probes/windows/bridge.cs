@@ -144,6 +144,8 @@ public static class W17 {
     DeletePinned(handle);
   }
   [DllImport(@"W17_DLL", ExactSpelling = true, CharSet = CharSet.Unicode)]
+  public static extern uint ReadDacl(string path, StringBuilder buffer, uint capacity);
+  [DllImport(@"W17_DLL", ExactSpelling = true, CharSet = CharSet.Unicode)]
   public static extern uint TreeSave(string root, string output,
                                      out uint count);
   [DllImport(@"W17_DLL", ExactSpelling = true, CharSet = CharSet.Unicode)]

@@ -112,11 +112,20 @@ function Confirm-Stage($entry,$pin) {
     if ($marker.PSIsContainer -or ($marker.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $marker.Length -ne 32 -or [IO.File]::ReadAllText($marker.FullName) -cne $d.marker) { throw 'Stage ownership marker changed' }
 }
 function Section($path) {
-    return (Get-Acl -LiteralPath $path).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access)
+    $buffer=[Text.StringBuilder]::new(65536)
+    Check ([W17]::ReadDacl($path,$buffer,$buffer.Capacity)) 'read raw file DACL'
+    return $buffer.ToString()
+}
+function New-DaclEditor($path,$sddl) {
+    $acl=if ([IO.Directory]::Exists($path)) { [Security.AccessControl.DirectorySecurity]::new() }
+         else { [Security.AccessControl.FileSecurity]::new() }
+    $acl.SetSecurityDescriptorSddlForm($sddl,[Security.AccessControl.AccessControlSections]::Access)
+    if ($acl.GetSecurityDescriptorSddlForm('Access') -cne $sddl) { throw "Cannot edit raw DACL losslessly $path" }
+    return $acl
 }
 function Ace($path,$sid,$rights,$inherit,$type,$scope) {
-    $acl=Get-Acl -LiteralPath $path
-    $before=$acl.GetSecurityDescriptorSddlForm('Access')
+    $before=Section $path
+    $acl=New-DaclEditor $path $before
     $entry=Intent 'acl' @{path=$path;before=$before;scope=$scope;sid=$sid;protected=$acl.AreAccessRulesProtected}
     $ace=[Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($sid),$rights,$inherit,'None',$type)
     $acl.AddAccessRule($ace)
@@ -132,10 +141,9 @@ function NeedsRestore($current,$before,$installed,$resource) {
     return $true
 }
 function RestoreAcl($e) {
-    $acl=Get-Acl -LiteralPath $e.data.path
-    $current=$acl.GetSecurityDescriptorSddlForm('Access')
+    $current=Section $e.data.path
     if (NeedsRestore $current $e.data.before $e.data.installed $e.data.path) {
-        $acl.SetSecurityDescriptorSddlForm($e.data.before,[Security.AccessControl.AccessControlSections]::Access)
+        $acl=New-DaclEditor $e.data.path $e.data.before
         Set-Acl -LiteralPath $e.data.path -AclObject $acl
     }
     if ((Section $e.data.path) -cne $e.data.before) { throw "DACL restoration mismatch $($e.data.path)" }

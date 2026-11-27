@@ -11,6 +11,8 @@
 // Advapi ACL setters can walk descendants and take only a PACL.
 extern "C" NTSYSAPI NTSTATUS NTAPI NtSetSecurityObject(
     HANDLE, SECURITY_INFORMATION, PSECURITY_DESCRIPTOR);
+extern "C" NTSYSAPI NTSTATUS NTAPI NtQuerySecurityObject(
+    HANDLE, SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, ULONG, PULONG);
 #pragma comment(lib, "ntdll.lib")
 
 namespace {
@@ -37,15 +39,17 @@ auto identity(const BY_HANDLE_FILE_INFORMATION &f) {
                          f.nFileIndexLow);
 }
 std::vector<BYTE> dacl(HANDLE h) {
-  PSECURITY_DESCRIPTOR descriptor = nullptr;
-  DWORD rc = GetSecurityInfo(h, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
-                             nullptr, nullptr, nullptr, nullptr, &descriptor);
-  if (rc)
-    throw rc;
-  auto begin = static_cast<BYTE *>(descriptor);
-  std::vector<BYTE> result(begin,
-                           begin + GetSecurityDescriptorLength(descriptor));
-  LocalFree(descriptor);
+  // NTFS limits the entire descriptor to 64 KiB. Query once on the handle
+  // whose file ID we checked, without a path lookup or an inheritance provider.
+  std::vector<BYTE> result(64 * 1024);
+  ULONG used = 0;
+  NTSTATUS status = NtQuerySecurityObject(h, DACL_SECURITY_INFORMATION,
+      result.data(), static_cast<ULONG>(result.size()), &used);
+  if (status < 0)
+    throw DWORD(RtlNtStatusToDosError(status));
+  if (!used || used > result.size())
+    throw DWORD(ERROR_INVALID_SECURITY_DESCR);
+  result.resize(used);
   return result;
 }
 wstring sddl(PSECURITY_DESCRIPTOR sd) {
@@ -55,6 +59,22 @@ wstring sddl(PSECURITY_DESCRIPTOR sd) {
   wstring value(s);
   LocalFree(s);
   return value;
+}
+// Diagnostic companion to the raw before value. Keep an incomplete reading
+// distinguishable from a complete SDDL and allow restore to continue on error.
+wstring directoryView(HANDLE h) {
+  PSECURITY_DESCRIPTOR descriptor = nullptr;
+  DWORD rc = GetSecurityInfo(h, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+                             nullptr, nullptr, nullptr, nullptr, &descriptor);
+  if (rc)
+    return L"error-" + std::to_wstring(rc);
+  std::unique_ptr<void, decltype(&LocalFree)> owned(descriptor, LocalFree);
+  try {
+    auto value = sddl(descriptor);
+    return value.size() <= 4096 ? value : L"over-limit";
+  } catch (DWORD error) {
+    return L"error-" + std::to_wstring(error);
+  }
 }
 template <class T> void write(std::ofstream &f, const T &value) {
   f.write(reinterpret_cast<const char *>(&value), sizeof(value));
@@ -102,6 +122,8 @@ struct Observation {
   wstring snapshot = L"-", expected = L"-", before = L"-", observed = L"-";
   wstring expectedBefore = L"-", request = L"-", setRc = L"not-called";
 
+  wstring getSecurityInfoBefore = L"-";
+
   void requireDacl(bool present) {
     if (!present) {
       site = L"null-dacl";
@@ -109,8 +131,8 @@ struct Observation {
     }
   }
 
-  void requireBefore(bool inheritedOnly) {
-    if (before != expectedBefore && !inheritedOnly) {
+  void requireBefore() {
+    if (before != expectedBefore) {
       site = L"before-conflict";
       throw DWORD(ERROR_REVISION_MISMATCH);
     }
@@ -135,7 +157,8 @@ struct Observation {
         << L" path=" << jsonString(e.path) << L" request=" << request
         << L" snapshot=" << snapshot << L" expected=" << expected
         << L" expectedBefore=" << expectedBefore << L" before=" << before
-        << L" observed=" << observed << L"\n";
+        << L" observed=" << observed
+        << L" getSecurityInfoBefore=" << getSecurityInfoBefore << L"\n";
     return out.str();
   }
 };
@@ -164,29 +187,6 @@ void verifyFile(File &file, const Entry &e) {
     throw DWORD(ERROR_FILE_INVALID);
 }
 
-// Accept an indirect change only if removing precisely this probe's inherited
-// deny recovers the entire snapshot, including P, AI and the other ACEs' order.
-bool inheritedDenyOnly(std::vector<BYTE> current, PSID sid, DWORD mask,
-                       DWORD inheritance, const wstring &snapshot) {
-  BOOL present, defaulted;
-  PACL acl = nullptr;
-  check(GetSecurityDescriptorDacl(current.data(), &present, &acl, &defaulted));
-  if (!present || !acl)
-    return false;
-  for (DWORD i = 0; i < acl->AceCount; ++i) {
-    void *raw = nullptr;
-    check(GetAce(acl, i, &raw));
-    auto ace = static_cast<ACCESS_DENIED_ACE *>(raw);
-    if (ace->Header.AceType == ACCESS_DENIED_ACE_TYPE &&
-        ace->Header.AceFlags == (inheritance | INHERITED_ACE) &&
-        ace->Mask == mask && EqualSid(&ace->SidStart, sid)) {
-      check(DeleteAce(acl, i));
-      return sddl(current.data()) == snapshot;
-    }
-  }
-  return false;
-}
-
 // Prepend exactly one explicit deny, preserving the original ACE bytes/order.
 // Directory ACEs still apply to future children created under the fixture.
 std::vector<BYTE> withDeny(PACL old, PSID sid, DWORD rights, BYTE inheritance) {
@@ -209,19 +209,26 @@ std::vector<BYTE> withDeny(PACL old, PSID sid, DWORD rights, BYTE inheritance) {
   return data;
 }
 
-void change(Entry &e, PSID sid, bool restore, bool skipped, Observation &o) {
+void readBefore(HANDLE handle, bool traceDirectory, Observation &o) {
+  o.before = o.observed = sddl(dacl(handle).data());
+  if (traceDirectory)
+    o.getSecurityInfoBefore = directoryView(handle);
+}
+
+void change(Entry &e, PSID sid, bool restore, bool skipped, bool trace, Observation &o) {
   o.snapshot = sddl(e.sd.data());
   if (restore)
     o.expected = o.snapshot;
   o.site = L"open";
   constexpr DWORD query = FILE_READ_ATTRIBUTES | READ_CONTROL;
+  const bool directory = (e.info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
   // Unwind must count untouched originals even if only READ_CONTROL is granted.
   if (restore) {
     File reader(e.path, query);
     o.site = L"identity";
     verifyFile(reader, e);
     o.site = L"read-before";
-    o.before = o.observed = sddl(dacl(reader.handle).data());
+    readBefore(reader.handle, trace && directory, o);
     if (o.before == o.snapshot) {
       o.expectedBefore = o.snapshot;
       o.site = L"already-original";
@@ -233,17 +240,14 @@ void change(Entry &e, PSID sid, bool restore, bool skipped, Observation &o) {
   o.site = L"identity";
   verifyFile(file, e);
   o.site = L"read-before";
-  auto current = dacl(file.handle);
-  o.before = o.observed = sddl(current.data());
+  readBefore(file.handle, trace && directory, o);
   o.site = L"snapshot-dacl";
   BOOL present, defaulted;
   PACL old = nullptr;
   check(GetSecurityDescriptorDacl(e.sd.data(), &present, &old, &defaulted));
   o.requireDacl(present && old);
   constexpr DWORD rights = FILE_GENERIC_READ & ~SYNCHRONIZE;
-  const BYTE inheritance = (e.info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-                               ? SUB_CONTAINERS_AND_OBJECTS_INHERIT
-                               : NO_INHERITANCE;
+  const BYTE inheritance = directory ? SUB_CONTAINERS_AND_OBJECTS_INHERIT : NO_INHERITANCE;
   o.site = L"build-acl";
   auto data = withDeny(old, sid, rights, inheritance);
   auto acl = reinterpret_cast<PACL>(data.data());
@@ -269,8 +273,7 @@ void change(Entry &e, PSID sid, bool restore, bool skipped, Observation &o) {
     o.site = L"not-attempted";
     return;
   }
-  o.requireBefore(restore && o.before != installed &&
-                  inheritedDenyOnly(current, sid, rights, inheritance, o.snapshot));
+  o.requireBefore();
   if (restore)
     check(SetSecurityDescriptorDacl(&sd, TRUE, old, FALSE));
   o.request = sddl(&sd);
@@ -303,6 +306,28 @@ void collectChildren(const wstring &name, std::vector<wstring> &pending) {
     throw err;
 }
 } // namespace
+// Read the DACL for the broker's exact file/directory path. Use the same
+// open flags and raw SDDL representation as the tree transaction.
+extern "C" __declspec(dllexport) DWORD WINAPI
+ReadDacl(const wchar_t *path, wchar_t *buffer, DWORD capacity) try {
+  File file(path, FILE_READ_ATTRIBUTES | READ_CONTROL);
+  BY_HANDLE_FILE_INFORMATION info{};
+  check(GetFileInformationByHandle(file.handle, &info));
+  if ((info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) ||
+      (!(info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && info.nNumberOfLinks != 1))
+    return ERROR_FILE_INVALID;
+  auto value = sddl(dacl(file.handle).data());
+  if (value.size() >= capacity)
+    return ERROR_INSUFFICIENT_BUFFER;
+  value.copy(buffer, value.size());
+  buffer[value.size()] = L'\0';
+  return ERROR_SUCCESS;
+} catch (DWORD error) {
+  return error;
+} catch (...) {
+  return ERROR_READ_FAULT;
+}
+
 // Snapshot format is private, run-local and consumed by the same compiled DLL.
 extern "C" __declspec(dllexport) DWORD WINAPI
 TreeSaveTrace(const wchar_t *root, const wchar_t *output, DWORD *count,
@@ -382,7 +407,7 @@ TreeChangeTrace(const wchar_t *manifest, DWORD count, const wchar_t *sidTextValu
     DWORD rc = ERROR_SUCCESS;
     bool skipped = firstError && !restore;
     try {
-      change(e, sid, restore != 0, skipped, o);
+      change(e, sid, restore != 0, skipped, log != nullptr, o);
       if (!skipped)
         ++*checked;
       else
