@@ -34,7 +34,19 @@ try {
         if ($LASTEXITCODE) { $failure=$LASTEXITCODE; throw "vswhere exit $failure" }
         if (!$vs) { throw 'x64 MSVC missing' }
         Import-Module "$vs\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
-        Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
+        # VsDevCmd exports a line-oriented environment through cmd.exe.
+        $multiline = @([Environment]::GetEnvironmentVariables().GetEnumerator() | Where-Object { $_.Value -match '[\r\n]' })
+        try {
+            foreach ($entry in $multiline) {
+                Write-Host "dev-shell setting aside environment variable $($entry.Key)"
+                [Environment]::SetEnvironmentVariable($entry.Key, [NullString]::Value)
+            }
+            Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
+        } finally {
+            foreach ($entry in $multiline) {
+                [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value)
+            }
+        }
         Push-Location $out
         try {
             foreach ($source in @('controller','subject')) {

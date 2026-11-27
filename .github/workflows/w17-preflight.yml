@@ -55,7 +55,7 @@ permissions:
 
 jobs:
   preflight:
-    if: github.run_number <= 4 && github.run_attempt == 1
+    if: github.run_number <= 5 && github.run_attempt == 1 && true
     runs-on: windows-2022
     timeout-minutes: 20
     steps:
@@ -106,7 +106,19 @@ jobs:
             if (!$vs) { throw 'No Visual Studio installation found' }
             $op='dev-shell'; $clock.Restart()
             Import-Module "$vs\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
-            Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
+            # VsDevCmd exports a line-oriented environment through cmd.exe.
+            $multiline = @([Environment]::GetEnvironmentVariables().GetEnumerator() | Where-Object { $_.Value -match '[\r\n]' })
+            try {
+                foreach ($entry in $multiline) {
+                    Add-Content $log "dev-shell setting aside environment variable $($entry.Key)"
+                    [Environment]::SetEnvironmentVariable($entry.Key, [NullString]::Value)
+                }
+                Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
+            } finally {
+                foreach ($entry in $multiline) {
+                    [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value)
+                }
+            }
             Result 0
             $op='compile'; $clock.Restart()
             cl.exe /nologo /EHsc /std:c++17 /W4 /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /MT /LD "$source/controller.cpp" "$source/tree-acl.cpp" /link /MACHINE:X64 advapi32.lib user32.lib userenv.lib ws2_32.lib fwpuclnt.lib ole32.lib uuid.lib 2>&1 | Out-File -FilePath $compiler -Append -Encoding utf8
