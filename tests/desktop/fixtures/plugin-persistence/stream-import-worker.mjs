@@ -1,3 +1,4 @@
+import { traceImportCuts } from "../../support/import-cut-trace.mjs";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -35,6 +36,8 @@ function traceRecordSteps() {
     if (fs !== entry.ns.fs) return "original";
     const relative = path.relative(fs.name(entry.ns.path()), name).split(path.sep).join("/");
     return relative
+      .replace("quarantine/" + entry.ticket.id + ".prepublish.bin", "quarantine/object")
+      .replace("quarantine/" + entry.ticket.id + ".prepublish-head", "quarantine/candidate")
       .replace("records/" + entry.ticket.target.id, "record")
       .replace("staging/" + entry.ticket.id, "stage")
       .replace("head." + entry.ticket.id + ".tmp", "candidate")
@@ -130,7 +133,9 @@ runPersistenceWorker({
     const faultFile = path.join(base, "fault");
     if (existsSync(faultFile)) {
       const fault = readFileSync(faultFile, "utf8");
-      if (fault === "record-steps") traceRecordSteps();
+      if (fault === "process-steps")
+        traceImportCuts(base, JSON.parse(readFileSync(path.join(base, "cut-config"), "utf8")));
+      else if (fault === "record-steps") traceRecordSteps();
       else if (fault === "drop-map") {
         const post = parentPort.postMessage.bind(parentPort);
         parentPort.postMessage = (frame, ...args) => {

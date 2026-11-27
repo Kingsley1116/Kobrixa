@@ -223,6 +223,33 @@ jobs:
       - uses: ./.github/actions/setup
       - run: pnpm test:persistence:stream
 
+  import-abort-restart:
+    name: Import abort restart (${{ matrix.platform }}-${{ matrix.arch }})
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux
+            arch: x64
+          # Electron's pinned node-gyp does not support Visual Studio 2026 yet.
+          - os: windows-2022
+            platform: win32
+            arch: x64
+          - os: macos-26
+            platform: darwin
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.platform == 'darwin' && 50 || 60 }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - run: pnpm test:persistence:import-abort-restart
+
   stage3:
     name: Stage 3 native acceptance
     needs: changes
@@ -235,7 +262,7 @@ jobs:
   result:
     name: CI result
     if: always()
-    needs: [changes, quality, web, platform, persistence, stage3]
+    needs: [changes, quality, web, platform, persistence, import-abort-restart, stage3]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

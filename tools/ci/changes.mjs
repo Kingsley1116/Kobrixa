@@ -51,12 +51,15 @@ export function detectChanges(
   }
 }
 
-export function requiredChecksPassed(needs) {
+export function requiredChecksPassed(
+  needs,
+  persistenceJobs = ["persistence", "import-abort-restart"],
+) {
   if (needs.changes?.result !== "success" || needs.quality?.result !== "success") return false;
   return [
     ["web", "web"],
     ["desktop", "platform"],
-    ["desktop", "persistence"],
+    ...persistenceJobs.map((job) => ["desktop", job]),
   ].every(([output, job]) => {
     const required = needs.changes.outputs?.[output];
     return required === "true"

@@ -53,7 +53,16 @@ import {
   type Location,
 } from "./namespace.js";
 import { QuotaLedger } from "./quota.js";
-import { scanNamespace, garbageCandidates, resolvedImport } from "./recovery-scan.js";
+import {
+  scanNamespace,
+  garbageCandidates,
+  resolvedImport,
+  exactDocument,
+  canonicalHead,
+  isFirstImportPlan,
+  legacyImportReserve,
+  retirePendingImportCandidate,
+} from "./recovery-scan.js";
 import type {
   DurableImportPort,
   ImportPlan,
@@ -73,6 +82,24 @@ import {
   sameImportValue,
 } from "./namespace.js";
 import { parseNonceDocument, parseBarrierDocument } from "./import-sources.js";
+// Stage envelopes have fixed field order, including the nested ticket, head and tag.
+const privateIntentSchema = z.strictObject({
+  formatVersion: z.literal(1),
+  ticket: publicationTicketSchema,
+  byteLength: z.number().int().nonnegative().max(8388608),
+  predecessor: z
+    .unknown()
+    .transform((value) => (value === null ? null : parseHead(Buffer.from(JSON.stringify(value))))),
+});
+const sealDocumentSchema = z.strictObject({
+  formatVersion: z.literal(1),
+  byteLength: z.number().int().nonnegative().max(8388608),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+});
+const importTagDocumentSchema = z.strictObject({
+  formatVersion: z.literal(1),
+  tag: importTagSchema,
+});
 type Outcome = Awaited<ReturnType<PersistenceEnginePort["publish"]>>;
 type Settlement =
   { disposition: "aborted" } | { disposition: "committed"; receipt: DiskHead["receipt"] };
@@ -110,7 +137,32 @@ type Entry = {
   retained?: SealedPayloadPin;
   recoveryGate?: PublicationGate;
   abortRequested?: boolean;
+  installedCandidate?: true;
 };
+function verifyImportIntent(
+  bytes: Uint8Array,
+  ticket: PublicationTicket,
+  raw: { byteLength: number; predecessor: unknown },
+) {
+  if (
+    !Number.isSafeInteger(raw.byteLength) ||
+    raw.byteLength < 0 ||
+    raw.byteLength > 2097152 ||
+    !exactDocument(bytes, {
+      formatVersion: 1,
+      ticket: publicationTicketSchema.parse(ticket),
+      byteLength: raw.byteLength,
+      predecessor:
+        raw.predecessor === null
+          ? null
+          : canonicalHead(Buffer.from(JSON.stringify(raw.predecessor))),
+    })
+  )
+    throw new Error("corrupt");
+}
+function isFirstRecordImport(e: Entry): e is Entry & { tag: ImportTag } {
+  return !!e.tag && e.ticket.target.kind === "record" && e.ticket.target.expectedRevision === null;
+}
 type Pin = {
   owner: string;
   source: string;
@@ -148,7 +200,10 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     string,
     { ns: Namespace; key: string; bytes: number }
   >();
-  private readonly failedReserves = new Map<string, { ticket: PublicationTicket; ns: Namespace }>();
+  private readonly failedReserves = new Map<
+    string,
+    { ticket: PublicationTicket; ns: Namespace; interruptedInstall?: true }
+  >();
   private readonly tombstones = new Map<
     string,
     { ticket: PublicationTicket; settlement: Settlement; until: number }
@@ -407,8 +462,8 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
           if (!(e.retained && this.pins.get(e.retained.pin)?.closeFailed)) throw error;
         });
   }
-  private async checkImportAdmission(ticket: PublicationTicket): Promise<void> {
-    if (ticket.target.kind !== "record" && ticket.target.kind !== "settings") return;
+  private async checkImportAdmission(ticket: PublicationTicket): Promise<boolean> {
+    if (ticket.target.kind !== "record" && ticket.target.kind !== "settings") return false;
     const ns = await this.ns(ticket.owner.sourceKey);
     let blocked = false,
       associated = false;
@@ -441,6 +496,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       }
     }
     if (blocked && !associated) throw new Error("import-pending");
+    return associated && ticket.target.kind === "record" && ticket.target.expectedRevision === null;
   }
   recordUnadmittedReserve(ticket: PublicationTicket): void {
     if (
@@ -649,6 +705,13 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     byteOffset = 0,
   ): Promise<void> {
     try {
+      if (isFirstImportPlan(ticket.target)) ticket = publicationTicketSchema.parse(ticket);
+      if (
+        ticket.target.kind === "import" &&
+        isFirstImportPlan(ticket.target) &&
+        (ticket.metadata.kind !== "import" || ticket.metadata.key !== ticket.target.key)
+      )
+        throw new Error("invalid-target");
       await this.admitTerminalDelete(ticket, byteLength);
       await this.reserveOne(ticket, byteLength, memory, byteOffset);
     } catch (error) {
@@ -656,6 +719,42 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       throw error;
     } finally {
       this.terminalDeletes.delete(ticket.id);
+    }
+  }
+  // Only a temporary name is visible until the complete document is synced and closed.
+  // The profile lease and ticket admission serialize installation in this directory.
+  private async installImportDocument(
+    ns: Namespace,
+    ticket: PublicationTicket,
+    name: "intent" | "sealed" | "publication" | "record-intent",
+    value: unknown,
+  ): Promise<void> {
+    if (
+      name === "record-intent"
+        ? ticket.target.kind !== "record" || ticket.target.expectedRevision !== null
+        : !isFirstImportPlan(ticket.target)
+    )
+      throw new Error("invalid-target");
+    if (Buffer.byteLength(JSON.stringify(value)) > 8192) throw new Error("size-limit");
+    const dir = ns.path("staging", ticket.id);
+    const dest = ns.path(
+      "staging",
+      ticket.id,
+      name === "record-intent" ? "intent.json" : name + ".json",
+    );
+    const temp = ns.path(
+      "staging",
+      ticket.id,
+      name === "record-intent" ? "import-record-intent.tmp" : "journal-" + name + ".tmp",
+    );
+    try {
+      if (await this.fs.exists(dest)) throw new Error("corrupt");
+      await ns.writeNew(temp, value);
+      await this.fs.atomicReplace(temp, dest);
+      await this.fs.syncDirectory(dir);
+    } catch (error) {
+      this.quarantineClose(ns.sourceKey, ticket.id);
+      throw error;
     }
   }
   private async reserveOne(
@@ -666,7 +765,13 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
   ): Promise<void> {
     await this.prune();
     this.admitted(ticket);
-    await this.checkImportAdmission(ticket);
+    const associatedRecordCreate = await this.checkImportAdmission(ticket);
+    const atomicIntent = associatedRecordCreate || isFirstImportPlan(ticket.target);
+    if (
+      associatedRecordCreate &&
+      (ticket.metadata.kind !== "record" || ticket.metadata.record.byteLength !== byteLength)
+    )
+      throw new Error("size-limit");
     if (
       !Number.isSafeInteger(byteLength) ||
       byteLength < 0 ||
@@ -724,20 +829,31 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
           (await this.fs.statfs(ns.path())).availableBytes,
         );
       });
+      if (atomicIntent && (await this.fs.exists(ns.path("staging", ticket.id))))
+        throw new Error("write-in-progress");
       allocated = ns;
       await this.fs.mkdir(ns.path("staging", ticket.id));
-      await ns.writeNew(ns.path("staging", ticket.id, "intent.json"), {
+      const rawIntent = {
         formatVersion: 1,
         ticket,
         byteLength,
         predecessor: old,
-      });
+      };
+      const intent = atomicIntent ? privateIntentSchema.parse(rawIntent) : rawIntent;
+      if (atomicIntent)
+        await this.installImportDocument(
+          ns,
+          ticket,
+          associatedRecordCreate ? "record-intent" : "intent",
+          intent,
+        );
+      else await ns.writeNew(ns.path("staging", ticket.id, "intent.json"), intent);
       const temp = ns.path("staging", ticket.id, "payload.tmp");
       await this.fs.at("open-temp", async () => {
         opened = await this.fs.openOwned(temp, "create-exclusive");
       });
       const fd = opened;
-      const frozen = structuredClone(ticket);
+      const frozen = atomicIntent ? intent.ticket : structuredClone(ticket);
       this.admitted(ticket);
       this.entries.set(ticket.id, {
         ticket: frozen,
@@ -764,6 +880,14 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       });
     } catch (e) {
       if (opened) await this.fs.closeOwned(opened).catch(() => {});
+      if (atomicIntent && allocated && this.quarantined(ticket)) {
+        this.failedReserves.set(ticket.id, {
+          ticket: structuredClone(ticket),
+          ns: allocated,
+          interruptedInstall: true,
+        });
+        throw e;
+      }
       let clean = true;
       if (allocated)
         for (const name of [
@@ -844,12 +968,17 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       await this.fs.closeOwned(e.fd!);
       e.fd = null;
       e.state = "sealed";
-      await e.ns.writeNew(e.ns.path("staging", ticket.id, "sealed.json"), {
+      const seal = sealDocumentSchema.parse({
         formatVersion: 1,
         byteLength,
         sha256,
       });
-      await this.fs.syncDirectory(e.ns.path("staging", ticket.id));
+      if (isFirstImportPlan(ticket.target))
+        await this.installImportDocument(e.ns, ticket, "sealed", seal);
+      else {
+        await e.ns.writeNew(e.ns.path("staging", ticket.id, "sealed.json"), seal);
+        await this.fs.syncDirectory(e.ns.path("staging", ticket.id));
+      }
       e.state = "sealed";
       e.progress = this.fs.now();
       e.last = null;
@@ -925,17 +1054,19 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
           sha256: e.hash.copy().digest("hex"),
           receipt: {
             revision,
-            commitId: e.tag ? t.id : randomUUID(),
+            commitId: e.tag || isFirstImportPlan(t.target) ? t.id : randomUUID(),
             durability: this.fs.durability,
           },
           ...(e.tag ? { importTag: e.tag } : {}),
         };
-      parseHead(Buffer.from(JSON.stringify(e.head)));
+      const parsedHead = parseHead(Buffer.from(JSON.stringify(e.head)));
+      if (isFirstRecordImport(e) || isFirstImportPlan(t.target)) e.head = parsedHead;
       const headTemp = ns.path(
         ...loc.parts,
         `${loc.name === "head.json" ? "head" : loc.name}.${t.id}.tmp`,
       );
-      const firstImport = e.tag && t.target.kind === "record" && t.target.expectedRevision === null;
+      const firstImport = isFirstRecordImport(e);
+      if (firstImport || isFirstImportPlan(t.target)) await this.validateImportStage(e);
       if (!deleted && !e.object) {
         this.live(e, gate);
         const destination = ns.object(loc, e.head);
@@ -944,14 +1075,19 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
           // Publish a complete candidate name before moving the only payload. Recovery
           // authenticates it against the pending attempt and never installs it as head.
           if (await this.fs.exists(headTemp)) {
-            if (!sameImportValue(parseHead(await this.fs.bytes(headTemp, 8192)), e.head))
+            if (!exactDocument(await this.fs.bytes(headTemp, 8192), e.head))
               throw new Error("corrupt");
           } else {
             const staging = ns.path("staging", t.id, "publication.json");
-            if (await this.fs.exists(staging)) await this.fs.unlink(staging);
+            if (await this.fs.exists(staging)) {
+              if (!exactDocument(await this.fs.bytes(staging, 8192), e.head))
+                throw new Error("corrupt");
+              await this.fs.unlink(staging);
+            }
             await this.fs.at("head-write", () => ns.writeNew(staging, e.head));
             await this.fs.atomicReplace(staging, headTemp);
           }
+          e.installedCandidate = true;
           await this.fs.syncDirectory(loc.directory);
         }
         await this.fs.at("object-rename", async () => {
@@ -988,10 +1124,22 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       }
       if (t.target.kind === "import") {
         const candidate = ns.path("staging", t.id, "publication.json");
-        if (!(await this.fs.exists(candidate))) await ns.writeNew(candidate, e.head);
-        else if (!sameImportValue(parseHead(await this.fs.bytes(candidate, 8192)), e.head))
-          throw new Error("input-changed");
-        await this.fs.syncDirectory(ns.path("staging", t.id));
+        if (!(await this.fs.exists(candidate))) {
+          if (isFirstImportPlan(t.target))
+            await this.installImportDocument(ns, t, "publication", e.head);
+          else {
+            await ns.writeNew(candidate, e.head);
+            await this.fs.syncDirectory(ns.path("staging", t.id));
+          }
+        } else {
+          const bytes = await this.fs.bytes(candidate, 8192);
+          const matches = isFirstImportPlan(t.target)
+            ? exactDocument(bytes, e.head)
+            : sameImportValue(parseHead(bytes), e.head);
+          if (!matches) throw new Error("input-changed");
+          await this.fs.syncDirectory(ns.path("staging", t.id));
+        }
+        if (isFirstImportPlan(t.target)) e.installedCandidate = true;
       }
       await this.fs.fault("before-publish");
       if (e.tag) {
@@ -1000,7 +1148,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
         // Verify the installed payload itself before the new head can name it.
         if (e.head.sha256 !== binding.item.mappedSha256) throw new Error("checksum-mismatch");
         await ns.verify(loc, e.head);
-        if (firstImport && !sameImportValue(parseHead(await this.fs.bytes(headTemp, 8192)), e.head))
+        if (firstImport && !exactDocument(await this.fs.bytes(headTemp, 8192), e.head))
           throw new Error("corrupt");
         const journal = await ns.location({ kind: "import", key: e.tag.importId });
         const head = await ns.head(journal);
@@ -1084,6 +1232,15 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     if (!e.busy && e.state === "committed")
       return { disposition: "committed", receipt: e.head!.receipt };
     if (e.state === "aborted") return { disposition: "not-committed" };
+    if (isFirstImportPlan(ticket.target) && this.quarantined(ticket))
+      return { disposition: "unknown" };
+    if (
+      isFirstRecordImport(e) &&
+      e.abortRequested &&
+      e.state === "unknown" &&
+      this.quarantined(e.ticket)
+    )
+      return { disposition: "unknown" };
     if (e.busy && (e.gate.dispatched || e.recoveryGate?.dispatched))
       return { disposition: "unknown" };
     if (!(e.gate.dispatched || e.recoveryGate?.dispatched)) return { disposition: "not-committed" };
@@ -1104,6 +1261,11 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     try {
       const current = await e.ns.head(e.location);
       if (current && e.head && current.receipt.commitId === e.head.receipt.commitId) {
+        if (
+          (isFirstRecordImport(e) || isFirstImportPlan(e.ticket.target)) &&
+          !exactDocument(await this.fs.bytes(e.location.head, 8192), e.head)
+        )
+          throw new Error("publish-uncertain");
         await e.ns.verify(e.location, current);
         await this.fs.syncDirectory(e.location.directory);
         this.confirm(e);
@@ -1146,6 +1308,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     const failed = this.failedReserves.get(ticket.id);
     if (failed) {
       if (!sameImportValue(ticket, failed.ticket)) throw new Error("stale");
+      if (failed.interruptedInstall) return "unknown";
       for (const name of [
         "payload.tmp",
         "sealed.json",
@@ -1182,44 +1345,168 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     const outcome = await this.settleUnpublished(e);
     return outcome.disposition === "not-committed" ? "aborted" : outcome.disposition;
   }
+  private async validateImportStage(e: Entry): Promise<void> {
+    const dir = e.ns.path("staging", e.ticket.id);
+    const docs = new Map<string, unknown>([
+      [
+        "intent.json",
+        {
+          formatVersion: 1,
+          ticket: e.ticket,
+          byteLength: e.size,
+          predecessor: e.old,
+        },
+      ],
+      [
+        "sealed.json",
+        { formatVersion: 1, byteLength: e.size, sha256: e.hash.copy().digest("hex") },
+      ],
+    ]);
+    if (isFirstImportPlan(e.ticket.target)) {
+      for (const [suffix, expected] of [
+        ["tmp", e.head],
+        ["backup", e.old],
+      ] as const) {
+        const path = e.ns.path(
+          ...e.location.parts,
+          e.location.name + "." + e.ticket.id + "." + suffix,
+        );
+        if (!(await this.fs.exists(path))) continue;
+        if (!expected) throw new Error("corrupt");
+        const full = Buffer.from(JSON.stringify(expected));
+        const actual = await this.fs.bytes(path, full.length);
+        if (
+          !full.subarray(0, actual.length).equals(actual) ||
+          (suffix === "tmp" &&
+            (await this.fs.exists(e.ns.path("staging", e.ticket.id, "publication.json"))) &&
+            actual.length !== full.length)
+        )
+          throw new Error("corrupt");
+      }
+    }
+    if (e.head) docs.set("publication.json", e.head);
+    if (e.tag) docs.set("import-tag.json", { formatVersion: 1, tag: e.tag });
+    for (const entry of await this.fs.entries(dir, 4096)) {
+      if (entry.directory) throw new Error("corrupt");
+      if (entry.name === "payload.tmp") continue;
+      if (
+        !docs.has(entry.name) ||
+        !exactDocument(
+          await this.fs.bytes(e.ns.path("staging", e.ticket.id, entry.name), 8192),
+          docs.get(entry.name),
+        )
+      )
+        throw new Error("corrupt");
+    }
+  }
   private async removeUnpublished(e: Entry, current: DiskHead | null): Promise<void> {
+    if (isFirstImportPlan(e.ticket.target)) this.assertSourceAvailable(e.ns.sourceKey);
     const pin = e.retained && this.pins.get(e.retained.pin);
     if (pin && e.retained) await this.closePin(e.retained.pin, pin);
     if (e.fd) {
       await this.fs.closeOwned(e.fd);
       e.fd = null;
     }
-    // Release reservations only after bytes have been removed; an unlink failure keeps the slot.
-    for (const p of [
-      e.temp,
-      e.object,
-      e.ns.path(
-        ...e.location.parts,
-        `${e.location.name === "head.json" ? "head" : e.location.name}.${e.ticket.id}.tmp`,
-      ),
-      e.ns.path(...e.location.parts, `${e.location.name}.${e.ticket.id}.backup`),
-      e.ns.path("staging", e.ticket.id, "sealed.json"),
-      e.ns.path("staging", e.ticket.id, "import-tag.json"),
-      e.ns.path("staging", e.ticket.id, "publication.json"),
-      e.ns.path("staging", e.ticket.id, "intent.json"),
-    ])
-      if (p && (await this.fs.exists(p))) await this.fs.unlink(p);
-    if (
-      current?.receipt.commitId === e.old?.receipt.commitId &&
-      (await this.fs.exists(e.location.previous))
-    ) {
-      const backup = parseHead(await this.fs.bytes(e.location.previous, 8192));
-      if (backup.receipt.commitId === current?.receipt.commitId)
-        await this.fs.unlink(e.location.previous);
+    let retained: { temporary: number; metadata: number } | undefined;
+    let chargeKey: string | undefined;
+    if (isFirstRecordImport(e)) {
+      this.assertSourceAvailable(e.ns.sourceKey);
+      try {
+        const result = await retirePendingImportCandidate(e.ns, e.location, {
+          ticket: e.ticket,
+          head: e.head,
+          installedCandidate: !!e.installedCandidate,
+          tag: e.tag,
+          reserveQuarantine: (p, bytes) => {
+            chargeKey = this.fs.name(p);
+            this.quota.holdTemporary(e.ns.sourceKey, chargeKey, bytes);
+          },
+        });
+        if (!result) throw new Error("publish-uncertain");
+        retained = result;
+        await this.cleanImportStage(e, chargeKey !== undefined);
+      } catch (error) {
+        // The source stays fenced with its exact reservation until a fresh scan.
+        // In particular a repeat after a failed directory sync cannot infer abort
+        // from a now-absent candidate.
+        e.state = "unknown";
+        this.quarantineClose(e.ns.sourceKey, e.ticket.id);
+        throw error;
+      }
+    } else {
+      if (isFirstImportPlan(e.ticket.target)) {
+        const witness = e.ns.path("staging", e.ticket.id, "publication.json");
+        try {
+          await this.validateImportStage(e);
+          if (!sameImportValue(current, e.old)) throw new Error("publish-uncertain");
+          if (current) await e.ns.verify(e.location, current);
+          if (e.installedCandidate || (await this.fs.exists(witness))) {
+            const candidate = canonicalHead(await this.fs.bytes(witness, 8192));
+            if (!e.object || !sameImportValue(candidate, e.head))
+              throw new Error("publish-uncertain");
+            await e.ns.verify(e.location, candidate);
+            await this.fs.unlink(witness);
+            await this.fs.syncDirectory(e.ns.path("staging", e.ticket.id));
+            delete e.installedCandidate;
+          }
+        } catch (error) {
+          this.quarantineClose(e.ns.sourceKey, e.ticket.id);
+          throw error;
+        }
+      }
+      for (const p of [
+        e.temp,
+        e.object,
+        e.ns.path(
+          ...e.location.parts,
+          `${e.location.name === "head.json" ? "head" : e.location.name}.${e.ticket.id}.tmp`,
+        ),
+        e.ns.path(...e.location.parts, `${e.location.name}.${e.ticket.id}.backup`),
+        e.ns.path("staging", e.ticket.id, "sealed.json"),
+        e.ns.path("staging", e.ticket.id, "import-tag.json"),
+        e.ns.path("staging", e.ticket.id, "publication.json"),
+        e.ns.path("staging", e.ticket.id, "intent.json"),
+      ])
+        if (p && (await this.fs.exists(p))) await this.fs.unlink(p);
+      if (
+        current?.receipt.commitId === e.old?.receipt.commitId &&
+        (await this.fs.exists(e.location.previous))
+      ) {
+        const backup = parseHead(await this.fs.bytes(e.location.previous, 8192));
+        if (backup.receipt.commitId === current?.receipt.commitId)
+          await this.fs.unlink(e.location.previous);
+      }
+      await this.fs.removeEmpty(e.ns.path("staging", e.ticket.id));
     }
-    await this.fs.removeEmpty(e.ns.path("staging", e.ticket.id));
-    this.quota.release(e.ticket.id);
+    if (retained && chargeKey !== undefined) {
+      this.quota.commit(e.ticket.id, { committed: 0, records: 0, ...retained });
+      this.quota.releaseTemporary(e.ns.sourceKey, chargeKey);
+    } else this.quota.release(e.ticket.id);
     this.releaseOld(e);
     delete e.original;
     e.state = "aborted";
     e.finished ??= this.fs.now();
     this.releaseTarget(e.ticket);
     this.importReservations.delete(e.ticket.id);
+  }
+  private async cleanImportStage(e: Entry, movedToQuarantine: boolean): Promise<void> {
+    const stage = e.ns.path("staging", e.ticket.id);
+    const names = [
+      ...(movedToQuarantine ? ["abort-tag.json"] : []),
+      "payload.tmp",
+      "sealed.json",
+      "import-tag.json",
+      "publication.json",
+      "intent.json",
+    ];
+    const entries = await this.fs.entries(stage, 4096);
+    if (entries.some((entry) => entry.directory || !names.includes(entry.name)))
+      throw new Error("corrupt");
+    for (const name of names) {
+      const p = e.ns.path("staging", e.ticket.id, name);
+      if (await this.fs.exists(p)) await this.fs.unlink(p);
+    }
+    await this.fs.removeEmpty(stage);
   }
   private releaseOld(e: Entry): void {
     if (e.oldHeld && e.old?.object) {
@@ -1240,6 +1527,11 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     }
     if (e.cleaned) return;
     await this.fs.at("cleanup", async () => {
+      if (isFirstRecordImport(e) || isFirstImportPlan(e.ticket.target)) {
+        await this.validateImportStage(e);
+        if (!exactDocument(await this.fs.bytes(e.location.head, 8192), e.head))
+          throw new Error("corrupt");
+      }
       if (
         (await e.ns.head(e.location))?.receipt.commitId === e.head?.receipt.commitId &&
         (await this.fs.exists(e.location.previous))
@@ -1559,7 +1851,8 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     if (e.state !== "receiving" || e.received !== 0 || e.busy || e.tag) throw new Error("sealed");
     e.busy = true;
     try {
-      const parsed = importTagSchema.parse(tag);
+      const document = importTagDocumentSchema.parse({ formatVersion: 1, tag });
+      const parsed = document.tag;
       const loc = await e.ns.location({ kind: "import", key: parsed.importId });
       const head = await e.ns.head(loc);
       if (!head) throw new Error("input-changed");
@@ -1579,10 +1872,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       )
         throw new Error("input-changed");
       // Persist the immutable binding before append can be admitted. The published head includes it.
-      await e.ns.writeNew(e.ns.path("staging", ticket.id, "import-tag.json"), {
-        formatVersion: 1,
-        tag: parsed,
-      });
+      await e.ns.writeNew(e.ns.path("staging", ticket.id, "import-tag.json"), document);
       await this.fs.syncDirectory(e.ns.path("staging", ticket.id));
       e.tag = parsed;
       e.verifiedItem = { item, head: loc.head, object, revision, digest: head.sha256 };
@@ -1611,6 +1901,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       if (!head?.importTag || !sameImportValue(head.importTag, item.tag)) continue;
       await ns.verify(loc, head);
       if (
+        !exactDocument(await this.fs.bytes(loc.head, 8192), head) ||
         head.receipt.commitId !== attempt.id ||
         head.sha256 !== item.mappedSha256 ||
         head.byteLength !== item.byteLength ||
@@ -1665,8 +1956,12 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     { ticket: PublicationTicket; bytes: Uint8Array; result: Promise<Outcome> }
   >();
   private async reconcileDocument(ticket: PublicationTicket): Promise<Outcome> {
-    if (this.failedReserves.has(ticket.id) && (await this.abort(ticket)) === "aborted")
-      return { disposition: "not-committed" };
+    if (this.failedReserves.has(ticket.id)) {
+      const result = await this.abort(ticket);
+      if (result === "aborted") return { disposition: "not-committed" };
+      if (result === "unknown" && isFirstImportPlan(ticket.target))
+        return { disposition: "unknown" };
+    }
     const tombstone = this.tombstones.get(ticket.id);
     if (
       tombstone &&
@@ -1682,10 +1977,10 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     key: string,
     value: unknown,
   ): Promise<void> {
+    if (kind === "import" && key.startsWith("import/")) value = importDocumentSchema.parse(value);
     const bytes = Buffer.from(JSON.stringify(value)),
       identity = JSON.stringify([owner.sourceKey, kind, key]);
     if (bytes.length > 2097152 || Buffer.byteLength(key) > 128) throw new Error("size-limit");
-    if (kind === "import" && key.startsWith("import/")) importDocumentSchema.parse(value);
     const previous = this.documentWrites.get(identity);
     if (previous) {
       let result = await previous.result;
@@ -1838,6 +2133,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
   private async readImport(ns: Namespace, loc: Location, head: DiskHead, id: string) {
     if (head.target.kind !== "import" || head.target.key !== id || !head.object)
       throw new Error("corrupt");
+    if (!exactDocument(await this.fs.bytes(loc.head, 8192), head)) throw new Error("corrupt");
     const cached = this.lastImport;
     if (
       cached?.digest === head.sha256 &&
@@ -1872,7 +2168,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     return head ? this.readImport(ns, loc, head, id) : null;
   }
   private async planImportOne(owner: PersistenceOwner, plan: ImportPlan): Promise<void> {
-    importPlanSchema.parse(plan);
+    plan = importPlanSchema.parse(plan);
     if (
       plan.targetSourceKey !== owner.sourceKey ||
       plan.items.some((i) => ownerKey(i.ticket.owner) !== ownerKey(owner))
@@ -1901,7 +2197,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     id: string,
     evidence: ImportItemEvidence,
   ): Promise<void> {
-    importItemEvidenceSchema.parse(evidence);
+    evidence = importItemEvidenceSchema.parse(evidence);
     const saved = await this.loadImport(owner, id);
     if (!saved) throw new Error("not-found");
     if (saved.plan.devicePreferencesEvidence && evidence.state === "skipped")
@@ -1958,15 +2254,22 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
   ): ReturnType<PersistenceEnginePort["reconcile"]> {
     const ns = await this.ns(ticket.owner.sourceKey);
     if (ticket.target.kind === "import") {
-      const resolved = await resolvedImport(ns, ticket.id);
+      if (isFirstImportPlan(ticket.target) && this.blockedSources.has(ns.sourceKey))
+        return { disposition: "unknown" };
+      const resolved = await resolvedImport(ns, ticket.id, isFirstImportPlan(ticket.target));
       if (resolved) {
-        const raw = JSON.parse(
-          Buffer.from(
-            await this.fs.bytes(ns.path("staging", ticket.id, "intent.json"), 32768),
-          ).toString("utf8"),
+        const intentBytes = await this.fs.bytes(
+          ns.path("staging", ticket.id, "intent.json"),
+          32768,
         );
-        if (!sameImportValue(publicationTicketSchema.parse(raw.ticket), ticket))
-          throw new Error("stale");
+        const raw = JSON.parse(Buffer.from(intentBytes).toString("utf8"));
+        const installedTicket = publicationTicketSchema.parse(raw.ticket);
+        if (!sameImportValue(installedTicket, ticket)) throw new Error("stale");
+        if (
+          isFirstImportPlan(ticket.target) &&
+          !(await legacyImportReserve(ns, ticket.id, raw.ticket, installedTicket))
+        )
+          verifyImportIntent(intentBytes, ticket, raw);
         return resolved.disposition === "committed"
           ? { disposition: "committed", receipt: resolved.receipt }
           : { disposition: "not-committed" };
@@ -1974,6 +2277,11 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       const loc = await ns.location(ticket.target),
         head = await ns.head(loc);
       if (head) {
+        if (
+          isFirstImportPlan(ticket.target) &&
+          !exactDocument(await this.fs.bytes(loc.head, 8192), head)
+        )
+          throw new Error("corrupt");
         await ns.verify(loc, head);
         const bytes = await this.fs.bytes(ns.object(loc, head), 2097152);
         if (ticket.target.key.startsWith("nonce/") || ticket.target.key.startsWith("barrier/")) {
@@ -1988,11 +2296,12 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       }
       // Live metadata uses the exact retained engine entry, including its dispatch gate.
       if (this.entries.has(ticket.id)) return this.reconcile(ticket);
+      if (this.failedReserves.get(ticket.id)?.interruptedInstall) return { disposition: "unknown" };
       const intentPath = ns.path("staging", ticket.id, "intent.json");
       if (!(await this.fs.exists(intentPath))) return { disposition: "unknown" };
-      const raw = JSON.parse(
-        new TextDecoder("utf-8", { fatal: true }).decode(await this.fs.bytes(intentPath, 32768)),
-      );
+      const intentBytes = await this.fs.bytes(intentPath, 32768);
+      const raw = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(intentBytes));
+      if (isFirstImportPlan(ticket.target)) verifyImportIntent(intentBytes, ticket, raw);
       if (
         raw.formatVersion !== 1 ||
         Object.keys(raw).sort().join(",") !== "byteLength,formatVersion,predecessor,ticket" ||
@@ -2001,7 +2310,10 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
         throw new Error("stale");
       const candidatePath = ns.path("staging", ticket.id, "publication.json");
       if (head && (await this.fs.exists(candidatePath))) {
-        const candidate = parseHead(await this.fs.bytes(candidatePath, 8192));
+        const bytes = await this.fs.bytes(candidatePath, 8192);
+        const candidate = isFirstImportPlan(ticket.target)
+          ? canonicalHead(bytes)
+          : parseHead(bytes);
         if (
           sameImportValue(candidate.target, ticket.target) &&
           sameImportValue(candidate.metadata, ticket.metadata) &&
@@ -2056,6 +2368,9 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
         attempt = evidence.publicationTicket;
       if (evidence.state === "committed" && evidence.receipt)
         return { disposition: "committed", receipt: evidence.receipt };
+      const failed = attempt && this.failedReserves.get(attempt.id);
+      if (failed?.interruptedInstall && sameImportValue(failed.ticket, attempt))
+        return { disposition: "unknown" };
       if (attempt && this.entries.has(attempt.id)) {
         const live = await this.reconcile(attempt);
         if (live.disposition !== "not-committed") return live;
@@ -2063,7 +2378,11 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       }
       const target = await ns.location(item.ticket.target),
         current = await ns.head(target);
-      if (current) await ns.verify(target, current);
+      if (current) {
+        if (current.importTag && !exactDocument(await this.fs.bytes(target.head, 8192), current))
+          throw new Error("corrupt");
+        await ns.verify(target, current);
+      }
       if (
         attempt &&
         current?.importTag &&

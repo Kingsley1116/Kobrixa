@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import os from "node:os";
-import { fileURLToPath } from "node:url";
 import { randomUUID, createHash } from "node:crypto";
 import {
   mkdir,
@@ -16,50 +15,12 @@ import {
   rename,
   stat,
 } from "node:fs/promises";
-import { openStoreRoot } from "../../apps/desktop/src/main/plugins/persistence/filesystem.ts";
-import { startPersistenceWorker } from "../../apps/desktop/src/main/plugins/persistence/worker.ts";
-import { createLegacyWriterBarrier } from "../../apps/desktop/src/main/plugins/persistence/import-sources.ts";
-import { createLegacyImportCoordinator } from "../../apps/desktop/src/main/plugins/persistence/import-coordinator.ts";
 import { syntheticImportDescriptor as descriptor } from "../../apps/desktop/src/main/plugins/persistence/import-fixtures.ts";
 import { sensorLabImportDescriptors } from "../../apps/desktop/src/main/plugins/persistence/sensor-lab-import.ts";
 import { channelKey } from "../../plugins/sensor-lab/src/model/data.ts";
 import { identityCalibration } from "../../plugins/sensor-lab/src/model/calibration.ts";
 
-async function launch(
-  root,
-  testControl,
-  importDescriptor = descriptor,
-  expectedRecovery = "ready",
-) {
-  const profile = { hostEpoch: randomUUID(), assertHeld() {} };
-  const { backend, recovery } = await startPersistenceWorker({
-    profile,
-    testControl,
-    root: await openStoreRoot({ userData: root, profile }),
-    now: () => performance.now(),
-    workerEntry: fileURLToPath(
-      new URL("./fixtures/plugin-persistence/stream-import-worker.mjs", import.meta.url),
-    ),
-  });
-  if (recovery !== expectedRecovery) await backend.dispose();
-  assert.equal(recovery, expectedRecovery);
-  const owner = {
-    sourceKey: importDescriptor.targetSourceKey,
-    pluginId: importDescriptor.id,
-    generation: 1,
-    hostEpoch: profile.hostEpoch,
-    processEpoch: randomUUID(),
-  };
-  const options = { backend, descriptors: [importDescriptor], importOwner: () => owner };
-  const coordinator = createLegacyImportCoordinator({
-    ...options,
-    sources: backend.sources,
-    currentSource: () => true,
-    currentScope: () => true,
-    barrier: createLegacyWriterBarrier({ ...options, writers: [] }),
-  });
-  return { backend, owner, coordinator };
-}
+import { launch } from "./support/import-worker-host.mjs";
 test("Node worker streams 50 distinct maximum-size originals into byte-identical destinations", async (t) => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "node-import-")));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -725,6 +686,91 @@ for (const fault of ["destination-close", "candidate-head-close"])
     }
   });
 
+for (const point of ["object-rename", "before-publish"]) {
+  test("cancel an active first import at " + point, async (t) => {
+    const root = await smallImport(t, 2);
+    await writeFile(path.join(root, "fault"), "record-steps");
+    let control, sibling, attempt, during, plan;
+    const f = await launch(root, (c) => (control = c));
+    const savePlan = f.backend.imports.plan;
+    f.backend.imports.plan = async (owner, value) => {
+      await savePlan(owner, value);
+      plan = value;
+    };
+    const signal = new AbortController();
+    const publish = f.backend.engine.publish;
+    f.backend.engine.publish = async (ticket) => {
+      if (ticket.target.kind !== "record") return publish(ticket);
+      if (!sibling) {
+        const outcome = await publish(ticket);
+        assert.equal(outcome.disposition, "committed");
+        sibling = ticket;
+        return outcome;
+      }
+      attempt = ticket;
+      const armed = control.reached("armed/" + point);
+      control.arm(point, "pause");
+      await armed;
+      const paused = control.reached(point);
+      const work = publish(ticket);
+      try {
+        await paused;
+        assert.equal(control.trace().at(-1).ticket, ticket.id);
+        signal.abort();
+        during = await f.backend.engine.abort(ticket);
+      } finally {
+        control.release(point);
+      }
+      return work;
+    };
+    try {
+      assert.deepEqual(await f.coordinator.run(descriptor, signal.signal), {
+        state: "blocked",
+        completedItems: 1,
+        totalItems: 2,
+      });
+      assert.equal(during, "unknown");
+      assert.equal(await f.backend.engine.abort(attempt), "aborted");
+      const journal = await f.backend.imports.load(f.owner, plan.id);
+      assert.equal(journal.items[0].receipt.commitId, sibling.id);
+      assert.deepEqual(journal.items[1].publicationTicket, attempt);
+      assert.equal(journal.items[1].state, "pending");
+      const q = await f.backend.evidence.quota(f.owner);
+      assert.equal(q.value.reservedBytes, 0);
+      // Both pauses are inside an admitted publish. The object rename may finish
+      // after revocation; the final gate still prevents head publication.
+      const evidence = path.join(
+        root,
+        "plugins",
+        "persistence-v1",
+        "namespaces",
+        createHash("sha256").update(f.owner.sourceKey).digest("hex"),
+        "quarantine",
+        attempt.id + ".prepublish",
+      );
+      for (const suffix of [".bin", "-head"])
+        await assert.rejects(readFile(evidence + suffix), { code: "ENOENT" });
+      assert.equal(q.value.temporaryBytes, 0);
+    } finally {
+      await f.backend.dispose();
+    }
+    const fresh = await launch(root);
+    try {
+      assert.deepEqual(await fresh.coordinator.run(descriptor, new AbortController().signal), {
+        state: "complete",
+        completedItems: 2,
+        totalItems: 2,
+      });
+      const final = await fresh.backend.imports.load(fresh.owner, plan.id);
+      assert.equal(final.items[0].receipt.commitId, sibling.id);
+      assert.notEqual(final.items[1].receipt.commitId, attempt.id);
+      assert.deepEqual(final.items[1].publicationTicket.target, attempt.target);
+    } finally {
+      await fresh.backend.dispose();
+    }
+  });
+}
+
 // Capture the actual ordered effects, then kill at each after-edge in a separate
 // profile. The committed sibling is the first plan item; the faulted item has
 // its own never-published target (expectedRevision === null).
@@ -747,7 +793,11 @@ for (const failure of [
         ),
       ].join("\n");
     }
-    async function trial(context, kill, committed = false, blocked = false) {
+    async function trial(context, kill, committed = false, blocked) {
+      const oldDisk = blocked !== undefined;
+      // Materialize the old unlink prefix offline after the real writer has exited.
+      // The new writer never produces this layout by dropping its last witness.
+      if (oldDisk) kill = "abort/openOwned/record";
       const root = await smallImport(context, 2);
       await writeFile(path.join(root, "fault"), "record-steps");
       let control;
@@ -858,7 +908,6 @@ for (const failure of [
       assert.equal(disposed[0].status, "rejected");
       assert.match(disposed[0].reason.message, /worker-dispose-unknown/);
       assert.equal(first.state, "blocked");
-      const fresh = await launch(root, undefined, descriptor, blocked ? "blocked" : "ready");
       const original = new Map();
       for (const name of ["item0", "item1"]) {
         const bytes = await readFile(path.join(root, "legacy", name));
@@ -874,6 +923,20 @@ for (const failure of [
           "records",
           ticket.target.id,
         );
+      if (oldDisk) {
+        const directory = recordDir(attempt);
+        const candidate = path.join(directory, "head." + attempt.id + ".tmp");
+        const head = JSON.parse(await readFile(candidate));
+        assert.equal(head.receipt.commitId, attempt.id);
+        const payload =
+          failure === "object-rename"
+            ? path.join(directory, "../../staging", attempt.id, "payload.tmp")
+            : path.join(directory, "objects", head.object);
+        assert.deepEqual(await readFile(payload), original.get(head.sha256));
+        await rm(payload);
+        if (!blocked) await rm(candidate);
+      }
+      const fresh = await launch(root, undefined, descriptor, blocked ? "blocked" : "ready");
       async function verifyDisk(ticket) {
         const head = JSON.parse(await readFile(path.join(recordDir(ticket), "head.json")));
         assert.equal(head.receipt.commitId, ticket.id);
@@ -934,7 +997,9 @@ for (const failure of [
     const required = failure
       ? [
           "abort/unlink/stage/sealed.json",
-          "abort/unlink/stage/import-tag.json",
+          failure === "before-publish"
+            ? "abort/unlink/stage/abort-tag.json"
+            : "abort/unlink/stage/import-tag.json",
           "abort/unlink/stage/intent.json",
           "abort/removeEmpty/stage",
         ]
@@ -958,7 +1023,20 @@ for (const failure of [
     if (failure === "object-rename")
       required.push("abort/unlink/stage/payload.tmp", "abort/unlink/record/candidate");
     if (failure === "before-publish")
-      required.push("abort/unlink/record/object", "abort/unlink/record/candidate");
+      required.push(
+        "abort/atomicReplace/stage/abort-tag.json",
+        "abort/syncDirectory/stage",
+        "abort/atomicReplace/quarantine/object",
+        "abort/syncDirectory/quarantine",
+        "abort/syncDirectory/record/objects",
+        "abort/atomicReplace/quarantine/candidate",
+        "abort/syncDirectory/quarantine/2",
+        "abort/unlink/quarantine/object",
+        "abort/syncDirectory/quarantine/3",
+        "abort/unlink/quarantine/candidate",
+        "abort/syncDirectory/quarantine/4",
+        "abort/syncDirectory/record",
+      );
     // Lower bounds from the full first-record paths. The file-sync-only adapter
     // omits open/sync/close for each directory sync (six on publish, one on abort).
     const minimum =
@@ -974,18 +1052,24 @@ for (const failure of [
     assert.ok(reference.length >= minimum - missingDirectoryEdges, incomplete);
     for (const edge of required)
       assert.ok(reference.includes(edge), incomplete + "\nmissing " + edge);
-    let committed = false,
-      blocked = false;
+    let committed = false;
     for (const step of reference) {
       if (step === "publish/atomicReplace/record/head.json") committed = true;
-      // BL1 W16R9 High 1: abort removed the only payload while its candidate still exists.
-      if (
-        step === "abort/unlink/record/object" ||
-        (failure === "object-rename" && step === "abort/unlink/stage/payload.tmp")
-      )
-        blocked = true;
-      if (step === "abort/unlink/record/candidate") blocked = false;
-      await t.test(step, (context) => trial(context, step, committed, blocked));
+      await t.test(step, (context) => trial(context, step, committed));
     }
+    if (failure !== "object-rename" && failure !== "before-publish") return;
+    await t.test("old disk", async (t) => {
+      const reference = [
+        failure === "object-rename"
+          ? "abort/unlink/stage/payload.tmp"
+          : "abort/unlink/record/object",
+        "abort/unlink/record/candidate",
+      ];
+      for (const step of reference) {
+        // The old abort blocks only while its candidate still names the lost payload.
+        const blocked = step !== "abort/unlink/record/candidate";
+        await t.test(step, (context) => trial(context, step, false, blocked));
+      }
+    });
   });
 }

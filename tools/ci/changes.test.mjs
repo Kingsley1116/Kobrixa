@@ -185,6 +185,7 @@ test("final gate accepts only explicitly unaffected skipped jobs", () => {
     web: { result: "success" },
     platform: { result: "skipped" },
     persistence: { result: "skipped" },
+    "import-abort-restart": { result: "skipped" },
   };
   assert.equal(requiredChecksPassed(needs), true);
   for (const state of ["failure", "cancelled", "skipped"])
@@ -214,18 +215,20 @@ test("final gate accepts only explicitly unaffected skipped jobs", () => {
 test("persistence must succeed for desktop changes and be skipped otherwise", () => {
   for (const desktop of ["true", "false"]) {
     const expected = desktop === "true" ? "success" : "skipped";
-    for (const result of ["success", "failure", "cancelled", "skipped"]) {
-      assert.equal(
-        requiredChecksPassed({
-          changes: { result: "success", outputs: { desktop, web: "false" } },
-          quality: { result: "success" },
-          web: { result: "skipped" },
-          platform: { result: expected },
-          persistence: { result },
-        }),
-        result === expected,
-        `desktop=${desktop}, persistence=${result}`,
-      );
+    for (const result of ["success", "failure", "cancelled", "skipped", undefined]) {
+      for (const restart of ["success", "failure", "cancelled", "skipped", undefined])
+        assert.equal(
+          requiredChecksPassed({
+            changes: { result: "success", outputs: { desktop, web: "false" } },
+            quality: { result: "success" },
+            web: { result: "skipped" },
+            platform: { result: expected },
+            ...(result && { persistence: { result } }),
+            ...(restart && { "import-abort-restart": { result: restart } }),
+          }),
+          result === expected && restart === expected,
+          `desktop=${desktop}, persistence=${result}, restart=${restart}`,
+        );
     }
   }
 });
