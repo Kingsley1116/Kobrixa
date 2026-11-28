@@ -1,5 +1,5 @@
+import { UpdateInstallation } from "./updates/installation.js";
 import { filePreferencesPatchSchema } from "./workspace/preferences.js";
-import { devicePreferencesPatchSchema } from "./device/preferences.js";
 import type { UpdateService, UpdateOperationGate } from "./updates/service.js";
 import { setKeyboardContext } from "./window/keyboard.js";
 import { validStroke } from "../shared/keyboard.js";
@@ -13,7 +13,6 @@ import {
   languageSyncRequestSchema,
   completionSyncRequestSchema,
 } from "./language/quick-fix-request.js";
-import { isIP } from "node:net";
 import { z } from "zod";
 import type { BuildService } from "./workspace/build.js";
 import type { DeviceService } from "./device/device.js";
@@ -22,22 +21,10 @@ import type { WorkspaceService } from "./workspace/workspace.js";
 import { workspaceSessionSchema } from "../shared/workspace-session.js";
 import { workspaceSearchRequestSchema } from "./workspace/search.js";
 import type { MonitorService } from "./device/monitor-service.js";
-import {
-  motorTestRefSchema,
-  motorTestRequestSchema,
-  type MotorTestService,
-} from "./device/motor-test-service.js";
-import type { MotorTestRequest } from "../shared/motor-test.js";
-import type { SensorLabService } from "./sensor-lab/service.js";
-import { sensorLabStartSchema, sensorLabCalibrationSchema } from "./sensor-lab/schema.js";
-import { exportSensorCsv } from "./sensor-lab-export.js";
 import { registerCollabMirrorIpc } from "./collab/mirror.js";
 import { DeviceControlGate, registerDeviceControlIpc } from "./collab/device-control.js";
 
 const id = z.string().uuid();
-const inputPort = z.number().int().min(0).max(3);
-const inputType = z.number().int().min(1).max(127);
-const inputMode = z.number().int().min(0).max(7);
 const file = z
   .string()
   .min(1)
@@ -57,27 +44,6 @@ const fileRevision = z
   .string()
   .regex(/^[0-9a-f]{64}$/)
   .nullable();
-const descriptor = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
-  transport: z.enum(["usb", "wifi", "mock"]),
-  address: z.string().optional(),
-  serialNumber: z.string().optional(),
-  metadata: z.record(z.string(), z.string()).optional(),
-});
-
-function parseDescriptor(value: unknown) {
-  const parsed = descriptor.parse(value);
-  return {
-    id: parsed.id,
-    name: parsed.name,
-    transport: parsed.transport,
-    ...(parsed.address ? { address: parsed.address } : {}),
-    ...(parsed.serialNumber ? { serialNumber: parsed.serialNumber } : {}),
-    ...(parsed.metadata ? { metadata: parsed.metadata } : {}),
-  };
-}
-
 /** The trusted-sender `ipcMain.handle` wrapper, for feature modules that register their own channels. */
 export type IpcHandle = <T extends unknown[], R>(
   channel: string,
@@ -94,19 +60,23 @@ export function registerIpc(
   operationGate: UpdateOperationGate,
   finishClose: (requestId: string, ready: boolean) => void = () => {},
   rendererReady: () => void = () => {},
-  sensorTools?: { monitor: MonitorService; lab: SensorLabService; motors?: MotorTestService },
+  sensorTools?: { monitor: MonitorService },
   modules: readonly ((handle: IpcHandle) => void)[] = [],
   /** Runs before quitAndInstall(); plugin processes must be gone before the installer quits. */
   beforeUpdateInstall: () => Promise<void> = async () => {},
   plugins?: Pick<PluginController, "diagnosticHelpEntry">,
-): void {
+  deviceFoundation?: DesktopDeviceIpc,
+  beforeWindowClose?: () => Promise<void>,
+  beforeUpdatePrepare?: () => Promise<void>,
+  resumeAfterUpdate?: () => Promise<void>,
+): UpdateInstallation {
   const trusted = (event: IpcMainInvokeEvent): void => {
     const renderer = trustedRenderer();
     if (!renderer || event.sender.id !== renderer.id || event.senderFrame !== renderer.mainFrame) {
       throw new Error("Rejected IPC from an untrusted sender.");
     }
   };
-  const deviceControl = new DeviceControlGate();
+  const deviceControl = deviceFoundation?.authority ?? new DeviceControlGate();
   const handle: IpcHandle = <T extends unknown[], R>(
     channel: string,
     action: (event: IpcMainInvokeEvent, ...args: T) => R,
@@ -114,8 +84,11 @@ export function registerIpc(
     ipcMain.handle(channel, (event, ...args: T) => {
       trusted(event);
       deviceControl.assert(event.sender.id, channel, args);
+      // This handler validates the session and mints a trusted device-current-stop
+      // action. Safety cleanup must remain reachable while an update fences work.
+      if (deviceFoundation && channel === "device:stop") return action(event, ...args);
       if (
-        /^(workspace|device|build|simulator|sensor-lab):/.test(channel) ||
+        /^(workspace|device|build|simulator):/.test(channel) ||
         /^collab:(prepare-project|preview-project|save-copy)$/.test(channel)
       )
         return operationGate.run(channel, () => action(event, ...args));
@@ -124,11 +97,7 @@ export function registerIpc(
   };
 
   for (const register of modules) register(handle);
-  registerDeviceControlIpc(
-    handle,
-    deviceControl,
-    () => sensorTools?.motors?.flush() ?? Promise.resolve(),
-  );
+  registerDeviceControlIpc(handle, deviceControl);
   handle("updates:state", () => updates.getState());
   handle("simulator:cancel", (_event, workspaceId: unknown) =>
     builds.cancelSimulation(id.parse(workspaceId)),
@@ -140,66 +109,10 @@ export function registerIpc(
       z.array(file).max(4).parse(entries),
     ),
   );
-  if (sensorTools?.motors) {
-    const motors = sensorTools.motors;
-    handle("device:motor-test-state", () => motors.getState());
-    handle("device:motor-test-start", (event, request: unknown) => {
-      const parsed = motorTestRequestSchema.parse(request) as MotorTestRequest;
-      try {
-        return motors.start(parsed, event.sender.id);
-      } catch (error) {
-        return {
-          request: parsed,
-          phase: "failed",
-          angle: null,
-          displacement: null,
-          elapsedMs: 0,
-          message: error instanceof Error ? error.message : String(error),
-        };
-      }
-    });
-    handle("device:motor-test-keepalive", (event, ref: unknown) =>
-      motors.keepAlive(motorTestRefSchema.parse(ref), event.sender.id),
-    );
-    handle("device:motor-test-stop", (event, ref: unknown, brake: unknown) =>
-      motors.stop(
-        motorTestRefSchema.parse(ref),
-        event.sender.id,
-        z.boolean().default(true).parse(brake),
-      ),
-    );
-  }
   if (sensorTools) {
-    const { lab, monitor } = sensorTools;
+    const { monitor } = sensorTools;
     handle("device:watch-monitor", (_event, sessionId: unknown, enabled: unknown) =>
       monitor.watch(id.parse(sessionId), z.boolean().parse(enabled)),
-    );
-    handle("sensor-lab:state", () => lab.getState());
-    handle("sensor-lab:start", (_event, request: unknown) =>
-      lab.start(sensorLabStartSchema.parse(request)),
-    );
-    handle("sensor-lab:stop", async (_event, reason: unknown) => {
-      const parsed = z.enum(["manual", "close", "update"]).default("manual").parse(reason);
-      if (parsed === "manual") return lab.stop(parsed);
-      await sensorTools.motors?.flush();
-      await lab.flush(parsed);
-      return lab.getState();
-    });
-    handle("sensor-lab:retry-save", () => lab.retrySave());
-    handle("sensor-lab:list", () => lab.list());
-    handle("sensor-lab:read", (_event, recordingId: unknown) => lab.read(id.parse(recordingId)));
-    handle("sensor-lab:delete", (_event, recordingId: unknown) =>
-      lab.delete(id.parse(recordingId)),
-    );
-    handle("sensor-lab:calibrations", () => lab.listCalibrations());
-    handle("sensor-lab:save-calibration", (_event, profile: unknown) =>
-      lab.saveCalibration(sensorLabCalibrationSchema.parse(profile)),
-    );
-    handle("sensor-lab:delete-calibration", (_event, profileId: unknown) =>
-      lab.deleteCalibration(id.parse(profileId)),
-    );
-    handle("sensor-lab:export", (_event, recordingId: unknown) =>
-      exportSensorCsv(lab, id.parse(recordingId)),
     );
   }
   handle("documentation:open", (_event, request: unknown) =>
@@ -246,15 +159,18 @@ export function registerIpc(
     ),
   );
   handle("updates:check", () => updates.check());
-  handle("updates:prepare", async () => {
-    await sensorTools?.motors?.flush();
-    updates.prepareInstall();
-  });
-  handle("updates:cancel", () => updates.cancelInstall());
-  handle("updates:install", async () => {
-    await beforeUpdateInstall();
-    updates.install();
-  });
+  const installation = new UpdateInstallation(
+    updates,
+    async () => {
+      if (beforeUpdatePrepare) await beforeUpdatePrepare();
+    },
+    beforeUpdateInstall,
+    resumeAfterUpdate,
+    (error) => console.error("Update recovery blocked.", error),
+  );
+  handle("updates:prepare", () => installation.prepare());
+  handle("updates:cancel", () => installation.cancel());
+  handle("updates:install", () => installation.install());
   handle("updates:open", () => updates.openRelease());
   handle("keyboard:context", (event, value: unknown) => {
     const context = z
@@ -291,7 +207,10 @@ export function registerIpc(
   handle("workspace:finish-close", async (_event, requestId: unknown, ready: unknown) => {
     const parsedId = id.parse(requestId),
       parsedReady = z.boolean().parse(ready);
-    if (parsedReady) await sensorTools?.motors?.flush();
+    if (parsedReady) {
+      if (beforeWindowClose) await beforeWindowClose();
+      else await deviceFoundation?.beforeClose();
+    }
     finishClose(parsedId, parsedReady);
   });
   handle("workspace:create", (_event, name: unknown) =>
@@ -399,25 +318,6 @@ export function registerIpc(
   );
   handle("language:cancel", () => language.cancel());
 
-  handle("device:monitor", (_event, sessionId: unknown) => devices.monitor(id.parse(sessionId)));
-  handle("device:input-modes", (_event, sessionId: unknown, port: unknown, type: unknown) =>
-    (sensorTools?.monitor ?? devices).inputModes(
-      id.parse(sessionId),
-      inputPort.parse(port),
-      inputType.parse(type),
-    ),
-  );
-  handle(
-    "device:set-input-mode",
-    (_event, sessionId: unknown, port: unknown, type: unknown, mode: unknown) =>
-      (sensorTools?.monitor ?? devices).setInputMode(
-        id.parse(sessionId),
-        inputPort.parse(port),
-        inputType.parse(type),
-        inputMode.parse(mode),
-      ),
-  );
-
   handle("device:files", (_event, request: unknown) =>
     devices.files(
       z
@@ -432,7 +332,7 @@ export function registerIpc(
         .parse(request),
     ),
   );
-  const batchRef = z.object({ sessionId: id, requestId: id, planId: id });
+  const batchRef = z.strictObject({ sessionId: id, requestId: id, planId: id });
   handle("device:files-prepare", async (event, request: unknown) => {
     const parsed = z
       .object({
@@ -449,6 +349,11 @@ export function registerIpc(
     deviceControl.rememberBatch(event.sender, snapshot);
     return snapshot;
   });
+  handle("device:files-renew", (event, ref: unknown) => {
+    const owner = deviceControl.principal(event.sender.id, "remote-files");
+    if (owner.kind !== "core") throw new Error("Core file owner required.");
+    devices.renewFilePlan(batchRef.parse(ref), owner);
+  });
   handle("device:files-execute", (event, ref: unknown, policy: unknown) =>
     devices.executeFiles(
       batchRef.parse(ref),
@@ -459,23 +364,14 @@ export function registerIpc(
   handle("device:files-stop", (event, ref: unknown) =>
     devices.stopFiles(batchRef.parse(ref), event.sender.id),
   );
-  handle("device:preferences", () => devices.getPreferences());
-  handle("device:set-preferences", (_event, patch: unknown) =>
-    devices.setPreferences(devicePreferencesPatchSchema.parse(patch)),
-  );
-  handle("device:discover", () => devices.discover());
-  handle("device:connect", (_event, target: unknown) => devices.connect(parseDescriptor(target)));
-  handle("device:connect-wifi", (_event, address: unknown) =>
-    devices.connectWifi(
-      z
-        .string()
-        .refine((value) => isIP(value) !== 0, "Expected an IPv4 or IPv6 address.")
-        .parse(address),
-    ),
-  );
-  handle("device:disconnect", (_event, sessionId: unknown) =>
-    devices.disconnect(id.parse(sessionId)),
-  );
+  handle("device:disconnect", (event, sessionId: unknown) => {
+    const session = id.parse(sessionId);
+    if (!deviceFoundation) throw new Error("Device lifecycle coordinator is unavailable.");
+    return deviceFoundation.disconnect(
+      session,
+      deviceControl.principal(event.sender.id, "recovery"),
+    );
+  });
   handle("device:upload", (_event, sessionId: unknown, buildId: unknown, remotePath: unknown) =>
     devices.upload(id.parse(sessionId), id.parse(buildId), file.parse(remotePath)),
   );
@@ -487,8 +383,185 @@ export function registerIpc(
   handle("device:run", (_event, sessionId: unknown, remotePath: unknown) =>
     devices.run(id.parse(sessionId), file.parse(remotePath)),
   );
-  handle("device:stop", (_event, sessionId: unknown) => devices.stop(id.parse(sessionId)));
+  handle("device:stop", (event, sessionId: unknown) => {
+    if (!deviceFoundation) throw new Error("Device foundation not attached.");
+    return deviceFoundation.stop(
+      id.parse(sessionId),
+      deviceControl.principal(event.sender.id, "recovery"),
+    );
+  });
   handle("device:delete", (_event, sessionId: unknown, remotePath: unknown) =>
     devices.delete(id.parse(sessionId), file.parse(remotePath)),
   );
+  return installation;
 }
+
+import type { Principal } from "@kobrixa/plugin-runtime";
+
+export interface DesktopDeviceIpc {
+  stop(sessionId: string, principal: Principal): Promise<void>;
+  authority: DeviceControlGate;
+  disconnect(sessionId: string, principal: Principal): Promise<void>;
+  beforeClose(): Promise<void>;
+}
+
+export function registerLegacyPreferencesIpc170(
+  handle: IpcHandle,
+  imports: LegacyImportHostPort,
+  scopeFor: (event: IpcMainInvokeEvent) => CoreWindowScope,
+): () => void {
+  let disposed = false;
+  const bridge = (event: IpcMainInvokeEvent) => {
+    if (disposed) throw new Error("Stale preferences window");
+    return legacyPreferencesFor170(scopeFor(event), imports);
+  };
+  handle("persistence:legacy-preferences-challenge", (event, descriptorId: string) =>
+    bridge(event).challenge(descriptorId),
+  );
+  handle("persistence:legacy-preferences-submit", (event, snapshot: LegacyPreferencesSnapshot) =>
+    bridge(event).submit(snapshot),
+  );
+  return () => {
+    disposed = true;
+  };
+}
+
+import type { CoreWindowScope } from "@kobrixa/plugin-runtime";
+export function registerPersistenceWindow170(input: {
+  handle: IpcHandle;
+  facets: NonNullable<PluginController["persistence170"]>;
+  coreRecovery: CoreRecovery;
+  renderer: () => Electron.WebContents | undefined;
+}): () => void {
+  const original = input.renderer();
+  if (!original) throw new Error("No workbench renderer");
+  let disposed = false;
+  let documentScope = structuredClone(input.facets.scope());
+  let documentFrame = original.mainFrame;
+  let attached = false;
+  let documentReady = true;
+  let retireDocument = () => {};
+  const routes = new Map<string, (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown>();
+  const registered = new Set<string>();
+  const sameScope = (a: CoreWindowScope, b: CoreWindowScope) =>
+    a.hostEpoch === b.hostEpoch && a.workbenchInstance === b.workbenchInstance;
+  const scope = () => {
+    if (
+      disposed ||
+      !attached ||
+      input.renderer() !== original ||
+      original.isDestroyed() ||
+      original.mainFrame !== documentFrame ||
+      !sameScope(input.facets.scope(), documentScope)
+    )
+      throw new Error("Stale persistence window");
+    return documentScope;
+  };
+  // Register native-window routes once. Their document handlers are replaceable,
+  // so pending old opens and subscriptions retain their retired closures.
+  const handle: IpcHandle = (channel, action) => {
+    routes.set(channel, action as (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown);
+    if (registered.has(channel)) return;
+    registered.add(channel);
+    input.handle(channel, (event, ...args: unknown[]) => {
+      if (event.sender !== original || event.senderFrame !== original.mainFrame)
+        throw new Error("Rejected IPC from an untrusted sender.");
+      if (
+        !disposed &&
+        documentReady &&
+        !attached &&
+        !sameScope(input.facets.scope(), documentScope)
+      )
+        attach();
+      scope();
+      return routes.get(channel)!(event, ...args);
+    });
+  };
+  const publish = (expected: CoreWindowScope, channel: string, value: unknown) => {
+    try {
+      if (sameScope(expected, scope())) original.send(channel, value);
+    } catch {
+      /* Retired document publications are dropped. */
+    }
+  };
+  const attach = () => {
+    documentScope = structuredClone(input.facets.scope());
+    documentFrame = original.mainFrame;
+    attached = true;
+    const expected = documentScope;
+    const documentScopeFor = () => {
+      const current = scope();
+      if (!sameScope(expected, current)) throw new Error("Stale persistence window");
+      return expected;
+    };
+    const offLegacy = registerLegacyPreferencesIpc170(
+      handle,
+      input.facets.imports,
+      documentScopeFor,
+    );
+    const offCore = input.coreRecovery.attachPersistence170(input.facets.detail);
+    const offSettings = registerSettingsIpc170({
+      handle,
+      service: input.facets.settings,
+      scope: documentScopeFor,
+      publish,
+    });
+    const offRecovery = registerPersistenceRecoveryIpc170({
+      handle,
+      bridge: input.facets.detail.bridge,
+      scope: documentScopeFor,
+      publish,
+    });
+    retireDocument = () => {
+      if (!attached) return;
+      attached = false;
+      offLegacy();
+      offSettings();
+      offRecovery();
+      offCore();
+      input.facets.imports.retirePreferences(expected);
+    };
+  };
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    retireDocument();
+    routes.clear();
+    original.removeListener("destroyed", dispose);
+    original.removeListener("render-process-gone", retireDocumentOnCrash);
+    original.removeListener("did-start-navigation", navigation);
+    original.removeListener("did-navigate", documentCommitted);
+  };
+  const retireDocumentOnCrash = () => {
+    documentReady = false;
+    retireDocument();
+  };
+  const documentCommitted = () => {
+    documentReady = true;
+  };
+  const navigation = (
+    _event: Electron.Event,
+    _url: string,
+    inPlace: boolean,
+    mainFrame: boolean,
+  ) => {
+    if (mainFrame && !inPlace) {
+      documentReady = false;
+      retireDocument();
+    }
+  };
+  attach();
+  original.once("destroyed", dispose);
+  original.on("render-process-gone", retireDocumentOnCrash);
+  original.on("did-start-navigation", navigation);
+  original.on("did-navigate", documentCommitted);
+  return dispose;
+}
+
+import { legacyPreferencesFor170 } from "./plugins/controller.js";
+import type {
+  LegacyImportHostPort,
+  LegacyPreferencesSnapshot,
+} from "./plugins/persistence/import-sources.js";
+import type { CoreRecovery } from "./plugins/core-recovery.js";
+import { registerSettingsIpc170, registerPersistenceRecoveryIpc170 } from "./plugins/ipc.js";

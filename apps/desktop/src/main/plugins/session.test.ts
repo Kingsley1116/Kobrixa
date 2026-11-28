@@ -21,6 +21,7 @@ it("starts a marker and removes it on a clean exit", async () => {
     startedAt: "2026-10-15T00:00:00.000Z",
     thirdPartyRunning: false,
     thirdPartyStaticContributions: false,
+    thirdPartyUiContributions: false,
     rendererUnresponsive: false,
   });
   session.update({ thirdPartyRunning: true });
@@ -76,17 +77,6 @@ it("quits through Electron on SIGINT and SIGTERM", () => {
   signals.emit("SIGINT");
   signals.emit("SIGTERM");
   expect(quit).toHaveBeenCalledTimes(2);
-});
-
-it("treats an unresponsive window or a crashed renderer as a hang, but not a clean exit", () => {
-  const window = Object.assign(new EventEmitter(), { webContents: new EventEmitter() });
-  const onHang = vi.fn();
-  watchRendererHealth(window, onHang);
-  window.webContents.emit("render-process-gone", {}, { reason: "clean-exit" });
-  expect(onHang).not.toHaveBeenCalled();
-  window.emit("unresponsive");
-  window.webContents.emit("render-process-gone", {}, { reason: "crashed" });
-  expect(onHang).toHaveBeenCalledTimes(2);
 });
 
 it("persists static risk synchronously and keeps it when no process is running", async () => {
@@ -159,4 +149,65 @@ it("throws on a failed checked write and retries instead of caching an unwritten
   session.markThirdPartyStaticContributions();
   expect((await onDisk()).thirdPartyStaticContributions).toBe(true);
   expect(marker().begin()).toBe("unclean-exit");
+});
+import { filePluginStateStore } from "./state-store.js";
+it.each([false, true])(
+  "D150 crash recovery risk=%s never re-enables a persisted optional builtin",
+  async (risk) => {
+    const store = filePluginStateStore(root);
+    await store.load();
+    await store.save({
+      disabled: new Set(["builtin:kobrixa.device-ev3"]),
+      legacyDisabledIds: new Set(),
+    });
+    const crashed = marker();
+    crashed.begin();
+    crashed.update({ thirdPartyRunning: risk });
+    expect(marker().begin()).toBe(risk ? "unclean-exit" : undefined);
+    expect((await filePluginStateStore(root).load()).disabled).toEqual(
+      new Set(["builtin:kobrixa.device-ev3"]),
+    );
+  },
+);
+
+it("records third-party UI risk before delivery, remains sticky, and defaults old markers to false", async () => {
+  const first = marker();
+  first.begin();
+  first.markThirdPartyUiContributions();
+  expect((await onDisk()).thirdPartyUiContributions).toBe(true);
+  first.update({ thirdPartyRunning: false });
+  const next = marker();
+  expect(next.begin()).toBe("unclean-exit");
+  expect(next.previousThirdPartyUiContributions).toBe(true);
+  next.finish();
+  await mkdir(path.join(root, "plugins"), { recursive: true });
+  await writeFile(
+    path.join(root, "plugins/session.json"),
+    JSON.stringify({
+      startedAt: "2026-10-15T00:00:00.000Z",
+      thirdPartyRunning: false,
+      rendererUnresponsive: false,
+    }),
+  );
+  const legacy = marker();
+  expect(legacy.begin()).toBeUndefined();
+  expect(legacy.previousThirdPartyUiContributions).toBe(false);
+});
+it("does not authorize third-party delivery when the checked marker cannot be persisted", async () => {
+  const session = marker();
+  session.begin();
+  await rm(session.file);
+  await mkdir(session.file);
+  expect(() => session.markThirdPartyUiContributions()).toThrow("PLUGIN_E_STATE_SAVE");
+});
+it("distinguishes renderer loss cleanup from an unresponsive recovery lock", () => {
+  const window = Object.assign(new EventEmitter(), { webContents: new EventEmitter() });
+  const hang = vi.fn();
+  const gone = vi.fn();
+  watchRendererHealth(window, hang, gone);
+  window.webContents.emit("render-process-gone", {}, { reason: "crashed" });
+  expect(hang).not.toHaveBeenCalled();
+  expect(gone).toHaveBeenCalledTimes(1);
+  window.emit("unresponsive");
+  expect(hang).toHaveBeenCalledTimes(1);
 });

@@ -1,0 +1,749 @@
+{
+  "command": "node tests/desktop/device-broker-run.mjs",
+  "exitCode": 0,
+  "observedDate": "2026-10-21 Asia/Taipei",
+  "rawLogSha256": "952ab5226611a03bfd2a639adab2db9a90a7a09b1183708377671975349527aa",
+  "report": {
+    "commit": "90a2b399761fc6af667988667eec4bd2e30f5fe4",
+    "artifact": {
+      "dirty": false,
+      "sha256": {
+        "main.cjs": "31bdefb517af2e01031689365967380a06d97c0a8a87cb31817f7c2126f657ee",
+        "js/consumer.cjs": "f78153cd50cf38a064426dbfebf253c15a00036d4df607df020acdcc4407f199",
+        "python/consumer.py": "5432101bf8185420b0a537d813ae1be1d66c34b3c542458292f800d7440dbfbe",
+        "stall.cjs": "f91e0b6389df6e6b2ca4125239dd153f637e436b9b2025493c80a7086f5a9b9e"
+      }
+    },
+    "transports": [
+      {
+        "ok": true,
+        "scenario": [
+          "negotiate",
+          "list",
+          "session",
+          "read",
+          "subscribe",
+          "mode-query",
+          "mode-set",
+          "reserve",
+          "recording-read",
+          "release",
+          "prepare",
+          "start",
+          "stop",
+          "query",
+          "unsubscribe"
+        ],
+        "eventReceipt": {
+          "kind": "devices.telemetry",
+          "subscriptionId": "94e89717-07ab-406f-be42-390254cf4cb5",
+          "sequence": 1,
+          "sessionId": "548fd460-bed9-43b9-8d93-a091e9bac9de",
+          "owner": {
+            "sourceKey": "dev:0ff81a745d59c5a8",
+            "pluginId": "kobrixa-fixture.devices",
+            "generation": 0,
+            "hostEpoch": "a4398b8c-5550-4308-b151-b4c48883abdb",
+            "processEpoch": "a88c6cbf-a990-45a8-aca9-1fbfd99c24d5"
+          }
+        },
+        "acknowledged": {
+          "subscriptionId": "94e89717-07ab-406f-be42-390254cf4cb5",
+          "sequence": 1
+        },
+        "language": "js",
+        "transport": "electron-message-port"
+      },
+      {
+        "ok": true,
+        "scenario": [
+          "negotiate",
+          "list",
+          "session",
+          "read",
+          "subscribe",
+          "mode-query",
+          "mode-set",
+          "reserve",
+          "recording-read",
+          "release",
+          "prepare",
+          "start",
+          "stop",
+          "query",
+          "unsubscribe"
+        ],
+        "eventReceipt": {
+          "kind": "devices.telemetry",
+          "subscriptionId": "91925ba0-b221-4d54-b4f7-8855c9a5a48a",
+          "sequence": 1,
+          "sessionId": "ab916fe2-6ce1-4292-a4f1-62b3b8901e62",
+          "owner": {
+            "sourceKey": "dev:e527a036f6f0a483",
+            "pluginId": "kobrixa-fixture.devices",
+            "generation": 14,
+            "hostEpoch": "a4398b8c-5550-4308-b151-b4c48883abdb",
+            "processEpoch": "427cccd5-eecf-4a1a-966f-1606f8447d34"
+          }
+        },
+        "acknowledged": {
+          "subscriptionId": "91925ba0-b221-4d54-b4f7-8855c9a5a48a",
+          "sequence": 1
+        },
+        "language": "python",
+        "transport": "content-length"
+      }
+    ],
+    "negotiations": [
+      {
+        "language": "js",
+        "transport": "electron-message-port",
+        "name": "absent",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "transport": "electron-message-port",
+        "name": "required-supported",
+        "ok": true,
+        "value": {
+          "devicesContractVersion": 1,
+          "eventVersion": 1,
+          "capabilities": [
+            {
+              "capability": "connection.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "telemetry.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "inputModes.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "finiteMotion.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "recordingReservation.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            }
+          ],
+          "requirementsSatisfied": true
+        }
+      },
+      {
+        "language": "js",
+        "transport": "electron-message-port",
+        "name": "optional-supported",
+        "ok": true,
+        "value": {
+          "devicesContractVersion": 1,
+          "eventVersion": 1,
+          "capabilities": [
+            {
+              "capability": "connection.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "telemetry.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "inputModes.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "finiteMotion.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "recordingReservation.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            }
+          ],
+          "requirementsSatisfied": true
+        }
+      },
+      {
+        "language": "js",
+        "transport": "electron-message-port",
+        "name": "required-unknown-version",
+        "ok": true,
+        "value": {
+          "devicesContractVersion": 1,
+          "eventVersion": 1,
+          "capabilities": [
+            {
+              "capability": "connection.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "telemetry.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "inputModes.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "finiteMotion.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "recordingReservation.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "telemetry.v99",
+              "state": "unsupported",
+              "providerId": null
+            }
+          ],
+          "requirementsSatisfied": false
+        }
+      },
+      {
+        "language": "js",
+        "transport": "electron-message-port",
+        "name": "optional-unknown-version",
+        "ok": true,
+        "value": {
+          "devicesContractVersion": 1,
+          "eventVersion": 1,
+          "capabilities": [
+            {
+              "capability": "connection.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "telemetry.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "inputModes.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "finiteMotion.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "recordingReservation.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "telemetry.v99",
+              "state": "unsupported",
+              "providerId": null
+            }
+          ],
+          "requirementsSatisfied": true
+        }
+      },
+      {
+        "language": "js",
+        "transport": "electron-message-port",
+        "name": "required-disabled",
+        "ok": true,
+        "value": {
+          "devicesContractVersion": 1,
+          "eventVersion": 1,
+          "capabilities": [
+            {
+              "capability": "connection.v1",
+              "state": "provider-unavailable",
+              "providerId": null
+            },
+            {
+              "capability": "telemetry.v1",
+              "state": "provider-unavailable",
+              "providerId": null
+            },
+            {
+              "capability": "inputModes.v1",
+              "state": "provider-unavailable",
+              "providerId": null
+            },
+            {
+              "capability": "finiteMotion.v1",
+              "state": "provider-unavailable",
+              "providerId": null
+            },
+            {
+              "capability": "recordingReservation.v1",
+              "state": "provider-unavailable",
+              "providerId": null
+            }
+          ],
+          "requirementsSatisfied": false
+        }
+      },
+      {
+        "language": "python",
+        "transport": "content-length",
+        "name": "absent",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "transport": "content-length",
+        "name": "required-supported",
+        "ok": true,
+        "value": {
+          "devicesContractVersion": 1,
+          "eventVersion": 1,
+          "capabilities": [
+            {
+              "capability": "connection.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "telemetry.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "inputModes.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "finiteMotion.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "recordingReservation.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            }
+          ],
+          "requirementsSatisfied": true
+        }
+      },
+      {
+        "language": "python",
+        "transport": "content-length",
+        "name": "optional-supported",
+        "ok": true,
+        "value": {
+          "devicesContractVersion": 1,
+          "eventVersion": 1,
+          "capabilities": [
+            {
+              "capability": "connection.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "telemetry.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "inputModes.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "finiteMotion.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "recordingReservation.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            }
+          ],
+          "requirementsSatisfied": true
+        }
+      },
+      {
+        "language": "python",
+        "transport": "content-length",
+        "name": "required-unknown-version",
+        "ok": true,
+        "value": {
+          "devicesContractVersion": 1,
+          "eventVersion": 1,
+          "capabilities": [
+            {
+              "capability": "connection.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "telemetry.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "inputModes.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "finiteMotion.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "recordingReservation.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "telemetry.v99",
+              "state": "unsupported",
+              "providerId": null
+            }
+          ],
+          "requirementsSatisfied": false
+        }
+      },
+      {
+        "language": "python",
+        "transport": "content-length",
+        "name": "optional-unknown-version",
+        "ok": true,
+        "value": {
+          "devicesContractVersion": 1,
+          "eventVersion": 1,
+          "capabilities": [
+            {
+              "capability": "connection.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "telemetry.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "inputModes.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "finiteMotion.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "recordingReservation.v1",
+              "state": "available",
+              "providerId": "kobrixa.device-ev3"
+            },
+            {
+              "capability": "telemetry.v99",
+              "state": "unsupported",
+              "providerId": null
+            }
+          ],
+          "requirementsSatisfied": true
+        }
+      },
+      {
+        "language": "python",
+        "transport": "content-length",
+        "name": "required-disabled",
+        "ok": true,
+        "value": {
+          "devicesContractVersion": 1,
+          "eventVersion": 1,
+          "capabilities": [
+            {
+              "capability": "connection.v1",
+              "state": "provider-unavailable",
+              "providerId": null
+            },
+            {
+              "capability": "telemetry.v1",
+              "state": "provider-unavailable",
+              "providerId": null
+            },
+            {
+              "capability": "inputModes.v1",
+              "state": "provider-unavailable",
+              "providerId": null
+            },
+            {
+              "capability": "finiteMotion.v1",
+              "state": "provider-unavailable",
+              "providerId": null
+            },
+            {
+              "capability": "recordingReservation.v1",
+              "state": "provider-unavailable",
+              "providerId": null
+            }
+          ],
+          "requirementsSatisfied": false
+        }
+      }
+    ],
+    "channelChecks": [
+      {
+        "language": "js",
+        "name": "reply-before-delivery",
+        "ok": true,
+        "events": 4
+      },
+      {
+        "language": "js",
+        "name": "retired:absent",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "event-delivery-withheld",
+        "ok": true,
+        "withheldEvents": 2
+      },
+      {
+        "language": "js",
+        "name": "retired:event-delivery-withheld",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "retired:required-supported",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "retired:optional-supported",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "retired:required-unknown-version",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "retired:optional-unknown-version",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "retired:required-disabled",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "hostile-requirements",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "retired:hostile-requirements",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "subscribe-send-throws",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "retired:subscribe-send-throws",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "subscribe-invalid-result",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "retired:subscribe-invalid-result",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "subscribe-cancel",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "retired:subscribe-cancel",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "metadata-absent",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "retired:metadata-absent",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "metadata-wrong",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "retired:metadata-wrong",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "metadata-retired",
+        "ok": true
+      },
+      {
+        "language": "js",
+        "name": "retired:metadata-retired",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "reply-before-delivery",
+        "ok": true,
+        "events": 4
+      },
+      {
+        "language": "python",
+        "name": "retired:absent",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "event-delivery-withheld",
+        "ok": true,
+        "withheldEvents": 2
+      },
+      {
+        "language": "python",
+        "name": "retired:event-delivery-withheld",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "retired:required-supported",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "retired:optional-supported",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "retired:required-unknown-version",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "retired:optional-unknown-version",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "retired:required-disabled",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "hostile-requirements",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "retired:hostile-requirements",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "subscribe-send-throws",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "retired:subscribe-send-throws",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "subscribe-invalid-result",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "retired:subscribe-invalid-result",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "subscribe-cancel",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "retired:subscribe-cancel",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "metadata-absent",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "retired:metadata-absent",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "metadata-wrong",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "retired:metadata-wrong",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "metadata-retired",
+        "ok": true
+      },
+      {
+        "language": "python",
+        "name": "retired:metadata-retired",
+        "ok": true
+      }
+    ],
+    "stall": "child-entered-and-killed"
+  }
+}

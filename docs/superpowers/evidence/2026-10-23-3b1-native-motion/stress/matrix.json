@@ -1,0 +1,47 @@
+{
+  "kind": "ui-motion-stress",
+  "reports": [
+    {
+      "scenario": {
+        "boundary": "pulse",
+        "position": "after",
+        "fault": "queue-pressure",
+        "stress": "delayed-readback"
+      },
+      "path": "delayed-readback.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "pulse",
+        "position": "after",
+        "fault": "queue-pressure",
+        "stress": "withheld-readback"
+      },
+      "path": "withheld-readback.json.gz"
+    },
+    {
+      "scenario": {
+        "boundary": "pulse",
+        "position": "after",
+        "fault": "queue-pressure",
+        "stress": "lost-start"
+      },
+      "path": "lost-start.json.gz"
+    }
+  ],
+  "artifact": {
+    "commit": "15ba2918037dc0a33c2438cd86abc0e0ea534d1c",
+    "dirty": true,
+    "sha256": {
+      "main.cjs": "12ba8c149fcb8618b8dd86b3cce95937f7b3988601acb73e0fed80bd6be36774",
+      "template/preload.cjs": "5c5f814bcd90bd8052368baddef282ff0c1ed72f1e9b13c5748079e47d1a352e",
+      "template/source/kobrixa-plugin.json": "ae440cba6c643c3d3649d81c16c2543f23ae10c00273b8e081e7e8795024e023",
+      "template/source/main.cjs": "bdd5ededcdfcaa5e90bdad4e7fffef428f1d86443579b837eac3cfbb26939af3",
+      "template/source/panel.json": "b15175e6d589a26e8b35170f2165b6079803f29aeb89c82b2d6a8b2417f21ceb",
+      "template/renderer/index.html": "0d2472e49e9290612529ea614763ca85208c2c72ce0d0097ffb586348bd0477a",
+      "template/renderer/assets/index-7OV_7gMa.js": "d6c47e467decf4c1b17f80dd293d4006cf06b0a13c70b134eba11fc4290497b0",
+      "template/renderer/assets/index-7OV_7gMa.js.map": "36c84ab429ffad933a2a1a63a90ccd812c0ff8c997187b99125fd981e1613ec0",
+      "template/renderer/assets/index-Ctv-p2WS.css": "35b19a04601f52a29ec5472c63ac8fe5b97c1ef863157b2bfa48bdb15271ec83"
+    }
+  }
+}

@@ -1,0 +1,133 @@
+{
+  "kind": "ui-maximum-load",
+  "reports": [
+    {
+      "scenario": {
+        "boundary": "pulse",
+        "position": "after",
+        "fault": "cancel",
+        "repeat": 0,
+        "load": {
+          "durationMs": 60000,
+          "cycles": 1000
+        }
+      },
+      "path": "load-0/report.json.gz",
+      "rendererEvents": "renderer-events.json.gz",
+      "mainEvents": "main-events.jsonl.gz",
+      "orphanFollowup": "orphan-followup.json"
+    },
+    {
+      "scenario": {
+        "boundary": "pulse",
+        "position": "after",
+        "fault": "cancel",
+        "repeat": 1,
+        "load": {
+          "durationMs": 60000,
+          "cycles": 1000
+        }
+      },
+      "path": "load-1/report.json.gz",
+      "rendererEvents": "renderer-events.json.gz",
+      "mainEvents": "main-events.jsonl.gz",
+      "orphanFollowup": "orphan-followup.json"
+    },
+    {
+      "scenario": {
+        "boundary": "pulse",
+        "position": "after",
+        "fault": "cancel",
+        "repeat": 2,
+        "load": {
+          "durationMs": 60000,
+          "cycles": 1000
+        }
+      },
+      "path": "load-2/report.json.gz",
+      "rendererEvents": "renderer-events.json.gz",
+      "mainEvents": "main-events.jsonl.gz",
+      "orphanFollowup": "orphan-followup.json"
+    }
+  ],
+  "artifact": {
+    "commit": "842aa56e5f1dd05a011341f6c3da343e9e4237ac",
+    "dirty": false,
+    "scope": "production pane and status load; CJK diagnostic glyphs",
+    "fixture": {
+      "panels": 16,
+      "statuses": 16,
+      "nodesPerPanel": 256,
+      "depth": 8,
+      "resourceBytes": 8388608,
+      "producerMinimumIntervalMs": 100
+    },
+    "sha256": {
+      "main.cjs": "0b338b0316567a5fe598abcc431c6c85c017f42eab8bad66948f8bc64b1de0f9",
+      "template/preload.cjs": "5c5f814bcd90bd8052368baddef282ff0c1ed72f1e9b13c5748079e47d1a352e",
+      "template/ui-7/consumer.py": "c05b3105808a1a62af08e6b3464f2f7aa164a6a6843516f2addf3d074fa16b44",
+      "template/ui-7/kobrixa-plugin.json": "6b633e058a1a48e6eb0b7f004619b6e1323c3b0213cbc8ea1f71dfe3590b8387",
+      "template/ui-7/main.cjs": "c8d6a168e715a8af4b0e1a4b680dce211170731dc7b27ebda12c6c76719d33ad",
+      "template/ui-7/panel-0.json": "6e69da21978e58291aa7f6f22edd90b3705a1cdb846a9ea5e770d79cd4e56348",
+      "template/ui-7/panel-1.json": "6e69da21978e58291aa7f6f22edd90b3705a1cdb846a9ea5e770d79cd4e56348",
+      "template/ui-7/status-0.json": "bc5f0b92894dd68a5ee6a8f836aab0391058769f66566dd252e64c8f241330d4",
+      "template/ui-7/status-1.json": "bc5f0b92894dd68a5ee6a8f836aab0391058769f66566dd252e64c8f241330d4",
+      "template/ui-6/consumer.py": "fd3fb5a8e46395df3f64b73dcdf0f11cb0752200d3b61a833f481fa14f6c67b4",
+      "template/ui-6/kobrixa-plugin.json": "79fef44eef72ec997b014718d26cb98ae392f33d2772a516bedf5149a75eb027",
+      "template/ui-6/main.cjs": "c8d6a168e715a8af4b0e1a4b680dce211170731dc7b27ebda12c6c76719d33ad",
+      "template/ui-6/panel-0.json": "d661455954a45677d8579d99c78553e23026aff9f887e8a277b252edc17a88ab",
+      "template/ui-6/panel-1.json": "d661455954a45677d8579d99c78553e23026aff9f887e8a277b252edc17a88ab",
+      "template/ui-6/status-0.json": "bc5f0b92894dd68a5ee6a8f836aab0391058769f66566dd252e64c8f241330d4",
+      "template/ui-6/status-1.json": "bc5f0b92894dd68a5ee6a8f836aab0391058769f66566dd252e64c8f241330d4",
+      "template/ui-5/consumer.py": "b9ab6049ec6f403c16ee374d19914ee0df2947bbd2ae195104df5502eda613cd",
+      "template/ui-5/kobrixa-plugin.json": "025834dfde1ecad17ed1ed77210fa9b4e6164d00e3e2b2f97f4f7f79d6d35f00",
+      "template/ui-5/main.cjs": "c8d6a168e715a8af4b0e1a4b680dce211170731dc7b27ebda12c6c76719d33ad",
+      "template/ui-5/panel-0.json": "400822c7f8164a08ae574bbc554f4f8ef2f55fd398d747334a19c89c8812cd05",
+      "template/ui-5/panel-1.json": "400822c7f8164a08ae574bbc554f4f8ef2f55fd398d747334a19c89c8812cd05",
+      "template/ui-5/status-0.json": "bc5f0b92894dd68a5ee6a8f836aab0391058769f66566dd252e64c8f241330d4",
+      "template/ui-5/status-1.json": "bc5f0b92894dd68a5ee6a8f836aab0391058769f66566dd252e64c8f241330d4",
+      "template/ui-4/consumer.py": "2ee59e47323d779359b70ff314cede323de50f6bf0431560af3a47ef968bef1f",
+      "template/ui-4/kobrixa-plugin.json": "4bdcb2635115af367847a1e877792a3a98ca3b891b985c39335b16f668bc367c",
+      "template/ui-4/main.cjs": "c8d6a168e715a8af4b0e1a4b680dce211170731dc7b27ebda12c6c76719d33ad",
+      "template/ui-4/panel-0.json": "ee29e92eba0c7c40cc6cd3b6044fb9170bf0a75771fbdb5ae8c1ab63dfe26dfd",
+      "template/ui-4/panel-1.json": "ee29e92eba0c7c40cc6cd3b6044fb9170bf0a75771fbdb5ae8c1ab63dfe26dfd",
+      "template/ui-4/status-0.json": "bc5f0b92894dd68a5ee6a8f836aab0391058769f66566dd252e64c8f241330d4",
+      "template/ui-4/status-1.json": "bc5f0b92894dd68a5ee6a8f836aab0391058769f66566dd252e64c8f241330d4",
+      "template/ui-3/consumer.py": "b1a3e4b0c73b1f5d1c3c79a29eed683686d489e22e248c2000451c65f517cfbb",
+      "template/ui-3/kobrixa-plugin.json": "9c6bb3779dc14f57175d6bda8964fd6d971ba07affa14cc700ea1488e36f2d0a",
+      "template/ui-3/main.cjs": "c8d6a168e715a8af4b0e1a4b680dce211170731dc7b27ebda12c6c76719d33ad",
+      "template/ui-3/panel-0.json": "42e03f6e0a82ddbb7564ed0b9a8b9601ac89fe391dff3c58f3dd783eec1a3d30",
+      "template/ui-3/panel-1.json": "42e03f6e0a82ddbb7564ed0b9a8b9601ac89fe391dff3c58f3dd783eec1a3d30",
+      "template/ui-3/status-0.json": "bc5f0b92894dd68a5ee6a8f836aab0391058769f66566dd252e64c8f241330d4",
+      "template/ui-3/status-1.json": "bc5f0b92894dd68a5ee6a8f836aab0391058769f66566dd252e64c8f241330d4",
+      "template/ui-2/consumer.py": "b13ea1faec04d46a62eebc2a6f4230742e916e956aa5764e684eaf0163d99734",
+      "template/ui-2/kobrixa-plugin.json": "4527a71c2b4ac74930cbd729918e5ac7694b1084bfd4c41dcd35c3c6c8e67808",
+      "template/ui-2/main.cjs": "c8d6a168e715a8af4b0e1a4b680dce211170731dc7b27ebda12c6c76719d33ad",
+      "template/ui-2/panel-0.json": "b04a8a7b20d1f578e0cb20510505ac3462820f236003a689a5bff5ee934c4858",
+      "template/ui-2/panel-1.json": "b04a8a7b20d1f578e0cb20510505ac3462820f236003a689a5bff5ee934c4858",
+      "template/ui-2/status-0.json": "bc5f0b92894dd68a5ee6a8f836aab0391058769f66566dd252e64c8f241330d4",
+      "template/ui-2/status-1.json": "bc5f0b92894dd68a5ee6a8f836aab0391058769f66566dd252e64c8f241330d4",
+      "template/ui-1/consumer.py": "11627274b44c54ca8a97b3b85f00c3e6905feceade96fb9bd7bff8911648117e",
+      "template/ui-1/kobrixa-plugin.json": "fefcae63d3b41420fedd828ee717dc873b6fa67dc79d835b9ca6a8b4a96ed371",
+      "template/ui-1/main.cjs": "c8d6a168e715a8af4b0e1a4b680dce211170731dc7b27ebda12c6c76719d33ad",
+      "template/ui-1/panel-0.json": "d04c4e1251c43e3ce7d669feccad9ebbdd90b337f82482e6eb11bb51cf6c5ee9",
+      "template/ui-1/panel-1.json": "d04c4e1251c43e3ce7d669feccad9ebbdd90b337f82482e6eb11bb51cf6c5ee9",
+      "template/ui-1/status-0.json": "bc5f0b92894dd68a5ee6a8f836aab0391058769f66566dd252e64c8f241330d4",
+      "template/ui-1/status-1.json": "bc5f0b92894dd68a5ee6a8f836aab0391058769f66566dd252e64c8f241330d4",
+      "template/ui-0/consumer.py": "034707b77d76bc759997c676bf3e82bfb2113ae22d503ffe902ed3929c8b665f",
+      "template/ui-0/kobrixa-plugin.json": "1173ebea4c4ca16202cf825037af5e58096d0c8f753cc970e29908f1d00527db",
+      "template/ui-0/main.cjs": "c8d6a168e715a8af4b0e1a4b680dce211170731dc7b27ebda12c6c76719d33ad",
+      "template/ui-0/panel-0.json": "ed8a4a2cbe060c3ca35557f90c4476733366dbd9cda024950009af040c18f8b1",
+      "template/ui-0/panel-1.json": "ed8a4a2cbe060c3ca35557f90c4476733366dbd9cda024950009af040c18f8b1",
+      "template/ui-0/status-0.json": "bc5f0b92894dd68a5ee6a8f836aab0391058769f66566dd252e64c8f241330d4",
+      "template/ui-0/status-1.json": "bc5f0b92894dd68a5ee6a8f836aab0391058769f66566dd252e64c8f241330d4",
+      "template/source/kobrixa-plugin.json": "ae440cba6c643c3d3649d81c16c2543f23ae10c00273b8e081e7e8795024e023",
+      "template/source/main.cjs": "bdd5ededcdfcaa5e90bdad4e7fffef428f1d86443579b837eac3cfbb26939af3",
+      "template/source/panel.json": "b15175e6d589a26e8b35170f2165b6079803f29aeb89c82b2d6a8b2417f21ceb",
+      "template/renderer/index.html": "3b699d4441ee15b3bb6fd4f9339cbff8a9ead63fdaea7354d5bc5143a0fc2cd1",
+      "template/renderer/assets/index-COdmZzMe.js": "5fcf09de53c8388aefac9d0af0b769a64e376435e2ed16ddde80cedea6bb4d11",
+      "template/renderer/assets/index-COdmZzMe.js.map": "a9ae96ada3bc62576b62cb35c2feb3b97c62ef21a549e03779ffc41247481c01",
+      "template/renderer/assets/index-Ctv-p2WS.css": "35b19a04601f52a29ec5472c63ac8fe5b97c1ef863157b2bfa48bdb15271ec83"
+    }
+  }
+}

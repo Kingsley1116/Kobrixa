@@ -48,3 +48,5 @@ export function parseDirectoryListing(directory: string, listing: string): Remot
         : 1,
   );
 }
+
+export const EV3_FILE_CHUNK_BYTES = 900;

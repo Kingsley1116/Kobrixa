@@ -34,6 +34,7 @@ export class RemoteFilesController {
   private generation = 0;
   private requestId: string | undefined;
   private decide: ((policy: "skip" | "replace" | undefined) => void) | undefined;
+  private confirmation: { cleanup?: Promise<void> } | undefined;
   constructor(
     private api: KobrixaApi,
     private execution: ExecutionController,
@@ -95,8 +96,13 @@ export class RemoteFilesController {
   onEvent = (event: DeviceEvent): void => {
     if (event.type === "file-batch") {
       const batch = event.snapshot;
-      if (batch.sessionId === this.state.sessionId && batch.requestId === this.requestId)
+      if (batch.sessionId === this.state.sessionId && batch.requestId === this.requestId) {
         this.update({ batch });
+        if (!["checking", "ready", "running"].includes(batch.phase)) {
+          this.decide?.(undefined);
+          this.decide = undefined;
+        }
+      }
     } else if (
       event.type === "state" &&
       event.state === "disconnected" &&
@@ -195,6 +201,48 @@ export class RemoteFilesController {
     }
     return succeeded;
   }
+  async renewConfirmation(): Promise<void> {
+    const batch = this.state.batch;
+    const confirmation = this.confirmation;
+    if (
+      !confirmation ||
+      !batch ||
+      !this.state.busy ||
+      batch.phase !== "ready" ||
+      batch.stopRequested
+    )
+      return;
+    const generation = this.generation;
+    try {
+      await this.api.device.renewFiles(batch);
+      if (
+        generation !== this.generation ||
+        this.state.batch?.planId !== batch.planId ||
+        this.state.batch.phase !== "ready"
+      )
+        return;
+      this.update({ error: undefined });
+    } catch (error) {
+      if (
+        generation !== this.generation ||
+        this.state.batch?.planId !== batch.planId ||
+        this.state.batch.phase !== "ready"
+      )
+        return;
+      // Keep cancellation inside this batch's withFiles lifetime, even when a
+      // terminal event or a late prepare response releases its confirmation wait.
+      confirmation.cleanup = Promise.resolve()
+        .then(() => this.api.device.stopFiles(batch))
+        .catch(() => {});
+      this.decide?.(undefined);
+      this.decide = undefined;
+      this.update({
+        error: asError(error),
+        batch: { ...batch, phase: "failed", stopRequested: true },
+      });
+      await confirmation.cleanup;
+    }
+  }
   async prepareBatch(
     action: FileBatchAction,
     paths: string[],
@@ -219,8 +267,10 @@ export class RemoteFilesController {
     const choice = new Promise<"skip" | "replace" | undefined>((resolve) => {
       this.decide = resolve;
     });
+    const confirmation: { cleanup?: Promise<void> } = {};
+    this.confirmation = confirmation;
     try {
-      await this.execution.withFiles(async () => {
+      const prepare = async () => {
         let batch = await this.api.device.prepareFiles({
           sessionId,
           requestId,
@@ -231,12 +281,20 @@ export class RemoteFilesController {
           locale,
         });
         if (!current() || batch.sessionId !== sessionId || batch.requestId !== requestId) return;
-        if (this.state.batch?.planId !== batch.planId || this.state.batch.phase !== "running")
-          this.update({ batch });
+        const published = this.state.batch;
+        if (published?.planId === batch.planId && !["checking", "ready"].includes(published.phase))
+          batch = published;
+        else this.update({ batch });
         if (batch.phase === "ready") {
           const policy = await choice;
           if (!current()) return;
           if (!policy) {
+            const terminal = this.state.batch;
+            if (
+              terminal?.planId === batch.planId &&
+              !["checking", "ready", "running"].includes(terminal.phase)
+            )
+              return;
             await this.api.device.stopFiles(batch);
             if (current())
               this.update({ batch: { ...batch, phase: "cancelled", stopRequested: true } });
@@ -275,7 +333,11 @@ export class RemoteFilesController {
             if (current()) this.update({ refreshError: asError(error) });
           }
         }
-      }, `${action} · ${path}`);
+      };
+      await this.execution.withFiles(
+        () => prepare().finally(() => confirmation.cleanup),
+        `${action} · ${path}`,
+      );
     } catch (error) {
       if (current()) {
         const batch = this.state.batch;
@@ -293,6 +355,7 @@ export class RemoteFilesController {
         if (current()) this.update({ error: asError(error) });
       }
     } finally {
+      if (this.confirmation === confirmation) this.confirmation = undefined;
       if (current()) {
         this.requestId = undefined;
         this.decide = undefined;

@@ -1,0 +1,25 @@
+{
+  "kind": "panel",
+  "data": {
+    "ticks": {
+      "schema": { "type": "string", "maxLength": 64, "nullable": false },
+      "initial": "tick:0"
+    }
+  },
+  "fields": {},
+  "root": "root",
+  "nodes": [
+    { "id": "root", "type": "group", "layout": "stack", "children": ["run"] },
+    {
+      "id": "run",
+      "type": "action",
+      "label": { "en": "Activate", "zh-TW": "執行" },
+      "variant": "primary",
+      "action": {
+        "kind": "command",
+        "command": "kobrixa.motor-test.activate",
+        "arguments": { "speed": { "literal": 20 }, "mode": { "literal": "brake" } }
+      }
+    }
+  ]
+}

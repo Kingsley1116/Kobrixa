@@ -1,0 +1,9 @@
+# Preserved SDK compatibility: actual Electron execution
+
+Candidate `337e1a7a473d523b2963bf61ad4693124f3631de`, Linux arm64 Electron acceptance host, fresh profile, offline Docker with fake device provider. Original preserved JS/Python SDKs at API 1.4, 1.5, 1.6, 1.7 and current 1.8 ran twice each: twenty distinct process/owner identities with normal retirement and no surviving owned children. All matrix checks and outside artifact-hash checks passed. The version-aware publication rule is in the B2 acceptance document; API 1.8 is intentionally present on this approved post-3D host.
+
+Actual transport retains legacy initialize and execute envelopes, absence of storage/drain below 1.7, supported drain callback plus the host's saved nonblocking report, schema identity across restarts, and independently generated JS/Python schema equality. Original source and payload hashes, environment, worker trace, exits and cleanup are retained in the compressed raw report. The controller additionally checked all preserved artifacts against their on-disk hashes. The 29 scoped pure compatibility tests passed; they are separate from this real-process receipt.
+
+The prior attempt stopped before native allocation because the committed 10,459,664-byte API 1.8 schema exceeded the materializer's 8 MiB git buffer. Its log is retained. The helper now uses a bounded 16 MiB buffer; no product limit or contract changed.
+
+This closes only the scoped compatibility producer. It is not full installed-product, hardware, broad persistence interop, RF5, load, X-T1 or aggregate Stage 3 acceptance. The raw historical handoffs retain their original owner commits; the renderer was rebuilt from the candidate, rather than relabelling an older renderer artifact. Full binaries/profiles remain in the controller directory; compressed files here preserve exact bytes with the inventory hashes.

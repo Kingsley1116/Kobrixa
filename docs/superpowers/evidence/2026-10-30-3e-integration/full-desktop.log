@@ -1,0 +1,19 @@
+
+ RUN  v5.0.4 /Users/kingsley/.codex/worktrees/plugin-3e/Kobrixa/apps/desktop
+
+[warn] `inlineDynamicImports` option is deprecated, please use `codeSplitting: false` instead.
+[warn] `inlineDynamicImports` option is deprecated, please use `codeSplitting: false` instead.
+[warn] `inlineDynamicImports` option is deprecated, please use `codeSplitting: false` instead.
+transforming...
+✓ 147 modules transformed.
+rendering chunks...
+computing gzip size...
+
+ Test Files  317 passed | 1 skipped (318)
+      Tests  4053 passed | 22 skipped (4075)
+   Start at  02:56:17
+   Duration  165.78s (tests 89%, import 5%, environment 3%, transform 2%)
+
+    Isolate  318 workers spawned · ~79ms startup each (spawn + environment, per file)
+             at least ~12.41s faster with isolate: false — reuses workers across files instead of one per file
+

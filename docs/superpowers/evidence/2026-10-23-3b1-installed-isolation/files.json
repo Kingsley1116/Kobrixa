@@ -1,0 +1,18 @@
+{
+  "installed.json": {
+    "sha256": "de9ff13dd4e7824278c6966292845cc6cd953cf46363b246ed15759fa82f4967",
+    "bytes": 18864
+  },
+  "artifact-identity.json": {
+    "sha256": "8b5b4e9018f4c6a1ff9e87edf79106457b01c96c1a8c71952030617177abbcad",
+    "bytes": 808
+  },
+  "isolation.sb": {
+    "sha256": "78b9233319b6eef1551f0473f0d623f299c654c733b6152752a88c719a0c130d",
+    "bytes": 108
+  },
+  "run.log": {
+    "sha256": "0cda07e0917590e2100462a5695b44ba54c8e9e128fcbd057cf40ff1e4f772f7",
+    "bytes": 1583
+  }
+}

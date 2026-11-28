@@ -1,0 +1,37 @@
+[
+  {
+    "file": "native-receipt.json.gz",
+    "source": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/B2-contention-window-owner-native.json",
+    "uncompressedBytes": 109888,
+    "uncompressedSha256": "e4807a8fecea80e4d73e4098e9c1bcfae0d5f2cbd82c952ca669490a7a51eff5",
+    "sha256": "199804033ce5e1d61f0c986e8aadea35df55b0e4cc8715c38642e7fcabb8ca79"
+  },
+  {
+    "file": "native-config.json.gz",
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-oqpW9U/contention.json",
+    "uncompressedBytes": 1162,
+    "uncompressedSha256": "6c6d53c0701028fa015df0f4a404c3c9a6803c81c2a2113985e7a2051ec37f84",
+    "sha256": "4d4565abf17638ed7c4cb7616ef55d9c9f7b37382ea6dca6ab7f7ec0bd67c069"
+  },
+  {
+    "file": "candidate.json.gz",
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-oqpW9U/contention.candidate.json",
+    "uncompressedBytes": 44750,
+    "uncompressedSha256": "cd25529e4f80da7f4f9c4727126568ef9b78002de077723357c1af4247c479d2",
+    "sha256": "de842de8ea845af0b8824da3eff81998c379be8897d3c9c1ffc33b658ac4d8e3"
+  },
+  {
+    "file": "renderer-artifact.json.gz",
+    "source": "/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-renderer-sI7bH2/renderer-artifact.json",
+    "uncompressedBytes": 21983,
+    "uncompressedSha256": "a40b7f4378c6157ee8e6a53ac8234c2ce2704e3954eb9df7dbc36969600c82ea",
+    "sha256": "f31a185d83fba19b4d1f1699cfabff0151396ac2e23236e5d9de907db66122bf"
+  },
+  {
+    "file": "native.log.gz",
+    "source": "/private/tmp/b2-contention-window-owner-native.log",
+    "uncompressedBytes": 929,
+    "uncompressedSha256": "fd49044e1a9736409e8da5c3d1b9b7fd119ce3da64d703e29387718802961b39",
+    "sha256": "7f94ad8f4432b6a1608b441f0424c046c7b773e7eb3e5d103fb22dca4bd4dfb2"
+  }
+]

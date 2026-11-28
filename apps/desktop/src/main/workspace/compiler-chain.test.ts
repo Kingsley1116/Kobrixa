@@ -20,6 +20,7 @@ it("builds a test-only language and non-rbf target through resolution commit and
   let service: BuildService | undefined;
   const source = (id: string, contributes: unknown) => ({
     kind: "builtin" as const,
+    policy: "required" as const,
     resources: {},
     manifest: {
       id,

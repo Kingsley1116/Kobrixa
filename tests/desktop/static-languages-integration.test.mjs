@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { build } from "esbuild";
 import { PluginManager } from "../../packages/plugin-runtime/dist/index.js";
@@ -209,6 +210,8 @@ test("production IPC, preload and browser acceptance entries bundle without fixt
     bundle: true,
     write: false,
     platform: "browser",
+    // The browser fixture lives outside the workspace that owns Monaco.
+    nodePaths: [fileURLToPath(new URL("../../apps/desktop/node_modules", import.meta.url))],
     format: "esm",
     loader: { ".css": "empty", ".ttf": "dataurl" },
   });

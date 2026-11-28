@@ -1,0 +1,107 @@
+[
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/atomic-dhXmef/adapter-evidence.json",
+    "archive": "00-atomic-dhXmef.json.gz",
+    "rawBytes": 7663,
+    "rawSha256": "e0fc71a656da0fe1c0990effef483355153133b2e4657b9bff245e381176decc",
+    "archiveSha256": "775013f9cc53111ae753a8704e499e62256d864e4624f8b947e6c214dbdb78f4"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/atomic-5OpDJi/adapter-evidence.json",
+    "archive": "01-atomic-5OpDJi.json.gz",
+    "rawBytes": 7701,
+    "rawSha256": "35aacf854de906aebb7377095dc06b7f41fde065ef47383b458ab4c32ac4677f",
+    "archiveSha256": "07c3662a7919ab5b2bc88474f88a0679d0053ad0bf227ff1740a2540acd6b1d8"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/atomic-490kdj/adapter-evidence.json",
+    "archive": "02-atomic-490kdj.json.gz",
+    "rawBytes": 9331,
+    "rawSha256": "700dba8ec4b2b8311ad8b947151137d0aa1746321ceee26de1336427d48ebd55",
+    "archiveSha256": "7373e56768cea5548aeb45ade4318fa0744376cec0b9dee00a8f5cc63c5a84eb"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/atomic-xdjDI2/adapter-evidence.json",
+    "archive": "03-atomic-xdjDI2.json.gz",
+    "rawBytes": 8365,
+    "rawSha256": "950a79057d15f70fefef40b20a722e79b84d54c453f6ef8cf4e99c9afa9f6091",
+    "archiveSha256": "fcb78cbf125019abc3228f627cd20a609646134f0e83f7059a998cdec5b983c5"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/atomic-uwL6zo/adapter-evidence.json",
+    "archive": "04-atomic-uwL6zo.json.gz",
+    "rawBytes": 7701,
+    "rawSha256": "b185657d7f59fca60956f9aad21d4a2c998b4b585d0979abb07ce93492a09bd3",
+    "archiveSha256": "2595fe02f75f05e83bcddf6d03b6dd831c8b5c991d593327be6b6872f42f6d71"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/atomic-SKm1UL/adapter-evidence.json",
+    "archive": "05-atomic-SKm1UL.json.gz",
+    "rawBytes": 7701,
+    "rawSha256": "6a288801c74217196b8dbc0a803c5ccd99d62d2c32df1c54db96cb4cdaed2fa0",
+    "archiveSha256": "b8917eec8efeb97ebec79c4e02734af43de5ac436a3765e0eed1a34637ba5dab"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/atomic-uDoDvR/adapter-evidence.json",
+    "archive": "06-atomic-uDoDvR.json.gz",
+    "rawBytes": 7698,
+    "rawSha256": "ee50701df597e95b6c44bc942f9f985b34c0c7dcfe1612ee485c2ff893a66be6",
+    "archiveSha256": "7c86783c69c43c8e7dcd4aed7fd6f41619378d7930b3efd05159dcd6d237b1eb"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/atomic-InuVnW/adapter-evidence.json",
+    "archive": "07-atomic-InuVnW.json.gz",
+    "rawBytes": 75710,
+    "rawSha256": "d8a14ae0f0acaeb06181b64954434b4ed000a959b2b0cc40104d5d10155e7450",
+    "archiveSha256": "5676301fadd6ddccb3532d2462992bf30904ab6231b1a1da226d8235d13be6da"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/atomic-uco6Wi/adapter-evidence.json",
+    "archive": "08-atomic-uco6Wi.json.gz",
+    "rawBytes": 8377,
+    "rawSha256": "9300a3aa864a35c5eabac28604afb2110886192dfd6fbcc80581574a9226db70",
+    "archiveSha256": "dd65f66a6f31ec87dfa94ccbd2d4e5b29118c052dea3286d7cea0c6b1091e17f"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/persistence-fs-HNSdbe/adapter-evidence.json",
+    "archive": "09-persistence-fs-HNSdbe.json.gz",
+    "rawBytes": 279,
+    "rawSha256": "74cc185eef172dc6222aa20033c1f4070285af3ebd60f726c53b398be16a2684",
+    "archiveSha256": "8e573009a313a8486cea3e184cada9ad35c32d9b27c4dfe697b2ce59da690ca3"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/persistence-fs-rpnYHQ/adapter-evidence.json",
+    "archive": "10-persistence-fs-rpnYHQ.json.gz",
+    "rawBytes": 1737,
+    "rawSha256": "5fe90c3d3a604e142268420c379d996565f48673fcabd248648c4874199858b9",
+    "archiveSha256": "b60e9e1e53176c4f907e2dcc5a10718229218b03c03dccf609d0c936e9e4c457"
+  },
+  {
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/persistence-fs-AAn5xu/adapter-evidence.json",
+    "archive": "11-persistence-fs-AAn5xu.json.gz",
+    "rawBytes": 283,
+    "rawSha256": "72b65129066439f3170f75f7da46a7877c9605aa1927d47d1a27ac884b9b6a1b",
+    "archiveSha256": "8afb4680e89c516172ecef0fccc9b79dfa1dce693e60eeb6d73de2878a30ce1b"
+  },
+  {
+    "source": "/private/tmp/b2-filesystem-adapter-evidence-index.json",
+    "archive": "b2-filesystem-adapter-evidence-index.json.gz",
+    "rawBytes": 3291,
+    "rawSha256": "c5572caf2358ee2833dcbdeb3a8a0631c18f739401683d334a966642823784fd",
+    "archiveSha256": "0dfd6088ab8a4f85caaf5c35ad3fc8b48caca58089a64bbba7ea9e39ee239624"
+  },
+  {
+    "source": "/private/tmp/b2-filesystem-adapter-implementation.md",
+    "archive": "b2-filesystem-adapter-implementation.md.gz",
+    "rawBytes": 4703,
+    "rawSha256": "b566f0493659e9fffb15291acef0c210970adc8a9bd5d5a01456416d82f7908e",
+    "archiveSha256": "b530c72bc8caa1ee0b072dbb050393ffb79130a0c4d67547860130f92dd5c705"
+  },
+  {
+    "source": "/private/tmp/b2-fs-adapter-tests.log",
+    "archive": "b2-fs-adapter-tests.log.gz",
+    "rawBytes": 213,
+    "rawSha256": "75ad0445c8484d70ce221f0225b72b7aa8c6be07b99aaa0e519ce781fc4a175f",
+    "archiveSha256": "1a1c49c019b9b71a4493598fa4cd29229d7d3cd515506518191b203d6825f480"
+  }
+]

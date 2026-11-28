@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { DeviceAuthorityReport } from "../../shared/collab.js";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -6,7 +7,7 @@ import { collabCopy } from "./collab-copy.js";
 import { CollabStore } from "./store.js";
 import { createLinkedSessions } from "./testing.js";
 import { DeviceControl } from "./device-control.js";
-import { DeviceControlBar, blockedNotice, useDeviceControl } from "./device-control-bar.js";
+import { DeviceControlBar, useDeviceControl } from "./device-control-bar.js";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let root: Root | undefined;
@@ -18,53 +19,51 @@ afterEach(() => {
 });
 
 describe("device control UI bridge", () => {
-  it("reports control to main and updates permission actions through grant, release and leave", () => {
+  it("reports explicit local/room states and invalidates on unmount", async () => {
     const room = createLinkedSessions(["host", "editor"]);
     const [hostSession, editorSession] = room.sessions;
     const hostControl = new DeviceControl(hostSession!);
     const store = new CollabStore(() => editorSession!);
-    const api = { setDeviceControl: vi.fn(async () => {}) };
+    const api = {
+      deviceControlContext: vi.fn(async () => ({
+        document: "00000000-0000-4000-8000-000000000001",
+      })),
+      setDeviceControl: vi.fn(async (_report: DeviceAuthorityReport) => {}),
+    };
     function Panel() {
-      const device = useDeviceControl(store, api);
-      if (!device) return createElement("p", null, "No room");
-      return createElement(
-        "div",
-        null,
-        createElement(
-          "button",
-          { disabled: Boolean(blockedNotice("en", device)), id: "run" },
-          "Run",
-        ),
-        createElement(DeviceControlBar, { ...device, locale: "en" }),
-      );
+      useDeviceControl(store, api);
+      return createElement("p", null, "Control");
     }
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
-    act(() => root!.render(createElement(Panel)));
-    expect(api.setDeviceControl).toHaveBeenLastCalledWith(null);
-    act(() => {
+    await act(async () => {
+      root!.render(createElement(Panel));
+    });
+    const last = () => api.setDeviceControl.mock.calls.at(-1)![0];
+    expect(last()).toMatchObject({ state: "local", role: null, isHolder: true, roomId: null });
+    await act(async () => {
       store.start(editorSession!.connection);
     });
-    expect(api.setDeviceControl).toHaveBeenLastCalledWith(false);
-    expect(host.querySelector<HTMLButtonElement>("#run")!.disabled).toBe(true);
-    const button = (label: string) =>
-      [...host.querySelectorAll("button")].find((item) => item.textContent === label)!;
-    act(() => button("Request control").click());
-    expect(hostControl.getSnapshot().requests).toHaveLength(1);
-    expect(button("Cancel request")).toBeDefined();
+    expect(last()).toMatchObject({ state: "room", role: "editor", isHolder: false });
     act(() => hostControl.grant(editorSession!.connection.participantId));
-    expect(api.setDeviceControl).toHaveBeenLastCalledWith(true);
-    expect(host.querySelector<HTMLButtonElement>("#run")!.disabled).toBe(false);
-    act(() => button("Give back control").click());
-    expect(api.setDeviceControl).toHaveBeenLastCalledWith(false);
-    act(() => hostControl.grant(editorSession!.connection.participantId));
+    expect(last()).toMatchObject({ state: "room", isHolder: true });
+    act(() => hostControl.reclaim());
+    expect(last()).toMatchObject({ state: "room", isHolder: false });
     act(() => editorSession!.close("kicked"));
-    expect(api.setDeviceControl).toHaveBeenLastCalledWith(false);
-    expect(host.querySelector<HTMLButtonElement>("#run")!.disabled).toBe(true);
-    act(() => store.stop());
-    expect(api.setDeviceControl).toHaveBeenLastCalledWith(null);
-    expect(host.textContent).toBe("No room");
+    expect(last()).toMatchObject({ state: "unsynced", isHolder: false });
+    await act(async () => {
+      store.stop();
+    });
+    expect(last()).toMatchObject({ state: "local" });
+    act(() => {
+      root!.unmount();
+      root = undefined;
+    });
+    expect(last()).toMatchObject({ state: "invalid", isHolder: false });
+    const sequences = api.setDeviceControl.mock.calls.map(([value]) => value.sequence);
+    expect(new Set(sequences).size).toBe(sequences.length);
+    expect(sequences).toEqual([...sequences].sort((a, b) => a - b));
     hostControl.dispose();
     hostSession!.destroy();
   });

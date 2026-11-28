@@ -1,0 +1,18 @@
+import * as actual from '/Users/kingsley/.codex/worktrees/plugin-3d/Kobrixa/node_modules/esbuild/lib/main.js';
+export * from '/Users/kingsley/.codex/worktrees/plugin-3d/Kobrixa/node_modules/esbuild/lib/main.js';
+const root='/Users/kingsley/.codex/worktrees/plugin-3e/Kobrixa';
+const alias={
+'@kobrixa/plugin-protocol':root+'/packages/plugin-protocol/src/index.ts',
+'@kobrixa/plugin-runtime':root+'/packages/plugin-runtime/src/index.ts',
+'@kobrixa/plugin-sdk':root+'/packages/plugin-sdk-js/src/index.ts',
+'@kobrixa/compiler':root+'/packages/compiler/src/index.ts',
+'@kobrixa/compiler/diagnostic-help':root+'/packages/compiler/src/diagnostic-help.ts',
+'@kobrixa/ir':root+'/packages/ir/src/index.ts',
+'@kobrixa/device':root+'/packages/device/src/index.ts',
+'@kobrixa/backend-ev3':root+'/packages/backend-ev3/src/index.ts',
+'@kobrixa/basic-plus':root+'/frontends/basic-plus/src/index.ts',
+'@kobrixa/basic-plus/language':root+'/frontends/basic-plus/src/language.ts',
+'@kobrixa/basic-plus/intelligence':root+'/frontends/basic-plus/src/intelligence.ts',
+'@kobrixa/collab-protocol':root+'/packages/collab-protocol/src/index.ts'
+};
+export const build = options => actual.build({...options,nodePaths:[...(options.nodePaths??[]),'/Users/kingsley/.codex/worktrees/plugin-3d/Kobrixa/node_modules'],alias:{...alias,...options.alias}});

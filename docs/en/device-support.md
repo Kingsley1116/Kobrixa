@@ -1,6 +1,6 @@
 # Device and platform support
 
-## v1 support matrix
+## Historical v1 support matrix (2026-10-12)
 
 | Desktop target      | USB HID                | Wi-Fi                  | Bluetooth       |
 | ------------------- | ---------------------- | ---------------------- | --------------- |
@@ -11,6 +11,14 @@
 Support is not considered shipped until automated transport tests and physical reference-brick tests pass on that platform.
 
 The shared USB and Wi-Fi transports already exist in `packages/device`. The maintainer confirmed physical EV3 acceptance on 2026-10-12. This records that confirmation; detailed platform logs are not attached here. Record the operating system, firmware, transport, exact application version and observed results for each acceptance run. Desktop signature validity is checked separately under the [code signing policy](../en/code-signing.md).
+
+## Stage 3 development interface
+
+On the Stage 3 development branch, use **Plugin tools → EV3 device** for explicit discovery, connection and monitoring, and the contributed plugin settings for connection preferences. Opening the panel does not connect. Switching USB/Wi-Fi saves the choice immediately; remembering a Wi-Fi address still requires opt-in and a successful connection. A preference-save failure after connection does not disconnect or repeat the connection.
+
+Core build/deploy, version checks, remote files and pending-Run Cancel continue to use the same session. Disconnect is a host action that stops and saves first. Closing a device panel removes only its observation demand; another active recorder remains responsible for its recording. Reconnection does not revive cancelled Run or recording intent.
+
+The v1 platform confirmations above do not certify this migration. Stage 3 native/installed and physical acceptance remains open in the [device UI checklist](../../tests/hardware/device-ui.md). The legacy device monitor and connection-settings renderer UI has been retired on this branch. The renderer routes to Plugin tools, and core battery status retains one host-backed path. Retirement of obsolete main IPC, preload and shared contracts is still in progress; final native retirement evidence remains open. Motor and Lab private routes are already removed. S3-13–S3-15 remain **NOT RUN**; the historical matrix is not Stage 3 platform approval.
 
 ## USB
 
@@ -40,17 +48,17 @@ The remote file browser also supports directory listing, downloads, folder creat
 
 Remote paths are normalized as EV3 paths. Parent traversal, embedded nulls, invalid lengths, and unsupported names are rejected before transport I/O.
 
-## Live monitor
+## Live monitor behavior and retained baseline
 
-Open **EV3 tools → Monitor** after connecting over USB or Wi-Fi. The panel shows local input ports 1–4, output ports A–D, battery percentage and voltage, and the EV3 user-program slot status. That status describes the program on the brick; it does not identify the currently edited project. Motor angles are read without resetting their counters.
+For current Stage 3 use **Plugin tools → EV3 device** after connecting over USB or Wi-Fi. The former **EV3 tools → Monitor** destination now directs users to Plugin tools on this branch. The following behavior remains the parity baseline; final replacement acceptance is still open. The panel shows local input ports 1–4, output ports A–D, battery percentage and voltage, and the EV3 user-program slot status. That status describes the program on the brick; it does not identify the currently edited project. Motor angles are read without resetting their counters.
 
-Without an active recording, sampling runs only while Monitor is selected, the tools panel is open, and the window is visible. An active recording keeps the same main-process scheduler running in the background. Each completed sample is followed by a 500 ms delay. Foreground operations take priority and there is at most one outstanding sample; uploads, file batches and confirmation waits pause monitoring. Paused, busy or failed samples preserve the last values and mark them as no longer live. The timestamp is the last successful sample, not a promise of continuous updates. Empty ports, initializing devices, unknown devices and unavailable values are distinct; invalid readings are never shown as zero.
+Without an active recording, sampling runs only while the device monitor view is selected, the tools panel is open, and the window is visible. An active recording keeps the same main-process scheduler running in the background. Each completed sample is followed by a 500 ms delay. Foreground operations take priority and there is at most one outstanding sample; uploads, file batches and confirmation waits pause monitoring. Paused, busy or failed samples preserve the last values and mark them as no longer live. The timestamp is the last successful sample, not a promise of continuous updates. Empty ports, initializing devices, unknown devices and unavailable values are distinct; invalid readings are never shown as zero.
 
 Official EV3 UART sensors offer the firmware's Port View modes through **Change mode**. Touch sensors, motors and third-party/I2C devices are read-only. Internal and calibration modes are excluded. Mode changes require a confirmed stopped user-program slot; running or unknown status disables the control. The application checks the program state and sensor identity again before sending a change and verifies the resulting mode. It never stops a program automatically, saves mode preferences, or restores an earlier mode after closing Monitor or reconnecting. A program started directly on the brick can change the sensor mode again.
 
-All available channels are shown; unlabeled multi-channel data uses channel numbers. The **Curves & calibration** subpage adds recording, comparison, CSV export and numerical calibration; see [Sensor lab](sensor-lab.md). Motor cards in **Readings** expand to single-motor jog, timed and angle tests; see [Motor testing](https://github.com/Kingsley1116/Kobrixa/blob/main/docs/en/motor-test.md). Testing pauses ordinary monitoring and cannot run alongside recording. Daisy-chain monitoring is not included. USB recovery uses the replacement session and discards old replies. Closing Monitor without an active recording stops future samples without interrupting a pending USB exchange or disconnecting the brick.
+All available channels are shown; unlabeled multi-channel data uses channel numbers. Use **Plugin tools → Sensor Lab** for recording, comparison, CSV export and calibration; see [Sensor Lab](sensor-lab.md). Use **Plugin tools → Motor test** for jog, timed and angle tests; see [Motor testing](motor-test.md). The former Lab subpage and motor cards are removed. Testing pauses ordinary monitoring and cannot run alongside recording. Daisy-chain monitoring is not included. USB recovery uses the replacement session and discards old replies. Closing Monitor without an active recording stops future samples without interrupting a pending USB exchange or disconnecting the brick.
 
-The desktop smoke uses simulated samples. Physical EV3 acceptance is confirmed by the maintainer; retain the [monitor acceptance procedure](https://github.com/Kingsley1116/Kobrixa/blob/main/tests/hardware/README.md#live-monitor--即時監測) for future regression checks.
+The desktop smoke uses simulated samples. The maintainer’s 2026-10-12 physical confirmation applies to the earlier implementation, not Stage 3; retain the [monitor acceptance procedure](https://github.com/Kingsley1116/Kobrixa/blob/main/tests/hardware/README.md#live-monitor--即時監測) for future regression checks.
 
 ## Required acceptance scenarios
 
@@ -65,3 +73,17 @@ Use the [manual hardware tools](https://github.com/Kingsley1116/Kobrixa/blob/mai
 - Monitor Color mode changes, IR multi-channel readings, Gyro initialization, negative motor angles, battery values and programs started/stopped directly on the brick. Verify pause/resume and USB recovery with pending samples.
 
 Bluetooth remains out of v1 because discovery, pairing, serial profiles, permissions, and packaging differ substantially across operating systems.
+
+<a id="windows-stage-3-journal-policy"></a>
+
+## Windows Stage 3 journal policy
+
+R1's 2026-11-12 follow-up permits the native safety-journal adapter on verified local fixed NTFS, using documented semantics plus kill-at-phase tests as the support basis. Production uses handle-relative `NtSetInformationFile(FileRenameInformationEx)` with replace/POSIX flags, temp/published-file `FlushFileBuffers` and a checked directory flush; Windows 10 1709+ is required. Physical power loss has not been tested and is not a required gate. The historical 19/19 candidate suite used `MoveFileExW` and attribute-only pins; it is not acceptance of the current production code. Current Windows native/installed acceptance remains **NOT RUN** until fresh CI evidence exists.
+
+The 2026-11-14 owner ruling permits normal app close and update with a non-ready safety journal only when all facts are positively established: the journal has never initialized successfully in this process; the independent, write-barrier-free inventory read has validated the directory as empty or absent; there is no retained or possible evidence (including any prior write attempt, uncertain publication, pending marker or old fault); no journal I/O is in flight or late; and no motion, Run or other marker-requiring risk work has ever been admitted or dispatched in this process. Unknown/unreadable inventory, any old journal file (including resolved history), corrupt data, expired/late native I/O and resource limits remain blockers. An empty displayed fault list or journal health alone proves none of these facts. The host receipt is `stopConfirmed:true`, `journalCommitted:false`, `faultIds:[]`, with reason `journal-unavailable-no-evidence`; only the close/update assertion treats this reason as non-blocking. It is not a committed journal receipt. Motion and Run remain refused in every non-ready state; trusted Stop is unchanged. Stop, save and process-exit obligations still have to succeed, whether or not an idle session exists.
+
+Product-created Windows journal directories and staging files receive an explicit protected DACL at creation (inheritance disabled), with full control for the current token user, SYSTEM and BUILTIN\Administrators; the owner is explicitly the token user even when the elevated token defaults to Administrators ownership. Existing directories are validated without ACL repair. Existing owners may be the current user, SYSTEM or Administrators. Effective mutation grants (generic all/write, file write/append, extended-attribute/attribute writes, delete-child, delete, DACL or owner changes) are accepted only for those principals or OWNER RIGHTS referring to that verified owner; other principals may have read/execute rights. Inherited grants to the same trusted principals are accepted. Inherit-only ACEs, including CREATOR OWNER templates, do not grant access to the object; an effective unresolved CREATOR OWNER mutation grant is refused. Null/unverifiable DACLs are refused. The journal, existing/staged/published files retain these checks; the pinned profile parent receives path/volume validation and a required flush, without imposing the journal's private DACL on the entire profile.
+
+Unsupported volumes, missing/incompatible addons, unsafe paths/ACLs and failed barriers remain fail-closed; `ENOTSUP` is no longer an unconditional Windows production result. Existing validated faults remain visible when initialization cannot authorize writes. Failed commits block motion/program admission and resolution; trusted Stop still attempts best-effort physical dispatch while retaining journal failure and unresolved close/update obligations. Editing/compilation, passive reads and clean idle quit are separate cases. See the [architecture policy](architecture.md) for the remaining same-user/privileged target-name and ACL race.
+
+Windows Stage 3 device execution/recovery is **not accepted** until those gates pass. No platform deferral or weaker safety guarantee is approved, and B2's record-store policy cannot waive the device journal. See the [Windows acceptance ledger](../superpowers/plans/2026-10-17-plugin-system-3a-acceptance.md). All delivered platforms still require final native/installed evidence and named physical/human results. A second launch must only focus/restore the primary without another writer/provider/recording; real suspend must end work without wake replay. These remain explicit cases in the hardware/UI checklist.

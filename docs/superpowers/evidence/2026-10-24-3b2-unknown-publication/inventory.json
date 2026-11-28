@@ -1,0 +1,44 @@
+[
+  {
+    "file": "native-receipt.json.gz",
+    "source": "/Users/kingsley/Documents/Kobrixa/.claude/worktrees/plugin-2b1/.superpowers/sdd/stage-3-exec/B2-unknown-clean-drain-native.json",
+    "uncompressedBytes": 101019,
+    "uncompressedSha256": "1b538143b5ed6207d3482642ab7a6a8fb4a823f9c3d0dd5e7c2f0e8218adb069",
+    "sha256": "5680dbc0ec14553eab21fa0ba9ae87266ce0bc1136a42bcce02d253ca5e6acee"
+  },
+  {
+    "file": "candidate.json.gz",
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-9mOhdn/unknown-publication.candidate.json",
+    "uncompressedBytes": 47491,
+    "uncompressedSha256": "318b4b8150cd3cf373e814a763491fdf9c613289cdc7fd0d55252a26ea218c6c",
+    "sha256": "3bb1282e5f68771a747211d8a24ab3979016806bbb961b8641a167dbf5e1de8d"
+  },
+  {
+    "file": "native-config.json.gz",
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-9mOhdn/unknown-publication.json",
+    "uncompressedBytes": 1189,
+    "uncompressedSha256": "c4167eeb1f5c63fea7cfda1b7b7646308dfeb40c6a659592f64453ce16004c46",
+    "sha256": "b00885ae1ae54e089bd16ba737de6f7b679727b6b22254d680953bd54c1c0059"
+  },
+  {
+    "file": "observation.json.gz",
+    "source": "/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-9mOhdn/unknown-publication-Mqxidb/unknown-publication-observation.json",
+    "uncompressedBytes": 61416,
+    "uncompressedSha256": "d1dcc28b8ab46be667aebe2c55440d61e9721d076dd1a77ba64cfd1e112ed8b5",
+    "sha256": "d42c94b83fccbdcf1ffc565ae97a0d93b9313ed0a83b32a8708973461afe3df0"
+  },
+  {
+    "file": "native.log.gz",
+    "source": "/private/tmp/b2-unknown-clean-drain-native.log",
+    "uncompressedBytes": 1460,
+    "uncompressedSha256": "a0c60685a9a7a43c45a565107dd760cb62b16c178b344c2347819c1bce3ec217",
+    "sha256": "bf596d62a4b633f362cf12b6d8d48c27991daffcc41804057293209283d3008c"
+  },
+  {
+    "file": "renderer-artifact.json.gz",
+    "source": "/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-persistence-renderer-sI7bH2/renderer-artifact.json",
+    "uncompressedBytes": 21983,
+    "uncompressedSha256": "a40b7f4378c6157ee8e6a53ac8234c2ce2704e3954eb9df7dbc36969600c82ea",
+    "sha256": "f31a185d83fba19b4d1f1699cfabff0151396ac2e23236e5d9de907db66122bf"
+  }
+]

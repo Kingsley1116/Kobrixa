@@ -1,3 +1,4 @@
+import type { DeviceSessionSnapshot } from "@kobrixa/plugin-protocol";
 import type { LanguageStatus, LanguageStatusEvent } from "./language-services.js";
 import type { LanguageFeatureRequest, LanguageFeatureReply } from "./language-query.js";
 import type { FilePreferences } from "./file-preferences.js";
@@ -23,9 +24,7 @@ export type {
   WorkspaceRefreshResult,
   WorkspaceWriteResult,
 } from "./workspace-files.js";
-import type { MotorTestRef, MotorTestRequest, MotorTestState } from "./motor-test.js";
-import type { DevicePreferences } from "./device-preferences.js";
-import type { MonitorUpdate, SensorLabApi } from "./sensor-lab.js";
+import type { MonitorUpdate } from "./sensor-lab.js";
 import type { QuickFixReply, QuickFixRequest } from "./quick-fixes.js";
 import type { DocumentationRequest } from "./documentation.js";
 import type { UpdatesApi } from "./updates.js";
@@ -41,13 +40,7 @@ import type {
   PublishedDiagnostic,
   ProjectManifest,
 } from "@kobrixa/compiler";
-import type {
-  DeviceDescriptor,
-  DeviceErrorCategory,
-  RemoteEntry,
-  DeviceMonitorSnapshot,
-  DeviceInputModes,
-} from "@kobrixa/device";
+import type { DeviceDescriptor, DeviceErrorCategory, RemoteEntry } from "@kobrixa/device";
 
 export type MonitorResult<T> =
   | { status: "ok"; value: T }
@@ -166,6 +159,15 @@ export interface FileBatchSnapshot extends FileBatchRef {
 }
 export type DeviceEvent =
   | {
+      /** Host-only committed broker projection; observation is not permission to run. */
+      type: "session-catalog";
+      hostEpoch: string;
+      revision: number;
+      cause: "snapshot" | "changed" | "connected" | "recovered" | "lost";
+      origin: "core" | "plugin" | "recovery";
+      session: DeviceSessionSnapshot | null;
+    }
+  | {
       type: "usb-recovery";
       state: "waiting" | "connecting" | "cancelled" | "unavailable" | "exhausted";
       previousSessionId: string;
@@ -212,7 +214,6 @@ export interface KobrixaApi {
       entries: string[],
     ): Promise<SimulationPrepareResult>;
   };
-  sensorLab: SensorLabApi;
   plugins: PluginsApi;
   documentation: { open(request: DocumentationRequest): Promise<void> };
   updates: UpdatesApi;
@@ -289,35 +290,17 @@ export interface KobrixaApi {
     cancel(): Promise<void>;
     diagnostics(workspaceId: string, overlays: Record<string, string>): Promise<Diagnostic[]>;
   };
+  /** Retained core only: deployment/programs, remote files, trusted Disconnect,
+   * session/recovery events, and broker-backed battery demand. Feature connection,
+   * monitor modes and settings belong to the public plugin API. */
   device: {
-    startMotorTest(request: MotorTestRequest): Promise<MotorTestState>;
-    keepMotorTestAlive(ref: MotorTestRef): Promise<void>;
-    stopMotorTest(ref: MotorTestRef, brake?: boolean): Promise<MotorTestState>;
-    motorTestState(): Promise<MotorTestState>;
-    onMotorTest(listener: (state: MotorTestState) => void): () => void;
     watchMonitor(sessionId: string, enabled: boolean): Promise<MonitorUpdate>;
     onMonitor(listener: (update: MonitorUpdate) => void): () => void;
-    monitor(sessionId: string): Promise<MonitorResult<DeviceMonitorSnapshot>>;
-    inputModes(
-      sessionId: string,
-      port: number,
-      expectedType: number,
-    ): Promise<MonitorResult<DeviceInputModes>>;
-    setInputMode(
-      sessionId: string,
-      port: number,
-      expectedType: number,
-      mode: number,
-    ): Promise<MonitorResult<DeviceMonitorSnapshot>>;
-    getPreferences(): Promise<DevicePreferences>;
-    setPreferences(patch: Partial<DevicePreferences>): Promise<DevicePreferences>;
     files(request: RemoteFileRequest): Promise<RemoteFileResult>;
     prepareFiles(request: FileBatchRequest): Promise<FileBatchSnapshot>;
     executeFiles(ref: FileBatchRef, policy: "skip" | "replace"): Promise<FileBatchSnapshot>;
+    renewFiles(ref: FileBatchRef): Promise<void>;
     stopFiles(ref: FileBatchRef): Promise<void>;
-    discover(): Promise<DeviceDescriptor[]>;
-    connect(descriptor: DeviceDescriptor): Promise<string>;
-    connectWifi(address: string): Promise<string>;
     disconnect(sessionId: string): Promise<void>;
     upload(sessionId: string, buildId: string, remotePath: string): Promise<void>;
     deploy(sessionId: string, buildId: string, remoteDirectory: string): Promise<void>;

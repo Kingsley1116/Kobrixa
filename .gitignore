@@ -36,3 +36,4 @@ apps/collab/worker-configuration.d.ts
 __pycache__/
 *.egg-info/
 /sdks/python/build/
+/apps/desktop/native/journal-win32/build/

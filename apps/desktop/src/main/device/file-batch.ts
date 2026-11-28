@@ -1,3 +1,4 @@
+import type { LegacyFileSession } from "../device-broker/legacy-files.js";
 import { randomUUID, createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, readdir, realpath, open, mkdir, rename, unlink, link } from "node:fs/promises";
@@ -7,7 +8,6 @@ import {
   managedPath,
   remoteChild,
   normalizeDeviceError,
-  type DeviceSession,
   type RemoteEntry,
 } from "@kobrixa/device";
 import type { Dialog } from "electron";
@@ -21,7 +21,8 @@ import type {
 type NativeDialog = Pick<Dialog, "showOpenDialog">;
 type Run = <T>(
   id: string,
-  work: (session: DeviceSession, signal: AbortSignal) => Promise<T>,
+  work: (session: LegacyFileSession, signal: AbortSignal) => Promise<T>,
+  operationClass: "file-read" | "file-write",
 ) => Promise<T>;
 interface Entry {
   view: FileBatchItem;
@@ -38,6 +39,7 @@ interface Task {
   entries: Entry[];
   decide: (policy: "skip" | "replace" | undefined) => void;
   done: Promise<void>;
+  session?: LegacyFileSession;
 }
 const localStamp = (s: Awaited<ReturnType<typeof lstat>>): string =>
   `${s.dev}:${s.ino}:${s.size}:${s.mtimeMs}:${s.ctimeMs}`;
@@ -89,64 +91,76 @@ export class FileBatchManager {
     const task: Task = { owner, request, snapshot, entries: [], decide, done: Promise.resolve() };
     this.tasks.set(snapshot.planId, task);
     const emit = () => this.publish(structuredClone(snapshot));
-    task.done = this.run(request.sessionId, async (session, signal) => {
-      const aborted = () => {
-        snapshot.stopRequested = true;
-        decide(undefined);
-      };
-      signal.addEventListener("abort", aborted, { once: true });
-      try {
-        emit();
-        const selected = await this.scan(task, session, signal);
-        signal.throwIfAborted();
-        if (!selected || snapshot.stopRequested) snapshot.phase = "cancelled";
-        else snapshot.phase = snapshot.issues.length ? "failed" : "ready";
-        emit();
-        prepared(structuredClone(snapshot));
-        if (snapshot.phase !== "ready") return;
-        const policy = await decision;
-        signal.throwIfAborted();
-        if (!policy || snapshot.stopRequested) {
-          snapshot.phase = "cancelled";
+    task.done = this.run(
+      request.sessionId,
+      async (session, signal) => {
+        task.session = session;
+        const aborted = () => {
+          snapshot.stopRequested = true;
+          decide(undefined);
+        };
+        signal.addEventListener("abort", aborted, { once: true });
+        try {
           emit();
-          return;
-        }
-        snapshot.phase = "running";
-        emit();
-        for (const entry of task.entries) {
-          if (snapshot.stopRequested) break;
-          snapshot.currentId = entry.view.id;
-          snapshot.progress = undefined;
-          entry.view.status = "running";
+          const selected = await this.scan(task, session, signal);
+          signal.throwIfAborted();
+          if (!selected || snapshot.stopRequested) snapshot.phase = "cancelled";
+          else snapshot.phase = snapshot.issues.length ? "failed" : "ready";
           emit();
-          try {
-            signal.throwIfAborted();
-            let lastProgress = 0;
-            const progress = (transferred: number, total: number) => {
-              snapshot.progress = { transferred, total };
-              if (transferred === total || Date.now() - lastProgress >= 100) {
-                lastProgress = Date.now();
-                emit();
-              }
-            };
-            entry.view.status = await this.process(task, entry, policy, session, signal, progress);
+          prepared(structuredClone(snapshot));
+          if (snapshot.phase !== "ready") return;
+          const policy = await session.confirm(() => decision);
+          signal.throwIfAborted();
+          if (!policy || snapshot.stopRequested) {
+            snapshot.phase = "cancelled";
             emit();
-          } catch (error) {
-            entry.view.status = "failed";
-            entry.view.message = normalizeDeviceError(error).message;
-            snapshot.phase = "failed";
-            emit();
-            throw error;
+            return;
           }
+          snapshot.phase = "running";
+          emit();
+          for (const entry of task.entries) {
+            if (snapshot.stopRequested) break;
+            snapshot.currentId = entry.view.id;
+            snapshot.progress = undefined;
+            entry.view.status = "running";
+            emit();
+            try {
+              signal.throwIfAborted();
+              let lastProgress = 0;
+              const progress = (transferred: number, total: number) => {
+                snapshot.progress = { transferred, total };
+                if (transferred === total || Date.now() - lastProgress >= 100) {
+                  lastProgress = Date.now();
+                  emit();
+                }
+              };
+              entry.view.status = await this.process(
+                task,
+                entry,
+                policy,
+                session,
+                signal,
+                progress,
+              );
+              emit();
+            } catch (error) {
+              entry.view.status = "failed";
+              entry.view.message = normalizeDeviceError(error).message;
+              snapshot.phase = "failed";
+              emit();
+              throw error;
+            }
+          }
+          snapshot.phase = snapshot.stopRequested ? "stopped" : "complete";
+          snapshot.progress = undefined;
+          snapshot.currentId = undefined;
+          emit();
+        } finally {
+          signal.removeEventListener("abort", aborted);
         }
-        snapshot.phase = snapshot.stopRequested ? "stopped" : "complete";
-        snapshot.progress = undefined;
-        snapshot.currentId = undefined;
-        emit();
-      } finally {
-        signal.removeEventListener("abort", aborted);
-      }
-    })
+      },
+      request.action === "download" ? "file-read" : "file-write",
+    )
       .catch((error) => {
         if (
           snapshot.phase === "checking" &&
@@ -197,18 +211,31 @@ export class FileBatchManager {
   async stop(ref: FileBatchRef, owner: number): Promise<void> {
     const task = this.require(ref, owner);
     task.snapshot.stopRequested = true;
+    void task.session?.cancel().catch(() => {});
     task.decide(undefined);
     this.publish(structuredClone(task.snapshot));
     if (task.snapshot.phase !== "running") await task.done;
+  }
+  renew(ref: FileBatchRef, owner: number): { idleRemainingMs: number; totalRemainingMs: number } {
+    const task = this.require(ref, owner);
+    if (task.snapshot.phase !== "ready" || !task.session)
+      throw new Error("Unknown or expired file operation.");
+    task.session.renewConfirmation();
+    return task.session.remaining();
   }
   abandonOwner(owner: number): void {
     for (const task of this.tasks.values())
       if (task.owner === owner) {
         task.snapshot.stopRequested = true;
+        void task.session?.cancel().catch(() => {});
         task.decide(undefined);
       }
   }
-  private async scan(task: Task, session: DeviceSession, signal: AbortSignal): Promise<boolean> {
+  private async scan(
+    task: Task,
+    session: LegacyFileSession,
+    signal: AbortSignal,
+  ): Promise<boolean> {
     const { request: r, snapshot: s } = task;
     const base = managedPath(r.path);
     const zh = r.locale === "zh-TW";
@@ -263,16 +290,18 @@ export class FileBatchManager {
     const remoteAt = async (p: string): Promise<RemoteEntry | undefined> =>
       (await listing(path.posix.dirname(p))).find((e) => e.path === p);
     if (r.action === "upload") {
-      const selection = await this.dialog.showOpenDialog({
-        title: zh
-          ? r.source === "files"
-            ? "上傳檔案至 EV3"
-            : "上傳資料夾至 EV3"
-          : r.source === "files"
-            ? "Upload files to EV3"
-            : "Upload folders to EV3",
-        properties: [r.source === "files" ? "openFile" : "openDirectory", "multiSelections"],
-      });
+      const selection = await session.confirm(() =>
+        this.dialog.showOpenDialog({
+          title: zh
+            ? r.source === "files"
+              ? "上傳檔案至 EV3"
+              : "上傳資料夾至 EV3"
+            : r.source === "files"
+              ? "Upload files to EV3"
+              : "Upload folders to EV3",
+          properties: [r.source === "files" ? "openFile" : "openDirectory", "multiSelections"],
+        }),
+      );
       if (selection.canceled || !selection.filePaths.length) return false;
       const walk = async (local: string, remote: string, parentExists: boolean): Promise<void> => {
         check();
@@ -317,10 +346,12 @@ export class FileBatchManager {
         fail("Select items from the current folder.");
       let localBase = "";
       if (r.action === "download") {
-        const selection = await this.dialog.showOpenDialog({
-          title: zh ? "選擇下載目的資料夾" : "Choose download folder",
-          properties: ["openDirectory", "createDirectory"],
-        });
+        const selection = await session.confirm(() =>
+          this.dialog.showOpenDialog({
+            title: zh ? "選擇下載目的資料夾" : "Choose download folder",
+            properties: ["openDirectory", "createDirectory"],
+          }),
+        );
         if (selection.canceled || !selection.filePaths[0]) return false;
         localBase = await realpath(selection.filePaths[0]);
       }
@@ -368,7 +399,7 @@ export class FileBatchManager {
     task: Task,
     entry: Entry,
     policy: "skip" | "replace",
-    session: DeviceSession,
+    session: LegacyFileSession,
     signal: AbortSignal,
     progress: (transferred: number, total: number) => void,
   ): Promise<"succeeded" | "skipped"> {
@@ -473,7 +504,7 @@ async function assertLocalParents(target: string): Promise<void> {
   }
 }
 async function downloadFile(
-  session: DeviceSession,
+  session: LegacyFileSession,
   remote: string,
   local: string,
   entry: RemoteEntry,
@@ -507,6 +538,7 @@ async function downloadFile(
       fail("Download verification failed; destination was not replaced.");
     signal.throwIfAborted();
     await output.sync();
+    signal.throwIfAborted();
   } catch (error) {
     await output.close();
     await unlink(temporary).catch(() => {});
@@ -521,6 +553,7 @@ async function downloadFile(
       (latest.isSymbolicLink() || !latest.isFile() || localStamp(latest) !== approvedStamp)
     )
       fail("Destination changed during download; check again.");
+    signal.throwIfAborted();
     if (approvedStamp) await rename(temporary, local);
     else {
       await link(temporary, local);

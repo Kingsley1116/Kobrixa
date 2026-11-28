@@ -1,0 +1,31 @@
+Real workbench browser workspace: /private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-C1gske
+renderer: %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools
+You might need to use a local HTTP server (instead of file://): https://react.dev/link/react-devtools-faq font-weight:bold
+[3728:1023/025104.077891:INFO:CONSOLE:234] "%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools
+You might need to use a local HTTP server (instead of file://): https://react.dev/link/react-devtools-faq font-weight:bold", source: file:///private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-C1gske/.vite/renderer/main_window/assets/index-Cg4j6c_Y.js (234)
+renderer:  Note that 'script-src' was not explicitly set, so 'default-src' is used as a fallback.
+[3728:1023/025104.105096:INFO:CONSOLE:1201] " Note that 'script-src' was not explicitly set, so 'default-src' is used as a fallback.", source: file:///private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-C1gske/.vite/renderer/main_window/assets/index-Cg4j6c_Y.js (1201)
+renderer:  Note that 'script-src' was not explicitly set, so 'default-src' is used as a fallback.
+[3728:1023/025104.189650:INFO:CONSOLE:911] " Note that 'script-src' was not explicitly set, so 'default-src' is used as a fallback.", source:  (911)
+[plugin acceptance.ui-0] UI_PID:3734
+[plugin acceptance.ui-1] UI_PID:3735
+UI_PHASE browser-probe-complete
+UI_PHASE painted
+UI_RENDERER_METRICS {"pid":3733,"metrics":[{"cpu":{"cumulativeCPUUsage":0.758465,"percentCPUUsage":0,"idleWakeupsPerSecond":0},"pid":3728,"type":"Browser","creationTime":1792695063199.809,"memory":{"workingSetSize":225392,"peakWorkingSetSize":227008},"sandboxed":false},{"cpu":{"cumulativeCPUUsage":0.21255,"percentCPUUsage":0,"idleWakeupsPerSecond":0},"pid":3731,"type":"GPU","creationTime":1792695063669.372,"serviceName":"GPU","memory":{"workingSetSize":140224,"peakWorkingSetSize":140224},"sandboxed":true},{"cpu":{"cumulativeCPUUsage":0.1003,"percentCPUUsage":0,"idleWakeupsPerSecond":0},"pid":3732,"type":"Utility","creationTime":1792695063682.659,"serviceName":"network.mojom.NetworkService","name":"Network Service","memory":{"workingSetSize":85552,"peakWorkingSetSize":90672},"sandboxed":true},{"cpu":{"cumulativeCPUUsage":0.554814,"percentCPUUsage":0,"idleWakeupsPerSecond":0},"pid":3733,"type":"Tab","creationTime":1792695063752.973,"memory":{"workingSetSize":271088,"peakWorkingSetSize":271088},"sandboxed":true},{"cpu":{"cumulativeCPUUsage":0.134564,"percentCPUUsage":0,"idleWakeupsPerSecond":0},"pid":3734,"type":"Utility","creationTime":1792695064251.797,"serviceName":"node.mojom.NodeService","name":"Kobrixa plugin acceptance.ui-0","memory":{"workingSetSize":132272,"peakWorkingSetSize":132272},"sandboxed":false},{"cpu":{"cumulativeCPUUsage":0.126405,"percentCPUUsage":0,"idleWakeupsPerSecond":0},"pid":3735,"type":"Utility","creationTime":1792695064382.082,"serviceName":"node.mojom.NodeService","name":"Kobrixa plugin acceptance.ui-1","memory":{"workingSetSize":131056,"peakWorkingSetSize":131056},"sandboxed":false}],"focused":true,"visible":true}
+UI_NATIVE_TARGET {"bounds":{"x":1243,"y":328,"focused":false},"size":[1420,872]}
+UI_PHASE captured
+UI_PHASE focus-requested
+UI_PHASE native-window-focused
+UI_PHASE native-input-complete
+Error occurred in handler for 'plugins:recovery:snapshot': Error: Device recovery is unavailable.
+    at Object.sessions (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-C1gske/.vite/build/main.cjs:401:5074)
+    at async Object.entries (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-C1gske/.vite/build/main.cjs:400:50477)
+    at async rj.snapshot (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-C1gske/.vite/build/main.cjs:400:48821)
+    at async Session.<anonymous> (node:electron/js2c/browser_init:1:119972)
+Error occurred in handler for 'plugins:recovery:snapshot': Error: Device recovery is unavailable.
+    at Object.sessions (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-C1gske/.vite/build/main.cjs:401:5074)
+    at async Object.entries (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-C1gske/.vite/build/main.cjs:400:50477)
+    at async rj.snapshot (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-C1gske/.vite/build/main.cjs:400:48821)
+    at async Session.<anonymous> (node:electron/js2c/browser_init:1:119972)
+PASS CJK diagnostic baseline: /private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-C1gske/browser.json
+Motion races, renderer diagnostics and load remain separate acceptance gates.

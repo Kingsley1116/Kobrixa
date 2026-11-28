@@ -1,0 +1,25 @@
+{
+  "observedAt": 1792700400009.4778,
+  "reportWrittenAfterExitAt": 1792699822138.6475,
+  "pids": [
+    16684,
+    16685,
+    16686,
+    16687,
+    16688,
+    16689,
+    16690,
+    16691,
+    16692,
+    16693,
+    16697,
+    16698,
+    16699,
+    16700,
+    16701,
+    16702
+  ],
+  "remainingPids": [],
+  "method": "os.kill(pid, 0), actual observation after the report was written following normal child exit",
+  "reportSha256": "8e660b352ad553b8c3e14337d571633f36d23096e70e462d76887991f42f999d"
+}

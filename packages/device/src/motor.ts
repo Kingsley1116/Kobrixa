@@ -1,3 +1,4 @@
+// Provider operations pass an immutable, per-operation bound connection.
 import type { Ev3Connection } from "./contracts.js";
 import { DeviceOperationError, withTimeout } from "./errors.js";
 import { MOTOR_HELPER, type MotorHelperStatus, type MotorTestReading } from "./motor-types.js";

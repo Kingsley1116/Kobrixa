@@ -1,0 +1,226 @@
+import { readFile } from "node:fs/promises";
+import { expect, it, vi } from "vitest";
+it("starts all desktop services under the primary callback", async () => {
+  const source = await readFile(new URL("./index.ts", import.meta.url), "utf8");
+  const gate = /const primary = startPrimary\(\s*app\b/.exec(source)?.index ?? -1;
+  expect(gate).toBeGreaterThan(0);
+  for (const construction of [
+    "new WorkspaceService(",
+    "composeDesktopMain(",
+    "new DeviceService(",
+    "new MonitorService(",
+    "await createCollabService(",
+  ])
+    expect(source.indexOf(construction), construction).toBeGreaterThan(gate);
+  expect(source).not.toContain("void app.whenReady().then(");
+  expect(source).not.toContain("releaseSingleInstanceLock");
+});
+it("never lets renderer handshake success bypass the main disposition guard", async () => {
+  const source = await readFile(new URL("./index.ts", import.meta.url), "utf8");
+  expect(source).toMatch(/\(\)\s*=>\s*\{\s*void mainClose\.request\(\);\s*\}/);
+  expect(source).not.toContain("updates?.installing || handshake.ready");
+});
+
+it("delegates window loss and quit disconnect to the coordinator without legacy reset", async () => {
+  const source = await readFile(new URL("./index.ts", import.meta.url), "utf8");
+  expect(source).not.toContain("devices.reset(");
+});
+
+it("tears down a USB loss episode once across repeated waiting/unavailable reports", async () => {
+  const { createDeviceLossHandler } = await import("./plugins/controller.js");
+  const lost = vi.fn(),
+    restored = vi.fn();
+  const handle = createDeviceLossHandler(lost, restored);
+  const descriptor = { id: "old", name: "EV3", transport: "usb" as const };
+  for (const state of ["waiting", "connecting", "waiting", "unavailable", "waiting"] as const)
+    handle({ type: "usb-recovery", state, previousSessionId: "old", descriptor });
+  expect(lost).toHaveBeenCalledExactlyOnceWith("old");
+  handle({
+    type: "usb-recovery",
+    state: "restored",
+    previousSessionId: "old",
+    sessionId: "new",
+    descriptor,
+    deployment: "none",
+  });
+  expect(restored).toHaveBeenCalledExactlyOnceWith("new");
+  handle({ type: "usb-recovery", state: "waiting", previousSessionId: "new", descriptor });
+  expect(lost.mock.calls).toEqual([["old"], ["new"]]);
+});
+
+vi.mock("electron", () => ({ utilityProcess: {}, MessageChannelMain: class {} }));
+it("restores a recovery window on blocked quit and second launch, and retries only explicitly", async () => {
+  const { createQuitRecovery } = await import("./plugins/quit.js");
+  let visible = false;
+  const focus = vi.fn(() => visible);
+  const open = vi.fn(() => {
+    visible = true;
+  });
+  const retry = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+  const quit = vi.fn();
+  const recovery = createQuitRecovery({ focus, open, retry, quit });
+  await recovery.blocked(new Error("journal"));
+  expect(open).toHaveBeenCalledOnce();
+  expect(retry).toHaveBeenCalledOnce();
+  expect(quit).not.toHaveBeenCalled();
+  visible = false;
+  expect(recovery.focus()).toBe(true);
+  expect(open).toHaveBeenCalledTimes(2);
+  await recovery.blocked(new Error("timeout"));
+  expect(quit).toHaveBeenCalledOnce();
+});
+it("production startup has no test provider selector and uses recovery/window retirement helpers", async () => {
+  const source = await readFile(new URL("./index.ts", import.meta.url), "utf8");
+  expect(source).not.toMatch(/providerFactory|createFakeDeviceProvider|KOBRIXA_A_T10/);
+  expect(source).toContain("createWindowRetirementHandler(");
+  expect(source).toContain("quitRecovery.blocked");
+});
+it("re-arms restored USB sessions without retaining their old loss episode", async () => {
+  const { createDeviceLossHandler } = await import("./plugins/controller.js");
+  const lost = vi.fn();
+  const handle = createDeviceLossHandler(lost, vi.fn());
+  const descriptor = { id: "old", name: "EV3", transport: "usb" as const };
+  handle({ type: "usb-recovery", state: "waiting", previousSessionId: "old", descriptor });
+  handle({
+    type: "usb-recovery",
+    state: "restored",
+    previousSessionId: "old",
+    sessionId: "old",
+    descriptor,
+    deployment: "none",
+  });
+  handle({ type: "usb-recovery", state: "waiting", previousSessionId: "old", descriptor });
+  expect(lost).toHaveBeenCalledTimes(2);
+});
+
+import { EventEmitter } from "node:events";
+
+import { attachNativeLifecycle } from "./plugins/shutdown-coordinator.js";
+const owner = {
+  sourceKey: "builtin:acme.fixture",
+  pluginId: "acme.fixture",
+  generation: 1,
+  hostEpoch: "host",
+  processEpoch: "process",
+};
+it("native hide stops intent but preserves a healthy background consumer", () => {
+  const window = new EventEmitter();
+  const contents = new EventEmitter();
+  const power = new EventEmitter();
+  const retire = vi.fn(async () => {});
+  const revokeIntent = vi.fn();
+  attachNativeLifecycle({
+    window,
+    contents,
+    power,
+    scope: () => ({ hostEpoch: "host", workbenchInstance: "window" }),
+    owners: () => [owner],
+    sessions: () => ["session"],
+    revokeIntent,
+    revokeActions: vi.fn(),
+    replaceWorkbench: vi.fn(),
+    markUnresponsive: vi.fn(),
+    retire,
+    suspend: vi.fn(async () => {}),
+    resume: vi.fn(async () => {}),
+    failed: vi.fn(),
+  });
+  window.emit("hide");
+  window.emit("blur");
+  window.emit("minimize");
+  expect(revokeIntent).toHaveBeenCalledTimes(3);
+  expect(retire).not.toHaveBeenCalled();
+});
+it("renderer loss revokes before retirement and publication, while only a hang marks recovery risk", async () => {
+  const window = new EventEmitter();
+  const contents = new EventEmitter();
+  const power = new EventEmitter();
+  const trace: string[] = [];
+  const markUnresponsive = vi.fn();
+  attachNativeLifecycle({
+    window,
+    contents,
+    power,
+    scope: () => ({ hostEpoch: "host", workbenchInstance: "window" }),
+    owners: () => [owner],
+    sessions: () => [],
+    revokeIntent: () => {
+      trace.push("intent");
+    },
+    revokeActions: () => {
+      trace.push("actions");
+    },
+    replaceWorkbench: () => {
+      trace.push("new-workbench");
+    },
+    markUnresponsive,
+    retire: async (_owner, reason) => {
+      trace.push(reason);
+    },
+    suspend: vi.fn(async () => {}),
+    resume: vi.fn(async () => {}),
+    failed: vi.fn(),
+  });
+  contents.emit("render-process-gone", {}, { reason: "crashed" });
+  expect(trace).toEqual(["intent", "actions", "renderer-crash", "new-workbench"]);
+  expect(markUnresponsive).not.toHaveBeenCalled();
+  window.emit("unresponsive");
+  expect(markUnresponsive).toHaveBeenCalledTimes(1);
+});
+it("suspend/wake routes each session through quiesce/reconcile without retiring owners or replaying work", async () => {
+  const window = new EventEmitter();
+  const contents = new EventEmitter();
+  const power = new EventEmitter();
+  const suspend = vi.fn(async () => {}),
+    resume = vi.fn(async () => {}),
+    retire = vi.fn(async () => {});
+  attachNativeLifecycle({
+    window,
+    contents,
+    power,
+    scope: () => ({ hostEpoch: "host", workbenchInstance: "window" }),
+    owners: () => [owner],
+    sessions: () => ["s1", "s2"],
+    revokeIntent: vi.fn(),
+    revokeActions: vi.fn(),
+    replaceWorkbench: vi.fn(),
+    markUnresponsive: vi.fn(),
+    retire,
+    suspend,
+    resume,
+    failed: vi.fn(),
+  });
+  power.emit("suspend");
+  expect(suspend.mock.calls).toEqual([["s1"], ["s2"]]);
+  power.emit("resume");
+  expect(resume.mock.calls).toEqual([["s1"], ["s2"]]);
+  expect(retire).not.toHaveBeenCalled();
+});
+
+it("installs the quit guard before awaiting desktop worker construction", async () => {
+  const source = await readFile(new URL("./index.ts", import.meta.url), "utf8");
+  const guard = source.indexOf("installPluginQuitCleanup(");
+  const admitted = source.indexOf("const { broker } = composition.foundation;");
+  expect(guard).toBeGreaterThan(source.indexOf("const pendingComposition = composeDesktopMain("));
+  expect(admitted).toBeGreaterThan(guard);
+  expect(source.slice(guard, admitted)).toContain("const composition = await pendingComposition;");
+  expect(source.slice(guard, admitted)).toContain("await composition.dispose()");
+});
+
+it("retires the private Lab writer while retaining migration and core lifecycle guards", async () => {
+  const source = await readFile(new URL("./index.ts", import.meta.url), "utf8");
+  expect(source).not.toMatch(/SensorLabService|sensorLab\.|labBusy|sensor-lab:state/);
+  expect(source).toContain("const legacyLabWriter = Object.freeze({");
+  expect(source).toContain('sourceKey: "builtin:kobrixa.sensor-lab"');
+  expect(source).toContain("legacyLabWriter,");
+  expect(source).toContain("legacyFlush: () => legacyLabWriter.settled()");
+  expect(source).toContain("flush: () => legacyLabWriter.settled()");
+  for (const guard of [
+    "requireCleanClose",
+    "createWindowRetirementHandler",
+    "monitor.disconnect",
+    "powerSessions.suspend",
+    "powerSessions.resume",
+  ])
+    expect(source).toContain(guard);
+});

@@ -1,0 +1,83 @@
+Real workbench browser workspace: /private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-nBngDv
+renderer: %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools
+You might need to use a local HTTP server (instead of file://): https://react.dev/link/react-devtools-faq font-weight:bold
+[6543:1023/030717.953857:INFO:CONSOLE:234] "%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools
+You might need to use a local HTTP server (instead of file://): https://react.dev/link/react-devtools-faq font-weight:bold", source: file:///private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-nBngDv/.vite/renderer/main_window/assets/index-Cg4j6c_Y.js (234)
+renderer:  Note that 'script-src' was not explicitly set, so 'default-src' is used as a fallback.
+[6543:1023/030717.989345:INFO:CONSOLE:1201] " Note that 'script-src' was not explicitly set, so 'default-src' is used as a fallback.", source: file:///private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-nBngDv/.vite/renderer/main_window/assets/index-Cg4j6c_Y.js (1201)
+renderer:  Note that 'script-src' was not explicitly set, so 'default-src' is used as a fallback.
+[6543:1023/030718.066987:INFO:CONSOLE:912] " Note that 'script-src' was not explicitly set, so 'default-src' is used as a fallback.", source:  (912)
+[plugin acceptance.ui-0] UI_PID:6551
+[plugin acceptance.ui-1] UI_PID:6552
+[plugin acceptance.legacy-old-js] UI_PID:6556
+[plugin acceptance.legacy-old-js] UI_LEGACY_WIRE:{"direction":"host","message":{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"apiVersion":"1.6.0","pluginId":"acceptance.legacy-old-js","locale":"zh-TW","grantedPermissions":[]}}}
+[plugin acceptance.legacy-old-js] UI_LEGACY_WIRE:{"direction":"plugin","message":{"jsonrpc":"2.0","id":1,"result":{"apiVersion":"1.4.0","sdk":{"name":"@kobrixa/plugin-sdk","version":"0.1.0"}}}}
+[plugin acceptance.legacy-old-js] UI_LEGACY_WIRE:{"direction":"host","message":{"jsonrpc":"2.0","id":2,"method":"command/execute","params":{"command":"acceptance.legacy-old-js.legacy"}}}
+[plugin acceptance.legacy-old-js] UI_LEGACY_EXECUTED:acceptance.legacy-old-js
+[plugin acceptance.legacy-old-js] UI_LEGACY_WIRE:{"direction":"plugin","message":{"jsonrpc":"2.0","id":2,"result":null}}
+[plugin acceptance.legacy-old-py] UI_PID:6559
+[plugin acceptance.legacy-old-py] UI_LEGACY_WIRE:{"direction": "host", "message": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"apiVersion": "1.6.0", "pluginId": "acceptance.legacy-old-py", "locale": "zh-TW", "grantedPermissions": []}}}
+[plugin acceptance.legacy-old-py] UI_LEGACY_WIRE:{"direction": "plugin", "message": {"jsonrpc": "2.0", "id": 1, "result": {"apiVersion": "1.4.0", "sdk": {"name": "kobrixa-plugin-sdk", "version": "0.1.0"}}}}
+[plugin acceptance.legacy-old-py] UI_LEGACY_WIRE:{"direction": "host", "message": {"jsonrpc": "2.0", "id": 2, "method": "command/execute", "params": {"command": "acceptance.legacy-old-py.legacy"}}}
+[plugin acceptance.legacy-old-py] UI_LEGACY_EXECUTED:acceptance.legacy-old-py
+[plugin acceptance.legacy-old-py] UI_LEGACY_WIRE:{"direction": "plugin", "message": {"jsonrpc": "2.0", "id": 2, "result": null}}
+[plugin acceptance.legacy-new-js] UI_PID:6560
+[plugin acceptance.legacy-new-js] UI_LEGACY_WIRE:{"direction":"host","message":{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"apiVersion":"1.6.0","pluginId":"acceptance.legacy-new-js","locale":"zh-TW","grantedPermissions":[]}}}
+[plugin acceptance.legacy-new-js] UI_LEGACY_WIRE:{"direction":"plugin","message":{"jsonrpc":"2.0","id":1,"result":{"apiVersion":"1.6.0","sdk":{"name":"@kobrixa/plugin-sdk","version":"0.1.0"}}}}
+[plugin acceptance.legacy-new-js] UI_LEGACY_WIRE:{"direction":"host","message":{"jsonrpc":"2.0","id":2,"method":"command/execute","params":{"command":"acceptance.legacy-new-js.legacy"}}}
+[plugin acceptance.legacy-new-js] UI_LEGACY_EXECUTED:acceptance.legacy-new-js
+[plugin acceptance.legacy-new-js] UI_LEGACY_WIRE:{"direction":"plugin","message":{"jsonrpc":"2.0","id":2,"result":null}}
+[plugin acceptance.legacy-new-py] UI_PID:6563
+[plugin acceptance.legacy-new-py] UI_LEGACY_WIRE:{"direction": "host", "message": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"apiVersion": "1.6.0", "pluginId": "acceptance.legacy-new-py", "locale": "zh-TW", "grantedPermissions": []}}}
+[plugin acceptance.legacy-new-py] UI_LEGACY_WIRE:{"direction": "plugin", "message": {"jsonrpc": "2.0", "id": 1, "result": {"apiVersion": "1.6.0", "sdk": {"name": "kobrixa-plugin-sdk", "version": "0.1.0"}}}}
+[plugin acceptance.legacy-new-py] UI_LEGACY_WIRE:{"direction": "host", "message": {"jsonrpc": "2.0", "id": 2, "method": "command/execute", "params": {"command": "acceptance.legacy-new-py.legacy"}}}
+[plugin acceptance.legacy-new-py] UI_LEGACY_EXECUTED:acceptance.legacy-new-py
+[plugin acceptance.legacy-new-py] UI_LEGACY_WIRE:{"direction": "plugin", "message": {"jsonrpc": "2.0", "id": 2, "result": null}}
+[plugin acceptance.legacy-old-ui-js] UI_PID:6564
+[plugin acceptance.legacy-old-ui-js] UI_LEGACY_WIRE:{"direction":"host","message":{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"apiVersion":"1.6.0","pluginId":"acceptance.legacy-old-ui-js","locale":"zh-TW","grantedPermissions":["ui.panels"]}}}
+[plugin acceptance.legacy-old-ui-js] UI_LEGACY_WIRE:{"direction":"plugin","message":{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"Invalid parameters for initialize."}}}
+[plugin acceptance.legacy-old-ui-py] UI_PID:6567
+[plugin acceptance.legacy-old-ui-py] UI_LEGACY_WIRE:{"direction": "host", "message": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"apiVersion": "1.6.0", "pluginId": "acceptance.legacy-old-ui-py", "locale": "zh-TW", "grantedPermissions": ["ui.panels"]}}}
+[plugin acceptance.legacy-old-ui-py] UI_LEGACY_WIRE:{"direction": "plugin", "message": {"jsonrpc": "2.0", "id": 1, "error": {"code": -32602, "message": "Invalid parameters for initialize: $.grantedPermissions[0]: expected one of ['ui.notifications']"}}}
+UI_PHASE browser-probe-complete
+UI_PHASE painted
+UI_RENDERER_METRICS {"pid":6550,"metrics":[{"cpu":{"cumulativeCPUUsage":0.877527,"percentCPUUsage":0,"idleWakeupsPerSecond":0},"pid":6543,"type":"Browser","creationTime":1792696037021.299,"memory":{"workingSetSize":217232,"peakWorkingSetSize":226464},"sandboxed":false},{"cpu":{"cumulativeCPUUsage":0.246602,"percentCPUUsage":0,"idleWakeupsPerSecond":0},"pid":6548,"type":"GPU","creationTime":1792696037524.615,"serviceName":"GPU","memory":{"workingSetSize":125520,"peakWorkingSetSize":136208},"sandboxed":true},{"cpu":{"cumulativeCPUUsage":0.098363,"percentCPUUsage":0,"idleWakeupsPerSecond":0},"pid":6549,"type":"Utility","creationTime":1792696037538.819,"serviceName":"network.mojom.NetworkService","name":"Network Service","memory":{"workingSetSize":85520,"peakWorkingSetSize":90896},"sandboxed":true},{"cpu":{"cumulativeCPUUsage":0.686452,"percentCPUUsage":0,"idleWakeupsPerSecond":0},"pid":6550,"type":"Tab","creationTime":1792696037617.816,"memory":{"workingSetSize":226704,"peakWorkingSetSize":258048},"sandboxed":true},{"cpu":{"cumulativeCPUUsage":0.167729,"percentCPUUsage":0,"idleWakeupsPerSecond":0},"pid":6551,"type":"Utility","creationTime":1792696038130.206,"serviceName":"node.mojom.NodeService","name":"Kobrixa plugin acceptance.ui-0","memory":{"workingSetSize":118800,"peakWorkingSetSize":131584},"sandboxed":false},{"cpu":{"cumulativeCPUUsage":0.135065,"percentCPUUsage":0,"idleWakeupsPerSecond":0},"pid":6552,"type":"Utility","creationTime":1792696038290.322,"serviceName":"node.mojom.NodeService","name":"Kobrixa plugin acceptance.ui-1","memory":{"workingSetSize":114336,"peakWorkingSetSize":130560},"sandboxed":false},{"cpu":{"cumulativeCPUUsage":0.107967,"percentCPUUsage":0,"idleWakeupsPerSecond":0},"pid":6556,"type":"Utility","creationTime":1792696039338.071,"serviceName":"node.mojom.NodeService","name":"Kobrixa plugin acceptance.legacy-old-js","memory":{"workingSetSize":107840,"peakWorkingSetSize":124256},"sandboxed":false},{"cpu":{"cumulativeCPUUsage":0.111515,"percentCPUUsage":0,"idleWakeupsPerSecond":0},"pid":6560,"type":"Utility","creationTime":1792696039766.129,"serviceName":"node.mojom.NodeService","name":"Kobrixa plugin acceptance.legacy-new-js","memory":{"workingSetSize":128928,"peakWorkingSetSize":128928},"sandboxed":false}],"focused":true,"visible":true}
+UI_NATIVE_TARGET {"bounds":{"x":1241,"y":346,"focused":false},"size":[1420,872]}
+UI_PHASE captured
+UI_PHASE focus-requested
+UI_PHASE native-window-focused
+UI_PHASE native-input-complete
+[plugin acceptance.legacy-old-js] UI_LEGACY_WIRE:{"direction":"host","message":{"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}}}
+[plugin acceptance.legacy-new-js] UI_LEGACY_WIRE:{"direction":"host","message":{"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}}}
+[plugin acceptance.legacy-new-js] UI_LEGACY_WIRE:{"direction":"plugin","message":{"jsonrpc":"2.0","id":3,"result":null}}
+[plugin acceptance.legacy-old-js] UI_LEGACY_WIRE:{"direction":"plugin","message":{"jsonrpc":"2.0","id":3,"result":null}}
+[plugin acceptance.legacy-new-js] UI_LEGACY_WIRE:{"direction":"host","message":{"jsonrpc":"2.0","method":"exit","params":{}}}
+[plugin acceptance.legacy-old-js] UI_LEGACY_WIRE:{"direction":"host","message":{"jsonrpc":"2.0","method":"exit","params":{}}}
+[plugin acceptance.legacy-new-py] UI_LEGACY_WIRE:{"direction": "host", "message": {"jsonrpc": "2.0", "id": 3, "method": "shutdown", "params": {}}}
+[plugin acceptance.legacy-new-py] UI_LEGACY_WIRE:{"direction": "plugin", "message": {"jsonrpc": "2.0", "id": 3, "result": null}}
+[plugin acceptance.legacy-new-py] UI_LEGACY_WIRE:{"direction": "host", "message": {"jsonrpc": "2.0", "method": "exit", "params": {}}}
+[plugin acceptance.legacy-old-py] UI_LEGACY_WIRE:{"direction": "host", "message": {"jsonrpc": "2.0", "id": 3, "method": "shutdown", "params": {}}}
+[plugin acceptance.legacy-old-py] UI_LEGACY_WIRE:{"direction": "plugin", "message": {"jsonrpc": "2.0", "id": 3, "result": null}}
+Error occurred in handler for 'plugins:recovery:snapshot': Error: Device recovery is unavailable.
+    at Object.sessions (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-nBngDv/.vite/build/main.cjs:401:5074)
+    at async Object.entries (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-nBngDv/.vite/build/main.cjs:400:50477)
+    at async rj.snapshot (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-nBngDv/.vite/build/main.cjs:400:48821)
+    at async Session.<anonymous> (node:electron/js2c/browser_init:1:119972)
+[plugin acceptance.legacy-old-py] UI_LEGACY_WIRE:{"direction": "host", "message": {"jsonrpc": "2.0", "method": "exit", "params": {}}}
+Error occurred in handler for 'plugins:recovery:snapshot': Error: Device recovery is unavailable.
+    at Object.sessions (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-nBngDv/.vite/build/main.cjs:401:5074)
+    at async Object.entries (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-nBngDv/.vite/build/main.cjs:400:50477)
+    at async rj.snapshot (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-nBngDv/.vite/build/main.cjs:400:48821)
+    at async Session.<anonymous> (node:electron/js2c/browser_init:1:119972)
+Error occurred in handler for 'plugins:recovery:snapshot': Error: Device recovery is unavailable.
+    at Object.sessions (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-nBngDv/.vite/build/main.cjs:401:5074)
+    at async Object.entries (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-nBngDv/.vite/build/main.cjs:400:50477)
+    at async rj.snapshot (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-nBngDv/.vite/build/main.cjs:400:48821)
+    at async Session.<anonymous> (node:electron/js2c/browser_init:1:119972)
+Error occurred in handler for 'plugins:recovery:snapshot': Error: Device recovery is unavailable.
+    at Object.sessions (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-nBngDv/.vite/build/main.cjs:401:5074)
+    at async Object.entries (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-nBngDv/.vite/build/main.cjs:400:50477)
+    at async rj.snapshot (/private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-nBngDv/.vite/build/main.cjs:400:48821)
+    at async Session.<anonymous> (node:electron/js2c/browser_init:1:119972)
+PASS CJK diagnostic baseline: /private/var/folders/mx/g0rnwxh14t93mtqb06px7x400000gn/T/kobrixa-ui-browser-nBngDv/browser.json
+Motion races, renderer diagnostics and load remain separate acceptance gates.

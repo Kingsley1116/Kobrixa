@@ -1,0 +1,288 @@
+import type {
+  BusinessResult,
+  PersistenceFailureDetail,
+  SettingsMutation,
+  SettingsSnapshot,
+  SettingsScalar,
+  SettingKey,
+  PluginErrorCodeV170,
+} from "@kobrixa/plugin-protocol";
+import type { SettingsDraftState } from "../plugin-ui/host-ports.js";
+export type SettingsStoreTransport = {
+  validate(key: SettingKey, value: SettingsScalar): boolean;
+  read(): Promise<SettingsSnapshot>;
+  mutate(input: {
+    key: SettingKey;
+    value: SettingsScalar;
+    reset: boolean;
+    schemaVersion: number;
+    expectedRevision: string | null;
+  }): Promise<BusinessResult<SettingsMutation, PersistenceFailureDetail, PluginErrorCodeV170>>;
+};
+export function createContributedSettingsStore(
+  initial: SettingsSnapshot,
+  io: SettingsStoreTransport,
+) {
+  let baseline = structuredClone(initial);
+  const draft = new Map(initial.values.map((x) => [x.key, x.value]));
+  const dirty = new Set<string>();
+  const queued = new Map<string, { value: SettingsScalar; reset: boolean }>();
+  const errors = new Map<string, string>();
+  const listeners = new Set<() => void>();
+  let busy: string | null = null,
+    paused = false,
+    disposed = false;
+  let reconciling = false;
+  let reconciliation = Promise.resolve();
+  let finishReconciliation = () => {};
+  function beginReconciliation() {
+    reconciling = true;
+    reconciliation = new Promise<void>((resolve) => {
+      finishReconciliation = resolve;
+    });
+  }
+  let observationGeneration = 0;
+  async function readCurrent() {
+    const generation = ++observationGeneration;
+    try {
+      const value = await io.read();
+      if (!disposed && generation === observationGeneration) return { value, generation };
+    } catch (error) {
+      if (!disposed && generation === observationGeneration) throw error;
+    }
+  }
+  let editVersion = 0;
+  const editedAt = new Map<string, number>();
+  const pausedMessage = "Saved values changed or save failed. Retry or reload.";
+  function markPending() {
+    for (const key of new Set([...dirty, ...queued.keys()]))
+      if (!errors.has(key)) errors.set(key, pausedMessage);
+  }
+  let deferredWatch: SettingsSnapshot | undefined;
+  let running: Promise<void> = Promise.resolve();
+  const notify = () => {
+    if (!disposed) for (const listener of listeners) listener();
+  };
+  const error = (key: string, message: string) => {
+    errors.set(key, message);
+    notify();
+  };
+  function snapshot(): SettingsDraftState {
+    return {
+      baseline: structuredClone(baseline),
+      draft: [...draft].map(([key, value]) => ({ key, value })),
+      busyKeys: busy ? [busy] : [],
+      errors: [...errors].map(([key, en]) => ({ key, message: { en } })),
+    };
+  }
+  function external(next: SettingsSnapshot) {
+    if (disposed || next.schemaVersion !== baseline.schemaVersion) return;
+    // A later observation supersedes pending reconciliation, even while saving.
+    ++observationGeneration;
+    if (busy !== null) {
+      deferredWatch = structuredClone(next);
+      return;
+    }
+    if (next.revision === baseline.revision) return;
+    baseline = structuredClone(next);
+    for (const { key, value } of next.values) {
+      if (!dirty.has(key)) draft.set(key, value);
+      else errors.set(key, "Saved values changed. Reload or explicitly retry this field.");
+    }
+    if (dirty.size) {
+      paused = true;
+      queued.clear();
+    }
+    notify();
+  }
+  async function pump() {
+    while (!disposed && !paused && queued.size) {
+      const [key, item] = queued.entries().next().value!;
+      queued.delete(key);
+      busy = key;
+      notify();
+      const revisionAtDispatch = baseline.revision;
+      try {
+        const result = await io.mutate({
+          key,
+          ...item,
+          schemaVersion: baseline.schemaVersion,
+          expectedRevision: revisionAtDispatch,
+        });
+        if (disposed) return;
+        if (!result.ok) {
+          paused = true;
+          error(key, result.error.message);
+          if (
+            result.error.detail?.kind === "persistence" &&
+            result.error.detail.disposition === "unknown"
+          ) {
+            const observed = await readCurrent();
+            if (observed && observed.generation === observationGeneration)
+              deferredWatch = observed.value;
+          }
+          continue;
+        }
+        if (
+          baseline.revision !== revisionAtDispatch &&
+          baseline.revision !== result.value.receipt.revision
+        ) {
+          paused = true;
+          error(key, "Saved values changed. Explicit retry required.");
+          continue;
+        }
+        baseline = structuredClone(result.value.snapshot);
+        if (draft.get(key) === item.value && !queued.has(key)) {
+          dirty.delete(key);
+          errors.delete(key);
+        }
+        for (const entry of baseline.values)
+          if (!dirty.has(entry.key)) draft.set(entry.key, entry.value);
+      } catch {
+        paused = true;
+        error(key, "Save outcome is unavailable. Read current values before retry.");
+        try {
+          const observed = await readCurrent();
+          if (observed && observed.generation === observationGeneration)
+            deferredWatch = observed.value;
+        } catch {
+          error(key, "Current saved values are unavailable.");
+        }
+      } finally {
+        busy = null;
+        if (paused) markPending();
+        const observed = deferredWatch;
+        deferredWatch = undefined;
+        if (observed) external(observed);
+        notify();
+      }
+    }
+  }
+  function edit(
+    key: string,
+    value: SettingsScalar,
+    phase: "change" | "blur" | "enter" | "reset",
+    immediate: boolean,
+  ) {
+    if (disposed || !draft.has(key)) return;
+    editedAt.set(key, ++editVersion);
+    draft.set(key, value);
+    dirty.add(key);
+    if (
+      !io.validate(key, value) ||
+      new TextEncoder().encode(JSON.stringify([...draft].map(([k, v]) => ({ key: k, value: v }))))
+        .length > 65536
+    ) {
+      queued.delete(key);
+      error(key, "Invalid value.");
+      return;
+    }
+    errors.delete(key);
+    const old = baseline.values.find((x) => x.key === key)?.value;
+    if (old === value && !busy && !queued.has(key) && phase !== "reset") {
+      dirty.delete(key);
+      notify();
+      return;
+    }
+    if (phase !== "change" || immediate) queued.set(key, { value, reset: phase === "reset" });
+    if (paused) errors.set(key, pausedMessage);
+    notify();
+    if (busy === null) running = pump();
+  }
+  return {
+    state: snapshot,
+    edit,
+    external,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    async idle() {
+      // Retry can start a mutation after reading. Wait for the whole operation,
+      // including any work that replaced running while we were awaiting it.
+      for (;;) {
+        const mutation = running;
+        const reconcile = reconciliation;
+        await Promise.all([mutation, reconcile]);
+        if (mutation === running && reconcile === reconciliation) return;
+      }
+    },
+    fail(message: string) {
+      paused = true;
+      for (const key of new Set([...draft.keys(), ...dirty, ...queued.keys()]))
+        errors.set(key, message);
+      notify();
+    },
+    async retry(key: string) {
+      if (disposed || reconciling || !dirty.has(key)) return;
+      beginReconciliation();
+      paused = true;
+      markPending();
+      queued.clear();
+      try {
+        await running;
+        if (disposed || !dirty.has(key)) return;
+        try {
+          const observed = await readCurrent();
+          if (disposed || !observed || observed.generation !== observationGeneration) return;
+          external(observed.value);
+        } catch {
+          error(key, "Current saved values are unavailable.");
+          return;
+        }
+        if (disposed) return;
+        const value = draft.get(key)!;
+        if (!io.validate(key, value)) return;
+        markPending();
+        queued.clear();
+        queued.set(key, { value, reset: false });
+        paused = false;
+        running = pump();
+        await running;
+      } finally {
+        reconciling = false;
+        finishReconciliation();
+      }
+    },
+    async reload() {
+      if (disposed || reconciling) return;
+      const startedAt = editVersion;
+      beginReconciliation();
+      paused = true;
+      markPending();
+      queued.clear();
+      try {
+        await running;
+        if (disposed) return;
+        const observed = await readCurrent();
+        if (disposed || !observed || observed.generation !== observationGeneration) return;
+        const value = observed.value;
+        const retained = [...draft].filter(([key]) => (editedAt.get(key) ?? 0) > startedAt);
+        dirty.clear();
+        queued.clear();
+        errors.clear();
+        paused = false;
+        baseline = structuredClone(value);
+        draft.clear();
+        for (const entry of value.values) draft.set(entry.key, entry.value);
+        for (const [key, value] of retained) {
+          draft.set(key, value);
+          dirty.add(key);
+          errors.set(key, pausedMessage);
+        }
+        paused = retained.length > 0;
+        notify();
+      } finally {
+        reconciling = false;
+        finishReconciliation();
+      }
+    },
+    dispose() {
+      disposed = true;
+      queued.clear();
+      listeners.clear();
+    },
+  };
+}

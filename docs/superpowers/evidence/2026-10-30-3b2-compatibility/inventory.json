@@ -1,0 +1,58 @@
+[
+  {
+    "source": "/private/tmp/kobrixa-b2-compatibility-native-337e1a7/kobrixa-compatibility-87DWjM/evidence.json",
+    "archive": "evidence.json.gz",
+    "rawBytes": 44352131,
+    "rawSha256": "040ec277efe1cd05e9a46724a209477d66b449af9ef569500aaafc610f7b7e65",
+    "archiveSha256": "9d52a49785baa7a3f6ede0453f1f90d0ac973d5cb2a3bf12a7e5e6cdb5ac6686"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-compatibility-native-337e1a7/kobrixa-persistence-4UUy7j/compatibility.candidate.json",
+    "archive": "candidate.json.gz",
+    "rawBytes": 44167539,
+    "rawSha256": "28f3d3fa0c42679007034e03f12217ccaeefb24dc5718b63c8e20ecd9ed0ba70",
+    "archiveSha256": "bd3856dce7961bcb2e8ee078ce45e2e9d4699942f2efced07b8feb5c32799582"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-compatibility-native-337e1a7/kobrixa-persistence-4UUy7j/compatibility.json",
+    "archive": "configuration.json.gz",
+    "rawBytes": 44056218,
+    "rawSha256": "b92dc28b15d54108e6c466ffbb7e33a1dc55ac120162a284cb05e364a9490570",
+    "archiveSha256": "464c620b3cce9f09f2e421a9bc4133a0a5c5cb752546f8a7ba959101b1daabaa"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-compatibility-native-337e1a7/kobrixa-compatibility-87DWjM/handoffs.json",
+    "archive": "handoffs.json.gz",
+    "rawBytes": 1295,
+    "rawSha256": "05ad2b15895ef50c543b47fb9c1bcda2768283ebf71713afa605da32263cd45f",
+    "archiveSha256": "fcaf752c186b0fc0d6fcafbbc86d0850d0264d1b870687d33991f7c1f2e3833f"
+  },
+  {
+    "source": "/private/tmp/kobrixa-b2-compatibility-native-337e1a7/kobrixa-compatibility-87DWjM/renderer-build/renderer-artifact.json",
+    "archive": "renderer-artifact.json.gz",
+    "rawBytes": 23397,
+    "rawSha256": "f8409e37621dfeb887e4c556b32cf1511490d5f3a3375c4f4b17ab3834e690d3",
+    "archiveSha256": "6baa03c5e94a527970651455b533af1f265d5a66c15eb25aa00bc1a1576ae176"
+  },
+  {
+    "source": "/private/tmp/b2-compatibility-native2.log",
+    "archive": "native.log.gz",
+    "rawBytes": 39005,
+    "rawSha256": "87f10de9f45710720d47abc398031eab12194e8e80e1164df33acdb003cbceb1",
+    "archiveSha256": "8f4c5f07026c30e85ac5212d3c9e3f4244f3d471f5d07d6395ee28d7f4262793"
+  },
+  {
+    "source": "/private/tmp/b2-compatibility-native1.log",
+    "archive": "failed-materialization.log.gz",
+    "rawBytes": 17456,
+    "rawSha256": "7bebe23a8bc4ce762307a03231a33ed6bf2e85de5a332162d8e83e9e77280f81",
+    "archiveSha256": "7f16ec407c33857b62e34f0fb388db544228a7d9a500bcd90789fd1bf6ec6bb4"
+  },
+  {
+    "source": "/private/tmp/b2-compatibility-controller.mjs",
+    "archive": "controller.mjs.gz",
+    "rawBytes": 1332,
+    "rawSha256": "3b47ce6de4e8ae20c0d8dd716cba2400305a17efe33dc09609f7b9de3fce953d",
+    "archiveSha256": "27798eb9090b47f251f790f3b7e32a883405a611f777e896a45308fc2020d157"
+  }
+]

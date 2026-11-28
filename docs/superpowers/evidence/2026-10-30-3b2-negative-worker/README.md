@@ -1,0 +1,7 @@
+# N01/N02/N06 real-worker rejection and reopen evidence
+
+Controller rerun at committed candidate4acba30:16 named cases passed,43 unrelated cases filtered. Agent entire worker file59 tests passed with scoped typecheck/lint; that separate dirty-source report is retained and is not labelled as this immutable run.
+
+The serialized RpcPeer public routes forward through the actual persistence host and worker thread to real temporary files. Both source owners have baseline records/settings; an actual watch event is acknowledged before injection. Transcripts retain malformed inputs, replies, before/after trees and hashes, quota/barrier/core snapshots, handle cleanup, and a fresh worker/hostEpoch reopening the same profile. Six admitted/aborted attempts truthfully project discard-only checkpoint obligations after shutdown; these are not hidden as empty recovery or published as data. Worker artifact and each transcript hash were independently verified.
+
+Limits: the profile lock is a test stub; this is not Electron, installed-plugin SDK interoperability, OS power-loss, hardware, or the full N01–N29 matrix. Observed handles/pins do not claim a census of every private registry. Payload profiles remain at receipt paths; archive includes the actual worker bundle and raw transcripts, not a full disk backup. Source/runtime hashes bind this candidate; later unrelated fixture edits are not included.

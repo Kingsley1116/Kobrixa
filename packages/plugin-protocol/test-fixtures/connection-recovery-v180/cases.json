@@ -1,0 +1,486 @@
+[
+  {
+    "id": "waiting",
+    "valid": true,
+    "snapshot": {
+      "hostEpoch": "00000000-0000-4000-8000-000000000001",
+      "revision": 1,
+      "recovery": {
+        "recoveryId": "00000000-0000-4000-8000-000000000001",
+        "providerId": "kobrixa.device-ev3",
+        "providerGeneration": 3,
+        "previousSessionId": "00000000-0000-4000-8000-000000000001",
+        "name": "EV3 \ud83d\ude42",
+        "attemptsStarted": 1,
+        "retryLimit": 3,
+        "phase": "waiting",
+        "retryAfterMs": 1000
+      }
+    }
+  },
+  {
+    "id": "connecting",
+    "valid": true,
+    "snapshot": {
+      "hostEpoch": "00000000-0000-4000-8000-000000000001",
+      "revision": 1,
+      "recovery": {
+        "recoveryId": "00000000-0000-4000-8000-000000000001",
+        "providerId": "kobrixa.device-ev3",
+        "providerGeneration": 3,
+        "previousSessionId": "00000000-0000-4000-8000-000000000001",
+        "name": "EV3 \ud83d\ude42",
+        "attemptsStarted": 1,
+        "retryLimit": 3,
+        "phase": "connecting"
+      }
+    }
+  },
+  {
+    "id": "cancelling",
+    "valid": true,
+    "snapshot": {
+      "hostEpoch": "00000000-0000-4000-8000-000000000001",
+      "revision": 1,
+      "recovery": {
+        "recoveryId": "00000000-0000-4000-8000-000000000001",
+        "providerId": "kobrixa.device-ev3",
+        "providerGeneration": 3,
+        "previousSessionId": "00000000-0000-4000-8000-000000000001",
+        "name": "EV3 \ud83d\ude42",
+        "attemptsStarted": 1,
+        "retryLimit": 3,
+        "phase": "cancelling"
+      }
+    }
+  },
+  {
+    "id": "cancel-failed",
+    "valid": true,
+    "snapshot": {
+      "hostEpoch": "00000000-0000-4000-8000-000000000001",
+      "revision": 1,
+      "recovery": {
+        "recoveryId": "00000000-0000-4000-8000-000000000001",
+        "providerId": "kobrixa.device-ev3",
+        "providerGeneration": 3,
+        "previousSessionId": "00000000-0000-4000-8000-000000000001",
+        "name": "EV3 \ud83d\ude42",
+        "attemptsStarted": 1,
+        "retryLimit": 3,
+        "phase": "cancel-failed",
+        "error": {
+          "reason": "cleanup-failed",
+          "message": "Still pending"
+        }
+      }
+    }
+  },
+  {
+    "id": "cancelled",
+    "valid": true,
+    "snapshot": {
+      "hostEpoch": "00000000-0000-4000-8000-000000000001",
+      "revision": 1,
+      "recovery": {
+        "recoveryId": "00000000-0000-4000-8000-000000000001",
+        "providerId": "kobrixa.device-ev3",
+        "providerGeneration": 3,
+        "previousSessionId": "00000000-0000-4000-8000-000000000001",
+        "name": "EV3 \ud83d\ude42",
+        "attemptsStarted": 1,
+        "retryLimit": 3,
+        "phase": "cancelled",
+        "reason": "user"
+      }
+    }
+  },
+  {
+    "id": "retry-exhausted",
+    "valid": true,
+    "snapshot": {
+      "hostEpoch": "00000000-0000-4000-8000-000000000001",
+      "revision": 1,
+      "recovery": {
+        "recoveryId": "00000000-0000-4000-8000-000000000001",
+        "providerId": "kobrixa.device-ev3",
+        "providerGeneration": 3,
+        "previousSessionId": "00000000-0000-4000-8000-000000000001",
+        "name": "EV3 \ud83d\ude42",
+        "attemptsStarted": 3,
+        "retryLimit": 3,
+        "phase": "retry-exhausted"
+      }
+    }
+  },
+  {
+    "id": "manual-required",
+    "valid": true,
+    "snapshot": {
+      "hostEpoch": "00000000-0000-4000-8000-000000000001",
+      "revision": 1,
+      "recovery": {
+        "recoveryId": "00000000-0000-4000-8000-000000000001",
+        "providerId": "kobrixa.device-ev3",
+        "providerGeneration": 3,
+        "previousSessionId": "00000000-0000-4000-8000-000000000001",
+        "name": "EV3 \ud83d\ude42",
+        "attemptsStarted": 1,
+        "retryLimit": 3,
+        "phase": "manual-required",
+        "reason": "identity-ambiguous"
+      }
+    }
+  },
+  {
+    "id": "restored",
+    "valid": true,
+    "snapshot": {
+      "hostEpoch": "00000000-0000-4000-8000-000000000001",
+      "revision": 1,
+      "recovery": {
+        "recoveryId": "00000000-0000-4000-8000-000000000001",
+        "providerId": "kobrixa.device-ev3",
+        "providerGeneration": 3,
+        "previousSessionId": "00000000-0000-4000-8000-000000000001",
+        "name": "EV3 \ud83d\ude42",
+        "attemptsStarted": 1,
+        "retryLimit": 3,
+        "phase": "restored",
+        "sessionId": "00000000-0000-4000-8000-000000000002"
+      }
+    }
+  },
+  {
+    "id": "none",
+    "valid": true,
+    "snapshot": {
+      "hostEpoch": "00000000-0000-4000-8000-000000000001",
+      "revision": 0,
+      "recovery": null
+    }
+  },
+  {
+    "id": "unicode-max",
+    "valid": true,
+    "snapshot": {
+      "hostEpoch": "00000000-0000-4000-8000-000000000001",
+      "revision": 1,
+      "recovery": {
+        "recoveryId": "00000000-0000-4000-8000-000000000001",
+        "providerId": "kobrixa.device-ev3",
+        "providerGeneration": 3,
+        "previousSessionId": "00000000-0000-4000-8000-000000000001",
+        "name": "\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42",
+        "attemptsStarted": 1,
+        "retryLimit": 3,
+        "phase": "waiting",
+        "retryAfterMs": 1000
+      }
+    }
+  },
+  {
+    "id": "lowered-policy",
+    "valid": true,
+    "snapshot": {
+      "hostEpoch": "00000000-0000-4000-8000-000000000001",
+      "revision": 1,
+      "recovery": {
+        "recoveryId": "00000000-0000-4000-8000-000000000001",
+        "providerId": "kobrixa.device-ev3",
+        "providerGeneration": 3,
+        "previousSessionId": "00000000-0000-4000-8000-000000000001",
+        "name": "EV3 \ud83d\ude42",
+        "attemptsStarted": 10,
+        "retryLimit": 3,
+        "phase": "retry-exhausted"
+      }
+    }
+  },
+  {
+    "id": "unlimited",
+    "valid": true,
+    "snapshot": {
+      "hostEpoch": "00000000-0000-4000-8000-000000000001",
+      "revision": 1,
+      "recovery": {
+        "recoveryId": "00000000-0000-4000-8000-000000000001",
+        "providerId": "kobrixa.device-ev3",
+        "providerGeneration": 3,
+        "previousSessionId": "00000000-0000-4000-8000-000000000001",
+        "name": "EV3 \ud83d\ude42",
+        "attemptsStarted": 1,
+        "retryLimit": "unlimited",
+        "phase": "waiting",
+        "retryAfterMs": 1000
+      }
+    }
+  },
+  {
+    "id": "bad-id",
+    "valid": false,
+    "snapshot": {
+      "hostEpoch": "00000000-0000-4000-8000-000000000001",
+      "revision": 1,
+      "recovery": {
+        "recoveryId": "fake",
+        "providerId": "kobrixa.device-ev3",
+        "providerGeneration": 3,
+        "previousSessionId": "00000000-0000-4000-8000-000000000001",
+        "name": "EV3 \ud83d\ude42",
+        "attemptsStarted": 1,
+        "retryLimit": 3,
+        "phase": "waiting",
+        "retryAfterMs": 1000
+      }
+    }
+  },
+  {
+    "id": "bad-generation",
+    "valid": false,
+    "snapshot": {
+      "hostEpoch": "00000000-0000-4000-8000-000000000001",
+      "revision": 1,
+      "recovery": {
+        "recoveryId": "00000000-0000-4000-8000-000000000001",
+        "providerId": "kobrixa.device-ev3",
+        "providerGeneration": -1,
+        "previousSessionId": "00000000-0000-4000-8000-000000000001",
+        "name": "EV3 \ud83d\ude42",
+        "attemptsStarted": 1,
+        "retryLimit": 3,
+        "phase": "waiting",
+        "retryAfterMs": 1000
+      }
+    }
+  },
+  {
+    "id": "extra",
+    "valid": false,
+    "snapshot": {
+      "hostEpoch": "00000000-0000-4000-8000-000000000001",
+      "revision": 1,
+      "recovery": {
+        "recoveryId": "00000000-0000-4000-8000-000000000001",
+        "providerId": "kobrixa.device-ev3",
+        "providerGeneration": 3,
+        "previousSessionId": "00000000-0000-4000-8000-000000000001",
+        "name": "EV3 \ud83d\ude42",
+        "attemptsStarted": 1,
+        "retryLimit": 3,
+        "phase": "waiting",
+        "retryAfterMs": 1000,
+        "path": "secret"
+      }
+    }
+  },
+  {
+    "id": "waiting-exhausted",
+    "valid": false,
+    "snapshot": {
+      "hostEpoch": "00000000-0000-4000-8000-000000000001",
+      "revision": 1,
+      "recovery": {
+        "recoveryId": "00000000-0000-4000-8000-000000000001",
+        "providerId": "kobrixa.device-ev3",
+        "providerGeneration": 3,
+        "previousSessionId": "00000000-0000-4000-8000-000000000001",
+        "name": "EV3 \ud83d\ude42",
+        "attemptsStarted": 3,
+        "retryLimit": 3,
+        "phase": "waiting",
+        "retryAfterMs": 1000
+      }
+    }
+  },
+  {
+    "id": "unicode-over",
+    "valid": false,
+    "snapshot": {
+      "hostEpoch": "00000000-0000-4000-8000-000000000001",
+      "revision": 1,
+      "recovery": {
+        "recoveryId": "00000000-0000-4000-8000-000000000001",
+        "providerId": "kobrixa.device-ev3",
+        "providerGeneration": 3,
+        "previousSessionId": "00000000-0000-4000-8000-000000000001",
+        "name": "\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42\ud83d\ude42",
+        "attemptsStarted": 1,
+        "retryLimit": 3,
+        "phase": "waiting",
+        "retryAfterMs": 1000
+      }
+    }
+  },
+  {
+    "id": "surrogate",
+    "valid": false,
+    "snapshot": {
+      "hostEpoch": "00000000-0000-4000-8000-000000000001",
+      "revision": 1,
+      "recovery": {
+        "recoveryId": "00000000-0000-4000-8000-000000000001",
+        "providerId": "kobrixa.device-ev3",
+        "providerGeneration": 3,
+        "previousSessionId": "00000000-0000-4000-8000-000000000001",
+        "name": "\ud800",
+        "attemptsStarted": 1,
+        "retryLimit": 3,
+        "phase": "waiting",
+        "retryAfterMs": 1000
+      }
+    }
+  },
+  {
+    "id": "newline",
+    "valid": false,
+    "snapshot": {
+      "hostEpoch": "00000000-0000-4000-8000-000000000001",
+      "revision": 1,
+      "recovery": {
+        "recoveryId": "00000000-0000-4000-8000-000000000001",
+        "providerId": "kobrixa.device-ev3",
+        "providerGeneration": 3,
+        "previousSessionId": "00000000-0000-4000-8000-000000000001",
+        "name": "a\nb",
+        "attemptsStarted": 1,
+        "retryLimit": 3,
+        "phase": "waiting",
+        "retryAfterMs": 1000
+      }
+    }
+  },
+  {
+    "id": "wrong-variant",
+    "valid": false,
+    "snapshot": {
+      "hostEpoch": "00000000-0000-4000-8000-000000000001",
+      "revision": 1,
+      "recovery": {
+        "recoveryId": "00000000-0000-4000-8000-000000000001",
+        "providerId": "kobrixa.device-ev3",
+        "providerGeneration": 3,
+        "previousSessionId": "00000000-0000-4000-8000-000000000001",
+        "name": "EV3 \ud83d\ude42",
+        "attemptsStarted": 1,
+        "retryLimit": 3,
+        "phase": "connecting",
+        "retryAfterMs": 1000
+      }
+    }
+  },
+  {
+    "id": "bool-counter",
+    "valid": false,
+    "snapshot": {
+      "hostEpoch": "00000000-0000-4000-8000-000000000001",
+      "revision": 1,
+      "recovery": {
+        "recoveryId": "00000000-0000-4000-8000-000000000001",
+        "providerId": "kobrixa.device-ev3",
+        "providerGeneration": 3,
+        "previousSessionId": "00000000-0000-4000-8000-000000000001",
+        "name": "EV3 \ud83d\ude42",
+        "attemptsStarted": true,
+        "retryLimit": 3,
+        "phase": "waiting",
+        "retryAfterMs": 1000
+      }
+    }
+  },
+  {
+    "id": "same-session",
+    "valid": false,
+    "snapshot": {
+      "hostEpoch": "00000000-0000-4000-8000-000000000001",
+      "revision": 1,
+      "recovery": {
+        "recoveryId": "00000000-0000-4000-8000-000000000001",
+        "providerId": "kobrixa.device-ev3",
+        "providerGeneration": 3,
+        "previousSessionId": "00000000-0000-4000-8000-000000000001",
+        "name": "EV3 \ud83d\ude42",
+        "attemptsStarted": 1,
+        "retryLimit": 3,
+        "phase": "restored",
+        "sessionId": "00000000-0000-4000-8000-000000000001"
+      }
+    }
+  },
+  {
+    "id": "exhausted-unlimited",
+    "valid": false,
+    "snapshot": {
+      "hostEpoch": "00000000-0000-4000-8000-000000000001",
+      "revision": 1,
+      "recovery": {
+        "recoveryId": "00000000-0000-4000-8000-000000000001",
+        "providerId": "kobrixa.device-ev3",
+        "providerGeneration": 3,
+        "previousSessionId": "00000000-0000-4000-8000-000000000001",
+        "name": "EV3 \ud83d\ude42",
+        "attemptsStarted": 3,
+        "retryLimit": "unlimited",
+        "phase": "retry-exhausted"
+      }
+    }
+  },
+  {
+    "id": "exhausted-early",
+    "valid": false,
+    "snapshot": {
+      "hostEpoch": "00000000-0000-4000-8000-000000000001",
+      "revision": 1,
+      "recovery": {
+        "recoveryId": "00000000-0000-4000-8000-000000000001",
+        "providerId": "kobrixa.device-ev3",
+        "providerGeneration": 3,
+        "previousSessionId": "00000000-0000-4000-8000-000000000001",
+        "name": "EV3 \ud83d\ude42",
+        "attemptsStarted": 2,
+        "retryLimit": 3,
+        "phase": "retry-exhausted"
+      }
+    }
+  },
+  {
+    "id": "not-started",
+    "valid": false,
+    "snapshot": {
+      "hostEpoch": "00000000-0000-4000-8000-000000000001",
+      "revision": 1,
+      "recovery": {
+        "recoveryId": "00000000-0000-4000-8000-000000000001",
+        "providerId": "kobrixa.device-ev3",
+        "providerGeneration": 3,
+        "previousSessionId": "00000000-0000-4000-8000-000000000001",
+        "name": "EV3 \ud83d\ude42",
+        "attemptsStarted": 0,
+        "retryLimit": 3,
+        "phase": "connecting"
+      }
+    }
+  },
+  {
+    "id": "error-over",
+    "valid": false,
+    "snapshot": {
+      "hostEpoch": "00000000-0000-4000-8000-000000000001",
+      "revision": 1,
+      "recovery": {
+        "recoveryId": "00000000-0000-4000-8000-000000000001",
+        "providerId": "kobrixa.device-ev3",
+        "providerGeneration": 3,
+        "previousSessionId": "00000000-0000-4000-8000-000000000001",
+        "name": "EV3 \ud83d\ude42",
+        "attemptsStarted": 1,
+        "retryLimit": 3,
+        "phase": "cancel-failed",
+        "error": {
+          "reason": "cleanup-failed",
+          "message": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        }
+      }
+    }
+  }
+]

@@ -45,3 +45,8 @@ describe("Content-Length framing", () => {
     expect(() => encodeContentLength("x".repeat(1024 * 1024 + 1))).toThrow(FramingError);
   });
 });
+
+it("preserves a UTF8 BOM so RPC parsing cannot silently undercount original bytes", () => {
+  const text = "\ufeff{}";
+  expect(new ContentLengthDecoder().push(encodeContentLength(text))).toEqual([text]);
+});

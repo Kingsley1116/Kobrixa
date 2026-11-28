@@ -1,0 +1,11 @@
+[89694:1023/022243.914168:WARNING:net/disk_cache/blockfile/backend_impl.cc:1869] Destroying invalid entry.
+[89694:1023/022243.965297:INFO:CONSOLE:2] "%cElectron Security Warning (Insecure Content-Security-Policy) font-weight: bold; This renderer process has either no Content Security
+  Policy set or a policy with "unsafe-eval" enabled. This exposes users of
+  this app to unnecessary security risks.
+
+For more information and help, consult
+https://electronjs.org/docs/tutorial/security.
+This warning will not show up
+once the app is packaged.", source: node:electron/js2c/sandbox_bundle (2)
+Renderer process crashed - see https://www.electronjs.org/docs/tutorial/application-debugging for potential debugging information.
+GONE { reason: 'crashed', exitCode: 10 }

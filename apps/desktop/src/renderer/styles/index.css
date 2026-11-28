@@ -1,9 +1,9 @@
 @import "./workbench.css";
+@import "../plugin-ui/styles.css";
 @import "./keybindings.css";
 @import "./tab-list.css";
 @import "./segmented.css";
 @import "./monitor.css";
-@import "./sensor-lab.css";
 @import "./collab-chat.css";
 @import "./collab.css";
 @import "./collab-panel.css";

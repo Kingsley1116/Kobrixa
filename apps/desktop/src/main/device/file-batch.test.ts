@@ -1,3 +1,7 @@
+import type { LegacyFileSession } from "../device-broker/legacy-files.js";
+import { LegacyFiles } from "../device-broker/legacy-files.js";
+import type { LegacyOperation, LegacyOperationPort } from "../device-broker/broker-port.js";
+import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile, symlink } from "node:fs/promises";
 import os from "node:os";
@@ -9,6 +13,7 @@ import type { FileBatchRequest, FileBatchSnapshot } from "../../shared/api.js";
 const ROOT = "/home/root/lms2012/prjs";
 const directories: string[] = [];
 afterEach(async () => {
+  vi.useRealTimers();
   for (const dir of directories.splice(0)) await rm(dir, { recursive: true, force: true });
 });
 function deferred<T>() {
@@ -27,6 +32,10 @@ async function setup() {
   let locked = false;
   const abort = new AbortController();
   const session = {
+    confirm: async <T>(work: () => Promise<T>): Promise<T> => work(),
+    renewConfirmation() {},
+    remaining: () => ({ idleRemainingMs: 120000, totalRemainingMs: 600000 }),
+    cancel: async () => {},
     descriptor: { id: "mock", name: "EV3", transport: "mock" as const },
     connected: true,
     list: vi.fn(async (directory: string): Promise<RemoteEntry[]> => {
@@ -75,7 +84,8 @@ async function setup() {
     readMonitor: vi.fn(),
     readInputModes: vi.fn(),
     setInputMode: vi.fn(),
-  } satisfies DeviceSession;
+  } satisfies DeviceSession &
+    Pick<LegacyFileSession, "confirm" | "renewConfirmation" | "remaining" | "cancel">;
   const dialog = { showOpenDialog: vi.fn(async () => ({ canceled: false, filePaths: [dir] })) };
   const changed = vi.fn();
   const manager = new FileBatchManager(
@@ -118,6 +128,67 @@ async function setup() {
   };
 }
 describe("prepared EV3 batches", () => {
+  it("F15 a late native dialog cannot revive a batch after its real confirmation lease expires", async () => {
+    const h = await setup();
+    await writeFile(path.join(h.dir, "late.rbf"), "program");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    const execute = vi.fn<LegacyOperation["execute"]>(async () => ({
+      value: { kind: "entries", entries: [] },
+      dispatch: "sent",
+      stopConfirmation: "not-required",
+      error: null,
+    }));
+    const operation: LegacyOperation = {
+      operationId: randomUUID(),
+      execute,
+      renewConfirmation: vi.fn(),
+      cancel: vi.fn(async () => {}),
+      finish: vi.fn(async () => {}),
+    };
+    const operations: LegacyOperationPort = { begin: vi.fn(async () => operation) };
+    const files = new LegacyFiles(
+      operations,
+      () => ({
+        kind: "core",
+        adapter: "remote-files",
+        hostEpoch: randomUUID(),
+        workbenchInstance: randomUUID(),
+        authorityContext: null,
+      }),
+      () => performance.now(),
+    );
+    const response = deferred<{ canceled: boolean; filePaths: string[] }>();
+    h.dialog.showOpenDialog.mockReturnValue(response.promise);
+    const manager = new FileBatchManager(
+      files.run.bind(files),
+      h.dialog,
+      (event) => h.events.push(event),
+      h.changed,
+    );
+    const pending = manager.prepare(
+      {
+        sessionId: "session",
+        requestId: "late",
+        path: ROOT,
+        action: "upload",
+        paths: [],
+        source: "files",
+        locale: "en",
+      },
+      1,
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.dialog.showOpenDialog).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(120000);
+    const expired = await pending;
+    expect(expired.phase).toBe("failed");
+    response.resolve({ canceled: false, filePaths: [path.join(h.dir, "late.rbf")] });
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(manager.execute(expired, "replace", 1)).rejects.toThrow("expired");
+    expect(execute).not.toHaveBeenCalled();
+    expect(operation.cancel).toHaveBeenCalledOnce();
+    expect(h.events.some((event) => event.phase === "ready")).toBe(false);
+  });
   it("preserves nested/empty folders and empty files, and reserves the device through confirmation", async () => {
     const h = await setup();
     await mkdir(path.join(h.dir, "robot", "empty"), { recursive: true });

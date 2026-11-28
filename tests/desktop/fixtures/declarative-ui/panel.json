@@ -1,0 +1,294 @@
+{
+  "kind": "panel",
+  "data": {
+    "ticks": {
+      "schema": {
+        "type": "string",
+        "maxLength": 64,
+        "nullable": false
+      },
+      "initial": "tick:0"
+    },
+    "progress": {
+      "schema": {
+        "type": "number",
+        "min": 0,
+        "max": 100,
+        "integer": true,
+        "nullable": false
+      },
+      "initial": 0
+    }
+  },
+  "fields": {
+    "speed": {
+      "schema": {
+        "type": "number",
+        "min": -100,
+        "max": 100,
+        "integer": true,
+        "nullable": false
+      },
+      "initial": 20,
+      "required": true
+    },
+    "level": {
+      "schema": {
+        "type": "number",
+        "min": 0,
+        "max": 100,
+        "integer": true,
+        "nullable": false
+      },
+      "initial": 50,
+      "required": true
+    },
+    "mode": {
+      "schema": {
+        "type": "enum",
+        "values": ["coast", "brake"],
+        "nullable": false
+      },
+      "initial": "brake",
+      "required": true
+    },
+    "enabled": {
+      "schema": {
+        "type": "boolean",
+        "nullable": false
+      },
+      "initial": true,
+      "required": true
+    },
+    "note": {
+      "schema": {
+        "type": "string",
+        "maxLength": 64,
+        "nullable": false
+      },
+      "initial": "🙂界",
+      "required": true
+    }
+  },
+  "root": "root",
+  "nodes": [
+    {
+      "id": "root",
+      "type": "group",
+      "layout": "stack",
+      "children": [
+        "text",
+        "help",
+        "note",
+        "speed",
+        "level",
+        "mode",
+        "enabled",
+        "activate",
+        "hold",
+        "status",
+        "alert",
+        "progress",
+        "details"
+      ]
+    },
+    {
+      "id": "text",
+      "type": "text",
+      "value": {
+        "text": {
+          "en": "<b>literal, not HTML</b>"
+        }
+      },
+      "emphasis": "normal"
+    },
+    {
+      "id": "help",
+      "type": "help",
+      "value": {
+        "text": {
+          "en": "Public UI test",
+          "zh-TW": "公開 UI 測試"
+        }
+      }
+    },
+    {
+      "id": "note",
+      "type": "textInput",
+      "field": "note",
+      "label": {
+        "en": "Note",
+        "zh-TW": "備註"
+      }
+    },
+    {
+      "id": "speed",
+      "type": "number",
+      "field": "speed",
+      "label": {
+        "en": "Speed",
+        "zh-TW": "速度"
+      },
+      "step": 1
+    },
+    {
+      "id": "level",
+      "type": "range",
+      "field": "level",
+      "label": {
+        "en": "Level",
+        "zh-TW": "等級"
+      },
+      "step": 1
+    },
+    {
+      "id": "mode",
+      "type": "choice",
+      "field": "mode",
+      "label": {
+        "en": "Mode",
+        "zh-TW": "模式"
+      },
+      "presentation": "segmented",
+      "options": [
+        {
+          "value": "coast",
+          "label": {
+            "en": "Coast",
+            "zh-TW": "滑行"
+          }
+        },
+        {
+          "value": "brake",
+          "label": {
+            "en": "Brake",
+            "zh-TW": "煞車"
+          }
+        }
+      ]
+    },
+    {
+      "id": "enabled",
+      "type": "boolean",
+      "field": "enabled",
+      "label": {
+        "en": "Enabled",
+        "zh-TW": "啟用"
+      }
+    },
+    {
+      "id": "activate",
+      "type": "action",
+      "label": {
+        "en": "Activate",
+        "zh-TW": "執行"
+      },
+      "variant": "primary",
+      "action": {
+        "kind": "command",
+        "command": "acceptance.ui.activate",
+        "arguments": {
+          "speed": {
+            "ref": {
+              "scope": "form",
+              "key": "speed"
+            }
+          },
+          "mode": {
+            "ref": {
+              "scope": "form",
+              "key": "mode"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "hold",
+      "type": "holdAction",
+      "label": {
+        "en": "Hold",
+        "zh-TW": "按住"
+      },
+      "command": "acceptance.ui.hold",
+      "arguments": {
+        "speed": {
+          "ref": {
+            "scope": "form",
+            "key": "speed"
+          }
+        },
+        "mode": {
+          "ref": {
+            "scope": "form",
+            "key": "mode"
+          }
+        }
+      }
+    },
+    {
+      "id": "status",
+      "type": "status",
+      "text": {
+        "ref": {
+          "scope": "data",
+          "key": "ticks"
+        }
+      },
+      "tone": "info"
+    },
+    {
+      "id": "alert",
+      "type": "alert",
+      "text": {
+        "text": {
+          "en": "Acceptance warning",
+          "zh-TW": "驗收警告"
+        }
+      },
+      "severity": "warning",
+      "visibleWhen": {
+        "op": "eq",
+        "left": {
+          "scope": "form",
+          "key": "enabled"
+        },
+        "right": true
+      }
+    },
+    {
+      "id": "progress",
+      "type": "progress",
+      "value": {
+        "ref": {
+          "scope": "data",
+          "key": "progress"
+        }
+      },
+      "max": 100,
+      "label": {
+        "en": "Progress",
+        "zh-TW": "進度"
+      }
+    },
+    {
+      "id": "details",
+      "type": "keyValue",
+      "rows": [
+        {
+          "id": "value",
+          "label": {
+            "en": "Value",
+            "zh-TW": "數值"
+          },
+          "value": {
+            "ref": {
+              "scope": "data",
+              "key": "progress"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

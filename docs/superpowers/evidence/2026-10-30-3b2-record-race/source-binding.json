@@ -1,0 +1,32 @@
+{
+  "commit": "5f94e72541b539c915b60ef0d6694356eb1820d2",
+  "testSourceSha256": "0c2035aa9ed49e235b50124c427c85f80d514f95c2d6080244260e03c8edd273",
+  "productSources": [
+    {
+      "relative": "./host-port.ts",
+      "sha256": "8fe51e81b3d38d070867194574b02327a49a5503f407072a182d899e47a34f89"
+    },
+    {
+      "relative": "./record-service.ts",
+      "sha256": "fe407c086d41230387723f142fec0eab5f1189dc3fbe32f8a2e1b0c6b926262c"
+    },
+    {
+      "relative": "./settings-service.ts",
+      "sha256": "fb28a4a208e57412f36176e51b7286a5748c00a2c3d866b414863c5798d15893"
+    },
+    {
+      "relative": "./worker.ts",
+      "sha256": "62f4a41364b20e8bc71fb3ef73367dda9f883aa89f92ecc43fec3c508dbb50a7"
+    },
+    {
+      "relative": "./atomic-store.ts",
+      "sha256": "2534b9f9ea9ac90397e9b3530802abd8b9ba429ee2b1c7bfa79e2962c0e2548f"
+    },
+    {
+      "relative": "./filesystem.ts",
+      "sha256": "b58286a73d1635e6c129372bf52604d005c0280a0be30e14e0ac87ce13ac2728"
+    }
+  ],
+  "originalCandidateField": null,
+  "method": "Controller compared original tested source hashes to committed blobs; no rerun or receipt rewrite."
+}
