@@ -67,8 +67,16 @@ function Read-Label($path) {
     return $buffer.ToString()
 }
 function Write-Label($path,$before,$requested) {
-    $rc=[W17]::WriteLabel($path,$before,$requested)
-    Write-Verbose "WriteLabel path=$path rc=$rc before=$before requested=$requested"
+    # Two hex characters per descriptor byte, plus space for optional SDDL.
+    $capacity=262145
+    $label=[Text.StringBuilder]::new($capacity)
+    $beforeDacl=[Text.StringBuilder]::new($capacity)
+    $observedDacl=[Text.StringBuilder]::new($capacity)
+    $rc=[W17]::WriteLabel($path,$before,$requested,$label,$beforeDacl,$observedDacl,$capacity)
+    foreach ($field in @($label,$beforeDacl,$observedDacl)) {
+        if (!$field.Length) { [void]$field.Append('unavailable') }
+    }
+    Write-Verbose "WriteLabel path=$path rc=$rc before=$before requested=$requested observedLabel=$label beforeDacl=$beforeDacl observedDacl=$observedDacl"
     if ($rc -eq 0x20000001) { throw "Mandatory label rollback or unchanged DACL could not be verified $path" }
     Check $rc 'write mandatory label'
 }

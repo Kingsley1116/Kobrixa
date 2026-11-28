@@ -176,7 +176,8 @@ public static class W17 {
   [DllImport(@"W17_DLL", ExactSpelling = true, CharSet = CharSet.Unicode)]
   public static extern uint ReadLabel(string path, StringBuilder buffer, uint capacity);
   [DllImport(@"W17_DLL", ExactSpelling = true, CharSet = CharSet.Unicode)]
-  public static extern uint WriteLabel(string path, string expectedBefore, string requested);
+  public static extern uint WriteLabel(string path, string expectedBefore, string requested,
+      StringBuilder observedLabel, StringBuilder beforeDacl, StringBuilder observedDacl, uint capacity);
   [DllImport(@"W17_DLL", ExactSpelling = true, CharSet = CharSet.Unicode)]
   public static extern uint WriteDacl(string path, string expectedBefore, string sddl, StringBuilder observed, uint capacity);
   [DllImport(@"W17_DLL", ExactSpelling = true, CharSet = CharSet.Unicode)]

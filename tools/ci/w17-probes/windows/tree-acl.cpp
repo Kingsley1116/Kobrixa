@@ -407,21 +407,6 @@ WriteDacl(const wchar_t *path, const wchar_t *expectedBefore, const wchar_t *req
 }
 
 namespace {
-// Journal just the label ACEs, independent of SACL control flags. An empty
-// SACL ("S:") is also the label-only write request for removing the label.
-wstring label(HANDLE handle) {
-  auto raw = queryDescriptor(handle, LABEL_SECURITY_INFORMATION);
-  BOOL present, defaulted;
-  PACL acl = nullptr;
-  check(GetSecurityDescriptorSacl(raw.data(), &present, &acl, &defaulted));
-  if (!present || !acl || !acl->AceCount)
-    return L"S:";
-  SECURITY_DESCRIPTOR sd{};
-  check(InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION));
-  check(SetSecurityDescriptorSacl(&sd, TRUE, acl, FALSE));
-  return sddl(&sd, SACL_SECURITY_INFORMATION);
-}
-
 auto parseLabel(const wchar_t *value) {
   PSECURITY_DESCRIPTOR sd = nullptr;
   check(ConvertStringSecurityDescriptorToSecurityDescriptorW(
@@ -429,18 +414,120 @@ auto parseLabel(const wchar_t *value) {
   return std::unique_ptr<void, decltype(&LocalFree)>(sd, LocalFree);
 }
 
+// Preserve the entire ordered ACE sequence, including header flags, mask and SID.
+auto labelAces(PSECURITY_DESCRIPTOR descriptor) {
+  BOOL present, defaulted;
+  PACL acl = nullptr;
+  check(GetSecurityDescriptorSacl(descriptor, &present, &acl, &defaulted));
+  std::vector<std::vector<BYTE>> aces;
+  if (present && acl) {
+    for (DWORD i = 0; i < acl->AceCount; ++i) {
+      void *ace = nullptr;
+      check(GetAce(acl, i, &ace));
+      auto first = static_cast<const BYTE *>(ace);
+      aces.emplace_back(first, first + static_cast<const ACE_HEADER *>(ace)->AceSize);
+    }
+  }
+  return aces;
+}
+
+constexpr DWORD labelSections = SACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION;
+wstring labelString(PSECURITY_DESCRIPTOR descriptor, DWORD sections) {
+  BOOL present, defaulted;
+  PACL acl = nullptr;
+  check(GetSecurityDescriptorSacl(descriptor, &present, &acl, &defaulted));
+  if (!present || !acl || !acl->AceCount)
+    return L"S:";
+  SECURITY_DESCRIPTOR sd{};
+  check(InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION));
+  check(SetSecurityDescriptorSacl(&sd, TRUE, acl, FALSE));
+  return sddl(&sd, sections);
+}
+
+wstring journalLabel(PSECURITY_DESCRIPTOR descriptor) {
+  auto aces = labelAces(descriptor);
+  if (aces.empty())
+    return L"S:";
+  // Use the durable intent's spelling for precisely this one inheritable low ACE.
+  constexpr auto low = L"S:(ML;OICI;NW;;;LW)";
+  if (aces == labelAces(parseLabel(low).get()))
+    return low;
+  auto text = labelString(descriptor, labelSections);
+  if (labelAces(parseLabel(text.c_str()).get()) != aces)
+    throw DWORD(ERROR_INVALID_DATA);
+  return text;
+}
+
+wstring label(HANDLE handle) {
+  return journalLabel(queryDescriptor(handle, LABEL_SECURITY_INFORMATION).data());
+}
+
+// Keep the exact comparison bytes even if Windows cannot render them as SDDL.
+struct DescriptorOutput {
+  wchar_t *buffer;
+  DWORD capacity;
+
+  void record(std::vector<BYTE> &raw, DWORD section) const {
+    constexpr wchar_t digits[] = L"0123456789abcdef";
+    if (raw.size() * 2 >= capacity)
+      throw DWORD(ERROR_INSUFFICIENT_BUFFER);
+    size_t i = 0;
+    for (BYTE b : raw) {
+      buffer[i++] = digits[b >> 4];
+      buffer[i++] = digits[b & 15];
+    }
+    buffer[i] = L'\0';
+    try {
+      auto text = L"|" + sddl(raw.data(), section);
+      if (section == labelSections)
+        text += L" legacyLabel=" + labelString(raw.data(), SACL_SECURITY_INFORMATION);
+      if (i + text.size() < capacity) {
+        text.copy(buffer + i, text.size());
+        buffer[i + text.size()] = L'\0';
+      }
+    } catch (...) {
+      // The full raw descriptor is already available.
+    }
+  }
+};
+
+struct LabelSnapshot {
+  std::vector<BYTE> labelSd, daclSd;
+
+  static DWORD readSection(HANDLE handle, DWORD section, std::vector<BYTE> &raw,
+                           DescriptorOutput out) {
+    try {
+      raw = queryDescriptor(handle, section);
+      out.record(raw, section == LABEL_SECURITY_INFORMATION ? labelSections : section);
+      return ERROR_SUCCESS;
+    } catch (DWORD error) {
+      return error;
+    } catch (...) {
+      return ERROR_READ_FAULT;
+    }
+  }
+
+  DWORD read(HANDLE handle, DescriptorOutput labelOut, DescriptorOutput daclOut) {
+    DWORD labelRc = readSection(handle, LABEL_SECURITY_INFORMATION, labelSd, labelOut);
+    DWORD daclRc = readSection(handle, DACL_SECURITY_INFORMATION, daclSd, daclOut);
+    return labelRc ? labelRc : daclRc;
+  }
+};
+
 DWORD setAndVerifyLabel(HANDLE handle, PSECURITY_DESCRIPTOR install, PSECURITY_DESCRIPTOR rollback,
-                        const wstring &requested, const wstring &before) {
-  const auto originalDacl = dacl(handle);
+                        const std::vector<BYTE> &originalDacl, DescriptorOutput labelOut,
+                        DescriptorOutput daclOut) {
   const auto status = NtSetSecurityObject(handle, LABEL_SECURITY_INFORMATION, install);
+  LabelSnapshot observed;
+  DWORD failure = observed.read(handle, labelOut, daclOut);
   if (status < 0)
     return RtlNtStatusToDosError(status);
-  DWORD failure = ERROR_INVALID_DATA;
   try {
-    const auto observed = label(handle);
-    const auto observedDacl = dacl(handle);
-    if (observed == requested && observedDacl == originalDacl)
-      return ERROR_SUCCESS;
+    if (!failure) {
+      if (labelAces(observed.labelSd.data()) == labelAces(install) && observed.daclSd == originalDacl)
+        return ERROR_SUCCESS;
+      failure = ERROR_INVALID_DATA;
+    }
   } catch (DWORD error) {
     failure = error;
   } catch (...) {
@@ -449,7 +536,8 @@ DWORD setAndVerifyLabel(HANDLE handle, PSECURITY_DESCRIPTOR install, PSECURITY_D
   constexpr DWORD rollbackFailed = APPLICATION_ERROR_MASK | 1;
   try {
     if (NtSetSecurityObject(handle, LABEL_SECURITY_INFORMATION, rollback) < 0 ||
-        label(handle) != before || dacl(handle) != originalDacl)
+        labelAces(queryDescriptor(handle, LABEL_SECURITY_INFORMATION).data()) != labelAces(rollback) ||
+        dacl(handle) != originalDacl)
       return rollbackFailed;
   } catch (...) {
     return rollbackFailed;
@@ -477,18 +565,31 @@ ReadLabel(const wchar_t *path, wchar_t *buffer, DWORD capacity) try {
 }
 
 extern "C" __declspec(dllexport) DWORD WINAPI
-WriteLabel(const wchar_t *path, const wchar_t *expectedBefore, const wchar_t *requested) try {
+WriteLabel(const wchar_t *path, const wchar_t *expectedBefore, const wchar_t *requested,
+           wchar_t *observedLabel, wchar_t *beforeDacl, wchar_t *observedDacl, DWORD capacity) try {
+  if (!capacity || !observedLabel || !beforeDacl || !observedDacl)
+    return ERROR_INVALID_PARAMETER;
+  *observedLabel = *beforeDacl = *observedDacl = L'\0';
   File reader(path, FILE_READ_ATTRIBUTES | READ_CONTROL);
   Entry entry;
   check(GetFileInformationByHandle(reader.handle, &entry.info));
   File file(path, FILE_READ_ATTRIBUTES | READ_CONTROL | WRITE_OWNER);
   verifyFile(file, entry);
-  const auto before = label(file.handle);
+  DescriptorOutput labelOut{observedLabel, capacity}, daclOut{observedDacl, capacity};
+  LabelSnapshot initial;
+  DWORD rc = initial.read(file.handle, labelOut, {beforeDacl, capacity});
+  if (!initial.daclSd.empty())
+    daclOut.record(initial.daclSd, DACL_SECURITY_INFORMATION);
+  if (rc)
+    return rc;
+  const auto before = journalLabel(initial.labelSd.data());
   if (before != expectedBefore)
     return ERROR_REVISION_MISMATCH;
   auto install = parseLabel(requested);
   auto rollback = parseLabel(before.c_str());
-  return setAndVerifyLabel(file.handle, install.get(), rollback.get(), requested, before);
+  // An unsuccessful post-set query must never display a stale pre-set value.
+  *observedLabel = *observedDacl = L'\0';
+  return setAndVerifyLabel(file.handle, install.get(), rollback.get(), initial.daclSd, labelOut, daclOut);
 } catch (DWORD error) {
   return error;
 } catch (...) {

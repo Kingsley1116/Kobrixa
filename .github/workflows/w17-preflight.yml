@@ -55,7 +55,7 @@ permissions:
 
 jobs:
   preflight:
-    if: github.run_number <= 6 && github.run_attempt == 1 && true
+    if: github.run_number <= 7 && github.run_attempt == 1 && true
     runs-on: windows-2022
     timeout-minutes: 20
     steps:
