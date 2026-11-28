@@ -242,7 +242,9 @@ jobs:
             platform: darwin
             arch: arm64
     runs-on: ${{ matrix.os }}
-    timeout-minutes: ${{ matrix.platform == 'darwin' && 50 || 60 }}
+    # Hosted runners take 42-47 minutes on Windows and Linux and about 57 on
+    # macOS for the full 1605-case matrix (about 31 locally).
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
         with:
