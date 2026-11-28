@@ -1,3 +1,4 @@
+import { realWorkerFoundation, type PersistenceClockKind } from "./persistence/clock.js";
 import { DeviceSettingsMigrationGate } from "./persistence/device-settings-migration.js";
 import {
   createDeviceSettingsHost,
@@ -1380,10 +1381,15 @@ export function desktopDeviceSettings(composition: DesktopMainComposition): Devi
   return host;
 }
 export async function composeDesktopMain(
-  input: DesktopMainCompositionInput,
+  input: DesktopMainCompositionInput & { persistenceClockKind?: PersistenceClockKind },
   test?: DesktopCompositionTestOptions,
 ): Promise<DesktopMainComposition> {
-  const { profile, now, coreActions } = input.foundationOptions;
+  const { profile, coreActions } = input.foundationOptions;
+  const foundationOptions = realWorkerFoundation(
+    input.foundationOptions,
+    input.persistenceClockKind,
+  );
+  const { now } = foundationOptions;
   profile.assertHeld();
   if (input.legacyDeviceWriter && input.legacyDeviceWriter.sourceKey !== DEVICE_PREFERENCES_SOURCE)
     throw new Error("Foreign legacy device writer.");
@@ -1398,7 +1404,7 @@ export async function composeDesktopMain(
   const foundation = await input.createFoundation(
     input.legacyDeviceWriter
       ? {
-          ...input.foundationOptions,
+          ...foundationOptions,
           subscribeConnectionPolicy: (changed) => {
             policyListeners.add(changed);
             return () => {
@@ -1410,7 +1416,7 @@ export async function composeDesktopMain(
             return deviceSettings.connectionPolicy();
           },
         }
-      : input.foundationOptions,
+      : foundationOptions,
   );
   const broker = foundation.broker;
   let runtimeAttachment: UiRuntimeAttachment | undefined;
@@ -1588,6 +1594,7 @@ export async function composeDesktopMain(
         profile,
         root,
         workerEntry,
+        ...(input.persistenceClockKind ? { clockKind: input.persistenceClockKind } : {}),
         now,
         ...(test?.worker ? { testControl: test.worker.control } : {}),
       });

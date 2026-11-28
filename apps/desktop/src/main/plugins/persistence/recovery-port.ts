@@ -16,7 +16,12 @@ type Dependencies = {
   now(): number;
   wall(): number;
   actions: CoreActionValidationPort;
-  retry(owner: ResourceOwner, report: DrainReport, deadline: number): Promise<DrainReport>;
+  retry(
+    owner: ResourceOwner,
+    report: DrainReport,
+    deadline: number,
+    retainedTicket?: PublicationTicket | null,
+  ): Promise<DrainReport>;
   discard(
     owner: ResourceOwner,
     report: DrainReport,
@@ -25,11 +30,16 @@ type Dependencies = {
   backend: PersistenceBackend;
   adapter: PersistenceActionAdapter;
   coreOwner(input: { sourceKey: string; scope: CoreWindowScope }): ResourceOwner | null;
-  changing?(owner: ResourceOwner): void;
+  changing?(owner: ResourceOwner, origin?: () => boolean): void;
   // Exact identity retirement is synchronous with durable removal. Reconciliation
   // below runs after releasing the mutation queue because it can join a drain.
   retired?(owner: ResourceOwner, report: DrainReport, ticket: PublicationTicket | null): void;
-  retried?(owner: ResourceOwner, report: DrainReport, deadline: number): Promise<void>;
+  retried?(
+    owner: ResourceOwner,
+    report: DrainReport,
+    deadline: number,
+    ticket?: PublicationTicket | null,
+  ): Promise<void>;
   discarded?(
     owner: ResourceOwner,
     report: DrainReport,
@@ -51,11 +61,82 @@ type Entry = {
   report: DrainReport;
   expires: number;
   restartRequired?: true;
+  dispositionFailed?: "retain" | "action" | "retry-blocked";
   actionIds: { retry: string; export: string; discard: string };
   evidence?: Pick<StoredRecovery, "ticket" | "sealedPin">;
 };
 export function createPersistenceRecovery(deps: Dependencies) {
   const entries = new Map<string, Entry>();
+  // Reserve a compact failure row before mutation admission. Pending slots do
+  // not expose actions or replace the last published snapshot.
+  const reservations = new Map<
+    string,
+    { entry: Entry; recordId: string | undefined; users: number }
+  >();
+  // A full report store can still owe a disposition. Keep only its identity
+  // and authority here; project the unavailable report when it is requested.
+  type Refusal = Pick<Entry, "owner" | "id" | "evidence"> & {
+    recordId?: string;
+    discardAction: string;
+    pendingSettings: boolean;
+  };
+  const refusals = new Map<string, Refusal>();
+  type IdentityKind = "owner" | "checkpoint" | "ticket";
+  const capacity = new Map<
+    string,
+    { source: string; owner: Set<string>; checkpoint: Set<string>; ticket: Set<string> }
+  >();
+  function reserveIdentity(owner: ResourceOwner, id: string, kind: IdentityKind) {
+    const key = ownerKey(owner);
+    let group = capacity.get(key);
+    if (!group) {
+      if (
+        capacity.size >= 1024 ||
+        [...capacity.values()].filter((row) => row.source === owner.sourceKey).length >= 64
+      )
+        limit();
+      group = {
+        source: owner.sourceKey,
+        owner: new Set(),
+        checkpoint: new Set(),
+        ticket: new Set(),
+      };
+      capacity.set(key, group);
+    }
+    if (group.owner.has(id) || group.checkpoint.has(id) || group.ticket.has(id)) return;
+    const slots = group[kind],
+      bound = kind === "owner" ? 1 : kind === "checkpoint" ? 64 : 1024;
+    if (slots.size >= bound) limit();
+    slots.add(id);
+  }
+  function releaseIdentity(owner: ResourceOwner, id: string) {
+    if (refusals.has(id)) return;
+    const key = ownerKey(owner),
+      group = capacity.get(key);
+    if (!group) return;
+    group.owner.delete(id);
+    group.checkpoint.delete(id);
+    group.ticket.delete(id);
+    if (!group.owner.size && !group.ticket.size && !group.checkpoint.size) capacity.delete(key);
+  }
+  function refusalEntry(row: Refusal): Entry {
+    return {
+      id: row.id,
+      owner: row.owner,
+      expires: Infinity,
+      dispositionFailed: "retain",
+      actionIds: { retry: "", export: "", discard: row.discardAction },
+      report: {
+        state: "uncertain",
+        blocker: true,
+        records: [],
+        errors: [],
+        pendingSettings: row.pendingSettings,
+        recovery: row.id,
+      },
+      ...(row.evidence ? { evidence: row.evidence } : {}),
+    };
+  }
   const mutations = new Map<string, { owner: ResourceOwner; tail: Promise<void>; count: number }>();
   let pendingMutations = 0;
   function mutate<T>(owner: ResourceOwner, operation: () => Promise<T>): Promise<T> {
@@ -81,6 +162,91 @@ export function createPersistenceRecovery(deps: Dependencies) {
       () => {},
     );
     return run;
+  }
+  const dispositions = new Set<{ owner: ResourceOwner; report: DrainReport }>();
+  function disposition<T>(
+    owner: ResourceOwner,
+    report: DrainReport,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const pending = { owner, report };
+    const work = mutate(owner, operation);
+    dispositions.add(pending);
+    return work.finally(() => {
+      dispositions.delete(pending);
+    });
+  }
+
+  // Sample admission data synchronously. Publish a queued failure before the
+  // next mutation can replace or remove the identified entry.
+  async function claimedDisposition<T>(
+    entry: Entry,
+    prepare: (preserveProjection: () => void) => () => Promise<T>,
+  ): Promise<T> {
+    const refusal = refusals.get(entry.id);
+    const identified = () =>
+      refusal ? refusals.get(entry.id) === refusal : entries.get(entry.id) === entry;
+    let preserve = false;
+    const publishFailure = () => {
+      if (!identified()) return;
+      if (preserve) {
+        entry.dispositionFailed ??= "retry-blocked";
+        revision++;
+        changed();
+      } else failed(entry, "action");
+    };
+    let work: Promise<T>;
+    try {
+      const operation = prepare(() => {
+        preserve = true;
+      });
+      work = disposition(entry.owner, entry.report, async () => {
+        try {
+          if (!identified()) stale();
+          return await operation();
+        } catch (error) {
+          publishFailure();
+          throw error;
+        } finally {
+          // Revoke reports before the next queued retain can test its revision.
+          deps.changing?.(entry.owner);
+        }
+      });
+    } catch (error) {
+      publishFailure();
+      deps.changing?.(entry.owner);
+      throw error;
+    }
+    deps.changing?.(entry.owner);
+    return work;
+  }
+  function fits(owner: ResourceOwner, id: string, candidate: DrainReport) {
+    const size = chargeBytes(candidate);
+    let host = size,
+      source = size;
+    const charge = (other: Entry) => {
+      if (other.id === id) return;
+      const bytes = Math.max(chargeBytes(other.report), pendingBytes.get(other.id) ?? 0);
+      host += bytes;
+      if (other.owner.sourceKey === owner.sourceKey) source += bytes;
+    };
+    for (const row of entries.values()) charge(row);
+    for (const { entry } of reservations.values()) if (!entries.has(entry.id)) charge(entry);
+    return size <= 8192 && host <= 67108864 && source <= 4194304;
+  }
+  const pendingBytes = new Map<string, number>();
+  function chargeBytes(report: DrainReport) {
+    return Math.max(
+      Buffer.byteLength(JSON.stringify(report)),
+      Buffer.byteLength(JSON.stringify({ ...report, state: "uncertain", blocker: true })),
+    );
+  }
+  function failed(entry: Entry, operation: "retain" | "action", origin?: () => boolean) {
+    entry.dispositionFailed = operation;
+    entry.report = { ...entry.report, state: "uncertain", blocker: true };
+    revision++;
+    changed();
+    if (operation === "retain") deps.changing?.(entry.owner, origin);
   }
   let revision = 0;
   const listeners = new Set<() => void>();
@@ -139,7 +305,16 @@ export function createPersistenceRecovery(deps: Dependencies) {
       sealedPin: entry.evidence ? entry.evidence.sealedPin : (previous?.sealedPin ?? null),
       expiresAt: Number.isFinite(entry.expires) ? projectWallExpiry(deps, entry.expires) : null,
     });
-    changed();
+  }
+  async function persistReplacement(entry: Entry, candidate: Entry) {
+    if (!fits(entry.owner, entry.id, candidate.report)) limit();
+    pendingBytes.set(entry.id, chargeBytes(candidate.report));
+    try {
+      await persist(candidate);
+      Object.assign(entry, candidate);
+    } finally {
+      pendingBytes.delete(entry.id);
+    }
   }
   function expire(entry: Entry) {
     if (
@@ -167,7 +342,10 @@ export function createPersistenceRecovery(deps: Dependencies) {
     action: CoreActionReference,
     kind: "persistence-retry" | "persistence-discard" | "persistence-export",
   ) {
-    const entry = entries.get(id);
+    const refusal = refusals.get(id);
+    const entry =
+      entries.get(id) ??
+      (refusal && kind === "persistence-discard" ? refusalEntry(refusal) : undefined);
     if (!entry) stale();
     expire(entry);
     if (!deps.actions.claim(action, { kind, recovery: id }))
@@ -179,6 +357,27 @@ export function createPersistenceRecovery(deps: Dependencies) {
     message: "Restart Kobrixa to verify storage before writing to this source again.",
   };
   const api = {
+    reserveIdentity,
+    releaseIdentity,
+    releaseOwner(owner: ResourceOwner) {
+      const key = ownerKey(owner),
+        group = capacity.get(key);
+      if (!group) return;
+      for (const slot of [group.owner, group.checkpoint, group.ticket])
+        for (const id of slot) releaseIdentity(owner, id);
+    },
+    blocked(owner: ResourceOwner, targets?: ReadonlySet<string>) {
+      const matches = (entry: { owner: ResourceOwner; report: DrainReport }) =>
+        ownerKey(entry.owner) === ownerKey(owner) &&
+        (!targets ||
+          !entry.report.records.length ||
+          entry.report.records.some((r) => targets.has(r.id)));
+      return (
+        [...refusals.values()].some((r) => ownerKey(r.owner) === ownerKey(owner)) ||
+        [...dispositions].some(matches) ||
+        [...entries.values()].some((e) => e.dispositionFailed && matches(e))
+      );
+    },
     retainRestartBlocker(owner: ResourceOwner, id: Handle): DrainReport {
       const existing = entries.get(id);
       if (existing) return structuredClone(existing.report);
@@ -221,137 +420,197 @@ export function createPersistenceRecovery(deps: Dependencies) {
       evidence?: Pick<StoredRecovery, "ticket" | "sealedPin">,
       current: () => boolean = () => true,
     ): Promise<DrainReport> {
-      return mutate(owner, async () => {
-        // Check after acquiring the queue. Once a write starts, the queue covers
-        // every persist await; a core action can only mutate after it finishes.
-        if (!current()) return structuredClone(report);
-        const existing = report.recovery
-          ? entries.get(report.recovery)
-          : [...entries.values()].find(
-              (entry) =>
-                !entry.restartRequired &&
-                ownerKey(entry.owner) === ownerKey(owner) &&
-                entry.report.records[0]?.id === report.records[0]?.id,
-            );
-        const size = Buffer.byteLength(JSON.stringify(report));
-        if (report.records.length > 2 || report.errors.length > 16 || size > 8192) limit();
-        const retained = [...entries.values()].filter((entry) => entry !== existing);
-        if (
-          retained.reduce(
-            (total, entry) => total + Buffer.byteLength(JSON.stringify(entry.report)),
-            size,
-          ) > 67108864 ||
-          retained
-            .filter((entry) => entry.owner.sourceKey === owner.sourceKey)
-            .reduce(
-              (total, entry) => total + Buffer.byteLength(JSON.stringify(entry.report)),
-              size,
-            ) > 4194304
-        )
-          limit();
-        const expires = Math.min(
-          ...report.records.map((r) =>
-            r.expiresAt === undefined
-              ? Infinity
-              : deps.now() + Math.max(0, r.expiresAt - deps.wall()),
-          ),
-        );
-        const entry: Entry = existing ?? {
-          id: report.recovery ?? randomUUID(),
+      if (!current()) return structuredClone(report);
+      const refusal = report.recovery
+        ? refusals.get(report.recovery)
+        : [...refusals.values()].find(
+            (r) => ownerKey(r.owner) === ownerKey(owner) && r.recordId === report.records[0]?.id,
+          );
+      if (refusal) {
+        if (ownerKey(refusal.owner) !== ownerKey(owner)) stale();
+        return refusalEntry(refusal).report;
+      }
+      const existing = report.recovery
+        ? entries.get(report.recovery)
+        : [...entries.values()].find(
+            (entry) =>
+              !entry.restartRequired &&
+              ownerKey(entry.owner) === ownerKey(owner) &&
+              entry.report.records[0]?.id === report.records[0]?.id,
+          );
+      if (existing && ownerKey(existing.owner) !== ownerKey(owner)) stale();
+      const pending = report.recovery
+        ? reservations.get(report.recovery)
+        : [...reservations.values()].find(
+            (r) =>
+              ownerKey(r.entry.owner) === ownerKey(owner) && r.recordId === report.records[0]?.id,
+          );
+      if (pending && ownerKey(pending.entry.owner) !== ownerKey(owner)) stale();
+      const id = existing?.id ?? pending?.entry.id ?? report.recovery ?? randomUUID();
+      const placeholder: DrainReport = {
+        state: "uncertain",
+        blocker: true,
+        pendingSettings: report.pendingSettings,
+        records: [],
+        errors: [],
+        recovery: id,
+      };
+      const reserved: Entry = existing ??
+        pending?.entry ?? {
+          id,
           owner: { ...owner },
-          report,
-          expires,
+          report: placeholder,
+          expires: Infinity,
           actionIds: { retry: randomUUID(), export: randomUUID(), discard: randomUUID() },
         };
-        if (evidence) entry.evidence = structuredClone(evidence);
-        entry.expires = Math.min(entry.expires, expires);
-        entry.report = structuredClone(report);
-        entry.report.recovery = entry.id;
-        for (const record of entry.report.records)
-          if (record.expiresAt !== undefined)
-            record.expiresAt = Math.min(record.expiresAt, projectWallExpiry(deps, entry.expires));
-        if (entry.report.state === "retryable") entry.report.retryAction = entry.actionIds.retry;
-        entries.set(entry.id, entry);
-        revision++;
-        await persist(entry).catch(() => {
-          entry.report.state = "uncertain";
-          entry.report.blocker = true;
-          revision++;
+      if (!existing && !pending && !fits(owner, id, placeholder)) {
+        // Identity admission is independent of the report-byte and mutation
+        // budgets. Nothing enters the queue until one of these slots exists.
+        reserveIdentity(owner, id, "ticket");
+        refusals.set(id, {
+          id,
+          owner: { ...owner },
+          discardAction: reserved.actionIds.discard,
+          pendingSettings: report.pendingSettings,
+          ...(report.records[0] ? { recordId: report.records[0].id } : {}),
+          ...(evidence ? { evidence: structuredClone(evidence) } : {}),
         });
-        return structuredClone(entry.report);
-      });
+        revision++;
+        changed();
+        deps.changing?.(owner, current);
+        limit();
+      }
+      const slot = pending ?? { entry: reserved, recordId: report.records[0]?.id, users: 0 };
+      reservations.set(id, slot);
+      slot.users++;
+      try {
+        return await disposition(owner, report, async () => {
+          if (!current()) return structuredClone(report);
+          const entry = entries.get(id) ?? reserved;
+          const projected = structuredClone(report);
+          projected.recovery = id;
+          if (projected.state === "retryable") projected.retryAction = entry.actionIds.retry;
+          if (report.records.length > 2 || report.errors.length > 16) limit();
+          const expires = Math.min(
+            ...report.records.map((r) =>
+              r.expiresAt === undefined
+                ? Infinity
+                : deps.now() + Math.max(0, r.expiresAt - deps.wall()),
+            ),
+          );
+          if (entry.dispositionFailed) {
+            if (entry.dispositionFailed !== "action")
+              await persist(entry).catch(() => failed(entry, "retain", current));
+            return structuredClone(entry.report);
+          }
+          const projectedExpires = Math.min(entry.expires, expires);
+          for (const record of projected.records)
+            if (record.expiresAt !== undefined)
+              record.expiresAt = Math.min(
+                record.expiresAt,
+                projectWallExpiry(deps, projectedExpires),
+              );
+          if (!fits(owner, id, projected)) limit();
+          if (evidence) entry.evidence = structuredClone(evidence);
+          entry.expires = projectedExpires;
+          entry.report = projected;
+          entries.set(entry.id, entry);
+          revision++;
+          await persist(entry).then(changed, () => failed(entry, "retain", current));
+          return structuredClone(entry.report);
+        });
+      } catch (error) {
+        const entry = entries.get(id) ?? reserved;
+        if (evidence && !entry.evidence) entry.evidence = structuredClone(evidence);
+        entries.set(id, entry);
+        failed(entry, "retain", current);
+        throw error;
+      } finally {
+        if (--slot.users === 0) reservations.delete(id);
+      }
     },
     recoverySnapshot(): PersistenceRecoverySnapshot {
       for (const entry of entries.values()) expire(entry);
       return {
         revision,
-        items: [...entries.values()].map((entry) => {
-          const record = entry.report.records.length === 1 ? entry.report.records[0] : undefined;
-          const payload = entry.report.records.some((r) => r.payload === "complete-staging")
-            ? ("complete-staging" as const)
-            : entry.report.records.some((r) => r.committedRevision !== null)
-              ? ("checkpoint-only" as const)
-              : ("none" as const);
-          return {
-            id: entry.id,
-            sourceKey: entry.owner.sourceKey,
-            pluginId: entry.owner.pluginId,
-            recordId: record?.id ?? null,
-            committedRevision: record?.committedRevision ?? null,
-            state: entry.report.state,
-            payload,
-            ...(entry.report.state === "retryable" && Number.isFinite(entry.expires)
-              ? { expiresAt: projectWallExpiry(deps, entry.expires) }
-              : {}),
-            ...(entry.restartRequired ? { restartRequired: true as const } : {}),
-            actions: entry.restartRequired
-              ? []
-              : [
-                  ...(entry.report.state === "retryable"
-                    ? [{ id: entry.actionIds.retry, kind: "retry" as const }]
-                    : []),
-                  ...(payload !== "none"
-                    ? [{ id: entry.actionIds.export, kind: "export" as const }]
-                    : []),
-                  { id: entry.actionIds.discard, kind: "discard" as const },
-                ],
-          };
-        }),
+        items: [...entries.values(), ...Array.from(refusals.values(), refusalEntry)].map(
+          (entry) => {
+            const record = entry.report.records.length === 1 ? entry.report.records[0] : undefined;
+            const payload = entry.report.records.some((r) => r.payload === "complete-staging")
+              ? ("complete-staging" as const)
+              : entry.report.records.some((r) => r.committedRevision !== null)
+                ? ("checkpoint-only" as const)
+                : ("none" as const);
+            return {
+              id: entry.id,
+              sourceKey: entry.owner.sourceKey,
+              pluginId: entry.owner.pluginId,
+              recordId: record?.id ?? null,
+              committedRevision: record?.committedRevision ?? null,
+              state: entry.report.state,
+              payload,
+              ...(entry.report.state === "retryable" && Number.isFinite(entry.expires)
+                ? { expiresAt: projectWallExpiry(deps, entry.expires) }
+                : {}),
+              ...(entry.restartRequired ? { restartRequired: true as const } : {}),
+              actions: entry.restartRequired
+                ? []
+                : [
+                    ...(entry.report.state === "retryable"
+                      ? [{ id: entry.actionIds.retry, kind: "retry" as const }]
+                      : []),
+                    ...(payload !== "none"
+                      ? [{ id: entry.actionIds.export, kind: "export" as const }]
+                      : []),
+                    { id: entry.actionIds.discard, kind: "discard" as const },
+                  ],
+            };
+          },
+        ),
       };
     },
     async retry(id: string, action: CoreActionReference) {
       const entry = checked(id, action, "persistence-retry");
       try {
-        if (entry.report.state !== "retryable" || deps.now() >= entry.expires) stale();
-        const deadline = Math.min(entry.expires, deps.now() + 10000);
-        deps.changing?.(entry.owner);
-        const saved = await mutate(entry.owner, async () => {
-          try {
-            if (
-              entries.get(id) !== entry ||
-              entry.report.state !== "retryable" ||
-              deps.now() >= deadline
-            )
+        let deadline: number = entry.expires;
+        const saved = await claimedDisposition(entry, (preserveProjection) => {
+          const admitted = deps.now();
+          deadline = Math.min(entry.expires, admitted + 10000);
+          if (admitted >= entry.expires) {
+            preserveProjection();
+            stale();
+          }
+          if (entry.report.state !== "retryable") stale();
+          return async () => {
+            if (entry.report.state !== "retryable") stale();
+            if (deps.now() >= deadline) {
+              preserveProjection();
               stale();
-            const result = await deps.retry(entry.owner, entry.report, deadline);
-            entry.report = structuredClone(result);
-            entry.report.recovery = entry.id;
-            for (const record of entry.report.records)
+            }
+            const result = await deps.retry(
+              entry.owner,
+              entry.report,
+              deadline,
+              entry.evidence?.ticket,
+            );
+            const candidate = { ...entry, report: structuredClone(result) };
+            candidate.report.recovery = entry.id;
+            for (const record of candidate.report.records)
               if (record.expiresAt !== undefined)
                 record.expiresAt = Math.min(
                   record.expiresAt,
                   projectWallExpiry(deps, entry.expires),
                 );
-            expire(entry);
+            expire(candidate);
+            if (candidate.report.blocker) candidate.dispositionFailed = "retry-blocked";
+            await persistReplacement(entry, candidate);
+            if (!entry.report.blocker) delete entry.dispositionFailed;
             revision++;
-            await persist(entry);
+            changed();
             return structuredClone(entry.report);
-          } finally {
-            // Also invalidates reports whose reads started while this action awaited I/O.
-            deps.changing?.(entry.owner);
-          }
+          };
         });
-        await deps.retried?.(entry.owner, saved, deadline);
+        await deps.retried?.(entry.owner, saved, deadline, entry.evidence?.ticket);
         return saved;
       } finally {
         deps.actions.complete(action);
@@ -360,35 +619,39 @@ export function createPersistenceRecovery(deps: Dependencies) {
     async discard(id: string, action: CoreActionReference) {
       const entry = checked(id, action, "persistence-discard");
       try {
-        if (entry.restartRequired) return structuredClone(entry.report);
-        deps.changing?.(entry.owner);
-        const result = await mutate(entry.owner, async () => {
-          try {
-            if (entries.get(id) !== entry) stale();
-            if (exporting.has(id) || (await reconcileExport(id))?.disposition === "unknown")
-              return {
-                report: { ...entry.report, state: "uncertain" as const, blocker: true },
-                ticket: null,
-              };
-            const ticket =
-              entry.evidence?.ticket ??
-              (await deps.backend.evidence.loadRecovery(id))?.ticket ??
-              null;
-            const report = await deps.discard(entry.owner, entry.report, ticket);
-            report.recovery = id;
-            // Unknown dispatch remains a blocker even after a user's discard request.
-            entry.report = report;
-            revision++;
-            if (!report.blocker) {
-              await deps.backend.evidence.removeRecovery(id);
-              entries.delete(id);
-              deps.retired?.(entry.owner, report, ticket);
-              changed();
-            } else await persist(entry);
-            return { report: structuredClone(report), ticket };
-          } finally {
-            deps.changing?.(entry.owner);
+        const result = await claimedDisposition(entry, () => async () => {
+          if (entry.restartRequired) {
+            failed(entry, "action");
+            return { report: structuredClone(entry.report), ticket: null };
           }
+          if (exporting.has(id) || (await reconcileExport(id))?.disposition === "unknown") {
+            failed(entry, "action");
+            return {
+              report: { ...entry.report, state: "uncertain" as const, blocker: true },
+              ticket: null,
+            };
+          }
+          const ticket =
+            entry.evidence?.ticket ??
+            (await deps.backend.evidence.loadRecovery(id))?.ticket ??
+            null;
+          const report = await deps.discard(entry.owner, entry.report, ticket);
+          report.recovery = id;
+          // Unknown dispatch remains a blocker even after a user's discard request.
+          revision++;
+          if (!report.blocker) {
+            await deps.backend.evidence.removeRecovery(id);
+            entries.delete(id);
+            refusals.delete(id);
+            releaseIdentity(entry.owner, id);
+            deps.retired?.(entry.owner, report, ticket);
+            changed();
+          } else {
+            const candidate: Entry = { ...entry, report, dispositionFailed: "action" };
+            await persistReplacement(entry, candidate);
+            changed();
+          }
+          return { report: structuredClone(report), ticket };
         });
         if (!result.report.blocker)
           await deps.discarded?.(entry.owner, result.report, result.ticket);

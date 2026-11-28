@@ -1,3 +1,4 @@
+import type { PersistenceClockKind } from "./clock.js";
 import { createHash } from "node:crypto";
 import type { DeviceDrainGrant, ReservationBinding } from "@kobrixa/plugin-runtime";
 import type {
@@ -108,6 +109,8 @@ import type { ExportDestination } from "./actions.js";
 import type { LegacySourceResolver } from "./import-sources.js";
 export type { PersistenceOwner } from "@kobrixa/plugin-runtime";
 export interface PersistenceBackend {
+  readonly clockKind?: PersistenceClockKind;
+  readonly now?: () => number;
   readonly engine: PersistenceEnginePort;
   readonly reads: PersistenceReadPort;
   readonly evidence: PersistenceEvidencePort; // AM-26
@@ -240,6 +243,7 @@ export type PersistenceBarrier = Readonly<{
   deadlineMonotonicMs: number;
 }>;
 
+export type StampedBarrierEvidence = PersistenceBarrierEvidence & { completedMonotonicMs: number };
 export type PersistenceBarrierEvidence = {
   restartBlocker?: Handle;
   state: "saved" | "failed" | "unknown";
@@ -267,11 +271,21 @@ export interface PersistenceEvidencePort {
   /** A successful worker reply confirmed cleanup of this exact record write. */
   confirmedAbort?(ticket: PublicationTicket): boolean;
   /** Preserve the captured identities for bounded drain reconciliation, without extending its deadline. */
-  captureDrain?(scope: PersistenceScope, deadlineMonotonicMs: number): PersistenceBarrier;
+  releaseProof?(barrier: PersistenceBarrier): void;
+  captureDrain?(
+    scope: PersistenceScope,
+    deadlineMonotonicMs: number,
+    ownerRetained?: boolean,
+  ): PersistenceBarrier;
   saveCheckpoint?(owner: PersistenceOwner, value: CheckpointRegistration): Promise<void>;
   retainSealed?(ticket: PublicationTicket): Promise<SealedPayloadPin>;
   capture(scope: PersistenceScope, deadlineMonotonicMs: number): PersistenceBarrier;
-  flush(barrier: PersistenceBarrier): Promise<PersistenceBarrierEvidence>;
+  flush(barrier: PersistenceBarrier): Promise<StampedBarrierEvidence>;
+  observe?(
+    barrier: PersistenceBarrier,
+    tickets: readonly PublicationTicket[],
+    observationDeadline: number,
+  ): Promise<StampedBarrierEvidence>;
   tickets(barrier: PersistenceBarrier): readonly PublicationTicket[];
   quota(owner: PersistenceOwner): Promise<StorageRequestMap["storage/quota"]["result"]>;
   settingsDigest(owner: PersistenceOwner): Promise<{

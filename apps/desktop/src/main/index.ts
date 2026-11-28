@@ -1,3 +1,4 @@
+import { hrtimeMilliseconds } from "./plugins/persistence/clock.js";
 import { DevicePreferencesStore } from "./device/preferences.js";
 import { createUpdateService } from "./updates/runtime.js";
 import { UpdateOperationGate, type UpdateService } from "./updates/service.js";
@@ -223,7 +224,7 @@ const primary = startPrimary(
     const workspaces = new WorkspaceService();
     const pluginSettings = pluginOptions(app.commandLine);
     const pluginLanguage = pluginLocale(app.getLocale());
-    const now = () => performance.now();
+    const now = hrtimeMilliseconds;
     const operationGate = new UpdateOperationGate(() => updates);
     const workbenchState: { current?: WorkbenchLifecycle } = {};
     // The retired IPC writer starts empty and performs no startup file I/O.
@@ -303,6 +304,7 @@ const primary = startPrimary(
       async settled() {},
     });
     const pendingComposition = composeDesktopMain({
+      persistenceClockKind: "hrtime",
       legacyDeviceWriter: {
         sourceKey: "builtin:kobrixa.device-ev3",
         freezeAdmission: () => preferences.freezeAdmission(),
@@ -511,19 +513,23 @@ const primary = startPrimary(
     const admittedDeviceActions = legacyAdmission.bind(legacy);
     devices.attachLegacy({
       device: legacy,
-      files: new LegacyFiles(broker, (operationClass) => {
-        const principal = currentCorePrincipal();
-        if (principal.kind !== "core") throw new Error("Core operation owner required.");
-        return {
-          ...principal,
-          adapter:
-            operationClass === "program-launch"
-              ? "program"
-              : operationClass === "deployment"
-                ? "deployment"
-                : "remote-files",
-        };
-      }),
+      files: new LegacyFiles(
+        broker,
+        (operationClass) => {
+          const principal = currentCorePrincipal();
+          if (principal.kind !== "core") throw new Error("Core operation owner required.");
+          return {
+            ...principal,
+            adapter:
+              operationClass === "program-launch"
+                ? "program"
+                : operationClass === "deployment"
+                  ? "deployment"
+                  : "remote-files",
+          };
+        },
+        now,
+      ),
     });
     const monitor = new MonitorService(legacy, (update) => send("device:monitor-update", update));
     // On macOS the application can outlive its last window. A quit in that state

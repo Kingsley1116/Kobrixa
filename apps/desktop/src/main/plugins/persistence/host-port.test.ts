@@ -66,7 +66,13 @@ function fixture() {
         deadlineMonotonicMs,
       }),
       tickets: (b) => tickets.slice(0, b.through),
-      flush: async () => ({ state: "saved", accepted: [], incomplete: [], unknown: [] }),
+      flush: async (b) => ({
+        completedMonotonicMs: input.now(),
+        state: "saved",
+        accepted: backend.evidence.tickets(b).map((t) => t.id),
+        incomplete: [],
+        unknown: [],
+      }),
       quota: fail,
       settingsDigest: fail,
       auxiliary: async () => null,
@@ -477,6 +483,7 @@ it("retains the original publishing ticket on owner loss even without checkpoint
   f.backend.engine.publish = async () => ({ disposition: "unknown" });
   f.backend.engine.reconcile = async () => ({ disposition: "unknown" });
   f.backend.evidence.flush = async (b) => ({
+    completedMonotonicMs: f.input.now(),
     state: "unknown",
     accepted: f.backend.evidence.tickets(b).map((t) => t.id),
     incomplete: [],
@@ -965,7 +972,13 @@ it.each([0, 11000])(
     };
     f.backend.evidence.flush = vi.fn<PersistenceBackend["evidence"]["flush"]>(async (barrier) => {
       if (!barriers.delete(barrier.id)) throw new Error("consumed barrier");
-      return { state: "saved", accepted: [], incomplete: [], unknown: [] };
+      return {
+        completedMonotonicMs: f.input.now(),
+        state: "saved",
+        accepted: f.backend.evidence.tickets(barrier).map((t) => t.id),
+        incomplete: [],
+        unknown: [],
+      };
     });
     f.input.composition.dispatchDrain = vi.fn<DrainDispatcher>(async (_owner, request) => {
       const begin = await host.request(
@@ -1166,10 +1179,22 @@ it.each(["other-checkpoint", "unknown-barrier"])(
       committed = true;
       return publish(t);
     };
-    f.backend.evidence.flush = async () =>
+    f.backend.evidence.flush = async (barrier) =>
       kind === "unknown-barrier" && committed
-        ? { state: "unknown", accepted: [], incomplete: [], unknown: ["unrelated-ticket"] }
-        : { state: "saved", accepted: [], incomplete: [], unknown: [] };
+        ? {
+            completedMonotonicMs: f.input.now(),
+            state: "unknown",
+            accepted: f.backend.evidence.tickets(barrier).map((t) => t.id),
+            incomplete: [],
+            unknown: ["unrelated-ticket"],
+          }
+        : {
+            completedMonotonicMs: f.input.now(),
+            state: "saved",
+            accepted: f.backend.evidence.tickets(barrier).map((t) => t.id),
+            incomplete: [],
+            unknown: [],
+          };
     f.input.composition.dispatchDrain = vi.fn<DrainDispatcher>(async (_owner, request) => {
       const begin = await host.request(
         principal,
@@ -1597,7 +1622,13 @@ it.each([
         entered.resolve();
         if (boundary !== "queued") await release.promise;
       }
-      return { state: "saved", accepted: [], incomplete: [], unknown: [] };
+      return {
+        completedMonotonicMs: f.input.now(),
+        state: "saved",
+        accepted: f.backend.evidence.tickets(barrier).map((t) => t.id),
+        incomplete: [],
+        unknown: [],
+      };
     };
     const save = f.backend.evidence.saveRecovery,
       remove = f.backend.evidence.removeRecovery;
@@ -1748,6 +1779,7 @@ it.each([false, true])(
         .filter((ticket) => !committed.has(ticket.id))
         .map((ticket) => ticket.id);
       return {
+        completedMonotonicMs: f.input.now(),
         state: unknown ? "unknown" : incomplete.length ? "failed" : "saved",
         accepted: tickets.map((ticket) => ticket.id),
         incomplete,
@@ -2276,3 +2308,74 @@ it("retained drain does not make a stale ordinary owner live when permissions re
     ),
   ).toMatchObject({ error: { code: "PLUGIN_E_STALE_RESOURCE" } });
 });
+
+it.each(["retry", "discard"] as const)(
+  "rejects substituted recovery descriptors during %s",
+  async (operation) => {
+    const f = checkpointFixture(),
+      signal = new AbortController().signal;
+    f.input.composition.dispatchDrain = vi.fn<DrainDispatcher>(async (_owner, request) => {
+      const begin = await host.request(
+        principal,
+        "storage/beginWrite",
+        finalInput(f.record(), request),
+        signal,
+      );
+      if (!begin.ok) throw new Error("final admission failed");
+      expect(
+        (await host.request(principal, "storage/sealWrite", { write: begin.value.write }, signal))
+          .ok,
+      ).toBe(true);
+      return { ok: true, value: { status: "submitted", writes: [] } };
+    });
+    const host = await createPersistenceHost(f.input);
+    expect(
+      (
+        await host.request(
+          principal,
+          "storage/registerCheckpoint",
+          { id: f.record().id, expectedRevision: f.record().revision },
+          signal,
+        )
+      ).ok,
+    ).toBe(true);
+    const offer = host.participant.freeze(owner, "shutdown", 10000);
+    const before = await host.participant.drain(offer, f.input.composition.dispatchDrain);
+    expect(before.state).toBe("retryable");
+
+    const stored = f.rows.get(before.recovery!)!;
+    if (!stored.ticket) throw Error("missing ticket");
+    f.rows.set(stored.id, {
+      ...stored,
+      ticket: { ...stored.ticket, deadlineMonotonicMs: stored.ticket.deadlineMonotonicMs + 1 },
+    });
+    const abort = vi.spyOn(f.backend.engine, "abort"),
+      reconcile = vi.spyOn(f.backend.engine, "reconcile");
+    await expect(host.participant[operation](before.recovery!, coreAction())).rejects.toMatchObject(
+      { result: { error: { code: "PLUGIN_E_STALE_RESOURCE" } } },
+    );
+    expect(abort).not.toHaveBeenCalled();
+    expect(reconcile).not.toHaveBeenCalled();
+    expect((await host.participant.drain(offer, f.input.composition.dispatchDrain)).blocker).toBe(
+      true,
+    );
+    expect(f.rows.has(before.recovery!)).toBe(true);
+    await host.dispose();
+  },
+);
+
+it.each(["node-performance", "hrtime"] as const)(
+  "composes external offers and the host in the %s worker domain",
+  async (kind) => {
+    const { persistenceClock, hrtimeMilliseconds, realWorkerFoundation } =
+      await import("./clock.js");
+    const f = fixture();
+    const wrongSource =
+      kind === "node-performance" ? () => hrtimeMilliseconds() : () => performance.now();
+    const foundation = realWorkerFoundation({ ...f.input, now: wrongSource }, kind);
+    expect(foundation.now).toBe(persistenceClock(kind));
+    Object.assign(f.backend, { clockKind: kind, now: persistenceClock(kind) });
+    const host = await createPersistenceHost(foundation);
+    await host.dispose();
+  },
+);

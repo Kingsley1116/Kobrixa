@@ -416,7 +416,7 @@ export function createLegacyWriterBarrier(input: {
     return {
       id: randomUUID(),
       owner: structuredClone(input.importOwner(sourceKey)),
-      deadlineMonotonicMs: performance.now() + 10000,
+      deadlineMonotonicMs: (input.backend.now?.() ?? performance.now()) + 10000,
       metadata: { kind: "import", key },
       target: { kind: "import", key },
     };

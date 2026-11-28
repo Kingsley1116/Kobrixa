@@ -70,7 +70,7 @@ import type {
   PersistenceEvidencePort,
   StoredRecovery,
   PersistenceBarrier,
-  PersistenceBarrierEvidence,
+  StampedBarrierEvidence,
 } from "./engine-port.js";
 import {
   importDocumentSchema,
@@ -123,6 +123,7 @@ type Entry = {
   head: DiskHead | null;
   accounted: boolean;
   finished: number | null;
+  completionDeadline?: number;
   oldHeld: boolean;
   cleaned: boolean;
   tag?: ImportTag;
@@ -1224,6 +1225,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
     delete e.original;
     e.state = "committed";
     e.finished ??= this.fs.now();
+    e.completionDeadline ??= (e.recoveryGate ?? e.gate).deadline;
     this.uncertain.delete(e.ticket.owner.sourceKey);
     this.releaseTarget(e.ticket);
   }
@@ -2696,15 +2698,177 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
       { formatVersion: 1, removed: true, id },
     );
   }
+  async observeBarrier(
+    barrier: PersistenceBarrier,
+    tickets: readonly PublicationTicket[],
+    observationDeadline: number,
+    signal?: AbortSignal,
+  ): Promise<StampedBarrierEvidence> {
+    const source = barrier.scope.owner.sourceKey;
+    const pending = this.namespaces.get(source);
+    if (!pending) throw new Error("namespace-unavailable");
+    const initialized = await pending;
+    const check = () => {
+      this.fs.profile.assertHeld();
+      if (signal?.aborted || this.fs.now() >= observationDeadline) throw new Error("expired");
+      if (this.blockedSources.has(source) || this.quarantinedSources.has(source))
+        throw new Error("recovery-blocked");
+    };
+    check();
+    const ns = initialized.observation(check);
+    const matches = (ticket: PublicationTicket) =>
+      ownerKey(ticket.owner) === ownerKey(barrier.scope.owner) &&
+      (barrier.scope.kind === "namespace" ||
+        (ticket.target.kind === "record" && ticket.target.id === barrier.scope.recordId));
+    const accepted: string[] = [],
+      incomplete: string[] = [],
+      unknown: string[] = [];
+    for (const ticket of tickets) {
+      const terminal = this.settlement(ticket.id, ticket);
+      const entry = this.entries.get(ticket.id);
+      if (!matches(ticket)) throw new Error("stale");
+      if (
+        terminal?.disposition !== "committed" ||
+        entry?.finished == null ||
+        entry.completionDeadline === undefined ||
+        entry.finished >= Math.min(entry.completionDeadline, barrier.deadlineMonotonicMs)
+      ) {
+        unknown.push(ticket.id);
+        continue;
+      }
+      const loc = await ns.location(ticket.target);
+      const head = await ns.head(loc);
+      if (
+        !head ||
+        !sameImportValue(head, entry.head) ||
+        !sameImportValue(head.receipt, terminal.receipt)
+      )
+        unknown.push(ticket.id);
+      else {
+        await ns.verify(loc, head);
+        accepted.push(ticket.id);
+      }
+    }
+    const finals = new Map<string, RecordMeta>();
+    const rows = new Map<string, StoredRecovery>();
+    const checkpoints = [];
+    for (const loc of await ns.locations()) {
+      check();
+      const head = await ns.head(loc);
+      if (!head) continue;
+      if (this.fs.name((await ns.location(head.target)).head) !== this.fs.name(loc.head))
+        throw new Error("identity-mismatch");
+      if (barrier.scope.kind === "namespace" && head.target.kind === "settings")
+        await ns.verify(loc, head);
+      const record = liveRecord(head);
+      if (record && (barrier.scope.kind === "namespace" || record.id === barrier.scope.recordId)) {
+        await ns.verify(loc, head);
+        if (record.checkpoint === "open") incomplete.push(record.id);
+        if (record.checkpoint === "final") finals.set(record.id, record);
+      }
+      if (head.target.kind !== "recovery") continue;
+      await ns.verify(loc, head);
+      const raw = JSON.parse(
+        Buffer.from(await this.fs.bytes(ns.object(loc, head), 2097152)).toString("utf8"),
+      );
+      assertDiskFormat(raw);
+      if ("checkpoint" in raw) {
+        const doc = checkpointDocumentSchema.parse(raw);
+        if (doc.checkpoint !== head.target.key) throw new Error("corrupt");
+        if (barrier.scope.kind === "namespace" || doc.record.id === barrier.scope.recordId)
+          checkpoints.push(doc);
+      } else if (raw.removed === true) {
+        z.strictObject({ formatVersion: z.literal(1), removed: z.literal(true), id: uuid }).parse(
+          raw,
+        );
+        if (raw.id !== head.target.key) throw new Error("corrupt");
+      } else {
+        const { value: row } = z
+          .strictObject({ formatVersion: z.literal(1), value: storedRecoverySchema })
+          .parse(raw);
+        if (row.id !== head.target.key || row.owner.sourceKey !== source)
+          throw new Error("corrupt");
+        rows.set(row.id, row);
+        if (
+          ownerKey(row.owner) === ownerKey(barrier.scope.owner) &&
+          (barrier.scope.kind === "namespace" ||
+            !row.report.records.length ||
+            row.report.records.some(
+              (r) => barrier.scope.kind === "target" && r.id === barrier.scope.recordId,
+            )) &&
+          (row.report.blocker || row.report.state !== "saved")
+        )
+          incomplete.push(row.id);
+      }
+    }
+    const linked = new Set<string>();
+    const linkedRows = new Map<string, { id: string; revision: string }>();
+    for (const doc of checkpoints) {
+      const row = rows.get(checkpointRecoveryId(doc.checkpoint));
+      if (
+        doc.state !== "final" ||
+        !sameImportValue(finals.get(doc.record.id), doc.record) ||
+        !row ||
+        ownerKey(row.owner) !== ownerKey(barrier.scope.owner) ||
+        (doc.binding && ownerKey(doc.binding.owner) !== ownerKey(row.owner)) ||
+        row.report.state !== "saved" ||
+        !row.report.records.some(
+          (r) => r.final && r.id === doc.record.id && r.committedRevision === doc.record.revision,
+        )
+      )
+        incomplete.push(doc.checkpoint);
+      else if (linked.has(doc.record.id)) unknown.push(doc.record.id);
+      else {
+        linked.add(doc.record.id);
+        linkedRows.set(row.id, doc.record);
+      }
+    }
+    for (const row of rows.values()) {
+      if (ownerKey(row.owner) !== ownerKey(barrier.scope.owner) || row.report.state !== "saved")
+        continue;
+      for (const record of row.report.records) {
+        if (barrier.scope.kind === "target" && record.id !== barrier.scope.recordId) continue;
+        if (
+          !record.final ||
+          linkedRows.get(row.id)?.id !== record.id ||
+          linkedRows.get(row.id)?.revision !== record.committedRevision
+        )
+          incomplete.push(row.id);
+      }
+    }
+    for (const id of finals.keys()) if (!linked.has(id)) incomplete.push(id);
+    check();
+    for (const e of this.entries.values()) {
+      if (matches(e.ticket) && (e.busy || (e.state !== "committed" && e.state !== "aborted")))
+        unknown.push(e.ticket.id);
+    }
+    for (const { ticket } of this.failedReserves.values())
+      if (matches(ticket)) unknown.push(ticket.id);
+    const uncertain = this.uncertain.get(source);
+    if (uncertain) unknown.push(uncertain);
+    const completedMonotonicMs = this.fs.now();
+    if (completedMonotonicMs >= observationDeadline) throw new Error("expired");
+    return {
+      completedMonotonicMs,
+      accepted,
+      incomplete,
+      unknown,
+      state: unknown.length ? "unknown" : incomplete.length ? "failed" : "saved",
+    };
+  }
   async flushEvidence(
     barrier: PersistenceBarrier,
     tickets: readonly PublicationTicket[],
-  ): Promise<PersistenceBarrierEvidence> {
+  ): Promise<StampedBarrierEvidence> {
     const accepted = tickets.map((t) => t.id),
       incomplete: Handle[] = [],
       unknown: Handle[] = [];
     for (const t of tickets) {
       const e = this.entries.get(t.id);
+      if (e && !sameImportValue(e.ticket, t)) {
+        unknown.push(t.id);
+        continue;
+      }
       if (!e) {
         const tombstone = this.tombstones.get(t.id);
         if (!tombstone || tombstone.until <= this.fs.now() || !sameImportValue(tombstone.ticket, t))
@@ -2741,6 +2905,7 @@ export class AtomicStore implements PersistenceEnginePort, PersistenceReadPort {
         if (pin.closeFailed && pin.source === barrier.scope.owner.sourceKey) unknown.push(id);
     if (restartBlocker && !unknown.includes(restartBlocker)) unknown.push(restartBlocker);
     return {
+      completedMonotonicMs: this.fs.now(),
       ...(restartBlocker ? { restartBlocker } : {}),
       state: unknown.length ? "unknown" : incomplete.length ? "failed" : "saved",
       accepted,

@@ -1,3 +1,4 @@
+import { hrtimeMilliseconds } from "./clock.js";
 import { createHash, randomUUID } from "node:crypto";
 import type { SettingsResourceV1, SettingsSnapshot, RecordMeta } from "@kobrixa/plugin-protocol";
 import { mkdtemp, rm, mkdir, realpath, writeFile, unlink, symlink, link } from "node:fs/promises";
@@ -109,7 +110,11 @@ beforeAll(async () => {
 afterAll(async () => {
   if (!process.env.B2_NEGATIVE_EVIDENCE_DIR) await rm(directory, { recursive: true, force: true });
 });
-async function launch(userData: string, hostEpoch = randomUUID()) {
+async function launch(
+  userData: string,
+  hostEpoch = randomUUID(),
+  clockKind: "node-performance" | "hrtime" = "node-performance",
+) {
   await mkdir(userData, { recursive: true });
   const profile = { hostEpoch, assertHeld() {} };
   const root = await openStoreRoot({ userData, profile });
@@ -118,7 +123,8 @@ async function launch(userData: string, hostEpoch = randomUUID()) {
     profile,
     root,
     workerEntry: entry,
-    now: () => performance.now(),
+    clockKind,
+
     testControl: (c) => {
       control = c;
     },
@@ -1576,6 +1582,7 @@ it("busy failed-chunk cleanup needs a terminal worker reply before a fresh drain
     expect(await write.status()).toMatchObject({ ok: true, value: { state: "aborted" } });
     expect(env.backend.evidence.tickets(initial)).toEqual([ticket]);
     expect(await env.backend.evidence.flush(initial)).toEqual({
+      completedMonotonicMs: expect.any(Number),
       state: "saved",
       accepted: [write.write],
       unknown: [],
@@ -1694,6 +1701,7 @@ it("a timed-out abort reply delivered after barrier settlement needs a fresh con
     const abort = env.backend.engine.abort(ticket).catch((error) => error);
     await held;
     expect(await env.backend.evidence.flush(capture())).toEqual({
+      completedMonotonicMs: expect.any(Number),
       accepted: [ticket.id],
       unknown: [ticket.id],
       incomplete: [],
@@ -1717,6 +1725,7 @@ it("a timed-out abort reply delivered after barrier settlement needs a fresh con
     expect(await env.backend.engine.abort(reordered)).toBe("aborted");
     expect(env.backend.evidence.confirmedAbort?.(reordered)).toBe(true);
     expect(await env.backend.evidence.flush(capture())).toEqual({
+      completedMonotonicMs: expect.any(Number),
       accepted: [],
       unknown: [],
       incomplete: [],
@@ -3593,4 +3602,51 @@ it("bounds each inventory request on 32 numeric-array files and returns their fu
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+it.each(["node-performance", "hrtime"] as const)(
+  "stamps an empty flush in the parent %s domain after delayed startup",
+  async (clockKind) => {
+    const now = clockKind === "hrtime" ? hrtimeMilliseconds : () => performance.now();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const env = await launch(path.join(directory, randomUUID()), randomUUID(), clockKind);
+    try {
+      const owner = {
+        hostEpoch: env.profile.hostEpoch,
+        processEpoch: randomUUID(),
+        generation: 1,
+        sourceKey: "builtin:test.clock",
+        pluginId: "test.clock",
+      };
+      const before = now();
+      const barrier = env.backend.evidence.capture({ kind: "namespace", owner }, before + 10000);
+      expect(env.backend.evidence.tickets(barrier)).toEqual([]);
+      const result = await env.backend.evidence.flush(barrier);
+      expect(result.state).toBe("saved");
+      expect(result.completedMonotonicMs).toBeGreaterThanOrEqual(before);
+      expect(result.completedMonotonicMs).toBeLessThanOrEqual(now());
+      const proof = env.backend.evidence.captureDrain!({ kind: "namespace", owner }, before);
+      await env.backend.evidence.flush(proof);
+      expect(() => env.backend.evidence.tickets(proof)).toThrow("stale");
+      const observed = await env.backend.evidence.observe!(proof, [], now() + 10000);
+      expect(observed.state).toBe("saved");
+      expect(observed.completedMonotonicMs).toBeGreaterThanOrEqual(result.completedMonotonicMs);
+      await expect(env.backend.evidence.observe!(proof, [], now())).rejects.toThrow();
+    } finally {
+      await env.backend.dispose();
+    }
+  },
+);
+
+it("rejects a real worker configured with a mismatched clock domain before launch", async () => {
+  const profile = { hostEpoch: randomUUID(), assertHeld() {} };
+  const root = await openStoreRoot({ userData: directory, profile });
+  for (const clocks of [
+    { clockKind: "hrtime" as const, now: () => performance.now() },
+    { clockKind: "node-performance" as const, now: hrtimeMilliseconds },
+    { clockKind: "node-performance" as const, now: () => hrtimeMilliseconds() },
+  ])
+    await expect(
+      startPersistenceWorker({ profile, root, workerEntry: entry, ...clocks }),
+    ).rejects.toThrow("clock-domain-mismatch");
 });

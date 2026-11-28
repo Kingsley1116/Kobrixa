@@ -1,3 +1,5 @@
+import type { PublicationTicket } from "./engine-port.js";
+import { randomUUID } from "node:crypto";
 import { storedRecoverySchema } from "./namespace.js";
 import { expect, it, vi } from "vitest";
 import type { RecordMeta, RecordWrite, ResourceOwner } from "@kobrixa/plugin-protocol";
@@ -63,7 +65,7 @@ function fixture() {
     pendingPublication: () => false,
     pendingSettings: () => false,
     settle: async () => {},
-    evidence: evidenceDouble(),
+    evidence: evidenceDouble(() => now),
     reads: { stat: async () => ({ ...record, checkpoint: final ? "final" : "open" }) },
     payload: () => ({ kind: "checkpoint-only" }),
     recover: async (_owner, report) => report,
@@ -152,6 +154,7 @@ it("T5fix2 discard cannot acknowledge a replacement open head", async () => {
     checkpoint: "open",
   });
   f.deps.evidence.flush = async () => ({
+    completedMonotonicMs: f.deps.now(),
     state: "failed",
     accepted: [],
     incomplete: [record.id],
@@ -176,6 +179,7 @@ it("T5fix2 discarded checkpoint leaves unknown barrier evidence blocking", async
   await f.life.participant.drain(offer, dispatch);
   f.life.retireCheckpoint(owner, checkpointRecoveryId(registered.value.checkpoint));
   f.deps.evidence.flush = async () => ({
+    completedMonotonicMs: f.deps.now(),
     state: "unknown",
     accepted: [],
     incomplete: [record.id],
@@ -338,7 +342,7 @@ it("B2-RF3: target-only scope excludes unrelated settings and final authorizatio
   );
 });
 
-function evidenceDouble(): LifecycleDependencies["evidence"] {
+function evidenceDouble(now: () => number): LifecycleDependencies["evidence"] {
   const fail = () => {
     throw new Error("Unexpected evidence I/O");
   };
@@ -350,7 +354,13 @@ function evidenceDouble(): LifecycleDependencies["evidence"] {
       deadlineMonotonicMs,
     }),
     tickets: () => [],
-    flush: async () => ({ state: "saved", accepted: [], incomplete: [], unknown: [] }),
+    flush: async () => ({
+      completedMonotonicMs: now(),
+      state: "saved",
+      accepted: [],
+      incomplete: [],
+      unknown: [],
+    }),
     quota: fail,
     settingsDigest: fail,
     auxiliary: fail,
@@ -366,6 +376,7 @@ it("sealed admitted writes survive owner loss even without a registered checkpoi
   f.deps.pendingWrites = () => [{ write: "ticket", id: record.id, state: "sealed" }];
   f.deps.payload = () => ({ kind: "complete-staging", expiresMonotonicMs: 30000 });
   f.deps.evidence.flush = async () => ({
+    completedMonotonicMs: f.deps.now(),
     state: "failed",
     accepted: ["ticket"],
     incomplete: ["ticket"],
@@ -382,6 +393,7 @@ it("unknown barrier evidence remains uncertain even with a final checkpoint head
   await f.life.register(owner, { id: record.id, expectedRevision: record.revision });
   f.setFinal();
   f.deps.evidence.flush = async () => ({
+    completedMonotonicMs: f.deps.now(),
     state: "unknown",
     accepted: ["ticket"],
     incomplete: [],
@@ -478,7 +490,13 @@ it("T5fix sequential drains preserve their result with single-use worker barrier
   };
   f.deps.evidence.flush = vi.fn(async (barrier) => {
     if (!captures.delete(barrier.id)) throw new Error("stale");
-    return { state: "saved" as const, accepted: [], incomplete: [], unknown: [] };
+    return {
+      completedMonotonicMs: f.deps.now(),
+      state: "saved" as const,
+      accepted: [],
+      incomplete: [],
+      unknown: [],
+    };
   });
   await f.life.register(owner, { id: record.id, expectedRevision: record.revision });
   const offer = f.life.participant.freeze(owner, "shutdown", 10000);
@@ -562,6 +580,7 @@ it("T5fix a cached drain expires sealed eligibility without renewing its origina
   f.deps.pendingWrites = () => [{ write: "ticket", id: record.id, state: "sealed" }];
   f.deps.payload = () => ({ kind: "complete-staging", expiresMonotonicMs: 30000 });
   f.deps.evidence.flush = async () => ({
+    completedMonotonicMs: f.deps.now(),
     state: "failed",
     accepted: ["ticket"],
     incomplete: ["ticket"],
@@ -598,6 +617,7 @@ it.each([true, false])(
     const expiry = 30000.375;
     f.deps.payload = () => ({ kind: "complete-staging", expiresMonotonicMs: expiry });
     f.deps.evidence.flush = async () => ({
+      completedMonotonicMs: f.deps.now(),
       state: "failed",
       accepted: [],
       incomplete: [record.id],
@@ -680,5 +700,323 @@ it.each(["lost", "expired", "owner", "token"] as const)(
     }));
     await f.life.participant.drain(offer, callback);
     expect(callback).not.toHaveBeenCalled();
+  },
+);
+
+it("keeps bounded original barrier evidence across more than the host limit of fresh reads", async () => {
+  const f = fixture();
+  const member: PublicationTicket = {
+    id: randomUUID(),
+    owner,
+    target: { kind: "record", id: record.id, expectedRevision: null },
+    metadata: { kind: "record", record, deleted: false },
+    deadlineMonotonicMs: 10000,
+  };
+  f.deps.evidence.tickets = () => [member];
+  const offer = f.life.participant.freeze(owner, "shutdown", 10000);
+  let count = 0;
+  f.deps.evidence.flush = async () => {
+    count++;
+    return {
+      completedMonotonicMs: f.deps.now(),
+      state: "unknown",
+      accepted: [],
+      unknown: [member.id],
+      incomplete: [],
+    };
+  };
+  const first = await f.life.participant.drain(offer, async () => ({
+    ok: true,
+    value: { status: "submitted", writes: [] },
+  }));
+  expect(first.blocker).toBe(true);
+  for (let i = 0; i < 1100; i++)
+    expect((await f.life.refreshRecovery(owner, 10000))?.blocker).toBe(true);
+  expect(count).toBe(1102);
+  for (const changed of [
+    { ...member, deadlineMonotonicMs: 999 },
+    { ...member, target: { ...member.target, id: randomUUID() } },
+    { ...member, metadata: { ...member.metadata, record: { ...record, label: "Different" } } },
+  ]) {
+    f.life.resolveTicket(owner, changed);
+    expect((await f.life.refreshRecovery(owner, 10000))?.blocker).toBe(true);
+  }
+  f.life.resolveTicket(owner, member);
+  expect((await f.life.refreshRecovery(owner, 10000))?.state).toBe("saved");
+});
+
+it("reclaims clean owner histories without reopening old generations", async () => {
+  const f = fixture();
+  for (let generation = 1; generation <= 195; generation++) {
+    const next = { ...owner, generation };
+    const offer = f.life.participant.freeze(next, "shutdown", f.deps.now() + 10000);
+    expect(
+      (
+        await f.life.participant.drain(offer, async () => ({
+          ok: true,
+          value: { status: "submitted", writes: [] },
+        }))
+      ).state,
+    ).toBe("saved");
+    f.advance(120001);
+  }
+  expect(
+    (await f.life.register(owner, { id: record.id, expectedRevision: record.revision })).ok,
+  ).toBe(false);
+});
+
+it("shortens both callers while the flush producer is pending", async () => {
+  vi.useFakeTimers();
+  try {
+    const f = fixture();
+    const flush = vi.fn(() => new Promise<never>(() => {}));
+    f.deps.evidence.flush = flush;
+    const offer = f.life.participant.freeze(owner, "shutdown", 500);
+    const dispatch = vi.fn();
+    const receipts: boolean[] = [];
+    const first = f.life.participant.drain(offer, dispatch).then((r) => receipts.push(r.blocker));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(flush).toHaveBeenCalled();
+    const second = f.life.participant
+      .drain({ ...offer, deadlineMonotonicMs: 10 }, dispatch)
+      .then((r) => receipts.push(r.blocker));
+    f.advance(10);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(receipts).toEqual([true, true]);
+    await Promise.all([first, second]);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("retiring 1100 siblings leaves capacity for another included target", async () => {
+  const f = fixture();
+  await f.life.register(owner, { id: record.id, expectedRevision: record.revision, reservation });
+  f.life.participant.endReservation(event, 10000);
+  for (let i = 0; i < 1100; i++) {
+    const id = randomUUID();
+    f.deps.record = async () => ({ ...record, id });
+    const result = await f.life.register(owner, { id, expectedRevision: record.revision });
+    if (!result.ok) throw Error("registration failed");
+    f.life.retireCheckpoint(owner, checkpointRecoveryId(result.value.checkpoint));
+  }
+  const id = randomUUID();
+  f.deps.record = async () => ({ ...record, id });
+  expect(
+    (await f.life.register(owner, { id, expectedRevision: record.revision, reservation })).ok,
+  ).toBe(true);
+  expect(f.life.participant.endReservation(event, 10000)?.checkpoints.length).toBe(2);
+});
+
+it("reclaims discharged reservation-only groups over repeated source limits", async () => {
+  const f = fixture();
+  f.setFinal();
+  for (let generation = 1; generation <= 195; generation++) {
+    const next = { ...owner, generation },
+      deadline = f.deps.now() + 10000;
+    f.deps.reservations.validate = () => ({
+      owner: next,
+      reservationId: reservation,
+      sessionId: event.sessionId,
+      providerGeneration: 1,
+    });
+    expect(
+      (
+        await f.life.register(next, {
+          id: record.id,
+          expectedRevision: record.revision,
+          reservation,
+        })
+      ).ok,
+    ).toBe(true);
+    const offer = f.life.participant.endReservation(
+      {
+        ...event,
+        owner: next,
+        endedMonotonicMs: f.deps.now(),
+        drain: { ...event.drain!, owner: next, expiresMonotonicMs: deadline },
+      },
+      deadline,
+    );
+    if (!offer) throw Error("missing target offer");
+    expect(
+      (
+        await f.life.participant.drain(offer, async () => ({
+          ok: true,
+          value: { status: "submitted", writes: [] },
+        }))
+      ).blocker,
+    ).toBe(false);
+    f.advance(120001);
+  }
+});
+
+it("reuses unresolved identities across clocks, unrelated admissions and failed reads at capacity", async () => {
+  vi.useFakeTimers();
+  try {
+    const f = fixture();
+    const members: PublicationTicket[] = Array.from({ length: 1024 }, () => ({
+      id: randomUUID(),
+      owner,
+      target: { kind: "record", id: record.id, expectedRevision: null },
+      metadata: { kind: "record", record, deleted: false },
+      deadlineMonotonicMs: 10000,
+    }));
+    const member = members[0]!;
+    let outcome: "unknown" | "rejected" | "timeout" | "saved" = "unknown";
+    let sequence = 0;
+    f.deps.evidence.capture = (scope, deadlineMonotonicMs) => ({
+      id: randomUUID(),
+      scope,
+      through: ++sequence,
+      deadlineMonotonicMs,
+    });
+    f.deps.evidence.tickets = () => (sequence <= 2 ? members : [member]);
+    f.deps.evidence.flush = async (barrier) => {
+      if (outcome === "timeout") return new Promise<never>(() => {});
+      if (outcome === "rejected") throw new Error("unavailable");
+      return {
+        state: outcome,
+        completedMonotonicMs: f.deps.now(),
+        accepted: barrier.through <= 2 ? members.map((m) => m.id) : [member.id],
+        unknown: outcome === "unknown" ? [member.id] : [],
+        incomplete: [],
+      };
+    };
+    const offer = f.life.participant.freeze(owner, "shutdown", 10000);
+    expect((await f.life.participant.drain(offer, vi.fn())).blocker).toBe(true);
+    for (const variant of ["rejected", "timeout", "unknown"] as const) {
+      outcome = variant;
+      for (let i = 0; i < (variant === "timeout" ? 2 : 550); i++) {
+        f.advance(1);
+        const reading = f.life.refreshRecovery(owner, f.deps.now() + 10);
+        if (variant === "timeout") {
+          await vi.advanceTimersByTimeAsync(0);
+          f.advance(10);
+          await vi.advanceTimersByTimeAsync(10);
+        }
+        expect((await reading)?.blocker).toBe(true);
+      }
+    }
+    expect(sequence).toBe(1104);
+    outcome = "saved";
+    expect((await f.life.refreshRecovery(owner, f.deps.now() + 10))?.blocker).toBe(true);
+    expect(f.life.resolveTicket(owner, member)).toBe(true);
+    expect((await f.life.refreshRecovery(owner, f.deps.now() + 10))?.state).toBe("saved");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+const captureCases = [
+  ["refresh", "freeze", "held", 2, false],
+  ["refresh", "drain", "held", 2, false],
+  ["refresh", "minimum", "before dispatch", 3, true],
+  ["corroboration", "freeze", "held", 2, true],
+  ["discharge", "drain", "held", 3, true],
+  ["original", "drain", "held", 3, true],
+  ["original", "freeze", "before dispatch", 1, false],
+  ["refresh", "freeze", "after fold", 2, false],
+  ["refresh", "drain", "after fold", 3, true],
+  ["refresh", "none", "held", 1, false],
+] as const;
+it.each(
+  captureCases.flatMap(([capture, source, phase, callers, populated]) =>
+    [9, 10, 11].map((stamp) => ({ capture, source, phase, callers, populated, stamp })),
+  ),
+)(
+  "capture cutoff $capture $source $phase x$callers at $stamp",
+  async ({ capture, source, phase, callers, populated, stamp }) => {
+    const f = fixture();
+    const member: PublicationTicket = {
+      id: randomUUID(),
+      owner,
+      target: { kind: "record", id: record.id, expectedRevision: record.revision },
+      metadata: { kind: "record", record, deleted: false },
+      deadlineMonotonicMs: 500,
+    };
+    if (populated) f.deps.evidence.tickets = () => [member];
+    const port = f.life.participant;
+    if (source === "minimum" || capture === "corroboration") {
+      expect(
+        (
+          await f.life.register(owner, {
+            id: record.id,
+            expectedRevision: record.revision,
+            reservation,
+          })
+        ).ok,
+      ).toBe(true);
+      if (source === "minimum") {
+        const target = port.endReservation(event, 500);
+        expect(target?.deadlineMonotonicMs).toBe(500);
+        f.setFinal();
+      }
+    }
+    const offer = port.freeze(owner, "shutdown", 500);
+    const result = (at: number) => ({
+      completedMonotonicMs: at,
+      state: "saved" as const,
+      accepted: populated ? [member.id] : [],
+      unknown: [],
+      incomplete: [],
+    });
+    f.deps.evidence.flush = async () => result(0);
+    if (capture === "corroboration")
+      f.deps.evidence.flush = async () => ({
+        ...result(0),
+        state: "unknown",
+        accepted: [],
+        unknown: [member.id],
+      });
+    if (capture === "discharge")
+      f.deps.evidence.flush = async () => {
+        throw Error("no original result");
+      };
+    const dispatch = vi.fn();
+    if (capture === "refresh") expect((await port.drain(offer, dispatch)).blocker).toBe(false);
+    if (capture === "corroboration" || capture === "discharge") {
+      expect((await port.drain(offer, dispatch)).blocker).toBe(true);
+      f.setFinal();
+      if (capture === "discharge") expect(f.life.resolveTicket(owner, member)).toBe(true);
+    }
+    const joined: Promise<{ blocker: boolean }>[] = [];
+    const shorten = () => {
+      const next =
+        source === "drain"
+          ? { ...offer, deadlineMonotonicMs: 10 }
+          : source === "minimum"
+            ? port.freeze(owner, "shutdown", 400, { ...event.drain!, expiresMonotonicMs: 10 })
+            : port.freeze(owner, "shutdown", 10);
+      for (let i = 1; i < callers; i++) joined.push(port.drain(next, dispatch));
+    };
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let signalEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      signalEntered = resolve;
+    });
+    f.deps.evidence.flush = async () => {
+      signalEntered();
+      await gate;
+      return result(source === "none" ? 500 + stamp : stamp);
+    };
+    if (phase === "after fold")
+      f.deps.pendingPublication = () => {
+        shorten();
+        return false;
+      };
+    const first =
+      capture !== "original" ? f.life.refreshRecovery(owner, 600) : port.drain(offer, dispatch);
+    if (phase === "before dispatch") shorten();
+    await entered;
+    if (phase === "held" && source !== "none") shorten();
+    release();
+    const receipts = [await first, ...(await Promise.all(joined))];
+    expect(receipts.map((r) => r?.blocker)).toEqual(
+      Array(callers).fill(source !== "none" && stamp >= 10),
+    );
   },
 );

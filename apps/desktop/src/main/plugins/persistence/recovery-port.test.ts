@@ -1,3 +1,4 @@
+import { createPersistenceLifecycle } from "./lifecycle.js";
 import { storedRecoverySchema } from "./namespace.js";
 import type { RecordMeta } from "@kobrixa/plugin-protocol";
 import type { ExportDestination } from "./actions.js";
@@ -197,6 +198,10 @@ it.each(["source", "host"] as const)(
     await expect(recovery.retain(overflow, retained)).rejects.toMatchObject({
       result: { error: { code: "PLUGIN_E_RESOURCE_LIMIT" } },
     });
+    expect(recovery.blocked(overflow)).toBe(true);
+    expect(
+      recovery.snapshot().items.some((r) => r.id === "retained" && r.state === "uncertain"),
+    ).toBe(true);
     if (scope === "source")
       expect(
         (
@@ -557,4 +562,482 @@ it("fractional recovery projections validate on retain/retry/snapshot without re
   });
   expect(saved).toHaveLength(3);
   expect(saved.at(-1)!.expiresAt).toBe(0);
+});
+
+it("keeps a failed retain blocking across repeated retention until authorized durable discard", async () => {
+  const backend = recoveryBackendDouble();
+  const changing = vi.fn(),
+    subscriber = vi.fn();
+  const recovery = createPersistenceRecovery({
+    changing,
+    coreOwner: () => owner,
+    now: () => 0,
+    wall: () => 100000,
+    actions: { claim: () => true, isClaimed: () => true, complete: () => {} },
+    retry: async () => report,
+    discard: async () => ({ ...report, state: "saved", blocker: false }),
+    backend,
+    adapter: { chooseDestination: async () => null, copyText: async () => {} },
+  });
+  recovery.subscribe(subscriber);
+  vi.spyOn(backend.evidence, "saveRecovery").mockRejectedValueOnce(new Error("io"));
+  const failed = await recovery.retain(owner, report);
+  expect(changing).toHaveBeenCalledOnce();
+  expect(subscriber).toHaveBeenCalledOnce();
+  const next = await recovery.retain(owner, { ...failed, state: "saved", blocker: false });
+  expect(next).toMatchObject({ state: "uncertain", blocker: true, recovery: failed.recovery });
+  expect((await backend.evidence.loadRecovery(failed.recovery!))?.report).toMatchObject({
+    state: "uncertain",
+    blocker: true,
+  });
+  expect(recovery.blocked(owner)).toBe(true);
+  await recovery.discard(failed.recovery!, action);
+  expect(recovery.blocked(owner)).toBe(false);
+});
+
+it("publishes the reserved blocker if the retain report exceeds the byte limit", async () => {
+  const changing = vi.fn(),
+    subscriber = vi.fn();
+  const recovery = createPersistenceRecovery({
+    coreOwner: () => owner,
+    now: () => 0,
+    wall: () => 0,
+    changing,
+    actions: { claim: () => true, isClaimed: () => true, complete() {} },
+    retry: async () => report,
+    discard: async () => ({ ...report, blocker: false }),
+    backend: recoveryBackendDouble(),
+    adapter: { chooseDestination: async () => null, copyText: async () => {} },
+  });
+  recovery.subscribe(subscriber);
+  await expect(
+    recovery.retain(owner, {
+      ...report,
+      errors: [{ code: "PLUGIN_E_STORAGE_IO", message: "x".repeat(8193) }],
+    }),
+  ).rejects.toThrow();
+  expect(recovery.blocked(owner)).toBe(true);
+  expect(changing).toHaveBeenCalledOnce();
+  expect(subscriber).toHaveBeenCalledOnce();
+  const [row] = recovery.snapshot().items;
+  await recovery.discard(row!.id, action);
+  expect(recovery.blocked(owner)).toBe(false);
+});
+
+it("publishes a discardable identity when restored reports exhaust the source byte budget", async () => {
+  const backend = recoveryBackendDouble(),
+    changing = vi.fn(),
+    subscriber = vi.fn();
+  const persistedOwner = {
+    ...owner,
+    hostEpoch: "00000000-0000-4000-8000-000000000001",
+    processEpoch: "00000000-0000-4000-8000-000000000002",
+  };
+  const ids = Array.from(
+    { length: 512 },
+    (_, i) => `00000000-0000-4000-8000-${(i + 1).toString().padStart(12, "0")}`,
+  );
+  for (const id of ids) {
+    const full: DrainReport = {
+      state: "uncertain",
+      blocker: true,
+      records: [],
+      pendingSettings: false,
+      recovery: id,
+      errors: Array.from({ length: 16 }, () => ({ code: "PLUGIN_E_STORAGE_IO", message: "x" })),
+    };
+    let space = 8192 - Buffer.byteLength(JSON.stringify(full));
+    for (const error of full.errors) {
+      const n = Math.min(space, 511);
+      error.message += "x".repeat(n);
+      space -= n;
+    }
+    expect(space).toBe(0);
+    const row = {
+      id,
+      owner: persistedOwner,
+      report: full,
+      ticket: null,
+      sealedPin: null,
+      expiresAt: null,
+    };
+    storedRecoverySchema.parse(row);
+    await backend.evidence.saveRecovery(row);
+  }
+  const load = backend.evidence.loadRecovery;
+  backend.evidence.recoveryPage = async (cursor) => {
+    const i = cursor ? ids.indexOf(cursor) + 1 : 0,
+      page = ids.slice(i, i + 16);
+    return {
+      items: await Promise.all(page.map(async (id) => (await load(id))!)),
+      nextCursor: i + 16 < ids.length ? page.at(-1)! : null,
+    };
+  };
+  const recovery = createPersistenceRecovery({
+    coreOwner: () => persistedOwner,
+    now: () => 0,
+    wall: () => 0,
+    changing,
+    actions: { claim: () => true, isClaimed: () => true, complete() {} },
+    retry: async () => report,
+    discard: async (_owner, previous) => ({ ...previous, blocker: false }),
+    backend,
+    adapter: { chooseDestination: async () => null, copyText: async () => {} },
+  });
+  await recovery.restore();
+  recovery.subscribe(subscriber);
+  const next = { ...persistedOwner, generation: 2 },
+    id = "00000000-0000-4000-8000-000000000999";
+  await expect(recovery.retain(next, { ...report, recovery: id })).rejects.toMatchObject({
+    result: { error: { code: "PLUGIN_E_RESOURCE_LIMIT" } },
+  });
+  expect(changing).toHaveBeenCalledOnce();
+  expect(subscriber).toHaveBeenCalledOnce();
+  expect(recovery.blocked(next)).toBe(true);
+  expect(recovery.snapshot().items.find((r) => r.id === id)).toMatchObject({
+    state: "uncertain",
+    actions: [{ kind: "discard" }],
+  });
+  const more = Array.from({ length: 64 }, (_, i) => ({
+    owner: { ...persistedOwner, generation: 3 + Math.floor(i / 2) },
+    id: `00000000-0000-4000-8000-${(1000 + i).toString().padStart(12, "0")}`,
+  }));
+  for (const item of more) {
+    recovery.reserveIdentity(item.owner, item.id, "ticket");
+    await expect(
+      recovery.retain(item.owner, { ...report, recovery: item.id }),
+    ).rejects.toMatchObject({ result: { error: { code: "PLUGIN_E_RESOURCE_LIMIT" } } });
+    expect(recovery.blocked(item.owner)).toBe(true);
+  }
+  expect(changing).toHaveBeenCalledTimes(65);
+  expect(subscriber).toHaveBeenCalledTimes(65);
+  expect(recovery.snapshot().items).toHaveLength(577);
+  for (const item of more) await recovery.discard(item.id, action);
+  await recovery.discard(id, action);
+  expect(recovery.blocked(next)).toBe(false);
+  expect(recovery.snapshot().items).toHaveLength(512);
+});
+
+it.each([
+  ["source", "discard"],
+  ["host", "discard"],
+  ["source", "retry"],
+  ["host", "retry"],
+] as const)("authorized %s queue refusal preserves %s blocker", async (scope, operation) => {
+  const changing = vi.fn(),
+    listener = vi.fn();
+  const recovery = createPersistenceRecovery({
+    coreOwner: () => owner,
+    now: () => 0,
+    wall: () => 0,
+    changing,
+    actions: { claim: () => true, isClaimed: () => true, complete() {} },
+    retry: async () => report,
+    discard: async () => ({ ...report, blocker: false }),
+    backend: recoveryBackendDouble(),
+    adapter: { chooseDestination: async () => null, copyText: async () => {} },
+  });
+  const lifecycle = recoveryLifecycle(recovery);
+  const unused = vi.fn();
+  changing.mockImplementation((owner) => lifecycle.invalidateRecovery(owner));
+  const offer = lifecycle.participant.freeze(owner, "shutdown", 10000);
+  const drain = () => lifecycle.participant.drain(offer, unused);
+  expect((await drain()).state).toBe("saved");
+  const item = await recovery.retain(owner, report);
+  recovery.subscribe(listener);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const pending = Array.from({ length: scope === "source" ? 64 : 1024 }, (_, i) =>
+    recovery.persistCheckpoint(
+      { ...owner, generation: 2, sourceKey: scope === "source" ? owner.sourceKey : String(i >> 6) },
+      () => true,
+      () => gate,
+    ),
+  );
+  try {
+    await expect(recovery[operation](item.recovery!, action)).rejects.toThrow();
+    expect(changing).toHaveBeenCalledWith(owner);
+    expect(listener).toHaveBeenCalled();
+    expect(recovery.blocked(owner)).toBe(true);
+  } finally {
+    release();
+    await Promise.all(pending);
+  }
+  expect(recovery.blocked(owner)).toBe(true);
+  expect((await drain()).blocker).toBe(true);
+  await recovery.discard(item.recovery!, action);
+  expect(recovery.blocked(owner)).toBe(false);
+  expect((await drain()).state).toBe("saved");
+});
+
+it.each(["report", "source", "host"] as const)(
+  "charges the final retryable projection against the last %s bytes",
+  async (bound) => {
+    const backend = recoveryBackendDouble();
+    const remaining = bound === "report" ? 8192 : 2048;
+    function padded(input: DrainReport, bytes: number, actionBytes = 0): DrainReport {
+      const full = {
+        ...input,
+        errors: Array.from({ length: 16 }, () => ({
+          code: "PLUGIN_E_STORAGE_IO" as const,
+          message: "x",
+        })),
+      };
+      let left = bytes - actionBytes - Buffer.byteLength(JSON.stringify(full));
+      for (const error of full.errors) {
+        const n = Math.min(left, 511);
+        error.message += "x".repeat(n);
+        left -= n;
+      }
+      expect(left).toBe(0);
+      return full;
+    }
+    if (bound !== "report") {
+      const count = (bound === "host" ? 67108864 : 4194304) / 8192;
+      const template = {
+        state: "uncertain" as const,
+        blocker: true,
+        pendingSettings: false,
+        records: [],
+        errors: [],
+        recovery: "00000000-0000-4000-8000-000000000000",
+      };
+      const full = padded(template, 8192),
+        last = padded(template, 8192 - remaining);
+      backend.evidence.recoveryPage = async (cursor) => {
+        const first = Number(cursor ?? 0),
+          end = Math.min(count, first + 16);
+        return {
+          items: Array.from({ length: end - first }, (_, i) => {
+            const index = first + i,
+              id = `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+            return {
+              id,
+              owner:
+                bound === "host"
+                  ? { ...owner, sourceKey: `source-${Math.floor(index / 512)}` }
+                  : owner,
+              report: { ...(index === count - 1 ? last : full), recovery: id },
+              ticket: null,
+              sealedPin: null,
+              expiresAt: null,
+            };
+          }),
+          nextCursor: end < count ? String(end) : null,
+        };
+      };
+    }
+    const recovery = createPersistenceRecovery({
+      coreOwner: () => owner,
+      now: () => 0,
+      wall: () => 100000,
+      actions: { claim: () => true, isClaimed: () => true, complete() {} },
+      retry: async () => report,
+      discard: async () => report,
+      backend,
+      adapter: { chooseDestination: async () => null, copyText: async () => {} },
+    });
+    await recovery.restore();
+    const input = { ...report, recovery: "10000000-0000-4000-8000-000000000001" };
+    const actionBytes =
+      Buffer.byteLength(JSON.stringify({ ...input, retryAction: input.recovery })) -
+      Buffer.byteLength(JSON.stringify(input));
+    for (const size of [remaining - 1, remaining, remaining + 1]) {
+      const result = recovery.retain(owner, padded(input, size, actionBytes));
+      if (size > remaining) {
+        await expect(result).rejects.toThrow();
+        expect(recovery.blocked(owner)).toBe(true);
+      } else expect(Buffer.byteLength(JSON.stringify(await result))).toBe(size);
+    }
+  },
+);
+
+function recoveryLifecycle(recovery: ReturnType<typeof createPersistenceRecovery>) {
+  const unused = () => {
+    throw Error("unexpected namespace operation");
+  };
+  const backend = recoveryBackendDouble();
+  return createPersistenceLifecycle({
+    now: () => 0,
+    wall: () => 0,
+    live: () => true,
+    reservations: { validate: unused, onEnded: unused },
+    record: unused,
+    persist: unused,
+    fence: () => [],
+    fenceTarget: () => [],
+    pendingWrites: () => [],
+    pendingPublication: () => false,
+    pendingSettings: () => false,
+    settle: async () => {},
+    evidence: {
+      ...backend.evidence,
+      capture: (scope, deadlineMonotonicMs) => ({
+        id: "cut",
+        through: 0,
+        scope,
+        deadlineMonotonicMs,
+      }),
+      tickets: () => [],
+      flush: async () => ({
+        completedMonotonicMs: 0,
+        state: "saved",
+        accepted: [],
+        unknown: [],
+        incomplete: [],
+      }),
+    },
+    reads: backend.reads,
+    payload: unused,
+    recover: async (_owner, result) => result,
+    checkpointOpen: () => false,
+    recovery,
+  });
+}
+
+it.each([
+  ["retry", "expiry before claim"],
+  ["retry", "expiry in claim"],
+  ["retry", "queued expiry"],
+  ["retry", "stale state"],
+  ["retry", "stale at admission"],
+  ["retry", "removed before dequeue"],
+  ["discard", "removed before dequeue"],
+  ["retry", "unidentified"],
+  ["discard", "unauthorized"],
+  ["retry", "blocked result"],
+  ["discard", "blocked result"],
+  ["discard", "restart required"],
+  ["discard", "export active"],
+  ["retry", "size refusal"],
+  ["discard", "size refusal"],
+  ["retry", "load rejection"],
+  ["discard", "load rejection"],
+  ["retry", "save rejection"],
+  ["retry", "dispatch rejection"],
+  ["discard", "remove rejection"],
+  ["discard", "dispatch rejection"],
+  ["discard", "blocked save rejection"],
+  ["retry", "queue refusal"],
+  ["discard", "queue refusal"],
+] as const)("claimed %s failure at %s invalidates the clean drain", async (operation, edge) => {
+  const backend = recoveryBackendDouble();
+  let now = 0;
+  const complete = vi.fn();
+  const claim = vi.fn(() => {
+    if (edge === "expiry in claim") now = 30000;
+    return edge !== "unauthorized";
+  });
+  const changing = vi.fn(),
+    listener = vi.fn();
+  const resolved = { ...report, state: "saved" as const, blocker: false };
+  let dispatchFails = true;
+  const dispatch = async () => {
+    if (!dispatchFails) return resolved;
+    if (edge === "dispatch rejection") throw Error(edge);
+    if (edge === "size refusal")
+      return {
+        ...report,
+        errors: [{ code: "PLUGIN_E_STORAGE_IO", message: "x".repeat(8192) }],
+      } as DrainReport;
+    return edge === "blocked save rejection" || edge === "blocked result" ? report : resolved;
+  };
+  const recovery = createPersistenceRecovery({
+    backend,
+    coreOwner: () => owner,
+    now: () => now,
+    wall: () => 100000 + now,
+    changing,
+    actions: { claim, isClaimed: () => true, complete },
+    retry: dispatch,
+    discard: dispatch,
+    adapter: { chooseDestination: async () => null, copyText: async () => {} },
+  });
+  const lifecycle = recoveryLifecycle(recovery);
+  changing.mockImplementation((owner) => lifecycle.invalidateRecovery(owner));
+  const offer = lifecycle.participant.freeze(owner, "shutdown", 10000);
+  const drain = () => lifecycle.participant.drain(offer, vi.fn());
+  const item = await recovery.retain(owner, report);
+  const id = item.recovery!;
+  expect((await drain()).blocker).toBe(false);
+  now = 29999;
+  expect(recovery.snapshot().items[0]?.actions.map((a) => a.kind)).toContain("retry");
+  recovery.subscribe(listener);
+  changing.mockClear();
+  if (edge === "expiry before claim") now = 30000;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const queue = Array.from({ length: edge === "queue refusal" ? 64 : 0 }, () =>
+    recovery.persistCheckpoint(
+      owner,
+      () => true,
+      () => gate,
+    ),
+  );
+  if (edge === "stale state")
+    queue.push(recovery.retain(owner, { ...resolved, recovery: id }).then(() => {}));
+  if (edge.includes("save rejection"))
+    vi.spyOn(backend.evidence, "saveRecovery").mockRejectedValueOnce(Error(edge));
+  if (edge === "remove rejection")
+    vi.spyOn(backend.evidence, "removeRecovery").mockRejectedValueOnce(Error(edge));
+  if (edge === "stale at admission") await recovery.retain(owner, { ...resolved, recovery: id });
+  if (edge === "removed before dequeue") queue.push(recovery.discard(id, action).then(() => {}));
+  if (edge === "load rejection")
+    vi.spyOn(backend.evidence, "loadRecovery").mockRejectedValueOnce(Error(edge));
+  let exporting: Promise<unknown> | undefined;
+  if (edge === "export active") {
+    vi.spyOn(backend.evidence, "loadRecovery").mockImplementationOnce(async () => {
+      await gate;
+      return null;
+    });
+    exporting = recovery.export({ recovery: id, action });
+  }
+  const target =
+    edge === "restart required" ? recovery.retainRestartBlocker(owner, "restart").recovery! : id;
+  listener.mockClear();
+  const acting = recovery[operation](edge === "unidentified" ? "missing" : target, action);
+  if (edge === "queued expiry") now = 30000;
+  try {
+    if (edge === "removed before dequeue" || edge === "unauthorized" || edge === "unidentified") {
+      await expect(acting).rejects.toThrow();
+      expect(complete).toHaveBeenCalledTimes(edge === "removed before dequeue" ? 2 : 0);
+      expect(claim).toHaveBeenCalledTimes(
+        edge === "removed before dequeue" ? 2 : edge === "unidentified" ? 0 : 1,
+      );
+      if (edge !== "removed before dequeue") {
+        expect(changing).not.toHaveBeenCalled();
+        expect(listener).not.toHaveBeenCalled();
+      }
+      expect(recovery.blocked(owner)).toBe(false);
+      expect((await drain()).blocker).toBe(false);
+      return;
+    }
+    if (edge === "blocked result" || edge === "export active" || edge === "restart required")
+      await expect(acting).resolves.toMatchObject({ blocker: true, recovery: target });
+    else await expect(acting).rejects.toThrow();
+    expect(claim).toHaveBeenCalledTimes(edge === "export active" ? 2 : 1);
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalled();
+    expect(changing).toHaveBeenCalledWith(owner);
+    expect(recovery.blocked(owner)).toBe(true);
+    expect(recovery.blocked(owner, new Set(["other"]))).toBe(edge === "restart required");
+    expect((await drain()).blocker).toBe(true);
+    if (now >= 30000)
+      expect(recovery.snapshot().items[0]?.actions.map((a) => a.kind)).not.toContain("retry");
+  } finally {
+    release();
+    await Promise.all(queue);
+    await exporting;
+  }
+  if (edge === "restart required") return; // Cleared by verified startup recovery.
+  // The next authorized removal is durable.
+  dispatchFails = false;
+  await recovery.discard(id, action);
+  expect(await backend.evidence.loadRecovery(id)).toBeNull();
+  expect(recovery.blocked(owner)).toBe(false);
+  expect((await drain()).blocker).toBe(false);
 });

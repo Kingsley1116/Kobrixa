@@ -173,15 +173,15 @@ export class NodePersistenceFs implements PersistenceFsPort {
       throw e;
     }
   }
-  private readonly pathOwners = new WeakMap<StorePath, CloseFailure>();
+  private readonly pathOwners = new WeakMap<StorePath, CloseFailure | null>();
   private readonly descriptorOwners = new WeakMap<StoreFd, CloseFailure>();
   private readonly failedCloses = new WeakMap<StoreFd, Error>();
-  ownedPath(p: StorePath, owner?: CloseFailure): StorePath {
-    if (owner) this.pathOwners.set(p, owner);
+  ownedPath(p: StorePath, owner?: CloseFailure | null): StorePath {
+    if (owner !== undefined) this.pathOwners.set(p, owner);
     return p;
   }
   async openOwned(p: StorePath, mode: OpenMode): Promise<StoreFd> {
-    const owner = this.pathOwners.get(p) ?? this.options.onCloseFailure;
+    const owner = this.pathOwners.has(p) ? this.pathOwners.get(p) : this.options.onCloseFailure;
     const register = (fd: StoreFd) => {
       if (owner) this.descriptorOwners.set(fd, owner);
       return fd;

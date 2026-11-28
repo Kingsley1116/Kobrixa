@@ -1,3 +1,5 @@
+import fsPromises from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -933,6 +935,7 @@ it("retains committed and aborted tombstones for captured evidence after entry p
       deadlineMonotonicMs: 240000,
     };
     expect(await env.store.flushEvidence(barrier, [a, b])).toEqual({
+      completedMonotonicMs: 120001,
       state: "failed",
       accepted: [a.id, b.id],
       incomplete: [b.id],
@@ -2066,6 +2069,222 @@ it("encodes only bytes returned by a short read into reused scratch", async () =
     });
     expect(await env.store.readEncoded(owner, pin, 6, 5)).toEqual({ length: 0, data: "" });
     await env.store.close(owner, pin);
+  } finally {
+    await env.close();
+  }
+});
+
+const observationBarrier = () => ({
+  id: randomUUID(),
+  scope: { kind: "namespace" as const, owner },
+  through: 1,
+  deadlineMonotonicMs: 100,
+});
+it.each(["open", "close", "timeout", "cancel", "success"] as const)(
+  "proof-only reads leave admission and storage unchanged on %s",
+  async (mode) => {
+    const env = await setup();
+    const cutoff = 100;
+    const barrier = observationBarrier();
+    const bytes = Buffer.alloc(300000);
+    const t = ticket(bytes);
+    // The adapter exposes rename and rmdir as atomicReplace and removeEmpty.
+    // Observe native truncation too, including FileHandle.truncate.
+    const probe = await fsPromises.open(path.join(env.root, "observer-probe"), "wx");
+    const handleTruncate = vi.spyOn(Object.getPrototypeOf(probe) as typeof probe, "truncate");
+    await probe.close();
+    const truncate = vi.spyOn(fsPromises, "truncate");
+    syncBuiltinESMExports();
+    const open = vi.spyOn(env.fs, "open");
+    const effects = [
+      ...(
+        [
+          "sync",
+          "syncDirectory",
+          "directorySync",
+          "write",
+          "atomicReplace",
+          "removeEmpty",
+          "unlink",
+          "mkdir",
+        ] as const
+      ).map((k) => vi.spyOn(env.fs, k)),
+      ...(["abort", "reconcile", "retainSealed", "initialize"] as const).map((k) =>
+        vi.spyOn(env.store, k),
+      ),
+      ...(["settled", "prune", "removeUnpublished", "ns"] as const).map((k) =>
+        vi.spyOn(env.store as unknown as Record<typeof k, () => Promise<void>>, k),
+      ),
+    ];
+    const state = () => ({
+      quota: env.store.quota.snapshot(owner.sourceKey),
+      failed: env.store["failedDescriptorCloses"].size,
+      quarantine: [...env.store["quarantinedSources"]],
+      tombstones: env.store["tombstones"].size,
+    });
+    const clean = (before: ReturnType<typeof state>) => {
+      expect(truncate).not.toHaveBeenCalled();
+      expect(handleTruncate).not.toHaveBeenCalled();
+      for (const spy of effects) expect(spy).not.toHaveBeenCalled();
+      expect(
+        open.mock.calls.every(([, mode]) => mode === "read" || mode === "directory-list"),
+      ).toBe(true);
+      expect(state()).toEqual(before);
+    };
+    try {
+      let before = state();
+      await expect(env.store.observeBarrier(barrier, [], cutoff)).rejects.toThrow(
+        "namespace-unavailable",
+      );
+      clean(before);
+      await stage(env.store, t, bytes);
+      expect((await env.store.publish(t)).disposition).toBe("committed");
+      open.mockClear();
+      for (const spy of effects) spy.mockClear();
+      before = state();
+      const controller = new AbortController();
+      if (mode === "open") open.mockRejectedValueOnce(Error("open-fault"));
+      if (mode === "close") {
+        const close = env.fs.close.bind(env.fs);
+        vi.spyOn(env.fs, "close").mockImplementationOnce(async (fd) => {
+          await close(fd);
+          throw Error("close-fault");
+        });
+      }
+      let started!: () => void, resume!: () => void;
+      const entered = new Promise<void>((resolve) => {
+          started = resolve;
+        }),
+        release = new Promise<void>((resolve) => {
+          resume = resolve;
+        });
+      const read = env.fs.readInto.bind(env.fs);
+      const chunks = vi.spyOn(env.fs, "readInto").mockImplementation(async (fd, offset, dest) => {
+        if (dest.length === 262144 && (mode === "timeout" || mode === "cancel")) {
+          started();
+          await release;
+        }
+        return read(fd, offset, dest);
+      });
+      const observation = env.store.observeBarrier(barrier, [t], cutoff, controller.signal);
+      if (mode === "timeout" || mode === "cancel") {
+        await entered;
+        if (mode === "timeout") env.advance(cutoff);
+        else controller.abort();
+        clean(before);
+        resume();
+      }
+      if (mode === "success")
+        expect(await observation).toMatchObject({ state: "saved", accepted: [t.id] });
+      else await expect(observation).rejects.toThrow();
+      if (mode === "cancel" || mode === "timeout")
+        expect(chunks.mock.calls.filter(([, offset]) => offset >= 262144)).toHaveLength(0);
+      clean(before);
+      chunks.mockRestore();
+      const pending = ticket(Buffer.alloc(0));
+      await env.store.reserve(pending, 0);
+      for (const spy of effects) spy.mockClear();
+      open.mockClear();
+      before = state();
+      expect(await env.store.observeBarrier(barrier, [pending], env.fs.now() + 100)).toMatchObject({
+        state: "unknown",
+        unknown: expect.arrayContaining([pending.id]),
+      });
+      await expect(env.store.observeBarrier(barrier, [pending], env.fs.now())).rejects.toThrow(
+        "expired",
+      );
+      clean(before);
+    } finally {
+      vi.restoreAllMocks();
+      syncBuiltinESMExports();
+      await env.close();
+    }
+  },
+);
+
+it("proof verifies settings bytes even without captured members", async () => {
+  const env = await setup();
+  try {
+    const t: PublicationTicket = {
+      ...ticket(Buffer.alloc(0)),
+      target: { kind: "settings", expectedRevision: null },
+      metadata: { kind: "settings", schemaVersion: 1, validationDigest: "a".repeat(64) },
+    };
+    const bytes = Buffer.from(
+      JSON.stringify({
+        formatVersion: 1,
+        schemaVersion: 1,
+        validationDigest: "a".repeat(64),
+        values: [],
+      }),
+    );
+    await stage(env.store, t, bytes);
+    expect((await env.store.publish(t)).disposition).toBe("committed");
+    const ns = await Namespace.open(env.fs, owner.sourceKey);
+    const loc = await ns.location(t.target);
+    await rm(env.fs.name(ns.object(loc, (await ns.head(loc))!)));
+    await expect(env.store.observeBarrier(observationBarrier(), [], 100)).rejects.toThrow();
+  } finally {
+    await env.close();
+  }
+});
+it("an orphan saved row needs the exact checkpoint and final head", async () => {
+  const env = await setup();
+  try {
+    const id = randomUUID();
+    await env.store.saveRecovery({
+      id,
+      owner,
+      ticket: null,
+      sealedPin: null,
+      expiresAt: null,
+      report: {
+        state: "saved",
+        blocker: false,
+        pendingSettings: false,
+        errors: [],
+        records: [
+          {
+            id: randomUUID(),
+            committedRevision: "r_" + "0".repeat(32),
+            final: true,
+            payload: "checkpoint-only",
+          },
+        ],
+      },
+    });
+    expect(await env.store.observeBarrier(observationBarrier(), [], 100)).toMatchObject({
+      state: "failed",
+      incomplete: [id],
+    });
+  } finally {
+    await env.close();
+  }
+});
+
+it("checks the gate in force when the dispatched publication completed", async () => {
+  const bytes = Buffer.from("payload"),
+    t = ticket(bytes);
+  const env = await setup(async (point) => {
+    if (point === "after-publish" && env.fs.now() === 0) {
+      env.store.fence(owner, 50);
+      env.advance(60);
+    }
+  });
+  try {
+    await stage(env.store, t, bytes);
+    expect((await env.store.publish(t)).disposition).toBe("committed");
+    const result = await env.store.observeBarrier(
+      {
+        id: randomUUID(),
+        scope: { kind: "namespace", owner },
+        through: 1,
+        deadlineMonotonicMs: 100,
+      },
+      [t],
+      90,
+    );
+    expect(result).toMatchObject({ state: "unknown", unknown: [t.id], accepted: [] });
   } finally {
     await env.close();
   }

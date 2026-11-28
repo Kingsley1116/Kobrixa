@@ -21,6 +21,7 @@ type TestFrame = {
 };
 type TestPort = EventEmitter & { postMessage(frame: unknown): void; close(): void };
 type TestWorker = EventEmitter & {
+  postMessage(frame: TestFrame): void;
   held: SharedArrayBuffer;
   frames: TestFrame[];
   gates: Map<string, PublicationGate>;
@@ -138,6 +139,7 @@ async function setup() {
   roots.push(root);
   const profile = { hostEpoch: randomUUID(), assertHeld() {} };
   let now = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
   const result = await startPersistenceWorker({
     profile,
     root: await openStoreRoot({ userData: root, profile }),
@@ -553,6 +555,55 @@ it("releases authenticated synthetic captures after finalizing the barrier, incl
         expect(await env.backend.sources.read(d.id, "preferences", 0, 262144)).toEqual(bytes);
       }
     }
+  } finally {
+    await env.backend.dispose();
+  }
+});
+
+it("expires a proof read without fencing, flushing, consuming or cancelling the captured work", async () => {
+  const env = await setup();
+  const ticket = env.ticket();
+  await env.backend.engine.reserve(ticket, 0);
+  const barrier = env.backend.evidence.captureDrain!(
+    { kind: "namespace", owner: env.owner },
+    10000,
+  );
+  vi.useFakeTimers();
+  harness.hold = true;
+  const post = vi.spyOn(harness.worker, "postMessage");
+  const observe = env.backend.evidence.observe!(barrier, [ticket], 25);
+  const rejected = expect(observe).rejects.toThrow("timeout");
+  await vi.advanceTimersByTimeAsync(25);
+  await rejected;
+  expect(post.mock.calls.map(([frame]) => frame.operation ?? frame.kind)).toEqual([
+    "evidence.observe",
+  ]);
+  expect(env.backend.evidence.tickets(barrier)).toEqual([ticket]);
+  expect(harness.worker.gates.get(ticket.id)?.deadline).toBe(ticket.deadlineMonotonicMs);
+  harness.hold = false;
+  vi.useRealTimers();
+  await env.backend.dispose();
+});
+
+it("bounds retained proof descriptors across ordinary cache expiry until explicit release", async () => {
+  const env = await setup(),
+    scope = { kind: "namespace" as const, owner: env.owner };
+  try {
+    const captures = Array.from({ length: 1024 }, () =>
+      env.backend.evidence.captureDrain!(scope, 100),
+    );
+    env.advance();
+    expect(() => env.backend.evidence.captureDrain!(scope, 130000)).toThrow("barrier-limit");
+    expect(() =>
+      env.backend.evidence.captureDrain!(
+        { ...scope, owner: { ...scope.owner, generation: 2 } },
+        130000,
+        true,
+      ),
+    ).not.toThrow();
+    env.backend.evidence.releaseProof!(captures[0]!);
+    await expect(env.backend.evidence.observe!(captures[0]!, [], 130000)).rejects.toThrow("stale");
+    expect(() => env.backend.evidence.captureDrain!(scope, 130000)).not.toThrow();
   } finally {
     await env.backend.dispose();
   }

@@ -412,11 +412,16 @@ export class Namespace {
   private constructor(
     readonly fs: NodePersistenceFs,
     readonly sourceKey: string,
-    private readonly onCloseFailure?: (fd: StoreFd) => void,
+    private readonly onCloseFailure?: ((fd: StoreFd) => void) | null,
+    private readonly checkRead?: () => void,
   ) {
     this.hash = createHash("sha256").update(sourceKey).digest("hex");
   }
+  observation(check: () => void) {
+    return new Namespace(this.fs, this.sourceKey, null, check);
+  }
   path(...parts: string[]): StorePath {
+    this.checkRead?.();
     return this.fs.ownedPath(this.fs.path("namespaces", this.hash, ...parts), this.onCloseFailure);
   }
   static async open(
@@ -517,12 +522,14 @@ export class Namespace {
     try {
       let offset = 0;
       while (offset < head.byteLength) {
+        this.checkRead?.();
         const bytes = await this.fs.readInto(
           fd,
           offset,
           scratch.subarray(0, Math.min(scratch.length, head.byteLength - offset)),
         );
         if (!bytes.length) throw new Error("corrupt");
+        this.checkRead?.();
         digest.update(bytes);
         offset += bytes.length;
       }

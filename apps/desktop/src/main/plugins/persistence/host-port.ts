@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+import { hrtimeMilliseconds, persistenceClock } from "./clock.js";
 import { createHash, randomUUID } from "node:crypto";
 import { createBoundSettingsService, settingsRequests } from "./settings-service.js";
 import { createPersistenceRecovery } from "./recovery-port.js";
@@ -102,7 +104,15 @@ export interface PersistenceCompositionInput {
 }
 function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
   const { backend, sources, events, dispatchDrain } = input.composition;
-  const now = input.now,
+  if (
+    backend.clockKind &&
+    (backend.now !== persistenceClock(backend.clockKind) ||
+      (backend.clockKind === "hrtime"
+        ? input.now !== hrtimeMilliseconds
+        : input.now === hrtimeMilliseconds))
+  )
+    throw new Error("clock-domain-mismatch");
+  const now = backend.now ?? input.now,
     wall = Date.now;
   // T8 publishes these permissions. Keep the F factory signature while using the exact local names.
   const permission = (principal: Principal, value: string) =>
@@ -117,27 +127,10 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
     string,
     { checkpoint: string; recovery: string; terminalAt?: number }
   >();
-  const settledAt = new Map<string, number>();
+
   const hostLimit = 1024,
     sourceLimit = 64;
   function sweep() {
-    for (const [id, at] of settledAt)
-      if (now() >= at + 120000) {
-        // A direct core abort does not rewrite the record service's old sealed
-        // projection. Keep its bounded identity until that projection is terminal.
-        if (
-          outcomes.get(id) === "discarded" &&
-          records
-            .admittedWrites()
-            .some(
-              (w) => w.ticket.id === id && ["receiving", "sealed", "publishing"].includes(w.state),
-            )
-        )
-          continue;
-        captured.delete(id);
-        outcomes.delete(id);
-        settledAt.delete(id);
-      }
     for (const [id, row] of registrations)
       if (row.terminalAt !== undefined && now() >= row.terminalAt + 120000)
         registrations.delete(id);
@@ -153,12 +146,11 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
       limit();
     owners.set(ownerKey(owner), Object.freeze({ ...owner }));
   }
-  const captured = new Map<string, PublicationTicket>(),
-    outcomes = new Map<string, string>();
-  const discardedTicket = (owner: ResourceOwner, id: string) =>
-    outcomes.get(id) === "discarded" &&
-    captured.has(id) &&
-    ownerKey(captured.get(id)!.owner) === ownerKey(owner);
+  const outcomes = new WeakMap<PublicationTicket, string>();
+  const discardedTicket = (owner: ResourceOwner, id: string): boolean => {
+    const member = lifecycle.captured(owner)?.get(id);
+    return !!member && outcomes.get(member) === "discarded";
+  };
   const schemas = {
     ...settingsRequestSchemas,
     ...storageRequestSchemas,
@@ -171,19 +163,21 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
     adapter: input.actionAdapter,
     actions: input.coreActions,
     coreOwner: sources.coreOwner,
-    changing: (owner) => lifecycle.invalidateRecovery(owner),
-    retried: async (owner, report, deadline) => {
+    changing: (owner, origin) => lifecycle.invalidateRecovery(owner, origin),
+    retried: async (owner, report, deadline, ticket) => {
+      if (ticket && !report.blocker && ticket.metadata.kind === "record") {
+        const record = ticket.metadata.record;
+        if (
+          report.records.some((r) => r.id === record.id && r.committedRevision === record.revision)
+        )
+          lifecycle.resolveTicket(owner, ticket);
+      }
       const current = await lifecycle.refreshRecovery(owner, deadline);
       if (report.recovery && current) input.reconciled?.(report.recovery, current);
     },
     retired(owner, report, ticket) {
-      if (
-        ticket &&
-        captured.has(ticket.id) &&
-        ownerKey(captured.get(ticket.id)!.owner) === ownerKey(owner)
-      ) {
-        outcomes.set(ticket.id, "discarded");
-        settledAt.set(ticket.id, now());
+      if (ticket && lifecycle.resolveTicket(owner, ticket)) {
+        outcomes.set(lifecycle.captured(owner)!.get(ticket.id)!, "discarded");
       }
       lifecycle.retireCheckpoint(owner, report.recovery!, report.records);
       for (const { id } of report.records) {
@@ -198,9 +192,14 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
     },
     now,
     wall,
-    async retry(_owner, report, deadline) {
+    async retry(owner, report, deadline, retainedTicket) {
       const stored = report.recovery ? await backend.evidence.loadRecovery(report.recovery) : null;
       if (!stored?.ticket) return { ...report, state: "checkpoint-only", blocker: true };
+      if (
+        (retainedTicket && !isDeepStrictEqual(retainedTicket, stored.ticket)) ||
+        !lifecycle.permitsDisposition(owner, stored.ticket)
+      )
+        throw new PersistenceFault("PLUGIN_E_STALE_RESOURCE");
       let result;
       try {
         result = await backend.engine.reconcile(stored.ticket);
@@ -242,9 +241,14 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
         ),
       };
     },
-    async discard(_owner, report, ticket) {
+    async discard(owner, report, ticket) {
       const stored = report.recovery ? await backend.evidence.loadRecovery(report.recovery) : null;
       if (ticket) {
+        if (
+          !lifecycle.permitsDisposition(owner, ticket) ||
+          (stored?.ticket && !isDeepStrictEqual(ticket, stored.ticket))
+        )
+          throw new PersistenceFault("PLUGIN_E_STALE_RESOURCE");
         const disposition = await backend.engine.abort(ticket).catch(() => "unknown" as const);
         if (disposition === "unknown") return { ...report, state: "uncertain", blocker: true };
         if (stored?.sealedPin) await backend.reads.close(stored.owner, stored.sealedPin);
@@ -262,7 +266,7 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
       };
     },
   });
-  const lifecycle = createPersistenceLifecycle({
+  const lifecycle: ReturnType<typeof createPersistenceLifecycle> = createPersistenceLifecycle({
     now,
     wall,
     live: (o) => sources.current(o),
@@ -360,6 +364,14 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
       return backend.engine.fence(o, d);
     },
     fenceTarget: (o, id, d) => backend.engine.fenceTarget(o, id, d),
+    hasDiscardedProjection: (owner) =>
+      records
+        .admittedWrites(owner)
+        .some(
+          (w) =>
+            ["receiving", "sealed", "publishing"].includes(w.state) &&
+            discardedTicket(owner, w.ticket.id),
+        ),
     pendingWrites: (o) =>
       records
         .admittedWrites(o)
@@ -381,16 +393,17 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
             !backend.evidence.confirmedAbort?.(w.ticket),
         ),
     pendingSettings: (o) =>
-      [...captured.values()].some(
+      [...(lifecycle.captured(o)?.values() ?? [])].some(
         (t) =>
           ownerKey(t.owner) === ownerKey(o) &&
           t.target.kind === "settings" &&
-          outcomes.get(t.id) !== "committed" &&
+          outcomes.get(t) !== "committed" &&
           !discardedTicket(o, t.id),
       ),
-    async settle(ids, _deadline) {
+    async settle(ids, _deadline, owner) {
+      const captured = lifecycle.captured(owner);
       ids = ids.filter((id) => {
-        const ticket = captured.get(id);
+        const ticket = captured?.get(id);
         return !ticket || !discardedTicket(ticket.owner, id);
       });
       await records.settle(ids);
@@ -398,9 +411,8 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
       for (const id of ids) {
         const projection = records.admittedWrites().find((w) => w.ticket.id === id);
         if (projection) await projection.pending.catch(() => {});
-        const ticket = captured.get(id) ?? projection?.ticket;
+        const ticket = captured?.get(id) ?? projection?.ticket;
         if (ticket && backend.evidence.confirmedAbort?.(ticket)) {
-          if (captured.has(id)) settledAt.set(id, settledAt.get(id) ?? now());
           continue;
         }
         // Reconciliation can revoke an unpublished ticket. A receiving write
@@ -408,10 +420,9 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
         if (ticket && projection?.state !== "receiving") {
           try {
             const disposition = (await backend.engine.reconcile(ticket)).disposition;
-            outcomes.set(id, disposition);
-            if (disposition === "committed") settledAt.set(id, settledAt.get(id) ?? now());
+            outcomes.set(ticket, disposition);
           } catch {
-            outcomes.set(id, "unknown");
+            outcomes.set(ticket, "unknown");
           }
         }
       }
@@ -437,15 +448,9 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
       },
       capture(scope, deadline) {
         sweep();
-        const barrier = (backend.evidence.captureDrain ?? backend.evidence.capture)(
-          scope,
-          deadline,
-        );
-        const tickets = backend.evidence.tickets(barrier);
-        const additional = tickets.filter((t) => !captured.has(t.id));
-        if (captured.size + additional.length > hostLimit) limit();
-        for (const ticket of additional) captured.set(ticket.id, ticket);
-        return barrier;
+        return backend.evidence.captureDrain
+          ? backend.evidence.captureDrain(scope, deadline, true)
+          : backend.evidence.capture(scope, deadline);
       },
     },
     reads: backend.reads,
@@ -464,7 +469,8 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
         ? { kind: "complete-staging", expiresMonotonicMs: write.retained.expiresMonotonicMs }
         : { kind: "checkpoint-only" };
     },
-    async recover(owner, report, current, unresolved, restartBlocker) {
+    async recover(owner, report, current, unresolved, restartBlocker, ownerRecovery) {
+      const captured = lifecycle.captured(owner);
       // StoredRecovery owns one immutable ticket/pin. Multi-target drains retain one row per target.
       const admissions = records
         .admittedWrites(owner)
@@ -500,7 +506,7 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
       // A terminal service status may have expired before its cleanup reply
       // reached main. Bind each unresolved flush member to its own action.
       for (const id of unresolved) {
-        const ticket = captured.get(id);
+        const ticket = captured?.get(id);
         if (
           !ticket ||
           ticket.target.kind !== "record" ||
@@ -545,7 +551,7 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
         const identity = item
           ? (registrations.get(JSON.stringify([ownerKey(owner), item.id]))?.recovery ??
             write?.ticket.id)
-          : undefined;
+          : ownerRecovery;
         // Retry belongs to this target's retained write, not every record in
         // the drain. Owner-wide uncertainty/settings/errors still fail closed.
         const state =
@@ -582,12 +588,12 @@ function constructServices(input: Parameters<typeof createPersistenceHost>[0]) {
         if (retained.state === "uncertain")
           report = { ...report, state: "uncertain", blocker: true };
       }
-      for (const ticket of captured.values())
+      for (const ticket of captured?.values() ?? [])
         if (
           current() &&
           ownerKey(ticket.owner) === ownerKey(owner) &&
           ticket.target.kind !== "record" &&
-          outcomes.get(ticket.id) !== "committed" &&
+          outcomes.get(ticket) !== "committed" &&
           report.pendingSettings
         ) {
           const retained = await recovery.retain(

@@ -136,7 +136,7 @@ export function createLegacyImportCoordinator(input: {
     return {
       id: randomUUID(),
       owner: structuredClone(input.importOwner(d.targetSourceKey)),
-      deadlineMonotonicMs: performance.now() + 10000,
+      deadlineMonotonicMs: (input.backend.now?.() ?? performance.now()) + 10000,
       metadata: { kind: "import", key },
       target: { kind: "import", key },
     };
@@ -565,7 +565,7 @@ export function createLegacyImportCoordinator(input: {
                   owner: structuredClone(owner),
                   target,
                   metadata,
-                  deadlineMonotonicMs: performance.now() + 10000,
+                  deadlineMonotonicMs: (input.backend.now?.() ?? performance.now()) + 10000,
                 };
                 publicationTicketSchema.parse(ticket);
                 items.push({

@@ -1,3 +1,4 @@
+import { hrtimeMilliseconds, persistenceClock, type PersistenceClockKind } from "./clock.js";
 import { projectImportItem } from "./import-journal.js";
 import { JsonFormatReader } from "./stream-json.js";
 import { ReserveNotAdmittedError } from "./engine-port.js";
@@ -94,7 +95,7 @@ export type WorkerOperations = Qualified<
     Required<
       Omit<
         PersistenceBackend["evidence"],
-        "capture" | "captureDrain" | "tickets" | "confirmedAbort"
+        "capture" | "captureDrain" | "releaseProof" | "tickets" | "confirmedAbort"
       >
     >,
     "evidence"
@@ -172,6 +173,11 @@ const args = {
   "reads.readEncoded": z.tuple([owner, handle, count, count.min(1).max(262144)]),
   "reads.read": z.tuple([owner, handle, count, count.min(1).max(262144)]),
   "reads.close": z.tuple([owner, handle]),
+  "evidence.observe": z.tuple([
+    persistenceBarrierSchema,
+    z.array(ticket).max(1024),
+    z.number().finite().nonnegative(),
+  ]),
   "evidence.flush": z.tuple([persistenceBarrierSchema, z.array(ticket).max(1024)]),
   "evidence.quota": z.tuple([owner]),
   "evidence.settingsDigest": z.tuple([owner]),
@@ -326,6 +332,7 @@ export type PersistenceWorkerResponse<K extends Operation = Operation> =
 const bootSchema = z.strictObject({
   version: z.literal(1),
   kind: z.literal("boot"),
+  clockKind: z.enum(["node-performance", "hrtime"]),
   hostEpoch: handle,
   root: z.string().min(1),
   held: z.instanceof(SharedArrayBuffer),
@@ -416,10 +423,23 @@ export async function startPersistenceWorker(input: {
   profile: ProfileWriterLock;
   root: StoreRoot;
   workerEntry: string;
-  now: () => number;
+  clockKind?: PersistenceClockKind;
+  now?: () => number;
   testControl?: (control: PersistenceFaultControl) => void;
 }): Promise<{ backend: PersistenceBackend; recovery: "ready" | "blocked" }> {
   input.profile.assertHeld();
+  const clockKind = input.clockKind ?? "node-performance";
+  const now = persistenceClock(clockKind);
+  if (
+    input.now &&
+    input.now !== now &&
+    !(
+      clockKind === "node-performance" &&
+      (input.now === performance.now ||
+        (input.clockKind === undefined && input.now !== hrtimeMilliseconds))
+    )
+  )
+    throw new Error("clock-domain-mismatch");
   const root = await storeRootPath(input.root, input.profile);
   if (!path.isAbsolute(input.workerEntry)) throw new Error("invalid-worker-entry");
   if (workerEpochs.get(root) === input.profile.hostEpoch) throw new Error("recovery-blocked");
@@ -444,7 +464,7 @@ export async function startPersistenceWorker(input: {
     exitCode = code;
     channel?.port1.close();
   });
-  const queue = new WorkQueue(input.now),
+  const queue = new WorkQueue(now),
     ledger = new Map<
       string,
       {
@@ -470,7 +490,7 @@ export async function startPersistenceWorker(input: {
   }
   function pruneLedger() {
     for (const [id, e] of ledger)
-      if (e.settledAt !== null && e.settledAt + 120000 <= input.now()) releaseSlot(id);
+      if (e.settledAt !== null && e.settledAt + 120000 <= now()) releaseSlot(id);
   }
   const ownerDeadlines = new Map<string, number>(),
     targetDeadlines = new Map<string, number>(),
@@ -486,8 +506,20 @@ export async function startPersistenceWorker(input: {
         drain: boolean;
       }
     >();
+  // Retained by the owner record. Ordinary barrier expiry can release its map entry
+  // without invalidating a pinned original descriptor for a later read.
+  const proofCaptures = new Map<
+    PersistenceBarrier,
+    { barrier: PersistenceBarrier; tickets: readonly PublicationTicket[] }
+  >();
+  // A lifecycle-owned descriptor is reachable only through its bounded owner
+  // record. Standalone transport callers continue to use the bounded cache.
+  let ownerProofs = new WeakMap<
+    PersistenceBarrier,
+    { barrier: PersistenceBarrier; tickets: readonly PublicationTicket[] }
+  >();
   function pruneBarriers() {
-    for (const [id, e] of barriers) if (e.expires <= input.now()) barriers.delete(id);
+    for (const [id, e] of barriers) if (e.expires <= now()) barriers.delete(id);
   }
   const destinations = new WeakMap<ExportDestination, string>();
   let sequence = 0,
@@ -506,7 +538,7 @@ export async function startPersistenceWorker(input: {
   const lost = () => {
     dead = true;
     Atomics.store(new Int32Array(held), 0, 0);
-    for (const e of ledger.values()) e.gate.shorten(input.now(), input.now());
+    for (const e of ledger.values()) e.gate.shorten(now(), now());
     for (const p of pending.values()) p.reject(new Error("worker-lost"));
     pending.clear();
   };
@@ -527,7 +559,7 @@ export async function startPersistenceWorker(input: {
         settled &&
         (marker.disposition === "committed" || settled.ticket.target.kind !== "record")
       )
-        settled.settledAt ??= input.now();
+        settled.settledAt ??= now();
     }
     // Only the reserve response can prove this attempt never became a write.
     // Failed cleanup remains unresolved until a separate terminal response.
@@ -535,7 +567,7 @@ export async function startPersistenceWorker(input: {
       const e = p.ticketId ? ledger.get(p.ticketId) : undefined;
       if (e && r.settled?.some((m) => m.id === p.ticketId && m.disposition === "aborted")) {
         e.unadmittedClean = true;
-        e.settledAt ??= input.now();
+        e.settledAt ??= now();
       }
     }
     if (!r.ok) {
@@ -612,6 +644,7 @@ export async function startPersistenceWorker(input: {
     worker.postMessage({
       version: 1,
       kind: "boot",
+      clockKind,
       hostEpoch: input.profile.hostEpoch,
       root,
       held,
@@ -629,10 +662,14 @@ export async function startPersistenceWorker(input: {
       source = first?.owner?.sourceKey ?? first?.sourceKey ?? "core";
     let requestId: number | undefined,
       cancelled = false;
+    const deadline =
+      operation === "evidence.observe"
+        ? Math.min(now() + 10000, parameters[2] as number)
+        : now() + 10000;
     const work = queue.run(
       source,
       charge(parameters) + 256,
-      input.now() + 10000,
+      deadline,
       () =>
         new Promise<Awaited<ReturnType<WorkerOperations[K]>>>((resolve, reject) => {
           if (cancelled || dead || closing) {
@@ -666,7 +703,7 @@ export async function startPersistenceWorker(input: {
                 ) {
                   if (confirmedAbort && entry.ticket.target.kind === "record")
                     entry.confirmedAbort = true;
-                  entry.settledAt ??= input.now();
+                  entry.settledAt ??= now();
                 }
                 resolve(value as Awaited<ReturnType<WorkerOperations[K]>>);
               },
@@ -685,19 +722,24 @@ export async function startPersistenceWorker(input: {
     );
     let timer: ReturnType<typeof setTimeout>;
     const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        cancelled = true;
-        const t = parameters[0] as PublicationTicket | undefined;
-        if (t?.id) ledger.get(t.id)?.gate.shorten(input.now(), input.now());
-        if (requestId !== undefined) {
-          worker.postMessage({ version: 1, kind: "cancel", id: requestId });
-          if (operation === "sources.map") {
-            pending.get(requestId)?.reject(new Error("timeout"));
-            pending.delete(requestId);
+      timer = setTimeout(
+        () => {
+          cancelled = true;
+          const t = parameters[0] as PublicationTicket | undefined;
+          if (operation !== "evidence.observe" && t?.id)
+            ledger.get(t.id)?.gate.shorten(now(), now());
+          if (requestId !== undefined) {
+            if (operation !== "evidence.observe")
+              worker.postMessage({ version: 1, kind: "cancel", id: requestId });
+            if (operation === "sources.map" || operation === "evidence.observe") {
+              pending.get(requestId)?.reject(new Error("timeout"));
+              pending.delete(requestId);
+            }
           }
-        }
-        reject(new Error("timeout"));
-      }, 10000);
+          reject(new Error("timeout"));
+        },
+        Math.max(0, deadline - now()),
+      );
     });
     return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
   }
@@ -724,7 +766,7 @@ export async function startPersistenceWorker(input: {
           ownerKey(grant.owner) !== ownerKey(t.owner) ||
           t.target.kind !== "record" ||
           t.target.id !== grant.recordId ||
-          input.now() >= deadline
+          now() >= deadline
         )
           throw new Error("stale");
         grant = { ...structuredClone(grant), deadlineMonotonicMs: deadline };
@@ -800,7 +842,7 @@ export async function startPersistenceWorker(input: {
     reserve: (t, size) => admit(t, size),
     reserveFinal: (t, size, grant) => admit(t, size, grant),
     publishRecovery: (t, p, d) =>
-      send("engine.publishRecovery", [t, p, Math.min(d, input.now() + 10000)]),
+      send("engine.publishRecovery", [t, p, Math.min(d, now() + 10000)]),
     append: (t, o, b) => send("engine.append", [t, o, b]),
     seal: (t, n, h) => send("engine.seal", [t, n, h]),
     async publish(t) {
@@ -820,7 +862,7 @@ export async function startPersistenceWorker(input: {
       const ids: string[] = [];
       for (const e of ledger.values())
         if (ownerKey(e.ticket.owner) === ownerKey(owner)) {
-          e.gate.shorten(deadline, input.now());
+          e.gate.shorten(deadline, now());
           ids.push(e.ticket.id);
         }
       return ids;
@@ -837,7 +879,7 @@ export async function startPersistenceWorker(input: {
           e.ticket.target.kind === "record" &&
           e.ticket.target.id === id
         ) {
-          e.gate.shorten(deadline, input.now());
+          e.gate.shorten(deadline, now());
           ids.push(e.ticket.id);
         }
       return ids;
@@ -847,11 +889,13 @@ export async function startPersistenceWorker(input: {
     scope: PersistenceScope,
     deadline: number,
     retain: boolean,
+    ownerRetained = false,
   ): PersistenceBarrier {
     input.profile.assertHeld();
     pruneLedger();
     pruneBarriers();
-    if (barriers.size >= 1024) throw new Error("barrier-limit");
+    if (barriers.size >= 1024 || (retain && !ownerRetained && proofCaptures.size >= 1024))
+      throw new Error("barrier-limit");
     const barrier = Object.freeze({
       id: randomUUID(),
       scope: structuredClone(scope),
@@ -861,7 +905,7 @@ export async function startPersistenceWorker(input: {
     barriers.set(barrier.id, {
       barrier,
       drain: retain,
-      expires: retain ? input.now() + 120000 : deadline,
+      expires: retain ? now() + 120000 : deadline,
       tickets: [...ledger.values()]
         .filter(
           (e) =>
@@ -871,9 +915,16 @@ export async function startPersistenceWorker(input: {
         )
         .map((e) => e.ticket),
     });
+    if (retain)
+      (ownerRetained ? ownerProofs : proofCaptures).set(
+        barrier,
+        structuredClone(barriers.get(barrier.id)!),
+      );
     return barrier;
   }
   const backend: PersistenceBackend = {
+    clockKind,
+    now,
     engine,
     reads: {
       settings: (o) => send("reads.settings", [o]),
@@ -893,12 +944,27 @@ export async function startPersistenceWorker(input: {
       saveCheckpoint: (o, v) => send("evidence.saveCheckpoint", [o, v]),
       retainSealed: (t) => send("evidence.retainSealed", [t]),
       capture: (scope, deadline) => captureBarrier(scope, deadline, false),
-      captureDrain: (scope, deadline) => captureBarrier(scope, deadline, true),
+      releaseProof(b) {
+        proofCaptures.delete(b);
+        ownerProofs.delete(b);
+      },
+      captureDrain: (scope, deadline, ownerRetained) =>
+        captureBarrier(scope, deadline, true, ownerRetained),
       tickets(b) {
         pruneBarriers();
         const saved = barriers.get(b.id);
         if (!saved || JSON.stringify(saved.barrier) !== JSON.stringify(b)) throw new Error("stale");
         return structuredClone(saved.tickets);
+      },
+      async observe(b, tickets, deadline) {
+        const saved = ownerProofs.get(b) ?? proofCaptures.get(b);
+        if (
+          !saved ||
+          !sameImportValue(saved.barrier, b) ||
+          !sameImportValue(saved.tickets, tickets)
+        )
+          throw new Error("stale");
+        return send("evidence.observe", [b, tickets, Math.min(deadline, now() + 10000)]);
       },
       async flush(b) {
         const tickets = backend.evidence.tickets(b);
@@ -976,6 +1042,8 @@ export async function startPersistenceWorker(input: {
       read: (d, k, o, n) => send("sources.read", [d, k, o, n]),
     },
     dispose() {
+      proofCaptures.clear();
+      ownerProofs = new WeakMap();
       return (closing ??= new Promise<void>((resolve, reject) => {
         if (exited || dead) {
           Atomics.store(new Int32Array(held), 0, 0);
@@ -985,7 +1053,7 @@ export async function startPersistenceWorker(input: {
           return;
         }
         input.profile.assertHeld();
-        for (const e of ledger.values()) e.gate.shorten(input.now(), input.now());
+        for (const e of ledger.values()) e.gate.shorten(now(), now());
         worker.once("exit", (code) => {
           channel?.port1.close();
           Atomics.store(new Int32Array(held), 0, 0);
@@ -1044,13 +1112,15 @@ export function runPersistenceWorker(input: {
         paused.delete(m.point);
       }
     });
+    const now = persistenceClock(boot.clockKind);
     const activeTicket = new AsyncLocalStorage<string | null>();
     const fs = new NodePersistenceFs(boot.root, profile, {
+      now,
       fault: async (point, edge) => {
         if (edge !== "before") return;
         faultPort?.postMessage({
           point,
-          time: performance.now(),
+          time: now(),
           ticket: activeTicket.getStore() ?? null,
         });
         const action = armed.get(point);
@@ -1063,7 +1133,7 @@ export function runPersistenceWorker(input: {
     });
     await fs.check(fs.path());
     const store = new AtomicStore(fs),
-      output = new NativeOutput(profile, store.quota, () => performance.now(), fs),
+      output = new NativeOutput(profile, store.quota, now, fs),
       sources = new WorkerSources(
         boot.root,
         store,
@@ -1091,7 +1161,7 @@ export function runPersistenceWorker(input: {
           : cause,
       );
     }
-    const queue = new WorkQueue(() => performance.now()),
+    const queue = new WorkQueue(now),
       accepted = new Map<
         number,
         {
@@ -1103,6 +1173,7 @@ export function runPersistenceWorker(input: {
       destinations = new Map<string, ExportDestination>();
     let closed = false;
     const requests = new Map<number, z.infer<typeof PersistenceWorkerRequest>>();
+    const observations = new Map<number, AbortController>();
     const cancelledMaps = new Set<number>();
     const releasingMaps = new Set<Promise<void>>();
     function collectSettled() {
@@ -1170,6 +1241,7 @@ export function runPersistenceWorker(input: {
       "reads.read": store.read.bind(store),
       "reads.readEncoded": store.readEncoded.bind(store),
       "reads.close": store.close.bind(store),
+      "evidence.observe": store.observeBarrier.bind(store),
       "evidence.flush": async (b: PersistenceBarrier, tickets: PublicationTicket[]) => {
         const members = tickets.filter((t) => matches(b.scope, t));
         if (!members.length) return store.flushEvidence(b, members);
@@ -1256,6 +1328,10 @@ export function runPersistenceWorker(input: {
         const cancel = cancelRequest.safeParse(raw);
         if (!cancel.success) return;
         const original = requests.get(cancel.data.id);
+        if (original?.operation === "evidence.observe") {
+          observations.get(cancel.data.id)?.abort();
+          return;
+        }
         if (original?.operation === "sources.map") cancelledMaps.add(cancel.data.id);
         const release = sources.cancelMap(cancel.data.id).catch(() => {
           /* close failure quarantines the source */
@@ -1333,13 +1409,14 @@ export function runPersistenceWorker(input: {
           return;
         }
       }
+      if (r.operation === "evidence.observe") observations.set(r.id, new AbortController());
       const first = r.args[0] as
         { owner?: PersistenceOwner; sourceKey?: string; id?: string } | undefined;
       void queue
         .run(
           first?.owner?.sourceKey ?? first?.sourceKey ?? "core",
           charge(r.args) + 256,
-          performance.now() + 10000,
+          now() + 10000,
           async () => {
             profile.assertHeld();
             if (r.operation === "sources.map") {
@@ -1352,7 +1429,11 @@ export function runPersistenceWorker(input: {
               return mapped;
             }
             const fn = api[r.operation] as (...parameters: unknown[]) => Promise<unknown>;
-            return activeTicket.run(first?.owner ? (first.id ?? null) : null, () => fn(...r.args));
+            return activeTicket.run(first?.owner ? (first.id ?? null) : null, () =>
+              r.operation === "evidence.observe"
+                ? fn(...r.args, observations.get(r.id)!.signal)
+                : fn(...r.args),
+            );
           },
         )
         .then(async (value) => {
@@ -1372,7 +1453,7 @@ export function runPersistenceWorker(input: {
               if (result === "committed") value = await store.reconcile(original);
             }
           }
-          const settled = collectSettled();
+          const settled = r.operation === "evidence.observe" ? [] : collectSettled();
           port.postMessage(
             {
               version: 1,
@@ -1397,11 +1478,12 @@ export function runPersistenceWorker(input: {
             id: r.id,
             ok: false,
             error: privateError(error),
-            settled: collectSettled(),
+            settled: r.operation === "evidence.observe" ? [] : collectSettled(),
           });
         })
         .finally(() => {
           requests.delete(r.id);
+          observations.delete(r.id);
           cancelledMaps.delete(r.id);
         });
     });

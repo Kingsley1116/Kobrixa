@@ -486,7 +486,13 @@ function evidenceDouble(overrides: Partial<PersistenceEvidencePort> = {}): Persi
       through: sequence++,
       deadlineMonotonicMs,
     }),
-    flush: async () => ({ state: "saved", accepted: [], incomplete: [], unknown: [] }),
+    flush: async () => ({
+      completedMonotonicMs: 0,
+      state: "saved",
+      accepted: [],
+      incomplete: [],
+      unknown: [],
+    }),
     tickets: () => [],
     settingsDigest: async () => null,
     quota: async () => {
