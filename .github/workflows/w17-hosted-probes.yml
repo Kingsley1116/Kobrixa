@@ -1,0 +1,359 @@
+name: W17 hosted feasibility probes
+
+on:
+  push:
+    branches: [test/w17-hosted-probes]
+
+permissions:
+  contents: read
+
+env:
+  W17_HOSTED: "1"
+  W17_PRIVATE_ACL: |
+    $ErrorActionPreference='Stop'
+    $trustees=@([Security.Principal.WindowsIdentity]::GetCurrent().User.Value,'S-1-5-18') | Select-Object -Unique
+    if ($env:W17_ACL_VERIFY_ONLY -ne '1') {
+      $acl=[Security.AccessControl.DirectorySecurity]::new()
+      $acl.SetAccessRuleProtection($true,$false)
+      foreach ($sid in $trustees) {
+        $id=[Security.Principal.SecurityIdentifier]::new($sid)
+        $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($id,'FullControl','ContainerInherit,ObjectInherit','None','Allow'))
+      }
+      Set-Acl -LiteralPath $env:W17_PRIVATE -AclObject $acl
+    }
+    Add-Type @'
+    using System;
+    using System.ComponentModel;
+    using System.Runtime.InteropServices;
+    using Microsoft.Win32.SafeHandles;
+    public static class PrivateDacl {
+      [DllImport("kernel32", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true)]
+      static extern SafeFileHandle CreateFileW(string path, uint access, uint share, IntPtr sa, uint mode, uint flags, IntPtr template);
+      [DllImport("ntdll")]
+      static extern int NtQuerySecurityObject(SafeFileHandle h, uint info, [Out] byte[] sd, uint size, out uint needed);
+      public static byte[] Read(string path) {
+        using (var h = CreateFileW(path, 0x20000, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero)) {
+          if (h.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+          var sd = new byte[64 * 1024];
+          uint used;
+          int status = NtQuerySecurityObject(h, 4, sd, (uint)sd.Length, out used);
+          if (status < 0 || used == 0 || used > sd.Length)
+            throw new InvalidOperationException("DACL read NTSTATUS " + status + ", length " + used);
+          Array.Resize(ref sd, (int)used);
+          return sd;
+        }
+      }
+    }
+    '@
+    $sd=[Security.AccessControl.RawSecurityDescriptor]::new([PrivateDacl]::Read($env:W17_PRIVATE),0)
+    $seen=@{}
+    if (!($sd.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -or $sd.DiscretionaryAcl.Count -ne @($trustees).Count) { throw 'Private directory DACL mismatch' }
+    foreach ($ace in $sd.DiscretionaryAcl) {
+      $sid=$ace.SecurityIdentifier.Value
+      if ($sid -notin $trustees -or $seen.ContainsKey($sid) -or $ace.AceType -ne 'AccessAllowed' -or [int]$ace.AceFlags -ne 3 -or $ace.AccessMask -ne [int][Security.AccessControl.FileSystemRights]::FullControl -or $ace.OpaqueLength -ne 0) { throw 'Unexpected private directory ACE' }
+      $seen[$sid]=$true
+    }
+
+jobs:
+  macos:
+    # Allocate the three starts to fresh qualifying pushes. A GitHub rerun
+    # cannot allocate an extra macOS runner, even after a cancellation.
+    # Change only this job's final literal to false once its W17P stop rule is met.
+    if: github.run_number <= 3 && github.run_attempt == 1 && true
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - name: Create private controller directory
+        id: bootstrap
+        timeout-minutes: 1
+        shell: bash
+        env:
+          PLATFORM: macos
+        run: &bootstrap |
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          import path from "node:path";
+          import {execFileSync} from "node:child_process";
+          const env = process.env;
+          const dir = path.join(env.RUNNER_TEMP, `w17-${env.PLATFORM}-${env.GITHUB_RUN_ID}-${env.GITHUB_RUN_ATTEMPT}`);
+          fs.mkdirSync(dir, { mode: 0o700 });
+          function protect(dir) {
+            if (process.platform === "win32") {
+              execFileSync("pwsh", ["-NoProfile", "-NonInteractive", "-Command", process.env.W17_PRIVATE_ACL], {
+                env: { ...process.env, W17_PRIVATE: dir }, stdio: "inherit"
+              });
+            }
+          }
+          protect(dir);
+          const st = fs.lstatSync(dir, { bigint: true });
+          if (!st.isDirectory() || !st.ino) throw Error("No directory identity");
+          const identity = { kind: "bootstrap", platform: env.PLATFORM, sha: env.GITHUB_SHA,
+            run: env.GITHUB_RUN_ID, attempt: env.GITHUB_RUN_ATTEMPT };
+          const id = st => `${st.dev}/${st.ino}/${st.birthtimeNs}`;
+          const fd = fs.openSync(path.join(dir, "observations.jsonl"), "wx", 0o600);
+          let observations;
+          try {
+            fs.writeFileSync(fd, JSON.stringify(identity) + "\n");
+            observations = id(fs.fstatSync(fd,{bigint:true}));
+          } finally { fs.closeSync(fd); }
+          fs.appendFileSync(env.GITHUB_OUTPUT,`dir=${dir}\nidentity=${id(st)}\nobservations=${observations}\n`);
+          fs.appendFileSync(env.GITHUB_ENV,`W17_OUT=${dir}\nW17_ROOT_ID=${id(st)}\nW17_OBS_ID=${observations}\n`);
+          NODE
+      - uses: actions/checkout@v7
+        id: checkout
+        timeout-minutes: 2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        id: setup
+        timeout-minutes: 5
+      - name: Probe primitives
+        id: primitives
+        timeout-minutes: 8
+        run: bash tools/ci/w17-probes/macos/run.sh primitives
+      - name: Build native package
+        id: build
+        if: "!cancelled() && steps.primitives.outcome != 'skipped'"
+        timeout-minutes: 11
+        shell: bash
+        run: |
+          set -eo pipefail
+          trap 'rc=$?; node tools/ci/w17-probes/evidence.mjs build-exit "$rc" || exit 1; exit "$rc"' EXIT
+          build() {
+            local code=0
+            "$@" || code=$?
+            node --input-type=module - "$code" "$@" <<'NODE'
+          import { appendObservation } from "./tools/ci/w17-probes/evidence.mjs";
+          const [code, ...argv] = process.argv.slice(2);
+          appendObservation(process.env.W17_OUT,
+            JSON.stringify({at:new Date().toISOString(),kind:"build command",data:{argv,exit:Number(code)}}) + "\n");
+          NODE
+            return "$code"
+          }
+          build node tools/ci/w17-probes/macos/guard-build.mjs
+          build node node_modules/typescript/bin/tsc -b packages/*/tsconfig.json frontends/*/tsconfig.json
+          build node node_modules/electron/install.js
+          build node tools/release/build-desktop.mjs
+      - name: Probe packaged app
+        id: package
+        if: "!cancelled() && steps.primitives.outcome != 'skipped'"
+        timeout-minutes: 7
+        run: bash tools/ci/w17-probes/macos/run.sh package
+      - name: Restore and verify owned resources
+        id: cleanup
+        env:
+          W17_ROOT_ID: ${{ steps.bootstrap.outputs.identity }}
+          W17_OBS_ID: ${{ steps.bootstrap.outputs.observations }}
+        if: always()
+        timeout-minutes: 6
+        run: bash tools/ci/w17-probes/macos/run.sh cleanup
+      - name: Record step outcomes
+        id: outcomes
+        working-directory: ${{ runner.temp }}
+        if: always()
+        timeout-minutes: 1
+        shell: bash
+        env:
+          PLATFORM: macos
+          OWNED_DIR: ${{ steps.bootstrap.outputs.dir }}
+          IDENTITY: ${{ steps.bootstrap.outputs.identity }}
+          OBS_ID: ${{ steps.bootstrap.outputs.observations }}
+          BOOTSTRAP: ${{ steps.bootstrap.outcome }}
+          CHECKOUT: ${{ steps.checkout.outcome }}
+          SETUP: ${{ steps.setup.outcome }}
+          PRIMITIVES: ${{ steps.primitives.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          PACKAGE: ${{ steps.package.outcome }}
+          CLEANUP: ${{ steps.cleanup.outcome }}
+        run: &outcomes |
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          import path from "node:path";
+          import {execFileSync} from "node:child_process";
+          const env = process.env;
+          function protect(dir) {
+            if (process.platform === "win32") {
+              execFileSync("pwsh", ["-NoProfile", "-NonInteractive", "-Command", process.env.W17_PRIVATE_ACL], {
+                env: { ...process.env, W17_PRIVATE: dir }, stdio: "inherit"
+              });
+            }
+          }
+          const source = env.OWNED_DIR;
+          const id = st => `${st.dev}/${st.ino}/${st.birthtimeNs}`;
+          function sameRoot() {
+            if (env.BOOTSTRAP !== "success" || !source || source !== env.W17_OUT) return false;
+            const st = fs.lstatSync(source, {bigint:true});
+            return st.isDirectory() && !!st.ino && id(st) === env.IDENTITY;
+          }
+          let dir = fs.mkdtempSync(path.join(env.RUNNER_TEMP, "w17-outcomes-"));
+          const refusals = [];
+          let privateSnapshot = true;
+          try { protect(dir); } catch {
+            privateSnapshot = false;
+            refusals.push("snapshot ACL verification failed");
+            dir = fs.mkdtempSync(path.join(env.USERPROFILE, "w17-refusal-"));
+          }
+          let owned;
+          try { owned = privateSnapshot && sameRoot(); } catch { owned = false; }
+          const files = [];
+          if (!owned) refusals.push("controller directory unverified");
+          const names = owned ? ["ledger.json", "observations.jsonl", "build.exit"] : [];
+          const identities = {"observations.jsonl":env.OBS_ID,"ledger.json":env.W17_LEDGER_ID,"build.exit":env.W17_BUILD_ID};
+          for (const name of names) {
+            const expected = identities[name];
+            let fd, bytes, mismatch;
+            try {
+              const file = path.join(source,name);
+              const st = fs.lstatSync(file,{bigint:true,throwIfNoEntry:false});
+              if (!st && !expected && name !== "observations.jsonl") continue;
+              if (!st?.isFile() || st.nlink !== 1n || !st.ino || id(st) !== expected) {
+                mismatch = "identity mismatch: expected " + (expected ?? "missing") + ", observed " + (st ? id(st) : "missing");
+                throw Error();
+              }
+              fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+              const opened = fs.fstatSync(fd,{bigint:true});
+              if (!sameRoot() || !opened.isFile() || opened.nlink !== 1n || id(opened) !== expected) {
+                mismatch = "root or opened file identity mismatch: expected " + expected + ", opened " + id(opened);
+                throw Error();
+              }
+              bytes = fs.readFileSync(fd);
+              if (name === "observations.jsonl") {
+                const lines = bytes.toString("utf8").trimEnd().split("\n");
+                const first = JSON.parse(lines[0]);
+                if (first.kind !== "bootstrap" || first.platform !== env.PLATFORM || first.sha !== env.GITHUB_SHA ||
+                    first.run !== env.GITHUB_RUN_ID || first.attempt !== env.GITHUB_RUN_ATTEMPT) throw Error();
+                const complete = lines.filter(line => {
+                  try { JSON.parse(line); return true; } catch { return false; }
+                });
+                if (complete.length !== lines.length) refusals.push(name + " contains incomplete records");
+                bytes = Buffer.from(complete.join("\n") + "\n");
+              }
+            } catch (error) {
+              const reason = mismatch ?? error.code;
+              refusals.push(name + " unverified or unreadable" + (reason ? " (" + reason + ")" : ""));
+              console.error(refusals.at(-1));
+              if (error.code && !["ENOENT","ENOTDIR","ELOOP"].includes(error.code)) process.exitCode = 1;
+              continue;
+            } finally { if (fd !== undefined) fs.closeSync(fd); }
+            const dest = path.join(dir,name);
+            fs.writeFileSync(dest,bytes,{flag:"wx",mode:0o600});
+            files.push(dest);
+          }
+          const file = path.join(dir,"observations.jsonl");
+          const steps = ["bootstrap", "checkout", "setup", "primitives", "build", "package", "cleanup"];
+          const result = Object.fromEntries(steps.map(key => [key, env[key.toUpperCase()]]));
+          const observation = { kind: "step outcomes", platform: env.PLATFORM, sha: env.GITHUB_SHA,
+            run: env.GITHUB_RUN_ID, attempt: env.GITHUB_RUN_ATTEMPT, owned, refusals, ...result };
+          fs.writeFileSync(file, JSON.stringify(observation) + "\n", { flag: files.includes(file) ? "a" : "wx", mode: 0o600 });
+          if (!files.includes(file)) files.push(file);
+          fs.appendFileSync(env.GITHUB_OUTPUT, "files<<W17_FILES\n" + files.join("\n") + "\nW17_FILES\n");
+          fs.appendFileSync(env.GITHUB_OUTPUT, `snapshot=${dir}\n`);
+          NODE
+      - uses: actions/upload-artifact@v7
+        if: always() && steps.outcomes.outputs.files != ''
+        timeout-minutes: 3
+        with:
+          name: w17-probe-macos-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.outcomes.outputs.files }}
+          if-no-files-found: error
+          retention-days: 14
+      - name: Decide exact feasibility
+        timeout-minutes: 1
+        if: always()
+        env:
+          W17_OUT: ${{ steps.outcomes.outputs.snapshot }}
+        run: node tools/ci/w17-probes/macos/verdict.mjs
+
+  windows:
+    # Change only this job's final literal to false once its W17P stop rule is met.
+    if: github.run_number <= 3 && github.run_attempt == 1 && true
+    runs-on: windows-2022
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Create private controller directory
+        id: bootstrap
+        timeout-minutes: 1
+        shell: bash
+        env:
+          PLATFORM: windows
+        run: *bootstrap
+      - uses: actions/checkout@v7
+        id: checkout
+        timeout-minutes: 2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        id: setup
+        timeout-minutes: 5
+      - name: Probe Windows primitives
+        id: primitives
+        timeout-minutes: 9
+        run: ./tools/ci/w17-probes/windows/run.ps1 -Phase primitives
+      - name: Build native Windows package
+        id: build
+        if: "!cancelled() && steps.primitives.outcome != 'skipped'"
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -eo pipefail
+          trap 'rc=$?; node tools/ci/w17-probes/evidence.mjs build-exit "$rc" || exit 1; exit "$rc"' EXIT
+          build() {
+            local rc=0
+            "$@" || rc=$?
+            node tools/ci/w17-probes/windows/phase-log.mjs build command "$rc" "$@"
+            return "$rc"
+          }
+          build node tools/ci/w17-probes/windows/phase-log.mjs build guard-build
+          build node node_modules/typescript/bin/tsc -b packages/*/tsconfig.json frontends/*/tsconfig.json
+          build node node_modules/electron/install.js
+          build node tools/release/journal-win32.mjs
+          build node tools/release/build-desktop.mjs
+      - name: Probe restricted Windows package
+        id: package
+        if: "!cancelled() && steps.primitives.outcome != 'skipped'"
+        timeout-minutes: 7
+        run: ./tools/ci/w17-probes/windows/run.ps1 -Phase package
+      - name: Restore and verify owned Windows resources
+        id: cleanup
+        env:
+          W17_ROOT_ID: ${{ steps.bootstrap.outputs.identity }}
+          W17_OBS_ID: ${{ steps.bootstrap.outputs.observations }}
+        if: always()
+        timeout-minutes: 6
+        run: ./tools/ci/w17-probes/windows/run.ps1 -Phase cleanup
+      - name: Record step outcomes
+        id: outcomes
+        working-directory: ${{ runner.temp }}
+        if: always()
+        timeout-minutes: 1
+        shell: bash
+        env:
+          PLATFORM: windows
+          OWNED_DIR: ${{ steps.bootstrap.outputs.dir }}
+          IDENTITY: ${{ steps.bootstrap.outputs.identity }}
+          OBS_ID: ${{ steps.bootstrap.outputs.observations }}
+          BOOTSTRAP: ${{ steps.bootstrap.outcome }}
+          CHECKOUT: ${{ steps.checkout.outcome }}
+          SETUP: ${{ steps.setup.outcome }}
+          PRIMITIVES: ${{ steps.primitives.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          PACKAGE: ${{ steps.package.outcome }}
+          CLEANUP: ${{ steps.cleanup.outcome }}
+        run: *outcomes
+      - uses: actions/upload-artifact@v7
+        if: always() && steps.outcomes.outputs.files != ''
+        timeout-minutes: 3
+        with:
+          name: w17-probe-windows-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.outcomes.outputs.files }}
+          retention-days: 14
+          if-no-files-found: error
+      - name: Decide exact Windows feasibility
+        timeout-minutes: 1
+        if: always()
+        env:
+          W17_OUT: ${{ steps.outcomes.outputs.snapshot }}
+        run: node tools/ci/w17-probes/windows/verdict.mjs

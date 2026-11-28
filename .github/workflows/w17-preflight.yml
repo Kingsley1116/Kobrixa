@@ -1,0 +1,162 @@
+name: W17 Windows preflight
+
+on:
+  push:
+    branches: [test/w17-preflight]
+
+env:
+  W17_PRIVATE_ACL: |
+    $ErrorActionPreference='Stop'
+    $trustees=@([Security.Principal.WindowsIdentity]::GetCurrent().User.Value,'S-1-5-18') | Select-Object -Unique
+    if ($env:W17_ACL_VERIFY_ONLY -ne '1') {
+      $acl=[Security.AccessControl.DirectorySecurity]::new()
+      $acl.SetAccessRuleProtection($true,$false)
+      foreach ($sid in $trustees) {
+        $id=[Security.Principal.SecurityIdentifier]::new($sid)
+        $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($id,'FullControl','ContainerInherit,ObjectInherit','None','Allow'))
+      }
+      Set-Acl -LiteralPath $env:W17_PRIVATE -AclObject $acl
+    }
+    Add-Type @'
+    using System;
+    using System.ComponentModel;
+    using System.Runtime.InteropServices;
+    using Microsoft.Win32.SafeHandles;
+    public static class PrivateDacl {
+      [DllImport("kernel32", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true)]
+      static extern SafeFileHandle CreateFileW(string path, uint access, uint share, IntPtr sa, uint mode, uint flags, IntPtr template);
+      [DllImport("ntdll")]
+      static extern int NtQuerySecurityObject(SafeFileHandle h, uint info, [Out] byte[] sd, uint size, out uint needed);
+      public static byte[] Read(string path) {
+        using (var h = CreateFileW(path, 0x20000, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero)) {
+          if (h.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+          var sd = new byte[64 * 1024];
+          uint used;
+          int status = NtQuerySecurityObject(h, 4, sd, (uint)sd.Length, out used);
+          if (status < 0 || used == 0 || used > sd.Length)
+            throw new InvalidOperationException("DACL read NTSTATUS " + status + ", length " + used);
+          Array.Resize(ref sd, (int)used);
+          return sd;
+        }
+      }
+    }
+    '@
+    $sd=[Security.AccessControl.RawSecurityDescriptor]::new([PrivateDacl]::Read($env:W17_PRIVATE),0)
+    $seen=@{}
+    if (!($sd.ControlFlags -band [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -or $sd.DiscretionaryAcl.Count -ne @($trustees).Count) { throw 'Private directory DACL mismatch' }
+    foreach ($ace in $sd.DiscretionaryAcl) {
+      $sid=$ace.SecurityIdentifier.Value
+      if ($sid -notin $trustees -or $seen.ContainsKey($sid) -or $ace.AceType -ne 'AccessAllowed' -or [int]$ace.AceFlags -ne 3 -or $ace.AccessMask -ne [int][Security.AccessControl.FileSystemRights]::FullControl -or $ace.OpaqueLength -ne 0) { throw 'Unexpected private directory ACE' }
+      $seen[$sid]=$true
+    }
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    if: github.run_number <= 7 && github.run_attempt == 1 && false
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        id: checkout
+        with:
+          persist-credentials: false
+      - name: Compile the x64 probe and time the disposable DACL round trip
+        id: preflight
+        working-directory: ${{ runner.temp }}
+        if: always()
+        env:
+          CHECKOUT: ${{ steps.checkout.outcome }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $PSNativeCommandUseErrorActionPreference=$false
+          $build=[IO.Directory]::CreateTempSubdirectory('w17-build-').FullName
+          $log=Join-Path $build preflight.log
+          $compiler=Join-Path $build compiler.log
+          Set-Content $compiler 'compile: not attempted yet'
+          Set-Content $log "checkout=$env:CHECKOUT"
+          foreach ($op in 'vs-discovery','dev-shell','compile','dependency','fixture','descriptor','snapshot','apply','restore','raw-dacl') {
+            Add-Content $log "$op : not attempted yet"
+          }
+          "build=$build" >> $env:GITHUB_OUTPUT
+          if ($env:CHECKOUT -ne 'success') { Add-Content $log 'checkout check exit=1'; exit 1 }
+          Add-Content $log 'checkout check exit=0'
+          $op='fixture-source'
+          $clock=[Diagnostics.Stopwatch]::StartNew()
+          $failure=0
+          function Result($rc,$detail) {
+            $line="$op exit=$rc elapsedMs=$($clock.ElapsedMilliseconds) $detail"
+            Add-Content $log $line
+            if ($op -eq 'compile') { Add-Content $compiler $line }
+            if ($rc -and !$script:failure) { $script:failure=$rc }
+          }
+          try {
+            $source=(Resolve-Path -LiteralPath (Join-Path $env:GITHUB_WORKSPACE tools/ci/w17-probes/windows)).Path
+            Push-Location $build
+            $pushed=$true
+            Result 0
+            $op='vs-discovery'; $clock.Restart()
+            $vswhere="${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+            $vs=& $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+            Result $LASTEXITCODE "found=$([bool]$vs)"
+            if ($failure) { exit $failure }
+            if (!$vs) { throw 'No Visual Studio installation found' }
+            $op='dev-shell'; $clock.Restart()
+            Import-Module "$vs\Common7\Tools\Microsoft.VisualStudio.DevShell.dll"
+            # VsDevCmd exports a line-oriented environment through cmd.exe.
+            $multiline = @([Environment]::GetEnvironmentVariables().GetEnumerator() | Where-Object { $_.Value -match '[\r\n]' })
+            try {
+                foreach ($entry in $multiline) {
+                    Add-Content $log "dev-shell setting aside environment variable $($entry.Key)"
+                    [Environment]::SetEnvironmentVariable($entry.Key, [NullString]::Value)
+                }
+                Enter-VsDevShell -VsInstallPath $vs -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64' | Out-Null
+            } finally {
+                foreach ($entry in $multiline) {
+                    [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value)
+                }
+            }
+            Result 0
+            $op='compile'; $clock.Restart()
+            cl.exe /nologo /EHsc /std:c++17 /W4 /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /MT /LD "$source/controller.cpp" "$source/tree-acl.cpp" /link /MACHINE:X64 advapi32.lib user32.lib userenv.lib ws2_32.lib fwpuclnt.lib ole32.lib uuid.lib 2>&1 | Out-File -FilePath $compiler -Append -Encoding utf8
+            Result $LASTEXITCODE
+            if ($failure) { exit $failure }
+            $env:NODE_PATH=Join-Path $build node_modules
+            foreach ($op in 'dependency','fixture','raw-dacl') {
+              $clock.Restart()
+              try {
+                switch ($op) {
+                  'dependency' {
+                    $tail=npm.cmd install --prefix $build --cache "$build/npm-cache" --ignore-scripts --no-audit --no-fund --no-package-lock zod@4.6.5 2>&1 | Select-Object -Last 40
+                    $rc=$LASTEXITCODE
+                    if ($rc) { $tail | Out-File -FilePath $log -Append -Encoding utf8 }
+                  }
+                  'fixture' {
+                    pwsh -NoProfile -File "$source/preflight.ps1" -ControllerDll "$build/controller.dll" 2>&1 | ForEach-Object { Add-Content $log $_.ToString() }
+                    $rc=$LASTEXITCODE
+                  }
+                  'raw-dacl' {
+                    pwsh -NoProfile -File "$source/preflight-raw.ps1" -Build $build 2>&1 | ForEach-Object { Add-Content $log $_.ToString() }
+                    $rc=$LASTEXITCODE
+                  }
+                }
+                Result $rc
+              } catch { Result 1 "exception=$($_.Exception.Message)" }
+            }
+            exit $failure
+          } catch {
+            Result 1 "exception=$($_.Exception.Message)"
+            throw
+          } finally { if ($pushed) { Pop-Location } }
+      - uses: actions/upload-artifact@v7
+        if: always() && steps.preflight.outputs.build != ''
+        with:
+          name: w17-preflight-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ steps.preflight.outputs.build }}/compiler.log
+            ${{ steps.preflight.outputs.build }}/preflight.log
+          retention-days: 14
+          if-no-files-found: error
