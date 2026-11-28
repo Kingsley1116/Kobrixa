@@ -150,23 +150,32 @@ test("a lost renderer preserves independent quit diagnostics", async () => {
   try {
     await mkdir(path.join(profile, "device-broker"));
     await writeFile(path.join(profile, "device-broker/faults.json"), "{}");
-    const rows = [
-      { pid: 31, ppid: 1 },
-      { pid: 32, ppid: 31 },
-      { pid: 33, ppid: 1 },
-    ];
-    const evidence = await collectQuitEvidence(
-      () => {
-        throw Error("Renderer gone");
-      },
-      profile,
-      31,
-      async () => rows,
-    );
-    assert.deepEqual(evidence.processes, rows.slice(0, 2));
-    assert.deepEqual(evidence.recovery, { unavailable: "Error: Renderer gone" });
-    assert.deepEqual(evidence.journalEntries, ["faults.json"]);
-    assert.match(evidence.sessionMarker.unavailable, /ENOENT/);
+    for (const rows of [
+      [
+        { pid: 31, ppid: 1, pgid: 31, created: "Thu Nov 12 10:00:00 2026" },
+        { pid: 32, ppid: 31, pgid: 31, created: "Thu Nov 12 10:00:01 2026" },
+        { pid: 33, ppid: 1, pgid: 33, created: "Thu Nov 12 10:00:00 2026" },
+      ],
+      [
+        { pid: 31, ppid: 1, created: "2026-11-12T10:00:00.1234567Z" },
+        { pid: 32, ppid: 31, created: "2026-11-12T10:00:00.1234568Z" },
+        { pid: 33, ppid: 1, created: "2026-11-12T10:00:00.1234568Z" },
+        { pid: 34, ppid: 31, created: "2026-11-12T10:00:00.1234566Z" },
+      ],
+    ]) {
+      const evidence = await collectQuitEvidence(
+        () => {
+          throw Error("Renderer gone");
+        },
+        profile,
+        31,
+        async () => rows,
+      );
+      assert.deepEqual(evidence.processes, rows.slice(0, 2));
+      assert.deepEqual(evidence.recovery, { unavailable: "Error: Renderer gone" });
+      assert.deepEqual(evidence.journalEntries, ["faults.json"]);
+      assert.match(evidence.sessionMarker.unavailable, /ENOENT/);
+    }
   } finally {
     await rm(profile, { recursive: true, force: true });
   }
