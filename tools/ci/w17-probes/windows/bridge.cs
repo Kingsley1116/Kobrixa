@@ -174,6 +174,10 @@ public static class W17 {
     DeletePinned(handle);
   }
   [DllImport(@"W17_DLL", ExactSpelling = true, CharSet = CharSet.Unicode)]
+  public static extern uint ReadLabel(string path, StringBuilder buffer, uint capacity);
+  [DllImport(@"W17_DLL", ExactSpelling = true, CharSet = CharSet.Unicode)]
+  public static extern uint WriteLabel(string path, string expectedBefore, string requested);
+  [DllImport(@"W17_DLL", ExactSpelling = true, CharSet = CharSet.Unicode)]
   public static extern uint WriteDacl(string path, string expectedBefore, string sddl, StringBuilder observed, uint capacity);
   [DllImport(@"W17_DLL", ExactSpelling = true, CharSet = CharSet.Unicode)]
   public static extern uint ReadDacl(string path, StringBuilder buffer, uint capacity);

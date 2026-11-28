@@ -61,3 +61,28 @@ function RestoreAcl($e) {
     }
     if ((Section $e.data.path) -cne $e.data.before) { throw "DACL restoration mismatch $($e.data.path)" }
 }
+function Read-Label($path) {
+    $buffer=[Text.StringBuilder]::new(65536)
+    Check ([W17]::ReadLabel($path,$buffer,$buffer.Capacity)) 'read mandatory label'
+    return $buffer.ToString()
+}
+function Write-Label($path,$before,$requested) {
+    $rc=[W17]::WriteLabel($path,$before,$requested)
+    Write-Verbose "WriteLabel path=$path rc=$rc before=$before requested=$requested"
+    if ($rc -eq 0x20000001) { throw "Mandatory label rollback or unchanged DACL could not be verified $path" }
+    Check $rc 'write mandatory label'
+}
+function Install-LowLabel($path) {
+    $before=Read-Label $path
+    $entry=Intent 'label' @{path=$path;before=$before;installed='S:(ML;OICI;NW;;;LW)'}
+    Write-Label $path $before $entry.data.installed
+    if ((Read-Label $path) -cne $entry.data.installed) { throw "Inherited low integrity label missing $path" }
+    return $entry
+}
+function RestoreLabel($e) {
+    $current=Read-Label $e.data.path
+    if (NeedsRestore $current $e.data.before $e.data.installed $e.data.path) {
+        Write-Label $e.data.path $current $e.data.before
+    }
+    if ((Read-Label $e.data.path) -cne $e.data.before) { throw "Label restoration mismatch $($e.data.path)" }
+}

@@ -222,6 +222,7 @@ function Unwind($selection) {
                     }
                 }
                 'acl' { RestoreAcl $e }
+                'label' { RestoreLabel $e }
                 'desktop' {
                     $current=DesktopSD $d.index
                     if (NeedsRestore $current $d.before $d.installed "desktop $($d.index)") {
@@ -395,9 +396,7 @@ function Dispatch($p) {
                 # The private subject scratch tree must also accept low-integrity
                 # writes in the fallback. Set the inheritable label while empty.
                 if ($a.sid -eq $j.accounts.subject.sid) {
-                    $null=Intent 'owned integrity label' @{path=$a.home;undo='remove verified run-owned scratch'}
-                    $null=& "$env:SystemRoot\System32\icacls.exe" $a.home /setintegritylevel '(OI)(CI)L'
-                    Check $LASTEXITCODE 'set private scratch integrity label'
+                    $null=Install-LowLabel $a.home
                 }
                 foreach ($dir in @('empty','Roaming','Local','Temp')) { New-OwnedDir (Join-Path $a.home $dir) }
             }
@@ -575,7 +574,7 @@ function Dispatch($p) {
                 return $e.kind -notin @('account','stage','junction')
             }
             $accounts=Unwind { param($e) $e.kind -eq 'account' -and (!$pendingProfile -or $e.data.role -ne 'subject') }
-            $pendingStage=@($j.entries | Where-Object { !$_.done -and ($_.kind -in @('tree-acl','account','container') -or ($_.kind -eq 'acl' -and $_.data.scope -ne 'runner')) }).Count -gt 0
+            $pendingStage=@($j.entries | Where-Object { !$_.done -and ($_.kind -in @('tree-acl','account','container','label') -or ($_.kind -eq 'acl' -and $_.data.scope -ne 'runner')) }).Count -gt 0
             $stageResult=Unwind {param($e) $e.kind -eq 'stage' -and !$pendingStage}
             return ,@($results+$accounts+$stageResult)
         }

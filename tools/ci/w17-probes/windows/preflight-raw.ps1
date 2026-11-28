@@ -131,30 +131,37 @@ function Test-RawAcl {
             $scratch=Join-Path $stage integrity
             if (![W17]::CreateDirectoryW($scratch,[IntPtr]::Zero)) { throw 'Integrity directory creation failed' }
             $objects.Add($scratch)
-            $grantError=$null
-            try { $homeGrant=Ace $scratch $sid Modify 'ContainerInherit,ObjectInherit' Allow stage }
-            catch { $grantError=$_.Exception.Message; Write-Verbose "integrity fixture grant failed error=$grantError" }
+            $homeGrant=Ace $scratch $sid Modify 'ContainerInherit,ObjectInherit' Allow stage
+            $grantEntry=$entries[$entries.Count-1]
             $before=Section $scratch
-            $listing=& "$env:SystemRoot\System32\icacls.exe" $scratch /setintegritylevel '(OI)(CI)L' 2>&1
-            $rc=$LASTEXITCODE
-            $d="rc=$rc before=$before grantError=$grantError"
-            foreach ($line in $listing) { Write-Verbose $line.ToString() }
+            if ($before -cne $homeGrant.after) { throw 'Integrity fixture DACL changed before label' }
+            $labelEntry=Install-LowLabel $scratch
+            if ($labelEntry.data.before -ceq $labelEntry.data.installed) { throw 'Integrity fixture already has requested label' }
             $raw=Section $scratch
-            $d+=" after=$raw"
-            $setRc=$rc
-            $listing=& "$env:SystemRoot\System32\icacls.exe" $scratch 2>&1
-            $rc=$LASTEXITCODE
-            $d+=" queryRc=$rc"
-            foreach ($line in $listing) { Write-Verbose $line.ToString() }
-            Check $setRc 'set private scratch integrity label'
+            $d="before=$before after=$raw originalLabel=$($labelEntry.data.before) installedLabel=$(Read-Label $scratch)"
             if ($raw -cne $before) { throw 'Integrity label changed the raw DACL' }
-            Check $rc 'query private scratch integrity label'
-            if (!(($listing -join ' ') -match '(?:Mandatory Label\\Low Mandatory Level|S-1-16-4096):\(OI\)\(CI\)')) { throw 'Inherited low integrity label missing' }
-            if ($grantError) { throw "Integrity fixture grant failed: $grantError" }
-            if ($before -cne $homeGrant.after) { throw 'Integrity fixture DACL changed before icacls' }
-            RestoreAcl $entries[$entries.Count-1]
+            RestoreLabel $labelEntry
+            $d+=" restoredLabel=$(Read-Label $scratch)"
+            if ((Section $scratch) -cne $before) { throw 'Integrity label restore changed the raw DACL' }
+            RestoreAcl $grantEntry
             Write-Verbose "result=INTEGRITY_LABEL PASS $d"
         } catch { $script:failed=$true; Write-Verbose "result=INTEGRITY_LABEL FAIL $d error=$($_.Exception.Message)" }
+
+        # Repeat the original experiment only on disposable state, after measurement.
+        try {
+            $control=Join-Path $stage icacls-control
+            if (!$protected -or ![W17]::CreateDirectoryW($control,[IntPtr]::Zero)) { throw 'Control directory unavailable' }
+            $objects.Add($control)
+            $null=Ace $control $sid Modify 'ContainerInherit,ObjectInherit' Allow stage
+            $controlBefore=Section $control
+            $listing=& "$env:SystemRoot\System32\icacls.exe" $control /setintegritylevel '(OI)(CI)L' 2>&1
+            $rc=$LASTEXITCODE
+            foreach ($line in $listing) { Write-Verbose $line.ToString() }
+            $controlAfter=Section $control
+            $label=Read-Label $control
+            $observed=if ($rc) { 'unknown' } else { $controlBefore -cne $controlAfter }
+            Write-Verbose "result=ICACLS_LABEL_REWRITES_DACL observed=$observed rc=$rc before=$controlBefore after=$controlAfter label=$label"
+        } catch { Write-Verbose "result=ICACLS_LABEL_REWRITES_DACL observed=unknown error=$($_.Exception.Message)" }
     } finally {
         $pending=$false
         for ($i=$objects.Count-1;$i -ge 0;$i--) {

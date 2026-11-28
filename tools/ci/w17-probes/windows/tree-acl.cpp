@@ -38,12 +38,12 @@ auto identity(const BY_HANDLE_FILE_INFORMATION &f) {
   return std::make_tuple(f.dwVolumeSerialNumber, f.nFileIndexHigh,
                          f.nFileIndexLow);
 }
-std::vector<BYTE> dacl(HANDLE h) {
+std::vector<BYTE> queryDescriptor(HANDLE h, DWORD section) {
   // NTFS limits the entire descriptor to 64 KiB. Query once on the handle
   // whose file ID we checked, without a path lookup or an inheritance provider.
   std::vector<BYTE> result(64 * 1024);
   ULONG used = 0;
-  NTSTATUS status = NtQuerySecurityObject(h, DACL_SECURITY_INFORMATION,
+  NTSTATUS status = NtQuerySecurityObject(h, section,
       result.data(), static_cast<ULONG>(result.size()), &used);
   if (status < 0)
     throw DWORD(RtlNtStatusToDosError(status));
@@ -52,10 +52,13 @@ std::vector<BYTE> dacl(HANDLE h) {
   result.resize(used);
   return result;
 }
-wstring sddl(PSECURITY_DESCRIPTOR sd) {
+std::vector<BYTE> dacl(HANDLE h) {
+  return queryDescriptor(h, DACL_SECURITY_INFORMATION);
+}
+wstring sddl(PSECURITY_DESCRIPTOR sd, DWORD section = DACL_SECURITY_INFORMATION) {
   LPWSTR s = nullptr;
   check(ConvertSecurityDescriptorToStringSecurityDescriptorW(
-      sd, SDDL_REVISION_1, DACL_SECURITY_INFORMATION, &s, nullptr));
+      sd, SDDL_REVISION_1, section, &s, nullptr));
   wstring value(s);
   LocalFree(s);
   return value;
@@ -397,6 +400,95 @@ WriteDacl(const wchar_t *path, const wchar_t *expectedBefore, const wchar_t *req
   SECURITY_DESCRIPTOR rollback{};
   buildDescriptor(original.data(), acl, rollback);
   return setAndVerify(file.handle, sd, rollback, expected, before, observed, capacity);
+} catch (DWORD error) {
+  return error;
+} catch (...) {
+  return ERROR_WRITE_FAULT;
+}
+
+namespace {
+// Journal just the label ACEs, independent of SACL control flags. An empty
+// SACL ("S:") is also the label-only write request for removing the label.
+wstring label(HANDLE handle) {
+  auto raw = queryDescriptor(handle, LABEL_SECURITY_INFORMATION);
+  BOOL present, defaulted;
+  PACL acl = nullptr;
+  check(GetSecurityDescriptorSacl(raw.data(), &present, &acl, &defaulted));
+  if (!present || !acl || !acl->AceCount)
+    return L"S:";
+  SECURITY_DESCRIPTOR sd{};
+  check(InitializeSecurityDescriptor(&sd, SECURITY_DESCRIPTOR_REVISION));
+  check(SetSecurityDescriptorSacl(&sd, TRUE, acl, FALSE));
+  return sddl(&sd, SACL_SECURITY_INFORMATION);
+}
+
+auto parseLabel(const wchar_t *value) {
+  PSECURITY_DESCRIPTOR sd = nullptr;
+  check(ConvertStringSecurityDescriptorToSecurityDescriptorW(
+      value, SDDL_REVISION_1, &sd, nullptr));
+  return std::unique_ptr<void, decltype(&LocalFree)>(sd, LocalFree);
+}
+
+DWORD setAndVerifyLabel(HANDLE handle, PSECURITY_DESCRIPTOR install, PSECURITY_DESCRIPTOR rollback,
+                        const wstring &requested, const wstring &before) {
+  const auto originalDacl = dacl(handle);
+  const auto status = NtSetSecurityObject(handle, LABEL_SECURITY_INFORMATION, install);
+  if (status < 0)
+    return RtlNtStatusToDosError(status);
+  DWORD failure = ERROR_INVALID_DATA;
+  try {
+    const auto observed = label(handle);
+    const auto observedDacl = dacl(handle);
+    if (observed == requested && observedDacl == originalDacl)
+      return ERROR_SUCCESS;
+  } catch (DWORD error) {
+    failure = error;
+  } catch (...) {
+    failure = ERROR_READ_FAULT;
+  }
+  constexpr DWORD rollbackFailed = APPLICATION_ERROR_MASK | 1;
+  try {
+    if (NtSetSecurityObject(handle, LABEL_SECURITY_INFORMATION, rollback) < 0 ||
+        label(handle) != before || dacl(handle) != originalDacl)
+      return rollbackFailed;
+  } catch (...) {
+    return rollbackFailed;
+  }
+  return failure;
+}
+} // namespace
+
+extern "C" __declspec(dllexport) DWORD WINAPI
+ReadLabel(const wchar_t *path, wchar_t *buffer, DWORD capacity) try {
+  File file(path, FILE_READ_ATTRIBUTES | READ_CONTROL);
+  Entry entry;
+  check(GetFileInformationByHandle(file.handle, &entry.info));
+  verifyFile(file, entry);
+  const auto value = label(file.handle);
+  if (value.size() >= capacity)
+    return ERROR_INSUFFICIENT_BUFFER;
+  value.copy(buffer, value.size());
+  buffer[value.size()] = L'\0';
+  return ERROR_SUCCESS;
+} catch (DWORD error) {
+  return error;
+} catch (...) {
+  return ERROR_READ_FAULT;
+}
+
+extern "C" __declspec(dllexport) DWORD WINAPI
+WriteLabel(const wchar_t *path, const wchar_t *expectedBefore, const wchar_t *requested) try {
+  File reader(path, FILE_READ_ATTRIBUTES | READ_CONTROL);
+  Entry entry;
+  check(GetFileInformationByHandle(reader.handle, &entry.info));
+  File file(path, FILE_READ_ATTRIBUTES | READ_CONTROL | WRITE_OWNER);
+  verifyFile(file, entry);
+  const auto before = label(file.handle);
+  if (before != expectedBefore)
+    return ERROR_REVISION_MISMATCH;
+  auto install = parseLabel(requested);
+  auto rollback = parseLabel(before.c_str());
+  return setAndVerifyLabel(file.handle, install.get(), rollback.get(), requested, before);
 } catch (DWORD error) {
   return error;
 } catch (...) {
